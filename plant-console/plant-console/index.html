@@ -490,6 +490,7 @@ const SECTIONS=[
   {id:'legal',label:'Legal Documents',kicker:'Compliance',title:'Legal Documents',lede:'Certificates, inspection records, HACCP plans, and licenses — stored, dated, and tracked for renewal.',empty:['No documents on file.','Upload and tag compliance records here to keep them in one place.']}
 ];
 
+let items=JSON.parse(localStorage.getItem('pc_items')||'[]');
 let storages=JSON.parse(localStorage.getItem('pc_storages')||'[]');
 let transactions=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
 let users=JSON.parse(localStorage.getItem('pc_users')||'[]');
@@ -521,6 +522,88 @@ function saveTxns(){localStorage.setItem('pc_transactions',JSON.stringify(transa
 function saveUsers(){localStorage.setItem('pc_users',JSON.stringify(users))}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function initials(name){return name.trim().split(/\s+/).map(w=>w[0]).join('').substring(0,2).toUpperCase()}
+
+
+/* ===== QUICKBOOKS ===== */
+var QB_REALM='9341455286904784';
+var QB_CLIENT_ID='ABaDfcxMMeAaUHHtYONpvC2GJlVdE5SAfRhB0xHnN4EAfqZFhi';
+var QB_CLIENT_SECRET='7Ijp0nOfoxWxNf199PgpyHfBuCXfQ8nGhMTxSlze';
+var qbAccessToken=localStorage.getItem('qb_access_token')||'eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2IiwieC5vcmciOiJIMCJ9..iyIPM3TiLlaeEfyH494vgg.2_2udYb7qdoQAqWSjtKcDiwKqldH-vBgXbXoYpAxFlSln0rHnaRTVFYOfcD1-NUPzhmN6BYyVqpKS03wtlOrXDahInJOglDJ937ZiTw8y9UXfjx-bI6W4cSBpg5K5FsqTGg5PyvxM6yOsK0xV0FW3oOd1hmXjJ24oowW5gVn43rBHL2-DjvmnToyQJk_1uIfZVZDQbbm6gCsFEdRgdo2nUUIYHSIcrIETE4ZCqnEpKToB8TW_ka_ulQIzEHthFBRdSGq7ADmlXYxKw_zAJirPJJvjhBYCGyW9Zk0aEeXrkzS4IEa7WxbhClOMhByY7ObI2kOczv0QZvwyEgoC8OJDhZwhU5sQxuYh7fFtzv66QmcKAR4AcukayhNC-KImDE3DgDvabFjPSoP_eN7Fa8DSwRBWWlBhLainuQkKLbr9EfxDyufFo2K1UuhhafrPE077BfBe4BNMmfbyE6fpYfuDDiRBqv45qFLX0vCg6Mj66Y.l3tsmwIpFrZtZdOdTJrGrA';
+var qbRefreshToken=localStorage.getItem('qb_refresh_token')||'RT1-73-H0-1790971810xrxelnls1051ngjsixxu';
+
+function qbSaveTokens(access, refresh){
+  qbAccessToken=access; qbRefreshToken=refresh;
+  localStorage.setItem('qb_access_token', access);
+  localStorage.setItem('qb_refresh_token', refresh);
+}
+
+async function qbRefreshAccessToken(){
+  var creds = btoa(QB_CLIENT_ID+':'+QB_CLIENT_SECRET);
+  var resp = await fetch('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',{
+    method:'POST',
+    headers:{'Authorization':'Basic '+creds,'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},
+    body:'grant_type=refresh_token&refresh_token='+encodeURIComponent(qbRefreshToken)
+  });
+  var data = await resp.json();
+  if(data.access_token){
+    qbSaveTokens(data.access_token, data.refresh_token||qbRefreshToken);
+    return true;
+  }
+  return false;
+}
+
+async function qbFetchItems(retry){
+  var btn=document.getElementById('qbSyncBtn');
+  var status=document.getElementById('qbStatus');
+  if(btn)btn.disabled=true;
+  if(status)status.textContent='Syncing from QuickBooks...';
+
+  var url='https://quickbooks.api.intuit.com/v3/company/'+QB_REALM+'/query?query=SELECT%20*%20FROM%20Item&minorversion=65';
+  var resp = await fetch(url,{
+    headers:{'Authorization':'Bearer '+qbAccessToken,'Accept':'application/json','Content-Type':'text/plain'}
+  });
+
+  if(resp.status===401&&!retry){
+    var ok=await qbRefreshAccessToken();
+    if(ok){ await qbFetchItems(true); return; }
+    if(status)status.textContent='Auth failed — try re-syncing.';
+    if(btn)btn.disabled=false;
+    return;
+  }
+
+  if(!resp.ok){
+    if(status)status.textContent='Error '+resp.status+' — '+resp.statusText;
+    if(btn)btn.disabled=false;
+    return;
+  }
+
+  var data=await resp.json();
+  var qbItems=(data.QueryResponse&&data.QueryResponse.Item)||[];
+  var added=0, updated=0;
+
+  qbItems.forEach(function(qi){
+    var existing=items.findIndex(function(x){return x.qbId===qi.Id});
+    var mapped={
+      id: existing>=0 ? items[existing].id : 'item_'+Date.now()+'_'+Math.random().toString(36).slice(2),
+      qbId: qi.Id,
+      name: qi.Name||'',
+      type: qi.Type||'',
+      description: qi.Description||qi.FullyQualifiedName||'',
+      sku: qi.Sku||'',
+      price: qi.UnitPrice||0,
+      qty: qi.QtyOnHand||0,
+      active: qi.Active!==false,
+      qbSynced: new Date().toISOString()
+    };
+    if(existing>=0){ items[existing]=mapped; updated++; }
+    else{ items.push(mapped); added++; }
+  });
+
+  localStorage.setItem('pc_items', JSON.stringify(items));
+  if(status)status.textContent='Synced '+qbItems.length+' items ('+added+' new, '+updated+' updated)';
+  if(btn)btn.disabled=false;
+  renderItemsTable();
+}
 
 /* ===== LOGIN ===== */
 function attemptLogin(){
@@ -588,8 +671,46 @@ function select(id){
   crumb.textContent=s.title;
   if(id==='settings') renderSettings();
   else if(id==='transactions') renderTransactions();
+  else if(id==='items') renderItemsView();
   else view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p><div class="empty"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICON[id]}</svg></div><div><h3>${s.empty[0]}</h3><p>${s.empty[1]}</p></div></div>`;
   view.focus({preventScroll:true});
+}
+
+
+/* ===== ITEMS ===== */
+function renderItemsView(){
+  view.innerHTML=`
+    <div class="eyebrow">Inventory</div>
+    <h2>Items</h2>
+    <p class="lede">Everything you stock — synced from QuickBooks and managed here.</p>
+    <div class="txn-toolbar">
+      <span id="qbStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted)">${items.length} item${items.length!==1?'s':''} on file</span>
+      <button id="qbSyncBtn" class="btn btn-primary" onclick="qbFetchItems(false)">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        Sync from QuickBooks
+      </button>
+    </div>
+    <div class="txn-table-wrap" id="itemsTableWrap"></div>`;
+  renderItemsTable();
+}
+
+function renderItemsTable(){
+  var wrap=document.getElementById('itemsTableWrap'); if(!wrap) return;
+  if(!items.length){
+    wrap.innerHTML=`<div class="txn-empty"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4v10l-9 4-9-4V7z"/><path d="M3 7l9 4 9-4M12 11v10"/></svg><p>No items yet. Click <strong>Sync from QuickBooks</strong> to import your inventory.</p></div>`;
+    return;
+  }
+  var rows=items.map(function(it){
+    return '<tr>'
+      +'<td><div class="txn-num">'+esc(it.name)+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
+      +'<td><span class="type-badge type-'+(it.type||'adjustment').toLowerCase()+'">'+esc(it.type||'—')+'</span></td>'
+      +'<td style="font-family:var(--mono);font-size:12px">'+esc(it.sku||'—')+'</td>'
+      +'<td style="font-family:var(--mono);font-size:12px">$'+Number(it.price||0).toFixed(2)+'</td>'
+      +'<td style="font-family:var(--mono);font-size:12px">'+Number(it.qty||0).toFixed(2)+'</td>'
+      +'<td><span style="font-family:var(--mono);font-size:10px;padding:3px 8px;border-radius:20px;background:'+(it.active?'rgba(30,140,80,.12)':'rgba(136,135,128,.12)')+';color:'+(it.active?'#0f6e40':'#5f5e5a')+'">'+(it.active?'Active':'Inactive')+'</span></td>'
+      +'</tr>';
+  }).join('');
+  wrap.innerHTML='<table class="txn-table"><thead><tr><th>Name</th><th>Type</th><th>SKU</th><th>Price</th><th>Qty on Hand</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
 /* ===== SETTINGS ===== */

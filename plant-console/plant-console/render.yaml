@@ -2,7 +2,7 @@ services:
   - type: web
     name: plant-console
     runtime: static
-    staticPublishPath: .
+    staticPublishPath: plant-console/plant-console
     pullRequestPreviewsEnabled: false
     # Single-page app: send any path back to index.html
     routes:

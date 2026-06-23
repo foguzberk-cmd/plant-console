@@ -16,195 +16,140 @@
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
-  body{
-    font-family:var(--sans); color:var(--ink); background:var(--bg);
-    -webkit-font-smoothing:antialiased; display:flex; min-height:100vh;
-  }
+  body{font-family:var(--sans);color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased;display:flex;min-height:100vh}
 
-  /* ---------- SIDEBAR ---------- */
-  .rail{
-    width:var(--rail); flex:0 0 var(--rail); background:var(--sidebar);
-    color:var(--sb-ink); display:flex; flex-direction:column;
-    position:sticky; top:0; height:100vh;
-  }
-  .brand{
-    padding:22px 22px 18px; display:flex; align-items:center; gap:12px;
-    border-bottom:1px solid rgba(255,255,255,.07);
-  }
-  .mark{
-    width:34px; height:34px; border-radius:7px; flex:0 0 34px;
-    background:linear-gradient(150deg,var(--brand-bright),var(--brand));
-    display:grid; place-items:center; color:#fff; font-weight:800;
-    font-family:var(--mono); font-size:15px; letter-spacing:-1px;
-    box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);
-  }
-  .brand h1{font-size:13.5px; letter-spacing:.16em; text-transform:uppercase; color:#fff; font-weight:700}
-  .brand span{display:block; font-family:var(--mono); font-size:10px; color:var(--sb-dim); letter-spacing:.12em; margin-top:3px}
+  .rail{width:var(--rail);flex:0 0 var(--rail);background:var(--sidebar);color:var(--sb-ink);display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+  .brand{padding:22px 22px 18px;display:flex;align-items:center;gap:12px;border-bottom:1px solid rgba(255,255,255,.07)}
+  .mark{width:34px;height:34px;border-radius:7px;flex:0 0 34px;background:linear-gradient(150deg,var(--brand-bright),var(--brand));display:grid;place-items:center;color:#fff;font-weight:800;font-family:var(--mono);font-size:15px;letter-spacing:-1px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
+  .brand h1{font-size:13.5px;letter-spacing:.16em;text-transform:uppercase;color:#fff;font-weight:700}
+  .brand span{display:block;font-family:var(--mono);font-size:10px;color:var(--sb-dim);letter-spacing:.12em;margin-top:3px}
+  nav{padding:14px 12px;flex:1;display:flex;flex-direction:column;gap:3px}
+  .nav-kicker{font-family:var(--mono);font-size:9.5px;letter-spacing:.22em;color:var(--sb-dim);padding:6px 12px 8px;text-transform:uppercase}
+  .nav-item{display:flex;align-items:center;gap:13px;width:100%;padding:11px 13px;border:0;background:transparent;cursor:pointer;color:var(--sb-ink);font-family:var(--mono);font-size:12.5px;letter-spacing:.04em;border-radius:8px;text-align:left;position:relative;transition:background .15s,color .15s}
+  .nav-item svg{width:18px;height:18px;flex:0 0 18px;stroke:currentColor;opacity:.85}
+  .nav-item:hover{background:rgba(255,255,255,.05);color:#fff}
+  .nav-item:focus-visible{outline:2px solid var(--cold);outline-offset:-2px}
+  .nav-item.active{background:rgba(255,255,255,.06);color:#fff}
+  .nav-item.active::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--cold)}
+  .nav-item.active svg{opacity:1;color:var(--cold)}
+  .rail-foot{padding:16px 18px;border-top:1px solid rgba(255,255,255,.07);font-family:var(--mono);font-size:10px;color:var(--sb-dim);letter-spacing:.08em}
+  .rail-foot b{color:var(--sb-ink);font-weight:600}
 
-  nav{padding:14px 12px; flex:1; display:flex; flex-direction:column; gap:3px}
-  .nav-kicker{font-family:var(--mono); font-size:9.5px; letter-spacing:.22em; color:var(--sb-dim); padding:6px 12px 8px; text-transform:uppercase}
-  .nav-item{
-    display:flex; align-items:center; gap:13px; width:100%;
-    padding:11px 13px; border:0; background:transparent; cursor:pointer;
-    color:var(--sb-ink); font-family:var(--mono); font-size:12.5px;
-    letter-spacing:.04em; border-radius:8px; text-align:left;
-    position:relative; transition:background .15s, color .15s;
-  }
-  .nav-item svg{width:18px; height:18px; flex:0 0 18px; stroke:currentColor; opacity:.85}
-  .nav-item:hover{background:rgba(255,255,255,.05); color:#fff}
-  .nav-item:focus-visible{outline:2px solid var(--cold); outline-offset:-2px}
-  .nav-item.active{background:rgba(255,255,255,.06); color:#fff}
-  .nav-item.active::before{
-    content:""; position:absolute; left:0; top:8px; bottom:8px; width:3px;
-    border-radius:0 3px 3px 0; background:var(--cold);
-  }
-  .nav-item.active svg{opacity:1; color:var(--cold)}
-
-  .rail-foot{padding:16px 18px; border-top:1px solid rgba(255,255,255,.07);
-    font-family:var(--mono); font-size:10px; color:var(--sb-dim); letter-spacing:.08em}
-  .rail-foot b{color:var(--sb-ink); font-weight:600}
-
-  /* ---------- MAIN ---------- */
-  .main{flex:1; min-width:0; display:flex; flex-direction:column}
-  .topbar{
-    height:62px; display:flex; align-items:center; justify-content:space-between;
-    padding:0 30px; background:var(--panel); border-bottom:1px solid var(--line);
-    position:sticky; top:0; z-index:5;
-  }
-  .topbar .where{font-family:var(--mono); font-size:11px; letter-spacing:.14em; color:var(--muted); text-transform:uppercase}
-  .topbar .where b{color:var(--ink); font-weight:700}
-  .status-cluster{display:flex; align-items:center; gap:18px}
-  .pill{
-    display:inline-flex; align-items:center; gap:7px; font-family:var(--mono);
-    font-size:11px; letter-spacing:.06em; color:var(--cold);
-    background:var(--cold-soft); padding:6px 11px; border-radius:20px;
-  }
-  .pill .dot{width:7px; height:7px; border-radius:50%; background:var(--cold);
-    box-shadow:0 0 0 0 var(--cold); animation:pulse 2.6s infinite}
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .topbar{height:62px;display:flex;align-items:center;justify-content:space-between;padding:0 30px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  .topbar .where{font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase}
+  .topbar .where b{color:var(--ink);font-weight:700}
+  .status-cluster{display:flex;align-items:center;gap:18px}
+  .pill{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--cold);background:var(--cold-soft);padding:6px 11px;border-radius:20px}
+  .pill .dot{width:7px;height:7px;border-radius:50%;background:var(--cold);animation:pulse 2.6s infinite}
   @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(46,124,139,.5)}70%{box-shadow:0 0 0 7px rgba(46,124,139,0)}100%{box-shadow:0 0 0 0 rgba(46,124,139,0)}}
-  .clock{font-family:var(--mono); font-size:12px; color:var(--ink); letter-spacing:.04em; text-align:right}
-  .clock small{display:block; color:var(--muted); font-size:9.5px; letter-spacing:.14em; text-transform:uppercase}
+  .clock{font-family:var(--mono);font-size:12px;color:var(--ink);letter-spacing:.04em;text-align:right}
+  .clock small{display:block;color:var(--muted);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase}
 
-  .view{padding:38px 40px; flex:1; overflow:auto}
-  .eyebrow{font-family:var(--mono); font-size:10.5px; letter-spacing:.24em; color:var(--brand); text-transform:uppercase}
-  .view h2{font-size:30px; letter-spacing:-.01em; margin:8px 0 6px; font-weight:750}
-  .lede{color:var(--muted); font-size:14.5px; max-width:62ch; line-height:1.55}
+  .view{padding:38px 40px;flex:1;overflow:auto}
+  .eyebrow{font-family:var(--mono);font-size:10.5px;letter-spacing:.24em;color:var(--brand);text-transform:uppercase}
+  .view h2{font-size:30px;letter-spacing:-.01em;margin:8px 0 6px;font-weight:750}
+  .lede{color:var(--muted);font-size:14.5px;max-width:62ch;line-height:1.55}
 
-  .empty{
-    margin-top:30px; background:var(--panel); border:1.5px dashed var(--line);
-    border-radius:14px; padding:46px 34px; display:flex; align-items:center;
-    gap:22px; max-width:640px;
-  }
-  .empty .ico{width:52px; height:52px; flex:0 0 52px; border-radius:12px;
-    background:var(--bg); display:grid; place-items:center; color:var(--brand)}
-  .empty .ico svg{width:26px; height:26px; stroke:currentColor}
-  .empty h3{font-size:15px; margin-bottom:4px}
-  .empty p{color:var(--muted); font-size:13px; line-height:1.5}
+  .empty{margin-top:30px;background:var(--panel);border:1.5px dashed var(--line);border-radius:14px;padding:46px 34px;display:flex;align-items:center;gap:22px;max-width:640px}
+  .empty .ico{width:52px;height:52px;flex:0 0 52px;border-radius:12px;background:var(--bg);display:grid;place-items:center;color:var(--brand)}
+  .empty .ico svg{width:26px;height:26px;stroke:currentColor}
+  .empty h3{font-size:15px;margin-bottom:4px}
+  .empty p{color:var(--muted);font-size:13px;line-height:1.5}
 
-  /* ---------- SETTINGS ---------- */
-  .settings-layout{margin-top:32px; display:flex; flex-direction:column; gap:32px; max-width:780px}
-  .settings-section{background:var(--panel); border-radius:14px; border:1px solid var(--line); overflow:hidden}
-  .settings-section-head{
-    padding:18px 24px; border-bottom:1px solid var(--line);
-    display:flex; align-items:center; justify-content:space-between;
-  }
-  .settings-section-head h3{font-size:14px; font-weight:700; letter-spacing:.01em}
-  .settings-section-head p{font-size:12.5px; color:var(--muted); margin-top:3px}
+  /* BUTTONS */
+  .btn{display:inline-flex;align-items:center;gap:7px;padding:8px 16px;border-radius:8px;border:1.5px solid var(--line);background:var(--panel);color:var(--ink);font-family:var(--mono);font-size:12px;letter-spacing:.04em;cursor:pointer;transition:background .14s,border-color .14s}
+  .btn:hover{background:var(--bg);border-color:var(--cold)}
+  .btn svg{width:15px;height:15px;stroke:currentColor}
+  .btn-primary{background:var(--cold);border-color:var(--cold);color:#fff}
+  .btn-primary:hover{background:#245f6d;border-color:#245f6d}
+  .btn-danger{color:var(--brand-bright);border-color:var(--line)}
+  .btn-danger:hover{background:#fff0f0;border-color:var(--brand-bright)}
+  .btn-sm{padding:5px 11px;font-size:11px}
 
-  .btn{
-    display:inline-flex; align-items:center; gap:7px;
-    padding:8px 16px; border-radius:8px; border:1.5px solid var(--line);
-    background:var(--panel); color:var(--ink); font-family:var(--mono);
-    font-size:12px; letter-spacing:.04em; cursor:pointer;
-    transition:background .14s, border-color .14s;
-  }
-  .btn:hover{background:var(--bg); border-color:var(--cold)}
-  .btn svg{width:15px; height:15px; stroke:currentColor}
-  .btn-primary{background:var(--cold); border-color:var(--cold); color:#fff}
-  .btn-primary:hover{background:#245f6d; border-color:#245f6d}
-  .btn-danger{color:var(--brand-bright); border-color:var(--line)}
-  .btn-danger:hover{background:#fff0f0; border-color:var(--brand-bright)}
-  .btn-sm{padding:5px 11px; font-size:11px}
-
+  /* SETTINGS */
+  .settings-layout{margin-top:32px;display:flex;flex-direction:column;gap:32px;max-width:780px}
+  .settings-section{background:var(--panel);border-radius:14px;border:1px solid var(--line);overflow:hidden}
+  .settings-section-head{padding:18px 24px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
+  .settings-section-head h3{font-size:14px;font-weight:700;letter-spacing:.01em}
+  .settings-section-head p{font-size:12.5px;color:var(--muted);margin-top:3px}
   .storage-list{list-style:none}
-  .storage-row{
-    display:flex; align-items:center; gap:14px;
-    padding:14px 24px; border-bottom:1px solid var(--line);
-    transition:background .12s;
-  }
+  .storage-row{display:flex;align-items:center;gap:14px;padding:14px 24px;border-bottom:1px solid var(--line);transition:background .12s}
   .storage-row:last-child{border-bottom:none}
   .storage-row:hover{background:var(--bg)}
-  .storage-icon{
-    width:36px; height:36px; border-radius:9px; flex:0 0 36px;
-    background:var(--cold-soft); display:grid; place-items:center; color:var(--cold);
-  }
-  .storage-icon svg{width:17px; height:17px; stroke:currentColor}
-  .storage-info{flex:1; min-width:0}
-  .storage-name{font-size:13.5px; font-weight:600}
-  .storage-meta{font-family:var(--mono); font-size:11px; color:var(--muted); margin-top:2px}
-  .storage-type-badge{
-    font-family:var(--mono); font-size:10px; letter-spacing:.08em;
-    padding:3px 9px; border-radius:20px; text-transform:uppercase;
-  }
-  .badge-cold{background:var(--cold-soft); color:var(--cold)}
-  .badge-dry{background:rgba(158,43,37,.1); color:var(--brand)}
-  .badge-frozen{background:rgba(46,86,139,.15); color:#185fa5}
-  .badge-ambient{background:rgba(136,135,128,.12); color:#5f5e5a}
-  .storage-actions{display:flex; gap:6px}
-
-  /* modal */
-  .modal-bg{
-    position:fixed; inset:0; background:rgba(0,0,0,.38); z-index:100;
-    display:flex; align-items:center; justify-content:center;
-  }
-  .modal-bg.hidden{display:none}
-  .modal{
-    background:var(--panel); border-radius:16px; padding:30px 28px;
-    width:100%; max-width:440px; box-shadow:0 8px 40px rgba(0,0,0,.18);
-  }
-  .modal h3{font-size:17px; font-weight:700; margin-bottom:4px}
-  .modal .sub{color:var(--muted); font-size:13px; margin-bottom:22px}
-  .form-group{margin-bottom:16px}
-  .form-group label{display:block; font-family:var(--mono); font-size:11px; letter-spacing:.1em; color:var(--muted); margin-bottom:6px; text-transform:uppercase}
-  .form-group input,.form-group select,.form-group textarea{
-    width:100%; padding:9px 12px; border:1.5px solid var(--line);
-    border-radius:8px; font-family:var(--sans); font-size:14px; color:var(--ink);
-    background:var(--bg); outline:none; transition:border-color .14s;
-  }
-  .form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:var(--cold)}
-  .form-group textarea{resize:vertical; min-height:72px}
-  .form-row{display:grid; grid-template-columns:1fr 1fr; gap:14px}
-  .modal-footer{display:flex; justify-content:flex-end; gap:10px; margin-top:24px; border-top:1px solid var(--line); padding-top:20px}
-
-  .confirm-modal{text-align:center}
-  .confirm-modal .warn-icon{
-    width:52px; height:52px; border-radius:14px; background:rgba(194,59,51,.1);
-    display:grid; place-items:center; color:var(--brand-bright); margin:0 auto 16px;
-  }
-  .confirm-modal .warn-icon svg{width:26px; height:26px; stroke:currentColor}
-
-  .empty-storage{
-    padding:40px 24px; text-align:center; color:var(--muted);
-  }
-  .empty-storage svg{width:32px; height:32px; stroke:var(--line); margin-bottom:10px}
+  .storage-icon{width:36px;height:36px;border-radius:9px;flex:0 0 36px;background:var(--cold-soft);display:grid;place-items:center;color:var(--cold)}
+  .storage-icon svg{width:17px;height:17px;stroke:currentColor}
+  .storage-info{flex:1;min-width:0}
+  .storage-name{font-size:13.5px;font-weight:600}
+  .storage-meta{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:2px}
+  .storage-type-badge{font-family:var(--mono);font-size:10px;letter-spacing:.08em;padding:3px 9px;border-radius:20px;text-transform:uppercase}
+  .badge-cold{background:var(--cold-soft);color:var(--cold)}
+  .badge-dry{background:rgba(158,43,37,.1);color:var(--brand)}
+  .badge-frozen{background:rgba(46,86,139,.15);color:#185fa5}
+  .badge-ambient{background:rgba(136,135,128,.12);color:#5f5e5a}
+  .storage-actions{display:flex;gap:6px}
+  .empty-storage{padding:40px 24px;text-align:center;color:var(--muted)}
+  .empty-storage svg{width:32px;height:32px;stroke:var(--line);margin-bottom:10px}
   .empty-storage p{font-size:13px}
 
-  @media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+  /* TRANSACTIONS */
+  .txn-toolbar{display:flex;align-items:center;justify-content:space-between;margin-top:28px;margin-bottom:16px}
+  .txn-table-wrap{background:var(--panel);border-radius:14px;border:1px solid var(--line);overflow:hidden}
+  .txn-table{width:100%;border-collapse:collapse;font-size:13px}
+  .txn-table th{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);padding:11px 18px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap;background:var(--bg)}
+  .txn-table td{padding:13px 18px;border-bottom:1px solid var(--line);vertical-align:middle}
+  .txn-table tr:last-child td{border-bottom:none}
+  .txn-table tr:hover td{background:var(--bg)}
+  .txn-num{font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--cold)}
+  .txn-desc{color:var(--muted);font-size:12px;margin-top:2px}
+  .txn-loc{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .txn-loc b{color:var(--ink);font-weight:600}
+  .txn-arrow{color:var(--muted);margin:0 4px;font-size:11px}
+  .type-badge{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.07em;padding:3px 9px;border-radius:20px;text-transform:uppercase;white-space:nowrap}
+  .type-receive{background:rgba(30,140,80,.12);color:#0f6e40}
+  .type-transfer{background:var(--cold-soft);color:var(--cold)}
+  .type-production{background:rgba(158,43,37,.1);color:var(--brand)}
+  .type-shipment{background:rgba(100,70,180,.12);color:#4a35a0}
+  .type-return{background:rgba(200,140,0,.12);color:#8a5a00}
+  .type-adjustment{background:rgba(136,135,128,.12);color:#5f5e5a}
+  .txn-date{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
+  .txn-actions{display:flex;gap:6px;justify-content:flex-end}
+  .txn-empty{padding:52px 24px;text-align:center;color:var(--muted)}
+  .txn-empty svg{width:34px;height:34px;stroke:var(--line);margin-bottom:12px;display:block;margin-left:auto;margin-right:auto}
+  .txn-empty p{font-size:13px}
 
-  /* ---------- RESPONSIVE ---------- */
+  /* MODALS */
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.38);z-index:100;display:flex;align-items:center;justify-content:center}
+  .modal-bg.hidden{display:none}
+  .modal{background:var(--panel);border-radius:16px;padding:30px 28px;width:100%;max-width:500px;box-shadow:0 8px 40px rgba(0,0,0,.18);max-height:92vh;overflow-y:auto}
+  .modal h3{font-size:17px;font-weight:700;margin-bottom:4px}
+  .modal .sub{color:var(--muted);font-size:13px;margin-bottom:22px}
+  .form-group{margin-bottom:16px}
+  .form-group label{display:block;font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--muted);margin-bottom:6px;text-transform:uppercase}
+  .form-group input,.form-group select,.form-group textarea{width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:8px;font-family:var(--sans);font-size:14px;color:var(--ink);background:var(--bg);outline:none;transition:border-color .14s}
+  .form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:var(--cold)}
+  .form-group textarea{resize:vertical;min-height:72px}
+  .form-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .modal-footer{display:flex;justify-content:flex-end;gap:10px;margin-top:24px;border-top:1px solid var(--line);padding-top:20px}
+  .confirm-modal{text-align:center}
+  .confirm-modal .warn-icon{width:52px;height:52px;border-radius:14px;background:rgba(194,59,51,.1);display:grid;place-items:center;color:var(--brand-bright);margin:0 auto 16px}
+  .confirm-modal .warn-icon svg{width:26px;height:26px;stroke:currentColor}
+
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
   @media (max-width:780px){
     body{flex-direction:column}
-    .rail{width:100%; height:auto; position:static; flex:none}
-    nav{flex-direction:row; overflow-x:auto; padding:10px; gap:6px}
+    .rail{width:100%;height:auto;position:static;flex:none}
+    nav{flex-direction:row;overflow-x:auto;padding:10px;gap:6px}
     .nav-kicker{display:none}
-    .nav-item{flex:0 0 auto; padding:9px 14px}
-    .nav-item.active::before{top:auto; bottom:0; left:8px; right:8px; width:auto; height:3px; border-radius:3px 3px 0 0}
+    .nav-item{flex:0 0 auto;padding:9px 14px}
+    .nav-item.active::before{top:auto;bottom:0;left:8px;right:8px;width:auto;height:3px;border-radius:3px 3px 0 0}
     .rail-foot{display:none}
     .view{padding:26px 20px}
     .topbar{padding:0 20px}
     .view h2{font-size:24px}
     .form-row{grid-template-columns:1fr}
-    .modal{max-width:94vw; padding:22px 18px}
+    .modal{max-width:94vw;padding:22px 18px}
+    .txn-table th:nth-child(4),.txn-table td:nth-child(4){display:none}
   }
 </style>
 </head>
@@ -212,14 +157,9 @@
   <aside class="rail">
     <div class="brand">
       <div class="mark">PC</div>
-      <div>
-        <h1>Plant Console</h1>
-        <span>Inventory &amp; Operations</span>
-      </div>
+      <div><h1>Plant Console</h1><span>Inventory &amp; Operations</span></div>
     </div>
-    <nav id="nav" aria-label="Sections">
-      <div class="nav-kicker">Menu</div>
-    </nav>
+    <nav id="nav" aria-label="Sections"><div class="nav-kicker">Menu</div></nav>
     <div class="rail-foot">Facility <b>PLT-01</b> · v0.1</div>
   </aside>
 
@@ -234,18 +174,14 @@
     <main class="view" id="view" tabindex="-1"></main>
   </div>
 
-  <!-- Add/Edit Storage Modal -->
+  <!-- Storage Modal -->
   <div class="modal-bg hidden" id="storageModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <div class="modal">
       <h3 id="modalTitle">Add storage location</h3>
       <p class="sub">Define a new physical storage area in your facility.</p>
-      <div class="form-group">
-        <label>Location name</label>
-        <input type="text" id="s-name" placeholder="e.g. Cooler A, Freezer 2, Dry Rack 3" />
-      </div>
+      <div class="form-group"><label>Location name</label><input type="text" id="s-name" placeholder="e.g. Cooler A, Freezer 2, Dry Rack 3"/></div>
       <div class="form-row">
-        <div class="form-group">
-          <label>Type</label>
+        <div class="form-group"><label>Type</label>
           <select id="s-type">
             <option value="cold">Cold (refrigerated)</option>
             <option value="frozen">Frozen</option>
@@ -253,28 +189,51 @@
             <option value="ambient">Ambient</option>
           </select>
         </div>
-        <div class="form-group">
-          <label>Capacity (lbs)</label>
-          <input type="number" id="s-capacity" placeholder="e.g. 5000" min="0" />
-        </div>
+        <div class="form-group"><label>Capacity (lbs)</label><input type="number" id="s-capacity" placeholder="e.g. 5000" min="0"/></div>
       </div>
       <div class="form-row">
-        <div class="form-group">
-          <label>Temp range</label>
-          <input type="text" id="s-temp" placeholder="e.g. 28–34 °F" />
-        </div>
-        <div class="form-group">
-          <label>Zone / bay</label>
-          <input type="text" id="s-zone" placeholder="e.g. Zone B" />
-        </div>
+        <div class="form-group"><label>Temp range</label><input type="text" id="s-temp" placeholder="e.g. 28–34 °F"/></div>
+        <div class="form-group"><label>Zone / bay</label><input type="text" id="s-zone" placeholder="e.g. Zone B"/></div>
       </div>
-      <div class="form-group">
-        <label>Notes</label>
-        <textarea id="s-notes" placeholder="Optional — HACCP zone, use restrictions, etc."></textarea>
-      </div>
+      <div class="form-group"><label>Notes</label><textarea id="s-notes" placeholder="Optional — HACCP zone, use restrictions, etc."></textarea></div>
       <div class="modal-footer">
         <button class="btn" onclick="closeStorageModal()">Cancel</button>
         <button class="btn btn-primary" onclick="saveStorage()">Save location</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Transaction Modal -->
+  <div class="modal-bg hidden" id="txnModal" role="dialog" aria-modal="true" aria-labelledby="txnModalTitle">
+    <div class="modal">
+      <h3 id="txnModalTitle">Create transaction</h3>
+      <p class="sub">Record a product movement in or out of a storage location.</p>
+      <div class="form-row">
+        <div class="form-group"><label>Transaction #</label><input type="text" id="t-num" placeholder="e.g. TXN-0001"/></div>
+        <div class="form-group"><label>Date</label><input type="date" id="t-date"/></div>
+      </div>
+      <div class="form-group"><label>Transaction type</label>
+        <select id="t-type">
+          <option value="receive">Receive — product coming in from supplier</option>
+          <option value="transfer">Transfer — move between internal locations</option>
+          <option value="production">Production — raw to processed product</option>
+          <option value="shipment">Shipment — product leaving the plant</option>
+          <option value="return">Return — product coming back</option>
+          <option value="adjustment">Adjustment — inventory correction</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Location out (from)</label>
+          <select id="t-loc-out"><option value="">— select —</option><option value="external">External / Supplier</option></select>
+        </div>
+        <div class="form-group"><label>Location in (to)</label>
+          <select id="t-loc-in"><option value="">— select —</option><option value="external">External / Customer</option></select>
+        </div>
+      </div>
+      <div class="form-group"><label>Description</label><textarea id="t-desc" placeholder="Product details, lot numbers, weight, supplier, notes…"></textarea></div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeTxnModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveTxn()">Save transaction</button>
       </div>
     </div>
   </div>
@@ -283,8 +242,8 @@
   <div class="modal-bg hidden" id="deleteModal" role="dialog" aria-modal="true">
     <div class="modal confirm-modal">
       <div class="warn-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
-      <h3>Remove this location?</h3>
-      <p class="sub" style="margin-bottom:0">This can't be undone. Any items assigned to this location will need to be reassigned.</p>
+      <h3 id="deleteTitle">Remove this?</h3>
+      <p class="sub" style="margin-bottom:0" id="deleteMsg">This can't be undone.</p>
       <div class="modal-footer" style="justify-content:center">
         <button class="btn" onclick="closeDeleteModal()">Keep it</button>
         <button class="btn btn-danger" onclick="confirmDelete()">Yes, remove</button>
@@ -293,56 +252,46 @@
   </div>
 
 <script>
-const ICON = {
+const ICON={
   items:'<path d="M3 7l9-4 9 4v10l-9 4-9-4V7z"/><path d="M3 7l9 4 9-4M12 11v10"/>',
   transactions:'<path d="M17 3l4 4-4 4"/><path d="M21 7H7"/><path d="M7 21l-4-4 4-4"/><path d="M3 17h14"/>',
   reports:'<path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/>',
   settings:'<circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
   legal:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6M9 9h1"/>'
 };
-
-const TYPE_ICON = {
+const TYPE_ICON={
   cold:'<path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>',
   frozen:'<line x1="12" y1="2" x2="12" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
   dry:'<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>',
   ambient:'<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>'
 };
-
-const SECTIONS = [
-  {id:'items', label:'Items', kicker:'Inventory', title:'Items',
-   lede:'Everything you stock — carcasses, primal and retail cuts, processed goods and by-products — counted in pieces, pounds, and boxes.',
-   empty:['No items defined yet.','Tell me how you want items organized and I\'ll build the structure here.']},
-  {id:'transactions', label:'Transactions', kicker:'Movement', title:'Transactions',
-   lede:'Receiving, production, internal transfers, and shipments — every movement of product in and out of the plant.',
-   empty:['No transactions recorded.','This is where each receive, transfer, and shipment will be logged.']},
-  {id:'reports', label:'Reports', kicker:'Insight', title:'Reports',
-   lede:'On-hand summaries, throughput, and traceability rolled up by source, product class, and storage location.',
-   empty:['No reports built yet.','Once items and transactions exist, summaries and breakdowns will appear here.']},
-  {id:'settings', label:'Settings', kicker:'Configuration', title:'Settings',
-   lede:'Categories, storage locations, units, and users that the rest of the console draws from.'},
-  {id:'legal', label:'Legal Documents', kicker:'Compliance', title:'Legal Documents',
-   lede:'Certificates, inspection records, HACCP plans, and licenses — stored, dated, and tracked for renewal.',
-   empty:['No documents on file.','Upload and tag compliance records here to keep them in one place.']}
+const SECTIONS=[
+  {id:'items',label:'Items',kicker:'Inventory',title:'Items',lede:'Everything you stock — carcasses, primal and retail cuts, processed goods and by-products — counted in pieces, pounds, and boxes.',empty:['No items defined yet.','Tell me how you want items organized and I\'ll build the structure here.']},
+  {id:'transactions',label:'Transactions',kicker:'Movement',title:'Transactions',lede:'Receiving, production, internal transfers, and shipments — every movement of product in and out of the plant.'},
+  {id:'reports',label:'Reports',kicker:'Insight',title:'Reports',lede:'On-hand summaries, throughput, and traceability rolled up by source, product class, and storage location.',empty:['No reports built yet.','Once items and transactions exist, summaries and breakdowns will appear here.']},
+  {id:'settings',label:'Settings',kicker:'Configuration',title:'Settings',lede:'Categories, storage locations, units, and users that the rest of the console draws from.'},
+  {id:'legal',label:'Legal Documents',kicker:'Compliance',title:'Legal Documents',lede:'Certificates, inspection records, HACCP plans, and licenses — stored, dated, and tracked for renewal.',empty:['No documents on file.','Upload and tag compliance records here to keep them in one place.']}
 ];
 
-// Storage state
-let storages = JSON.parse(localStorage.getItem('pc_storages') || '[]');
-let editingId = null;
-let deletingId = null;
+let storages=JSON.parse(localStorage.getItem('pc_storages')||'[]');
+let transactions=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
+let editingStorageId=null;
+let editingTxnId=null;
+let deletingId=null;
+let deletingKind=null;
 
-function saveToStorage(){
-  localStorage.setItem('pc_storages', JSON.stringify(storages));
-}
+function saveStorages(){localStorage.setItem('pc_storages',JSON.stringify(storages))}
+function saveTxns(){localStorage.setItem('pc_transactions',JSON.stringify(transactions))}
 
-const nav = document.getElementById('nav');
-const view = document.getElementById('view');
-const crumb = document.getElementById('crumb');
+const nav=document.getElementById('nav');
+const view=document.getElementById('view');
+const crumb=document.getElementById('crumb');
 
 SECTIONS.forEach((s,i)=>{
   const b=document.createElement('button');
   b.className='nav-item'+(i===0?' active':'');
   b.dataset.id=s.id;
-  b.setAttribute('aria-current', i===0?'page':'false');
+  b.setAttribute('aria-current',i===0?'page':'false');
   b.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[s.id]}</svg>${s.label}`;
   b.addEventListener('click',()=>select(s.id));
   nav.appendChild(b);
@@ -353,25 +302,124 @@ function select(id){
   document.querySelectorAll('.nav-item').forEach(n=>{
     const on=n.dataset.id===id;
     n.classList.toggle('active',on);
-    n.setAttribute('aria-current', on?'page':'false');
+    n.setAttribute('aria-current',on?'page':'false');
   });
   crumb.textContent=s.title;
-
-  if(id==='settings'){
-    renderSettings();
-  } else {
-    view.innerHTML=`
-      <div class="eyebrow">${s.kicker}</div>
-      <h2>${s.title}</h2>
-      <p class="lede">${s.lede}</p>
-      <div class="empty">
-        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICON[id]}</svg></div>
-        <div><h3>${s.empty[0]}</h3><p>${s.empty[1]}</p></div>
-      </div>`;
+  if(id==='settings') renderSettings();
+  else if(id==='transactions') renderTransactions();
+  else {
+    view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p><div class="empty"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICON[id]}</svg></div><div><h3>${s.empty[0]}</h3><p>${s.empty[1]}</p></div></div>`;
   }
   view.focus({preventScroll:true});
 }
 
+function esc(str){return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+
+/* ===== TRANSACTIONS ===== */
+const TXN_TYPES={receive:'Receive',transfer:'Transfer',production:'Production',shipment:'Shipment',return:'Return',adjustment:'Adjustment'};
+
+function renderTransactions(){
+  const s=SECTIONS.find(x=>x.id==='transactions');
+  view.innerHTML=`
+    <div class="eyebrow">${s.kicker}</div>
+    <h2>${s.title}</h2>
+    <p class="lede">${s.lede}</p>
+    <div class="txn-toolbar">
+      <span style="font-family:var(--mono);font-size:11px;color:var(--muted)">${transactions.length} record${transactions.length!==1?'s':''}</span>
+      <button class="btn btn-primary" onclick="openAddTxnModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Create transaction
+      </button>
+    </div>
+    <div class="txn-table-wrap" id="txnTableWrap"></div>`;
+  renderTxnTable();
+}
+
+function renderTxnTable(){
+  const wrap=document.getElementById('txnTableWrap');
+  if(!wrap) return;
+  if(transactions.length===0){
+    wrap.innerHTML=`<div class="txn-empty"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3l4 4-4 4"/><path d="M21 7H7"/><path d="M7 21l-4-4 4-4"/><path d="M3 17h14"/></svg><p>No transactions yet. Click <strong>Create transaction</strong> to log the first movement.</p></div>`;
+    return;
+  }
+  const rows=[...transactions].reverse().map(t=>{
+    const locOut=t.locOut==='external'?'External':storages.find(x=>x.id===t.locOut)?.name||t.locOut||'—';
+    const locIn=t.locIn==='external'?'External':storages.find(x=>x.id===t.locIn)?.name||t.locIn||'—';
+    const dateStr=t.date?new Date(t.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
+    return `<tr>
+      <td><div class="txn-num">${esc(t.num)||'—'}</div>${t.desc?`<div class="txn-desc">${esc(t.desc.substring(0,60))}${t.desc.length>60?'…':''}</div>`:''}</td>
+      <td><span class="type-badge type-${t.type}">${TXN_TYPES[t.type]||t.type}</span></td>
+      <td><span class="txn-loc"><b>${esc(locOut)}</b><span class="txn-arrow">→</span><b>${esc(locIn)}</b></span></td>
+      <td class="txn-date">${dateStr}</td>
+      <td><div class="txn-actions">
+        <button class="btn btn-sm" onclick="openEditTxnModal('${t.id}')" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+        <button class="btn btn-sm btn-danger" onclick="openDeleteModal('${t.id}','txn')" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
+      </div></td>
+    </tr>`;
+  }).join('');
+  wrap.innerHTML=`<table class="txn-table"><thead><tr><th>Transaction</th><th>Type</th><th>Movement</th><th>Date</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function populateLocationSelects(){
+  const opts=storages.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  document.getElementById('t-loc-out').innerHTML=`<option value="">— select —</option><option value="external">External / Supplier</option>${opts}`;
+  document.getElementById('t-loc-in').innerHTML=`<option value="">— select —</option><option value="external">External / Customer</option>${opts}`;
+}
+
+function openAddTxnModal(){
+  editingTxnId=null;
+  document.getElementById('txnModalTitle').textContent='Create transaction';
+  document.getElementById('t-num').value='TXN-'+String(transactions.length+1).padStart(4,'0');
+  document.getElementById('t-date').value=new Date().toISOString().slice(0,10);
+  document.getElementById('t-type').value='receive';
+  document.getElementById('t-desc').value='';
+  populateLocationSelects();
+  document.getElementById('txnModal').classList.remove('hidden');
+  document.getElementById('t-num').focus();
+}
+
+function openEditTxnModal(id){
+  const t=transactions.find(x=>x.id===id);
+  if(!t) return;
+  editingTxnId=id;
+  document.getElementById('txnModalTitle').textContent='Edit transaction';
+  document.getElementById('t-num').value=t.num||'';
+  document.getElementById('t-date').value=t.date||'';
+  document.getElementById('t-type').value=t.type||'receive';
+  document.getElementById('t-desc').value=t.desc||'';
+  populateLocationSelects();
+  document.getElementById('t-loc-out').value=t.locOut||'';
+  document.getElementById('t-loc-in').value=t.locIn||'';
+  document.getElementById('txnModal').classList.remove('hidden');
+  document.getElementById('t-num').focus();
+}
+
+function closeTxnModal(){document.getElementById('txnModal').classList.add('hidden')}
+
+function saveTxn(){
+  const num=document.getElementById('t-num').value.trim();
+  if(!num){document.getElementById('t-num').focus();return;}
+  const data={
+    id:editingTxnId||('txn_'+Date.now()),
+    num,
+    date:document.getElementById('t-date').value,
+    type:document.getElementById('t-type').value,
+    locOut:document.getElementById('t-loc-out').value,
+    locIn:document.getElementById('t-loc-in').value,
+    desc:document.getElementById('t-desc').value.trim(),
+  };
+  if(editingTxnId){
+    const idx=transactions.findIndex(x=>x.id===editingTxnId);
+    transactions[idx]=data;
+  } else {
+    transactions.push(data);
+  }
+  saveTxns();
+  closeTxnModal();
+  renderTransactions();
+}
+
+/* ===== SETTINGS ===== */
 function typeBadge(type){
   const labels={cold:'Cold',frozen:'Frozen',dry:'Dry',ambient:'Ambient'};
   return `<span class="storage-type-badge badge-${type}">${labels[type]||type}</span>`;
@@ -386,11 +434,8 @@ function renderSettings(){
     <div class="settings-layout">
       <div class="settings-section">
         <div class="settings-section-head">
-          <div>
-            <h3>Storage locations</h3>
-            <p>Physical areas where product is held — coolers, freezers, dry racks.</p>
-          </div>
-          <button class="btn btn-primary btn-sm" onclick="openAddModal()">
+          <div><h3>Storage locations</h3><p>Physical areas where product is held — coolers, freezers, dry racks.</p></div>
+          <button class="btn btn-primary btn-sm" onclick="openAddStorageModal()">
             <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             Add location
           </button>
@@ -402,57 +447,40 @@ function renderSettings(){
 }
 
 function renderStorageList(){
-  const list = document.getElementById('storageList');
+  const list=document.getElementById('storageList');
   if(!list) return;
   if(storages.length===0){
-    list.innerHTML=`<li class="empty-storage">
-      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
-      <p>No storage locations yet. Click <strong>Add location</strong> to get started.</p>
-    </li>`;
+    list.innerHTML=`<li class="empty-storage"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg><p>No storage locations yet. Click <strong>Add location</strong> to get started.</p></li>`;
     return;
   }
-  list.innerHTML = storages.map(loc=>`
+  list.innerHTML=storages.map(loc=>`
     <li class="storage-row">
-      <div class="storage-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${TYPE_ICON[loc.type]||TYPE_ICON.ambient}</svg>
-      </div>
+      <div class="storage-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${TYPE_ICON[loc.type]||TYPE_ICON.ambient}</svg></div>
       <div class="storage-info">
         <div class="storage-name">${esc(loc.name)}</div>
         <div class="storage-meta">${loc.zone?esc(loc.zone)+' · ':''}${loc.temp?esc(loc.temp)+' · ':''}${loc.capacity?Number(loc.capacity).toLocaleString()+' lb cap':'no capacity set'}</div>
       </div>
       ${typeBadge(loc.type)}
       <div class="storage-actions">
-        <button class="btn btn-sm" onclick="openEditModal('${loc.id}')" title="Edit">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-        </button>
-        <button class="btn btn-sm btn-danger" onclick="openDeleteModal('${loc.id}')" title="Remove">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-        </button>
+        <button class="btn btn-sm" onclick="openEditStorageModal('${loc.id}')" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+        <button class="btn btn-sm btn-danger" onclick="openDeleteModal('${loc.id}','storage')" title="Remove"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
       </div>
     </li>`).join('');
 }
 
-function esc(str){
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-function openAddModal(){
-  editingId=null;
+function openAddStorageModal(){
+  editingStorageId=null;
   document.getElementById('modalTitle').textContent='Add storage location';
-  document.getElementById('s-name').value='';
+  ['s-name','s-capacity','s-temp','s-zone','s-notes'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('s-type').value='cold';
-  document.getElementById('s-capacity').value='';
-  document.getElementById('s-temp').value='';
-  document.getElementById('s-zone').value='';
-  document.getElementById('s-notes').value='';
   document.getElementById('storageModal').classList.remove('hidden');
   document.getElementById('s-name').focus();
 }
 
-function openEditModal(id){
+function openEditStorageModal(id){
   const loc=storages.find(x=>x.id===id);
   if(!loc) return;
-  editingId=id;
+  editingStorageId=id;
   document.getElementById('modalTitle').textContent='Edit storage location';
   document.getElementById('s-name').value=loc.name;
   document.getElementById('s-type').value=loc.type;
@@ -464,52 +492,59 @@ function openEditModal(id){
   document.getElementById('s-name').focus();
 }
 
-function closeStorageModal(){
-  document.getElementById('storageModal').classList.add('hidden');
-}
+function closeStorageModal(){document.getElementById('storageModal').classList.add('hidden')}
 
 function saveStorage(){
   const name=document.getElementById('s-name').value.trim();
-  if(!name){document.getElementById('s-name').focus(); return;}
+  if(!name){document.getElementById('s-name').focus();return;}
   const data={
-    id: editingId || ('loc_'+Date.now()),
+    id:editingStorageId||('loc_'+Date.now()),
     name,
-    type: document.getElementById('s-type').value,
-    capacity: document.getElementById('s-capacity').value,
-    temp: document.getElementById('s-temp').value.trim(),
-    zone: document.getElementById('s-zone').value.trim(),
-    notes: document.getElementById('s-notes').value.trim(),
+    type:document.getElementById('s-type').value,
+    capacity:document.getElementById('s-capacity').value,
+    temp:document.getElementById('s-temp').value.trim(),
+    zone:document.getElementById('s-zone').value.trim(),
+    notes:document.getElementById('s-notes').value.trim(),
   };
-  if(editingId){
-    const idx=storages.findIndex(x=>x.id===editingId);
-    storages[idx]=data;
-  } else {
-    storages.push(data);
-  }
-  saveToStorage();
+  if(editingStorageId){const idx=storages.findIndex(x=>x.id===editingStorageId);storages[idx]=data;}
+  else storages.push(data);
+  saveStorages();
   closeStorageModal();
   renderStorageList();
 }
 
-function openDeleteModal(id){
-  deletingId=id;
+/* ===== SHARED DELETE ===== */
+function openDeleteModal(id,kind){
+  deletingId=id; deletingKind=kind;
+  if(kind==='txn'){
+    const t=transactions.find(x=>x.id===id);
+    document.getElementById('deleteTitle').textContent='Delete this transaction?';
+    document.getElementById('deleteMsg').textContent=`Transaction ${t?.num||''} will be permanently removed.`;
+  } else {
+    document.getElementById('deleteTitle').textContent='Remove this location?';
+    document.getElementById('deleteMsg').textContent='Any transactions referencing this location will still be kept.';
+  }
   document.getElementById('deleteModal').classList.remove('hidden');
 }
 
-function closeDeleteModal(){
-  document.getElementById('deleteModal').classList.add('hidden');
-  deletingId=null;
-}
+function closeDeleteModal(){document.getElementById('deleteModal').classList.add('hidden');deletingId=null;deletingKind=null}
 
 function confirmDelete(){
-  storages=storages.filter(x=>x.id!==deletingId);
-  saveToStorage();
-  closeDeleteModal();
-  renderStorageList();
+  if(deletingKind==='txn'){
+    transactions=transactions.filter(x=>x.id!==deletingId);
+    saveTxns();
+    closeDeleteModal();
+    renderTransactions();
+  } else {
+    storages=storages.filter(x=>x.id!==deletingId);
+    saveStorages();
+    closeDeleteModal();
+    renderStorageList();
+  }
 }
 
-// Close modals on backdrop click
 document.getElementById('storageModal').addEventListener('click',e=>{if(e.target===e.currentTarget)closeStorageModal()});
+document.getElementById('txnModal').addEventListener('click',e=>{if(e.target===e.currentTarget)closeTxnModal()});
 document.getElementById('deleteModal').addEventListener('click',e=>{if(e.target===e.currentTarget)closeDeleteModal()});
 
 select('items');

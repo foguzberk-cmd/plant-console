@@ -558,26 +558,22 @@ async function qbFetchItems(retry){
   if(btn)btn.disabled=true;
   if(status)status.textContent='Syncing from QuickBooks...';
 
-  var url='https://quickbooks.api.intuit.com/v3/company/'+QB_REALM+'/query?query=SELECT%20*%20FROM%20Item&minorversion=65';
-  var resp = await fetch(url,{
-    headers:{'Authorization':'Bearer '+qbAccessToken,'Accept':'application/json','Content-Type':'text/plain'}
-  });
-
-  if(resp.status===401&&!retry){
-    var ok=await qbRefreshAccessToken();
-    if(ok){ await qbFetchItems(true); return; }
-    if(status)status.textContent='Auth failed — try re-syncing.';
-    if(btn)btn.disabled=false;
-    return;
-  }
+  // Use local proxy to avoid CORS
+  var base=window.location.origin;
+  var resp = await fetch(base+'/api/qb/items');
 
   if(!resp.ok){
-    if(status)status.textContent='Error '+resp.status+' — '+resp.statusText;
+    if(status)status.textContent='Sync error '+resp.status+' — check server logs.';
     if(btn)btn.disabled=false;
     return;
   }
 
   var data=await resp.json();
+  if(data.error){
+    if(status)status.textContent='QB Error: '+data.error;
+    if(btn)btn.disabled=false;
+    return;
+  }
   var qbItems=(data.QueryResponse&&data.QueryResponse.Item)||[];
   var added=0, updated=0;
 

@@ -1,11 +1,11 @@
 services:
   - type: web
     name: plant-console
-    runtime: static
-    staticPublishPath: plant-console/plant-console
-    pullRequestPreviewsEnabled: false
-    # Single-page app: send any path back to index.html
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
+    runtime: node
+    buildCommand: npm install
+    startCommand: node server.js
+    branch: main
+    rootDir: plant-console/plant-console
+    envVars:
+      - key: NODE_ENV
+        value: production

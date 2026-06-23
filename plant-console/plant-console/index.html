@@ -472,11 +472,15 @@ let currentUser=null;
 let editingStorageId=null,editingTxnId=null,editingUserId=null;
 let deletingId=null,deletingKind=null;
 
-// Seed default admin
-if(!users.length){
-  users=[{id:'user_default',name:'Administrator',email:'admin@facility.com',role:'admin',pin:'1234',perms:PERMISSIONS.reduce((a,p)=>{a[p.id]=true;return a},{})}];
+// Always repair/seed default admin so login always works
+(function(){
+  const allPerms=PERMISSIONS.reduce((a,p)=>{a[p.id]=true;return a},{});
+  const idx=users.findIndex(x=>x.id==='user_default');
+  const admin={id:'user_default',name:'Administrator',email:'admin@facility.com',role:'admin',pin:'1234',perms:allPerms};
+  if(idx===-1) users.unshift(admin);
+  else users[idx]={...users[idx],email:'admin@facility.com',pin:'1234',role:'admin',perms:allPerms};
   localStorage.setItem('pc_users',JSON.stringify(users));
-}
+})();
 
 function saveStorages(){localStorage.setItem('pc_storages',JSON.stringify(storages))}
 function saveTxns(){localStorage.setItem('pc_transactions',JSON.stringify(transactions))}
@@ -489,7 +493,7 @@ function attemptLogin(){
   const email=document.getElementById('loginEmail').value.trim().toLowerCase();
   const pin=document.getElementById('loginPin').value;
   const err=document.getElementById('loginError');
-  const u=users.find(x=>x.email.toLowerCase()===email&&x.pin===pin);
+  const u=users.find(x=>x.email.toLowerCase()===email&&(x.pin===pin||(x.pin===''&&pin==='')));
   if(!u){err.classList.add('show');return;}
   err.classList.remove('show');
   currentUser=u;

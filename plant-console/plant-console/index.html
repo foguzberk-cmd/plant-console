@@ -6,10 +6,10 @@
 <title>Plant Console</title>
 <style>
   :root{
-    --bg:#EFEDEA; --panel:#FFFFFF; --ink:#1C1517; --muted:#877E79;
-    --line:#DED9D4; --sidebar:#221316; --sb-ink:#CBC0BB; --sb-dim:#83716D;
-    --brand:#9E2B25; --brand-bright:#C23B33;
-    --cold:#2E7C8B; --cold-soft:rgba(46,124,139,.16);
+    --bg:#EFEDEA;--panel:#FFFFFF;--ink:#1C1517;--muted:#877E79;
+    --line:#DED9D4;--sidebar:#221316;--sb-ink:#CBC0BB;--sb-dim:#83716D;
+    --brand:#9E2B25;--brand-bright:#C23B33;
+    --cold:#2E7C8B;--cold-soft:rgba(46,124,139,.16);
     --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
     --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     --rail:248px;
@@ -50,7 +50,6 @@
   .eyebrow{font-family:var(--mono);font-size:10.5px;letter-spacing:.24em;color:var(--brand);text-transform:uppercase}
   .view h2{font-size:30px;letter-spacing:-.01em;margin:8px 0 6px;font-weight:750}
   .lede{color:var(--muted);font-size:14.5px;max-width:62ch;line-height:1.55}
-
   .empty{margin-top:30px;background:var(--panel);border:1.5px dashed var(--line);border-radius:14px;padding:46px 34px;display:flex;align-items:center;gap:22px;max-width:640px}
   .empty .ico{width:52px;height:52px;flex:0 0 52px;border-radius:12px;background:var(--bg);display:grid;place-items:center;color:var(--brand)}
   .empty .ico svg{width:26px;height:26px;stroke:currentColor}
@@ -68,11 +67,13 @@
   .btn-sm{padding:5px 11px;font-size:11px}
 
   /* SETTINGS */
-  .settings-layout{margin-top:32px;display:flex;flex-direction:column;gap:32px;max-width:780px}
+  .settings-layout{margin-top:32px;display:flex;flex-direction:column;gap:32px;max-width:820px}
   .settings-section{background:var(--panel);border-radius:14px;border:1px solid var(--line);overflow:hidden}
   .settings-section-head{padding:18px 24px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
   .settings-section-head h3{font-size:14px;font-weight:700;letter-spacing:.01em}
   .settings-section-head p{font-size:12.5px;color:var(--muted);margin-top:3px}
+
+  /* STORAGE */
   .storage-list{list-style:none}
   .storage-row{display:flex;align-items:center;gap:14px;padding:14px 24px;border-bottom:1px solid var(--line);transition:background .12s}
   .storage-row:last-child{border-bottom:none}
@@ -88,9 +89,43 @@
   .badge-frozen{background:rgba(46,86,139,.15);color:#185fa5}
   .badge-ambient{background:rgba(136,135,128,.12);color:#5f5e5a}
   .storage-actions{display:flex;gap:6px}
-  .empty-storage{padding:40px 24px;text-align:center;color:var(--muted)}
-  .empty-storage svg{width:32px;height:32px;stroke:var(--line);margin-bottom:10px}
-  .empty-storage p{font-size:13px}
+  .empty-list{padding:40px 24px;text-align:center;color:var(--muted)}
+  .empty-list svg{width:32px;height:32px;stroke:var(--line);margin-bottom:10px;display:block;margin-left:auto;margin-right:auto}
+  .empty-list p{font-size:13px}
+
+  /* USERS */
+  .user-list{list-style:none}
+  .user-row{display:flex;align-items:center;gap:16px;padding:14px 24px;border-bottom:1px solid var(--line);transition:background .12s}
+  .user-row:last-child{border-bottom:none}
+  .user-row:hover{background:var(--bg)}
+  .user-avatar{width:38px;height:38px;border-radius:50%;flex:0 0 38px;display:grid;place-items:center;font-weight:700;font-size:13px;letter-spacing:.04em}
+  .avatar-admin{background:rgba(158,43,37,.12);color:var(--brand)}
+  .avatar-user{background:var(--cold-soft);color:var(--cold)}
+  .user-info{flex:1;min-width:0}
+  .user-name{font-size:13.5px;font-weight:600}
+  .user-email{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:2px}
+  .role-badge{font-family:var(--mono);font-size:10px;letter-spacing:.08em;padding:3px 9px;border-radius:20px;text-transform:uppercase;white-space:nowrap}
+  .role-admin{background:rgba(158,43,37,.1);color:var(--brand)}
+  .role-operator{background:var(--cold-soft);color:var(--cold)}
+  .role-viewer{background:rgba(136,135,128,.12);color:#5f5e5a}
+  .user-perms{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+  .perm-chip{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;padding:2px 7px;border-radius:12px;background:var(--bg);border:1px solid var(--line);color:var(--muted);text-transform:uppercase}
+  .user-actions{display:flex;gap:6px}
+
+  /* PERMISSIONS GRID */
+  .perm-grid{display:flex;flex-direction:column;gap:0}
+  .perm-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--line)}
+  .perm-row:last-child{border-bottom:none}
+  .perm-label{font-size:13px;font-weight:600}
+  .perm-desc{font-size:11.5px;color:var(--muted);margin-top:2px}
+  .toggle-wrap{position:relative;width:40px;height:22px;flex:0 0 40px}
+  .toggle-wrap input{opacity:0;width:0;height:0;position:absolute}
+  .toggle-track{position:absolute;inset:0;border-radius:11px;background:var(--line);cursor:pointer;transition:background .2s}
+  .toggle-wrap input:checked+.toggle-track{background:var(--cold)}
+  .toggle-track::after{content:"";position:absolute;left:3px;top:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .2s}
+  .toggle-wrap input:checked+.toggle-track::after{transform:translateX(18px)}
+  .admin-locked{opacity:.4;pointer-events:none}
+  .admin-note{font-family:var(--mono);font-size:10.5px;color:var(--muted);padding:10px 0 2px;font-style:italic}
 
   /* TRANSACTIONS */
   .txn-toolbar{display:flex;align-items:center;justify-content:space-between;margin-top:28px;margin-bottom:16px}
@@ -104,7 +139,7 @@
   .txn-desc{color:var(--muted);font-size:12px;margin-top:2px}
   .txn-loc{font-family:var(--mono);font-size:11px;color:var(--muted)}
   .txn-loc b{color:var(--ink);font-weight:600}
-  .txn-arrow{color:var(--muted);margin:0 4px;font-size:11px}
+  .txn-arrow{color:var(--muted);margin:0 4px}
   .type-badge{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.07em;padding:3px 9px;border-radius:20px;text-transform:uppercase;white-space:nowrap}
   .type-receive{background:rgba(30,140,80,.12);color:#0f6e40}
   .type-transfer{background:var(--cold-soft);color:var(--cold)}
@@ -131,6 +166,7 @@
   .form-group textarea{resize:vertical;min-height:72px}
   .form-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
   .modal-footer{display:flex;justify-content:flex-end;gap:10px;margin-top:24px;border-top:1px solid var(--line);padding-top:20px}
+  .modal-section-title{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin:20px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}
   .confirm-modal{text-align:center}
   .confirm-modal .warn-icon{width:52px;height:52px;border-radius:14px;background:rgba(194,59,51,.1);display:grid;place-items:center;color:var(--brand-bright);margin:0 auto 16px}
   .confirm-modal .warn-icon svg{width:26px;height:26px;stroke:currentColor}
@@ -140,10 +176,9 @@
     body{flex-direction:column}
     .rail{width:100%;height:auto;position:static;flex:none}
     nav{flex-direction:row;overflow-x:auto;padding:10px;gap:6px}
-    .nav-kicker{display:none}
+    .nav-kicker,.rail-foot{display:none}
     .nav-item{flex:0 0 auto;padding:9px 14px}
     .nav-item.active::before{top:auto;bottom:0;left:8px;right:8px;width:auto;height:3px;border-radius:3px 3px 0 0}
-    .rail-foot{display:none}
     .view{padding:26px 20px}
     .topbar{padding:0 20px}
     .view h2{font-size:24px}
@@ -175,11 +210,11 @@
   </div>
 
   <!-- Storage Modal -->
-  <div class="modal-bg hidden" id="storageModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <div class="modal-bg hidden" id="storageModal" role="dialog" aria-modal="true">
     <div class="modal">
-      <h3 id="modalTitle">Add storage location</h3>
+      <h3 id="storageModalTitle">Add storage location</h3>
       <p class="sub">Define a new physical storage area in your facility.</p>
-      <div class="form-group"><label>Location name</label><input type="text" id="s-name" placeholder="e.g. Cooler A, Freezer 2, Dry Rack 3"/></div>
+      <div class="form-group"><label>Location name</label><input type="text" id="s-name" placeholder="e.g. Cooler A, Freezer 2"/></div>
       <div class="form-row">
         <div class="form-group"><label>Type</label>
           <select id="s-type">
@@ -195,7 +230,7 @@
         <div class="form-group"><label>Temp range</label><input type="text" id="s-temp" placeholder="e.g. 28–34 °F"/></div>
         <div class="form-group"><label>Zone / bay</label><input type="text" id="s-zone" placeholder="e.g. Zone B"/></div>
       </div>
-      <div class="form-group"><label>Notes</label><textarea id="s-notes" placeholder="Optional — HACCP zone, use restrictions, etc."></textarea></div>
+      <div class="form-group"><label>Notes</label><textarea id="s-notes" placeholder="Optional — HACCP zone, restrictions…"></textarea></div>
       <div class="modal-footer">
         <button class="btn" onclick="closeStorageModal()">Cancel</button>
         <button class="btn btn-primary" onclick="saveStorage()">Save location</button>
@@ -204,7 +239,7 @@
   </div>
 
   <!-- Transaction Modal -->
-  <div class="modal-bg hidden" id="txnModal" role="dialog" aria-modal="true" aria-labelledby="txnModalTitle">
+  <div class="modal-bg hidden" id="txnModal" role="dialog" aria-modal="true">
     <div class="modal">
       <h3 id="txnModalTitle">Create transaction</h3>
       <p class="sub">Record a product movement in or out of a storage location.</p>
@@ -223,17 +258,44 @@
         </select>
       </div>
       <div class="form-row">
-        <div class="form-group"><label>Location out (from)</label>
-          <select id="t-loc-out"><option value="">— select —</option><option value="external">External / Supplier</option></select>
-        </div>
-        <div class="form-group"><label>Location in (to)</label>
-          <select id="t-loc-in"><option value="">— select —</option><option value="external">External / Customer</option></select>
-        </div>
+        <div class="form-group"><label>Location out (from)</label><select id="t-loc-out"></select></div>
+        <div class="form-group"><label>Location in (to)</label><select id="t-loc-in"></select></div>
       </div>
-      <div class="form-group"><label>Description</label><textarea id="t-desc" placeholder="Product details, lot numbers, weight, supplier, notes…"></textarea></div>
+      <div class="form-group"><label>Description</label><textarea id="t-desc" placeholder="Product details, lot numbers, weight, supplier…"></textarea></div>
       <div class="modal-footer">
         <button class="btn" onclick="closeTxnModal()">Cancel</button>
         <button class="btn btn-primary" onclick="saveTxn()">Save transaction</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- User Modal -->
+  <div class="modal-bg hidden" id="userModal" role="dialog" aria-modal="true">
+    <div class="modal">
+      <h3 id="userModalTitle">Add user</h3>
+      <p class="sub">Create an account and set what this person can do in Plant Console.</p>
+      <div class="form-row">
+        <div class="form-group"><label>Full name</label><input type="text" id="u-name" placeholder="e.g. Maria Santos"/></div>
+        <div class="form-group"><label>Email</label><input type="email" id="u-email" placeholder="maria@facility.com"/></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Role</label>
+          <select id="u-role" onchange="onRoleChange()">
+            <option value="admin">Admin — full access</option>
+            <option value="operator">Operator</option>
+            <option value="viewer">Viewer</option>
+          </select>
+        </div>
+        <div class="form-group"><label>PIN / Password</label><input type="password" id="u-pin" placeholder="Set login PIN or password"/></div>
+      </div>
+      <div id="permSection">
+        <div class="modal-section-title">Permissions</div>
+        <p class="admin-note" id="adminNote" style="display:none">Admin role has all permissions automatically.</p>
+        <div class="perm-grid" id="permGrid"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeUserModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveUser()">Save user</button>
       </div>
     </div>
   </div>
@@ -265,23 +327,44 @@ const TYPE_ICON={
   dry:'<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>',
   ambient:'<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>'
 };
+
+const PERMISSIONS=[
+  {id:'viewItems',    label:'View items',         desc:'See the full items / inventory list'},
+  {id:'editItems',    label:'Edit items',          desc:'Create, update, and delete inventory items'},
+  {id:'viewTxns',     label:'View transactions',   desc:'See all recorded product movements'},
+  {id:'createTxns',   label:'Create transactions', desc:'Log new receives, transfers, and shipments'},
+  {id:'editTxns',     label:'Edit & delete transactions', desc:'Modify or remove existing transaction records'},
+  {id:'viewReports',  label:'View reports',        desc:'Access on-hand summaries and throughput reports'},
+  {id:'manageStorage',label:'Manage storage',      desc:'Add, edit, or remove storage locations'},
+  {id:'manageLegal',  label:'Manage legal docs',   desc:'Upload and manage compliance documents'},
+  {id:'manageUsers',  label:'Manage users',        desc:'Add, edit, or remove user accounts (admin only)'},
+];
+
 const SECTIONS=[
   {id:'items',label:'Items',kicker:'Inventory',title:'Items',lede:'Everything you stock — carcasses, primal and retail cuts, processed goods and by-products — counted in pieces, pounds, and boxes.',empty:['No items defined yet.','Tell me how you want items organized and I\'ll build the structure here.']},
   {id:'transactions',label:'Transactions',kicker:'Movement',title:'Transactions',lede:'Receiving, production, internal transfers, and shipments — every movement of product in and out of the plant.'},
   {id:'reports',label:'Reports',kicker:'Insight',title:'Reports',lede:'On-hand summaries, throughput, and traceability rolled up by source, product class, and storage location.',empty:['No reports built yet.','Once items and transactions exist, summaries and breakdowns will appear here.']},
-  {id:'settings',label:'Settings',kicker:'Configuration',title:'Settings',lede:'Categories, storage locations, units, and users that the rest of the console draws from.'},
+  {id:'settings',label:'Settings',kicker:'Configuration',title:'Settings',lede:'Storage locations, users, and system configuration for the entire console.'},
   {id:'legal',label:'Legal Documents',kicker:'Compliance',title:'Legal Documents',lede:'Certificates, inspection records, HACCP plans, and licenses — stored, dated, and tracked for renewal.',empty:['No documents on file.','Upload and tag compliance records here to keep them in one place.']}
 ];
 
 let storages=JSON.parse(localStorage.getItem('pc_storages')||'[]');
 let transactions=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
-let editingStorageId=null;
-let editingTxnId=null;
-let deletingId=null;
-let deletingKind=null;
+let users=JSON.parse(localStorage.getItem('pc_users')||'[]');
+
+// Seed a default admin if none exist
+if(users.length===0){
+  users=[{id:'user_default',name:'Administrator',email:'admin@facility.com',role:'admin',pin:'',perms:PERMISSIONS.reduce((a,p)=>{a[p.id]=true;return a},{})}];
+  localStorage.setItem('pc_users',JSON.stringify(users));
+}
+
+let editingStorageId=null,editingTxnId=null,editingUserId=null;
+let deletingId=null,deletingKind=null;
 
 function saveStorages(){localStorage.setItem('pc_storages',JSON.stringify(storages))}
 function saveTxns(){localStorage.setItem('pc_transactions',JSON.stringify(transactions))}
+function saveUsers(){localStorage.setItem('pc_users',JSON.stringify(users))}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 
 const nav=document.getElementById('nav');
 const view=document.getElementById('view');
@@ -307,124 +390,11 @@ function select(id){
   crumb.textContent=s.title;
   if(id==='settings') renderSettings();
   else if(id==='transactions') renderTransactions();
-  else {
-    view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p><div class="empty"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICON[id]}</svg></div><div><h3>${s.empty[0]}</h3><p>${s.empty[1]}</p></div></div>`;
-  }
+  else view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p><div class="empty"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICON[id]}</svg></div><div><h3>${s.empty[0]}</h3><p>${s.empty[1]}</p></div></div>`;
   view.focus({preventScroll:true});
 }
 
-function esc(str){return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
-
-/* ===== TRANSACTIONS ===== */
-const TXN_TYPES={receive:'Receive',transfer:'Transfer',production:'Production',shipment:'Shipment',return:'Return',adjustment:'Adjustment'};
-
-function renderTransactions(){
-  const s=SECTIONS.find(x=>x.id==='transactions');
-  view.innerHTML=`
-    <div class="eyebrow">${s.kicker}</div>
-    <h2>${s.title}</h2>
-    <p class="lede">${s.lede}</p>
-    <div class="txn-toolbar">
-      <span style="font-family:var(--mono);font-size:11px;color:var(--muted)">${transactions.length} record${transactions.length!==1?'s':''}</span>
-      <button class="btn btn-primary" onclick="openAddTxnModal()">
-        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        Create transaction
-      </button>
-    </div>
-    <div class="txn-table-wrap" id="txnTableWrap"></div>`;
-  renderTxnTable();
-}
-
-function renderTxnTable(){
-  const wrap=document.getElementById('txnTableWrap');
-  if(!wrap) return;
-  if(transactions.length===0){
-    wrap.innerHTML=`<div class="txn-empty"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3l4 4-4 4"/><path d="M21 7H7"/><path d="M7 21l-4-4 4-4"/><path d="M3 17h14"/></svg><p>No transactions yet. Click <strong>Create transaction</strong> to log the first movement.</p></div>`;
-    return;
-  }
-  const rows=[...transactions].reverse().map(t=>{
-    const locOut=t.locOut==='external'?'External':storages.find(x=>x.id===t.locOut)?.name||t.locOut||'—';
-    const locIn=t.locIn==='external'?'External':storages.find(x=>x.id===t.locIn)?.name||t.locIn||'—';
-    const dateStr=t.date?new Date(t.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
-    return `<tr>
-      <td><div class="txn-num">${esc(t.num)||'—'}</div>${t.desc?`<div class="txn-desc">${esc(t.desc.substring(0,60))}${t.desc.length>60?'…':''}</div>`:''}</td>
-      <td><span class="type-badge type-${t.type}">${TXN_TYPES[t.type]||t.type}</span></td>
-      <td><span class="txn-loc"><b>${esc(locOut)}</b><span class="txn-arrow">→</span><b>${esc(locIn)}</b></span></td>
-      <td class="txn-date">${dateStr}</td>
-      <td><div class="txn-actions">
-        <button class="btn btn-sm" onclick="openEditTxnModal('${t.id}')" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-        <button class="btn btn-sm btn-danger" onclick="openDeleteModal('${t.id}','txn')" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
-      </div></td>
-    </tr>`;
-  }).join('');
-  wrap.innerHTML=`<table class="txn-table"><thead><tr><th>Transaction</th><th>Type</th><th>Movement</th><th>Date</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
-}
-
-function populateLocationSelects(){
-  const opts=storages.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
-  document.getElementById('t-loc-out').innerHTML=`<option value="">— select —</option><option value="external">External / Supplier</option>${opts}`;
-  document.getElementById('t-loc-in').innerHTML=`<option value="">— select —</option><option value="external">External / Customer</option>${opts}`;
-}
-
-function openAddTxnModal(){
-  editingTxnId=null;
-  document.getElementById('txnModalTitle').textContent='Create transaction';
-  document.getElementById('t-num').value='TXN-'+String(transactions.length+1).padStart(4,'0');
-  document.getElementById('t-date').value=new Date().toISOString().slice(0,10);
-  document.getElementById('t-type').value='receive';
-  document.getElementById('t-desc').value='';
-  populateLocationSelects();
-  document.getElementById('txnModal').classList.remove('hidden');
-  document.getElementById('t-num').focus();
-}
-
-function openEditTxnModal(id){
-  const t=transactions.find(x=>x.id===id);
-  if(!t) return;
-  editingTxnId=id;
-  document.getElementById('txnModalTitle').textContent='Edit transaction';
-  document.getElementById('t-num').value=t.num||'';
-  document.getElementById('t-date').value=t.date||'';
-  document.getElementById('t-type').value=t.type||'receive';
-  document.getElementById('t-desc').value=t.desc||'';
-  populateLocationSelects();
-  document.getElementById('t-loc-out').value=t.locOut||'';
-  document.getElementById('t-loc-in').value=t.locIn||'';
-  document.getElementById('txnModal').classList.remove('hidden');
-  document.getElementById('t-num').focus();
-}
-
-function closeTxnModal(){document.getElementById('txnModal').classList.add('hidden')}
-
-function saveTxn(){
-  const num=document.getElementById('t-num').value.trim();
-  if(!num){document.getElementById('t-num').focus();return;}
-  const data={
-    id:editingTxnId||('txn_'+Date.now()),
-    num,
-    date:document.getElementById('t-date').value,
-    type:document.getElementById('t-type').value,
-    locOut:document.getElementById('t-loc-out').value,
-    locIn:document.getElementById('t-loc-in').value,
-    desc:document.getElementById('t-desc').value.trim(),
-  };
-  if(editingTxnId){
-    const idx=transactions.findIndex(x=>x.id===editingTxnId);
-    transactions[idx]=data;
-  } else {
-    transactions.push(data);
-  }
-  saveTxns();
-  closeTxnModal();
-  renderTransactions();
-}
-
 /* ===== SETTINGS ===== */
-function typeBadge(type){
-  const labels={cold:'Cold',frozen:'Frozen',dry:'Dry',ambient:'Ambient'};
-  return `<span class="storage-type-badge badge-${type}">${labels[type]||type}</span>`;
-}
-
 function renderSettings(){
   const s=SECTIONS.find(x=>x.id==='settings');
   view.innerHTML=`
@@ -436,30 +406,41 @@ function renderSettings(){
         <div class="settings-section-head">
           <div><h3>Storage locations</h3><p>Physical areas where product is held — coolers, freezers, dry racks.</p></div>
           <button class="btn btn-primary btn-sm" onclick="openAddStorageModal()">
-            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            Add location
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add location
           </button>
         </div>
         <ul class="storage-list" id="storageList"></ul>
       </div>
+      <div class="settings-section">
+        <div class="settings-section-head">
+          <div><h3>Users &amp; permissions</h3><p>Manage who can access the console and what they can do.</p></div>
+          <button class="btn btn-primary btn-sm" onclick="openAddUserModal()">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add user
+          </button>
+        </div>
+        <ul class="user-list" id="userList"></ul>
+      </div>
     </div>`;
   renderStorageList();
+  renderUserList();
 }
 
+/* ===== STORAGE ===== */
+function typeBadge(type){
+  const l={cold:'Cold',frozen:'Frozen',dry:'Dry',ambient:'Ambient'};
+  return `<span class="storage-type-badge badge-${type}">${l[type]||type}</span>`;
+}
 function renderStorageList(){
   const list=document.getElementById('storageList');
   if(!list) return;
-  if(storages.length===0){
-    list.innerHTML=`<li class="empty-storage"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg><p>No storage locations yet. Click <strong>Add location</strong> to get started.</p></li>`;
+  if(!storages.length){
+    list.innerHTML=`<li class="empty-list"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg><p>No locations yet. Click <strong>Add location</strong> to get started.</p></li>`;
     return;
   }
   list.innerHTML=storages.map(loc=>`
     <li class="storage-row">
       <div class="storage-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${TYPE_ICON[loc.type]||TYPE_ICON.ambient}</svg></div>
-      <div class="storage-info">
-        <div class="storage-name">${esc(loc.name)}</div>
-        <div class="storage-meta">${loc.zone?esc(loc.zone)+' · ':''}${loc.temp?esc(loc.temp)+' · ':''}${loc.capacity?Number(loc.capacity).toLocaleString()+' lb cap':'no capacity set'}</div>
-      </div>
+      <div class="storage-info"><div class="storage-name">${esc(loc.name)}</div><div class="storage-meta">${loc.zone?esc(loc.zone)+' · ':''}${loc.temp?esc(loc.temp)+' · ':''}${loc.capacity?Number(loc.capacity).toLocaleString()+' lb cap':'no capacity set'}</div></div>
       ${typeBadge(loc.type)}
       <div class="storage-actions">
         <button class="btn btn-sm" onclick="openEditStorageModal('${loc.id}')" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
@@ -467,21 +448,18 @@ function renderStorageList(){
       </div>
     </li>`).join('');
 }
-
 function openAddStorageModal(){
   editingStorageId=null;
-  document.getElementById('modalTitle').textContent='Add storage location';
+  document.getElementById('storageModalTitle').textContent='Add storage location';
   ['s-name','s-capacity','s-temp','s-zone','s-notes'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('s-type').value='cold';
   document.getElementById('storageModal').classList.remove('hidden');
   document.getElementById('s-name').focus();
 }
-
 function openEditStorageModal(id){
-  const loc=storages.find(x=>x.id===id);
-  if(!loc) return;
+  const loc=storages.find(x=>x.id===id); if(!loc) return;
   editingStorageId=id;
-  document.getElementById('modalTitle').textContent='Edit storage location';
+  document.getElementById('storageModalTitle').textContent='Edit storage location';
   document.getElementById('s-name').value=loc.name;
   document.getElementById('s-type').value=loc.type;
   document.getElementById('s-capacity').value=loc.capacity||'';
@@ -491,26 +469,171 @@ function openEditStorageModal(id){
   document.getElementById('storageModal').classList.remove('hidden');
   document.getElementById('s-name').focus();
 }
-
 function closeStorageModal(){document.getElementById('storageModal').classList.add('hidden')}
-
 function saveStorage(){
   const name=document.getElementById('s-name').value.trim();
   if(!name){document.getElementById('s-name').focus();return;}
-  const data={
-    id:editingStorageId||('loc_'+Date.now()),
-    name,
-    type:document.getElementById('s-type').value,
-    capacity:document.getElementById('s-capacity').value,
-    temp:document.getElementById('s-temp').value.trim(),
-    zone:document.getElementById('s-zone').value.trim(),
-    notes:document.getElementById('s-notes').value.trim(),
-  };
-  if(editingStorageId){const idx=storages.findIndex(x=>x.id===editingStorageId);storages[idx]=data;}
-  else storages.push(data);
-  saveStorages();
-  closeStorageModal();
-  renderStorageList();
+  const data={id:editingStorageId||('loc_'+Date.now()),name,type:document.getElementById('s-type').value,capacity:document.getElementById('s-capacity').value,temp:document.getElementById('s-temp').value.trim(),zone:document.getElementById('s-zone').value.trim(),notes:document.getElementById('s-notes').value.trim()};
+  if(editingStorageId){const i=storages.findIndex(x=>x.id===editingStorageId);storages[i]=data;}else storages.push(data);
+  saveStorages(); closeStorageModal(); renderStorageList();
+}
+
+/* ===== USERS ===== */
+function initials(name){return name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase()}
+function roleBadge(role){
+  const l={admin:'Admin',operator:'Operator',viewer:'Viewer'};
+  return `<span class="role-badge role-${role}">${l[role]||role}</span>`;
+}
+function permChips(u){
+  if(u.role==='admin') return '<span class="perm-chip">All permissions</span>';
+  return PERMISSIONS.filter(p=>u.perms&&u.perms[p.id]).map(p=>`<span class="perm-chip">${p.label}</span>`).join('')||'<span style="font-size:11px;color:var(--muted)">No permissions assigned</span>';
+}
+function renderUserList(){
+  const list=document.getElementById('userList'); if(!list) return;
+  if(!users.length){
+    list.innerHTML=`<li class="empty-list"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><p>No users yet.</p></li>`;
+    return;
+  }
+  list.innerHTML=users.map(u=>`
+    <li class="user-row">
+      <div class="user-avatar avatar-${u.role==='admin'?'admin':'user'}">${initials(u.name)}</div>
+      <div class="user-info">
+        <div class="user-name">${esc(u.name)}</div>
+        <div class="user-email">${esc(u.email)}</div>
+        <div class="user-perms">${permChips(u)}</div>
+      </div>
+      ${roleBadge(u.role)}
+      <div class="user-actions">
+        <button class="btn btn-sm" onclick="openEditUserModal('${u.id}')" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+        <button class="btn btn-sm btn-danger" onclick="openDeleteModal('${u.id}','user')" title="Remove"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
+      </div>
+    </li>`).join('');
+}
+function buildPermGrid(perms,isAdmin){
+  const grid=document.getElementById('permGrid');
+  document.getElementById('adminNote').style.display=isAdmin?'block':'none';
+  grid.innerHTML=PERMISSIONS.map(p=>`
+    <div class="perm-row${isAdmin?' admin-locked':''}">
+      <div><div class="perm-label">${p.label}</div><div class="perm-desc">${p.desc}</div></div>
+      <label class="toggle-wrap" title="${p.label}">
+        <input type="checkbox" id="perm-${p.id}" ${(isAdmin||perms[p.id])?'checked':''} ${isAdmin?'disabled':''}>
+        <span class="toggle-track"></span>
+      </label>
+    </div>`).join('');
+}
+function onRoleChange(){
+  const role=document.getElementById('u-role').value;
+  const currentPerms=PERMISSIONS.reduce((a,p)=>{a[p.id]=document.getElementById('perm-'+p.id)?.checked||false;return a},{});
+  buildPermGrid(currentPerms,role==='admin');
+}
+function openAddUserModal(){
+  editingUserId=null;
+  document.getElementById('userModalTitle').textContent='Add user';
+  ['u-name','u-email','u-pin'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('u-role').value='operator';
+  buildPermGrid({},false);
+  document.getElementById('userModal').classList.remove('hidden');
+  document.getElementById('u-name').focus();
+}
+function openEditUserModal(id){
+  const u=users.find(x=>x.id===id); if(!u) return;
+  editingUserId=id;
+  document.getElementById('userModalTitle').textContent='Edit user';
+  document.getElementById('u-name').value=u.name;
+  document.getElementById('u-email').value=u.email;
+  document.getElementById('u-role').value=u.role;
+  document.getElementById('u-pin').value='';
+  buildPermGrid(u.perms||{},u.role==='admin');
+  document.getElementById('userModal').classList.remove('hidden');
+  document.getElementById('u-name').focus();
+}
+function closeUserModal(){document.getElementById('userModal').classList.add('hidden')}
+function saveUser(){
+  const name=document.getElementById('u-name').value.trim();
+  const email=document.getElementById('u-email').value.trim();
+  if(!name){document.getElementById('u-name').focus();return;}
+  const role=document.getElementById('u-role').value;
+  const perms=PERMISSIONS.reduce((a,p)=>{a[p.id]=role==='admin'?true:(document.getElementById('perm-'+p.id)?.checked||false);return a},{});
+  const data={id:editingUserId||('user_'+Date.now()),name,email,role,pin:document.getElementById('u-pin').value||'',perms};
+  if(editingUserId){const i=users.findIndex(x=>x.id===editingUserId);users[i]=data;}else users.push(data);
+  saveUsers(); closeUserModal(); renderUserList();
+}
+
+/* ===== TRANSACTIONS ===== */
+const TXN_TYPES={receive:'Receive',transfer:'Transfer',production:'Production',shipment:'Shipment',return:'Return',adjustment:'Adjustment'};
+function renderTransactions(){
+  const s=SECTIONS.find(x=>x.id==='transactions');
+  view.innerHTML=`
+    <div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p>
+    <div class="txn-toolbar">
+      <span style="font-family:var(--mono);font-size:11px;color:var(--muted)">${transactions.length} record${transactions.length!==1?'s':''}</span>
+      <button class="btn btn-primary" onclick="openAddTxnModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Create transaction
+      </button>
+    </div>
+    <div class="txn-table-wrap" id="txnTableWrap"></div>`;
+  renderTxnTable();
+}
+function renderTxnTable(){
+  const wrap=document.getElementById('txnTableWrap'); if(!wrap) return;
+  if(!transactions.length){
+    wrap.innerHTML=`<div class="txn-empty"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3l4 4-4 4"/><path d="M21 7H7"/><path d="M7 21l-4-4 4-4"/><path d="M3 17h14"/></svg><p>No transactions yet. Click <strong>Create transaction</strong> to log the first movement.</p></div>`;
+    return;
+  }
+  const rows=[...transactions].reverse().map(t=>{
+    const lOut=t.locOut==='external'?'External':storages.find(x=>x.id===t.locOut)?.name||t.locOut||'—';
+    const lIn=t.locIn==='external'?'External':storages.find(x=>x.id===t.locIn)?.name||t.locIn||'—';
+    const ds=t.date?new Date(t.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
+    return `<tr>
+      <td><div class="txn-num">${esc(t.num)||'—'}</div>${t.desc?`<div class="txn-desc">${esc(t.desc.substring(0,60))}${t.desc.length>60?'…':''}</div>`:''}</td>
+      <td><span class="type-badge type-${t.type}">${TXN_TYPES[t.type]||t.type}</span></td>
+      <td><span class="txn-loc"><b>${esc(lOut)}</b><span class="txn-arrow">→</span><b>${esc(lIn)}</b></span></td>
+      <td class="txn-date">${ds}</td>
+      <td><div class="txn-actions">
+        <button class="btn btn-sm" onclick="openEditTxnModal('${t.id}')" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+        <button class="btn btn-sm btn-danger" onclick="openDeleteModal('${t.id}','txn')" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
+      </div></td>
+    </tr>`;
+  }).join('');
+  wrap.innerHTML=`<table class="txn-table"><thead><tr><th>Transaction</th><th>Type</th><th>Movement</th><th>Date</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+function populateLocSelects(){
+  const opts=storages.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  document.getElementById('t-loc-out').innerHTML=`<option value="">— select —</option><option value="external">External / Supplier</option>${opts}`;
+  document.getElementById('t-loc-in').innerHTML=`<option value="">— select —</option><option value="external">External / Customer</option>${opts}`;
+}
+function openAddTxnModal(){
+  editingTxnId=null;
+  document.getElementById('txnModalTitle').textContent='Create transaction';
+  document.getElementById('t-num').value='TXN-'+String(transactions.length+1).padStart(4,'0');
+  document.getElementById('t-date').value=new Date().toISOString().slice(0,10);
+  document.getElementById('t-type').value='receive';
+  document.getElementById('t-desc').value='';
+  populateLocSelects();
+  document.getElementById('txnModal').classList.remove('hidden');
+  document.getElementById('t-num').focus();
+}
+function openEditTxnModal(id){
+  const t=transactions.find(x=>x.id===id); if(!t) return;
+  editingTxnId=id;
+  document.getElementById('txnModalTitle').textContent='Edit transaction';
+  document.getElementById('t-num').value=t.num||'';
+  document.getElementById('t-date').value=t.date||'';
+  document.getElementById('t-type').value=t.type||'receive';
+  document.getElementById('t-desc').value=t.desc||'';
+  populateLocSelects();
+  document.getElementById('t-loc-out').value=t.locOut||'';
+  document.getElementById('t-loc-in').value=t.locIn||'';
+  document.getElementById('txnModal').classList.remove('hidden');
+  document.getElementById('t-num').focus();
+}
+function closeTxnModal(){document.getElementById('txnModal').classList.add('hidden')}
+function saveTxn(){
+  const num=document.getElementById('t-num').value.trim();
+  if(!num){document.getElementById('t-num').focus();return;}
+  const data={id:editingTxnId||('txn_'+Date.now()),num,date:document.getElementById('t-date').value,type:document.getElementById('t-type').value,locOut:document.getElementById('t-loc-out').value,locIn:document.getElementById('t-loc-in').value,desc:document.getElementById('t-desc').value.trim()};
+  if(editingTxnId){const i=transactions.findIndex(x=>x.id===editingTxnId);transactions[i]=data;}else transactions.push(data);
+  saveTxns(); closeTxnModal(); renderTransactions();
 }
 
 /* ===== SHARED DELETE ===== */
@@ -520,35 +643,35 @@ function openDeleteModal(id,kind){
     const t=transactions.find(x=>x.id===id);
     document.getElementById('deleteTitle').textContent='Delete this transaction?';
     document.getElementById('deleteMsg').textContent=`Transaction ${t?.num||''} will be permanently removed.`;
+  } else if(kind==='user'){
+    const u=users.find(x=>x.id===id);
+    document.getElementById('deleteTitle').textContent='Remove this user?';
+    document.getElementById('deleteMsg').textContent=`${u?.name||'This user'} will lose all access to Plant Console.`;
   } else {
     document.getElementById('deleteTitle').textContent='Remove this location?';
-    document.getElementById('deleteMsg').textContent='Any transactions referencing this location will still be kept.';
+    document.getElementById('deleteMsg').textContent='Transactions referencing this location will still be kept.';
   }
   document.getElementById('deleteModal').classList.remove('hidden');
 }
-
 function closeDeleteModal(){document.getElementById('deleteModal').classList.add('hidden');deletingId=null;deletingKind=null}
-
 function confirmDelete(){
-  if(deletingKind==='txn'){
-    transactions=transactions.filter(x=>x.id!==deletingId);
-    saveTxns();
-    closeDeleteModal();
-    renderTransactions();
-  } else {
-    storages=storages.filter(x=>x.id!==deletingId);
-    saveStorages();
-    closeDeleteModal();
-    renderStorageList();
-  }
+  if(deletingKind==='txn'){transactions=transactions.filter(x=>x.id!==deletingId);saveTxns();closeDeleteModal();renderTransactions();}
+  else if(deletingKind==='user'){users=users.filter(x=>x.id!==deletingId);saveUsers();closeDeleteModal();renderUserList();}
+  else{storages=storages.filter(x=>x.id!==deletingId);saveStorages();closeDeleteModal();renderStorageList();}
 }
 
-document.getElementById('storageModal').addEventListener('click',e=>{if(e.target===e.currentTarget)closeStorageModal()});
-document.getElementById('txnModal').addEventListener('click',e=>{if(e.target===e.currentTarget)closeTxnModal()});
-document.getElementById('deleteModal').addEventListener('click',e=>{if(e.target===e.currentTarget)closeDeleteModal()});
+['storageModal','txnModal','userModal','deleteModal'].forEach(id=>{
+  document.getElementById(id).addEventListener('click',e=>{
+    if(e.target===e.currentTarget){
+      if(id==='storageModal') closeStorageModal();
+      else if(id==='txnModal') closeTxnModal();
+      else if(id==='userModal') closeUserModal();
+      else closeDeleteModal();
+    }
+  });
+});
 
 select('items');
-
 function tick(){
   const d=new Date();
   document.getElementById('time').textContent=d.toLocaleTimeString('en-US',{hour12:false});

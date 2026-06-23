@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plant Console</title>
+<style>
+  :root{
+    --bg:#EFEDEA; --panel:#FFFFFF; --ink:#1C1517; --muted:#877E79;
+    --line:#DED9D4; --sidebar:#221316; --sb-ink:#CBC0BB; --sb-dim:#83716D;
+    --brand:#9E2B25; --brand-bright:#C23B33;
+    --cold:#2E7C8B; --cold-soft:rgba(46,124,139,.16);
+    --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --rail:248px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:var(--sans); color:var(--ink); background:var(--bg);
+    -webkit-font-smoothing:antialiased; display:flex; min-height:100vh;
+  }
+
+  /* ---------- SIDEBAR ---------- */
+  .rail{
+    width:var(--rail); flex:0 0 var(--rail); background:var(--sidebar);
+    color:var(--sb-ink); display:flex; flex-direction:column;
+    position:sticky; top:0; height:100vh;
+  }
+  .brand{
+    padding:22px 22px 18px; display:flex; align-items:center; gap:12px;
+    border-bottom:1px solid rgba(255,255,255,.07);
+  }
+  .mark{
+    width:34px; height:34px; border-radius:7px; flex:0 0 34px;
+    background:linear-gradient(150deg,var(--brand-bright),var(--brand));
+    display:grid; place-items:center; color:#fff; font-weight:800;
+    font-family:var(--mono); font-size:15px; letter-spacing:-1px;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);
+  }
+  .brand h1{font-size:13.5px; letter-spacing:.16em; text-transform:uppercase; color:#fff; font-weight:700}
+  .brand span{display:block; font-family:var(--mono); font-size:10px; color:var(--sb-dim); letter-spacing:.12em; margin-top:3px}
+
+  nav{padding:14px 12px; flex:1; display:flex; flex-direction:column; gap:3px}
+  .nav-kicker{font-family:var(--mono); font-size:9.5px; letter-spacing:.22em; color:var(--sb-dim); padding:6px 12px 8px; text-transform:uppercase}
+  .nav-item{
+    display:flex; align-items:center; gap:13px; width:100%;
+    padding:11px 13px; border:0; background:transparent; cursor:pointer;
+    color:var(--sb-ink); font-family:var(--mono); font-size:12.5px;
+    letter-spacing:.04em; border-radius:8px; text-align:left;
+    position:relative; transition:background .15s, color .15s;
+  }
+  .nav-item svg{width:18px; height:18px; flex:0 0 18px; stroke:currentColor; opacity:.85}
+  .nav-item:hover{background:rgba(255,255,255,.05); color:#fff}
+  .nav-item:focus-visible{outline:2px solid var(--cold); outline-offset:-2px}
+  .nav-item.active{background:rgba(255,255,255,.06); color:#fff}
+  .nav-item.active::before{
+    content:""; position:absolute; left:0; top:8px; bottom:8px; width:3px;
+    border-radius:0 3px 3px 0; background:var(--cold);
+  }
+  .nav-item.active svg{opacity:1; color:var(--cold)}
+
+  .rail-foot{padding:16px 18px; border-top:1px solid rgba(255,255,255,.07);
+    font-family:var(--mono); font-size:10px; color:var(--sb-dim); letter-spacing:.08em}
+  .rail-foot b{color:var(--sb-ink); font-weight:600}
+
+  /* ---------- MAIN ---------- */
+  .main{flex:1; min-width:0; display:flex; flex-direction:column}
+  .topbar{
+    height:62px; display:flex; align-items:center; justify-content:space-between;
+    padding:0 30px; background:var(--panel); border-bottom:1px solid var(--line);
+    position:sticky; top:0; z-index:5;
+  }
+  .topbar .where{font-family:var(--mono); font-size:11px; letter-spacing:.14em; color:var(--muted); text-transform:uppercase}
+  .topbar .where b{color:var(--ink); font-weight:700}
+  .status-cluster{display:flex; align-items:center; gap:18px}
+  .pill{
+    display:inline-flex; align-items:center; gap:7px; font-family:var(--mono);
+    font-size:11px; letter-spacing:.06em; color:var(--cold);
+    background:var(--cold-soft); padding:6px 11px; border-radius:20px;
+  }
+  .pill .dot{width:7px; height:7px; border-radius:50%; background:var(--cold);
+    box-shadow:0 0 0 0 var(--cold); animation:pulse 2.6s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(46,124,139,.5)}70%{box-shadow:0 0 0 7px rgba(46,124,139,0)}100%{box-shadow:0 0 0 0 rgba(46,124,139,0)}}
+  .clock{font-family:var(--mono); font-size:12px; color:var(--ink); letter-spacing:.04em; text-align:right}
+  .clock small{display:block; color:var(--muted); font-size:9.5px; letter-spacing:.14em; text-transform:uppercase}
+
+  .view{padding:38px 40px; flex:1; overflow:auto}
+  .eyebrow{font-family:var(--mono); font-size:10.5px; letter-spacing:.24em; color:var(--brand); text-transform:uppercase}
+  .view h2{font-size:30px; letter-spacing:-.01em; margin:8px 0 6px; font-weight:750}
+  .lede{color:var(--muted); font-size:14.5px; max-width:62ch; line-height:1.55}
+
+  .empty{
+    margin-top:30px; background:var(--panel); border:1.5px dashed var(--line);
+    border-radius:14px; padding:46px 34px; display:flex; align-items:center;
+    gap:22px; max-width:640px;
+  }
+  .empty .ico{width:52px; height:52px; flex:0 0 52px; border-radius:12px;
+    background:var(--bg); display:grid; place-items:center; color:var(--brand)}
+  .empty .ico svg{width:26px; height:26px; stroke:currentColor}
+  .empty h3{font-size:15px; margin-bottom:4px}
+  .empty p{color:var(--muted); font-size:13px; line-height:1.5}
+
+  @media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+
+  /* ---------- RESPONSIVE ---------- */
+  @media (max-width:780px){
+    body{flex-direction:column}
+    .rail{width:100%; height:auto; position:static; flex:none}
+    .brand{border-bottom:1px solid rgba(255,255,255,.07)}
+    nav{flex-direction:row; overflow-x:auto; padding:10px; gap:6px}
+    .nav-kicker{display:none}
+    .nav-item{flex:0 0 auto; padding:9px 14px}
+    .nav-item.active::before{top:auto; bottom:0; left:8px; right:8px; width:auto; height:3px; border-radius:3px 3px 0 0}
+    .rail-foot{display:none}
+    .view{padding:26px 20px}
+    .topbar{padding:0 20px}
+    .view h2{font-size:24px}
+  }
+</style>
+</head>
+<body>
+  <aside class="rail">
+    <div class="brand">
+      <div class="mark">PC</div>
+      <div>
+        <h1>Plant Console</h1>
+        <span>Inventory &amp; Operations</span>
+      </div>
+    </div>
+    <nav id="nav" aria-label="Sections">
+      <div class="nav-kicker">Menu</div>
+    </nav>
+    <div class="rail-foot">Facility <b>PLT-01</b> · v0.1</div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="where">Section / <b id="crumb">Items</b></div>
+      <div class="status-cluster">
+        <span class="pill"><span class="dot"></span>Cold chain OK</span>
+        <div class="clock"><span id="time">--:--:--</span><small id="date">—</small></div>
+      </div>
+    </header>
+    <main class="view" id="view" tabindex="-1"></main>
+  </div>
+
+<script>
+const ICON = {
+  items:'<path d="M3 7l9-4 9 4v10l-9 4-9-4V7z"/><path d="M3 7l9 4 9-4M12 11v10"/>',
+  transactions:'<path d="M17 3l4 4-4 4"/><path d="M21 7H7"/><path d="M7 21l-4-4 4-4"/><path d="M3 17h14"/>',
+  reports:'<path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/>',
+  settings:'<circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
+  legal:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6M9 9h1"/>'
+};
+const SECTIONS = [
+  {id:'items', label:'Items', kicker:'Inventory', title:'Items',
+   lede:'Everything you stock — carcasses, primal and retail cuts, processed goods and by-products — counted in pieces, pounds, and boxes.',
+   empty:['No items defined yet.','Tell me how you want items organized and I’ll build the structure here.']},
+  {id:'transactions', label:'Transactions', kicker:'Movement', title:'Transactions',
+   lede:'Receiving, production, internal transfers, and shipments — every movement of product in and out of the plant.',
+   empty:['No transactions recorded.','This is where each receive, transfer, and shipment will be logged.']},
+  {id:'reports', label:'Reports', kicker:'Insight', title:'Reports',
+   lede:'On-hand summaries, throughput, and traceability rolled up by source, product class, and storage location.',
+   empty:['No reports built yet.','Once items and transactions exist, summaries and breakdowns will appear here.']},
+  {id:'settings', label:'Settings', kicker:'Configuration', title:'Settings',
+   lede:'Categories, storage locations, units, and users that the rest of the console draws from.',
+   empty:['Nothing configured yet.','Define your sources, product classes, and locations here to drive the dropdowns everywhere else.']},
+  {id:'legal', label:'Legal Documents', kicker:'Compliance', title:'Legal Documents',
+   lede:'Certificates, inspection records, HACCP plans, and licenses — stored, dated, and tracked for renewal.',
+   empty:['No documents on file.','Upload and tag compliance records here to keep them in one place.']}
+];
+
+const nav = document.getElementById('nav');
+const view = document.getElementById('view');
+const crumb = document.getElementById('crumb');
+
+SECTIONS.forEach((s,i)=>{
+  const b=document.createElement('button');
+  b.className='nav-item'+(i===0?' active':'');
+  b.dataset.id=s.id;
+  b.setAttribute('aria-current', i===0?'page':'false');
+  b.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[s.id]}</svg>${s.label}`;
+  b.addEventListener('click',()=>select(s.id));
+  nav.appendChild(b);
+});
+
+function select(id){
+  const s=SECTIONS.find(x=>x.id===id);
+  document.querySelectorAll('.nav-item').forEach(n=>{
+    const on=n.dataset.id===id;
+    n.classList.toggle('active',on);
+    n.setAttribute('aria-current', on?'page':'false');
+  });
+  crumb.textContent=s.title;
+  view.innerHTML=`
+    <div class="eyebrow">${s.kicker}</div>
+    <h2>${s.title}</h2>
+    <p class="lede">${s.lede}</p>
+    <div class="empty">
+      <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICON[id]}</svg></div>
+      <div><h3>${s.empty[0]}</h3><p>${s.empty[1]}</p></div>
+    </div>`;
+  view.focus({preventScroll:true});
+}
+select('items');
+
+function tick(){
+  const d=new Date();
+  document.getElementById('time').textContent=d.toLocaleTimeString('en-US',{hour12:false});
+  document.getElementById('date').textContent=d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+}
+tick(); setInterval(tick,1000);
+</script>
+</body>
+</html>

@@ -277,7 +277,8 @@
         <input type="password" id="loginPin" placeholder="Enter your PIN or password" autocomplete="current-password"/>
       </div>
       <button class="login-btn" onclick="attemptLogin()">Sign in</button>
-      <div class="login-footer">FACILITY PLT-01 · v0.1</div>
+      <div class="login-footer" style="margin-top:14px">FACILITY PLT-01 · v0.1</div>
+      <div style="text-align:center;margin-top:10px"><button onclick="resetAndLogin()" style="background:none;border:none;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--muted);text-decoration:underline;letter-spacing:.06em">Reset app data &amp; login as admin</button></div>
     </div>
   </div>
 
@@ -474,11 +475,20 @@ let deletingId=null,deletingKind=null;
 
 // Always repair/seed default admin so login always works
 (function(){
-  const allPerms=PERMISSIONS.reduce((a,p)=>{a[p.id]=true;return a},{});
-  const idx=users.findIndex(x=>x.id==='user_default');
-  const admin={id:'user_default',name:'Administrator',email:'admin@facility.com',role:'admin',pin:'1234',perms:allPerms};
-  if(idx===-1) users.unshift(admin);
-  else users[idx]={...users[idx],email:'admin@facility.com',pin:'1234',role:'admin',perms:allPerms};
+  var allPerms={};
+  for(var i=0;i<PERMISSIONS.length;i++) allPerms[PERMISSIONS[i].id]=true;
+  var admin={id:'user_default',name:'Administrator',email:'admin@facility.com',role:'admin',pin:'1234',perms:allPerms};
+  var found=false;
+  for(var i=0;i<users.length;i++){
+    if(users[i].id==='user_default'){
+      users[i].email='admin@facility.com';
+      users[i].pin='1234';
+      users[i].role='admin';
+      users[i].perms=allPerms;
+      found=true; break;
+    }
+  }
+  if(!found) users.unshift(admin);
   localStorage.setItem('pc_users',JSON.stringify(users));
 })();
 
@@ -490,20 +500,28 @@ function initials(name){return name.trim().split(/\s+/).map(w=>w[0]).join('').su
 
 /* ===== LOGIN ===== */
 function attemptLogin(){
-  const email=document.getElementById('loginEmail').value.trim().toLowerCase();
-  const pin=document.getElementById('loginPin').value;
-  const err=document.getElementById('loginError');
-  const u=users.find(x=>x.email.toLowerCase()===email&&(x.pin===pin||(x.pin===''&&pin==='')));
-  if(!u){err.classList.add('show');return;}
+  var email=document.getElementById('loginEmail').value.trim().toLowerCase();
+  var pin=document.getElementById('loginPin').value.trim();
+  var err=document.getElementById('loginError');
+  var found=null;
+  for(var i=0;i<users.length;i++){
+    var u=users[i];
+    if(u.email.trim().toLowerCase()===email && u.pin===pin){ found=u; break; }
+  }
+  if(!found){ err.classList.add('show'); return; }
   err.classList.remove('show');
-  currentUser=u;
+  currentUser=found;
   document.getElementById('loginScreen').classList.add('hidden');
   document.getElementById('appShell').classList.add('visible');
-  document.getElementById('railAvatar').textContent=initials(u.name);
-  document.getElementById('railName').textContent=u.name;
-  document.getElementById('railRole').textContent=u.role.charAt(0).toUpperCase()+u.role.slice(1);
+  document.getElementById('railAvatar').textContent=initials(found.name);
+  document.getElementById('railName').textContent=found.name;
+  document.getElementById('railRole').textContent=found.role.charAt(0).toUpperCase()+found.role.slice(1);
   buildNav();
   select('items');
+}
+function resetAndLogin(){
+  localStorage.clear();
+  location.reload();
 }
 
 document.getElementById('loginPin').addEventListener('keydown',e=>{if(e.key==='Enter')attemptLogin()});

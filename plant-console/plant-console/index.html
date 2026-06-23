@@ -18,6 +18,57 @@
   html,body{height:100%}
   body{font-family:var(--sans);color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased;display:flex;min-height:100vh}
 
+  /* ===== LOGIN SCREEN ===== */
+  #loginScreen{
+    position:fixed;inset:0;z-index:200;
+    background:var(--sidebar);
+    display:flex;align-items:center;justify-content:center;
+  }
+  #loginScreen.hidden{display:none}
+  #appShell{display:none}
+  #appShell.visible{display:flex}
+  .login-box{
+    background:var(--panel);border-radius:20px;padding:40px 38px;
+    width:100%;max-width:400px;
+    box-shadow:0 20px 60px rgba(0,0,0,.35);
+  }
+  .login-mark{
+    width:48px;height:48px;border-radius:12px;
+    background:linear-gradient(150deg,var(--brand-bright),var(--brand));
+    display:grid;place-items:center;color:#fff;font-weight:800;
+    font-family:var(--mono);font-size:18px;letter-spacing:-1px;
+    margin-bottom:22px;
+  }
+  .login-box h2{font-size:22px;font-weight:750;letter-spacing:-.01em;margin-bottom:4px}
+  .login-box .sub{color:var(--muted);font-size:13.5px;margin-bottom:28px}
+  .login-error{
+    background:#fff0f0;border:1px solid rgba(194,59,51,.25);
+    color:var(--brand-bright);font-size:12.5px;padding:10px 14px;
+    border-radius:8px;margin-bottom:16px;display:none;
+  }
+  .login-error.show{display:block}
+  .login-field{margin-bottom:16px}
+  .login-field label{display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;margin-bottom:7px}
+  .login-field input{
+    width:100%;padding:11px 14px;border:1.5px solid var(--line);
+    border-radius:10px;font-size:15px;color:var(--ink);
+    background:var(--bg);outline:none;transition:border-color .14s;
+    font-family:var(--sans);
+  }
+  .login-field input:focus{border-color:var(--cold)}
+  .login-btn{
+    width:100%;padding:12px;border-radius:10px;border:none;
+    background:var(--cold);color:#fff;font-family:var(--mono);
+    font-size:13px;letter-spacing:.06em;cursor:pointer;margin-top:8px;
+    transition:background .15s;
+  }
+  .login-btn:hover{background:#245f6d}
+  .login-footer{text-align:center;margin-top:18px;font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.08em}
+
+  /* ===== APP SHELL ===== */
+  #appShell{display:flex;width:100%;min-height:100vh}
+  #appShell.hidden{display:none}
+
   .rail{width:var(--rail);flex:0 0 var(--rail);background:var(--sidebar);color:var(--sb-ink);display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
   .brand{padding:22px 22px 18px;display:flex;align-items:center;gap:12px;border-bottom:1px solid rgba(255,255,255,.07)}
   .mark{width:34px;height:34px;border-radius:7px;flex:0 0 34px;background:linear-gradient(150deg,var(--brand-bright),var(--brand));display:grid;place-items:center;color:#fff;font-weight:800;font-family:var(--mono);font-size:15px;letter-spacing:-1px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
@@ -28,12 +79,22 @@
   .nav-item{display:flex;align-items:center;gap:13px;width:100%;padding:11px 13px;border:0;background:transparent;cursor:pointer;color:var(--sb-ink);font-family:var(--mono);font-size:12.5px;letter-spacing:.04em;border-radius:8px;text-align:left;position:relative;transition:background .15s,color .15s}
   .nav-item svg{width:18px;height:18px;flex:0 0 18px;stroke:currentColor;opacity:.85}
   .nav-item:hover{background:rgba(255,255,255,.05);color:#fff}
-  .nav-item:focus-visible{outline:2px solid var(--cold);outline-offset:-2px}
   .nav-item.active{background:rgba(255,255,255,.06);color:#fff}
   .nav-item.active::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--cold)}
   .nav-item.active svg{opacity:1;color:var(--cold)}
-  .rail-foot{padding:16px 18px;border-top:1px solid rgba(255,255,255,.07);font-family:var(--mono);font-size:10px;color:var(--sb-dim);letter-spacing:.08em}
-  .rail-foot b{color:var(--sb-ink);font-weight:600}
+
+  /* user card in rail footer */
+  .rail-user{
+    padding:14px 16px;border-top:1px solid rgba(255,255,255,.07);
+    display:flex;align-items:center;gap:10px;
+  }
+  .rail-avatar{width:32px;height:32px;border-radius:50%;flex:0 0 32px;display:grid;place-items:center;font-weight:700;font-size:11px;letter-spacing:.04em;background:rgba(255,255,255,.1);color:#fff}
+  .rail-user-info{flex:1;min-width:0}
+  .rail-user-name{font-size:12px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rail-user-role{font-family:var(--mono);font-size:9.5px;color:var(--sb-dim);letter-spacing:.08em;text-transform:uppercase;margin-top:1px}
+  .logout-btn{background:transparent;border:0;cursor:pointer;color:var(--sb-dim);padding:4px;border-radius:5px;display:grid;place-items:center;transition:color .14s}
+  .logout-btn:hover{color:#fff}
+  .logout-btn svg{width:15px;height:15px;stroke:currentColor}
 
   .main{flex:1;min-width:0;display:flex;flex-direction:column}
   .topbar{height:62px;display:flex;align-items:center;justify-content:space-between;padding:0 30px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
@@ -73,6 +134,17 @@
   .settings-section-head h3{font-size:14px;font-weight:700;letter-spacing:.01em}
   .settings-section-head p{font-size:12.5px;color:var(--muted);margin-top:3px}
 
+  /* MY PROFILE */
+  .my-profile-card{padding:22px 24px;display:flex;align-items:center;gap:18px}
+  .profile-avatar-lg{width:54px;height:54px;border-radius:50%;flex:0 0 54px;display:grid;place-items:center;font-weight:700;font-size:17px;letter-spacing:.04em}
+  .avatar-admin{background:rgba(158,43,37,.12);color:var(--brand)}
+  .avatar-user{background:var(--cold-soft);color:var(--cold)}
+  .profile-info{flex:1}
+  .profile-name{font-size:16px;font-weight:700}
+  .profile-email{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:3px}
+  .profile-role{margin-top:6px}
+  .profile-actions{display:flex;gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+
   /* STORAGE */
   .storage-list{list-style:none}
   .storage-row{display:flex;align-items:center;gap:14px;padding:14px 24px;border-bottom:1px solid var(--line);transition:background .12s}
@@ -98,9 +170,7 @@
   .user-row{display:flex;align-items:center;gap:16px;padding:14px 24px;border-bottom:1px solid var(--line);transition:background .12s}
   .user-row:last-child{border-bottom:none}
   .user-row:hover{background:var(--bg)}
-  .user-avatar{width:38px;height:38px;border-radius:50%;flex:0 0 38px;display:grid;place-items:center;font-weight:700;font-size:13px;letter-spacing:.04em}
-  .avatar-admin{background:rgba(158,43,37,.12);color:var(--brand)}
-  .avatar-user{background:var(--cold-soft);color:var(--cold)}
+  .user-avatar{width:38px;height:38px;border-radius:50%;flex:0 0 38px;display:grid;place-items:center;font-weight:700;font-size:13px}
   .user-info{flex:1;min-width:0}
   .user-name{font-size:13.5px;font-weight:600}
   .user-email{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:2px}
@@ -112,8 +182,8 @@
   .perm-chip{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;padding:2px 7px;border-radius:12px;background:var(--bg);border:1px solid var(--line);color:var(--muted);text-transform:uppercase}
   .user-actions{display:flex;gap:6px}
 
-  /* PERMISSIONS GRID */
-  .perm-grid{display:flex;flex-direction:column;gap:0}
+  /* PERMISSIONS TOGGLES */
+  .perm-grid{display:flex;flex-direction:column}
   .perm-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--line)}
   .perm-row:last-child{border-bottom:none}
   .perm-label{font-size:13px;font-weight:600}
@@ -125,7 +195,7 @@
   .toggle-track::after{content:"";position:absolute;left:3px;top:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .2s}
   .toggle-wrap input:checked+.toggle-track::after{transform:translateX(18px)}
   .admin-locked{opacity:.4;pointer-events:none}
-  .admin-note{font-family:var(--mono);font-size:10.5px;color:var(--muted);padding:10px 0 2px;font-style:italic}
+  .admin-note{font-family:var(--mono);font-size:10.5px;color:var(--muted);padding:10px 0 4px;font-style:italic}
 
   /* TRANSACTIONS */
   .txn-toolbar{display:flex;align-items:center;justify-content:space-between;margin-top:28px;margin-bottom:16px}
@@ -176,7 +246,7 @@
     body{flex-direction:column}
     .rail{width:100%;height:auto;position:static;flex:none}
     nav{flex-direction:row;overflow-x:auto;padding:10px;gap:6px}
-    .nav-kicker,.rail-foot{display:none}
+    .nav-kicker{display:none}
     .nav-item{flex:0 0 auto;padding:9px 14px}
     .nav-item.active::before{top:auto;bottom:0;left:8px;right:8px;width:auto;height:3px;border-radius:3px 3px 0 0}
     .view{padding:26px 20px}
@@ -185,28 +255,62 @@
     .form-row{grid-template-columns:1fr}
     .modal{max-width:94vw;padding:22px 18px}
     .txn-table th:nth-child(4),.txn-table td:nth-child(4){display:none}
+    .login-box{padding:30px 24px;margin:16px}
   }
 </style>
 </head>
 <body>
-  <aside class="rail">
-    <div class="brand">
-      <div class="mark">PC</div>
-      <div><h1>Plant Console</h1><span>Inventory &amp; Operations</span></div>
-    </div>
-    <nav id="nav" aria-label="Sections"><div class="nav-kicker">Menu</div></nav>
-    <div class="rail-foot">Facility <b>PLT-01</b> · v0.1</div>
-  </aside>
 
-  <div class="main">
-    <header class="topbar">
-      <div class="where">Section / <b id="crumb">Items</b></div>
-      <div class="status-cluster">
-        <span class="pill"><span class="dot"></span>Cold chain OK</span>
-        <div class="clock"><span id="time">--:--:--</span><small id="date">—</small></div>
+  <!-- ===== LOGIN SCREEN ===== -->
+  <div id="loginScreen">
+    <div class="login-box">
+      <div class="login-mark">PC</div>
+      <h2>Plant Console</h2>
+      <p class="sub">Sign in to continue to your facility dashboard.</p>
+      <div class="login-error" id="loginError">Incorrect email or PIN. Please try again.</div>
+      <div class="login-field">
+        <label>Email</label>
+        <input type="email" id="loginEmail" placeholder="your@email.com" autocomplete="username"/>
       </div>
-    </header>
-    <main class="view" id="view" tabindex="-1"></main>
+      <div class="login-field">
+        <label>PIN / Password</label>
+        <input type="password" id="loginPin" placeholder="Enter your PIN or password" autocomplete="current-password"/>
+      </div>
+      <button class="login-btn" onclick="attemptLogin()">Sign in</button>
+      <div class="login-footer">FACILITY PLT-01 · v0.1</div>
+    </div>
+  </div>
+
+  <!-- ===== APP SHELL ===== -->
+  <div id="appShell">
+    <aside class="rail">
+      <div class="brand">
+        <div class="mark">PC</div>
+        <div><h1>Plant Console</h1><span>Inventory &amp; Operations</span></div>
+      </div>
+      <nav id="nav" aria-label="Sections"><div class="nav-kicker">Menu</div></nav>
+      <div class="rail-user">
+        <div class="rail-avatar" id="railAvatar">?</div>
+        <div class="rail-user-info">
+          <div class="rail-user-name" id="railName">—</div>
+          <div class="rail-user-role" id="railRole">—</div>
+        </div>
+        <button class="logout-btn" onclick="logout()" title="Sign out">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <div class="where">Section / <b id="crumb">Items</b></div>
+        <div class="status-cluster">
+          <span class="pill"><span class="dot"></span>Cold chain OK</span>
+          <div class="clock"><span id="time">--:--:--</span><small id="date">—</small></div>
+        </div>
+      </header>
+      <main class="view" id="view" tabindex="-1"></main>
+    </div>
   </div>
 
   <!-- Storage Modal -->
@@ -288,14 +392,29 @@
         </div>
         <div class="form-group"><label>PIN / Password</label><input type="password" id="u-pin" placeholder="Set login PIN or password"/></div>
       </div>
-      <div id="permSection">
-        <div class="modal-section-title">Permissions</div>
-        <p class="admin-note" id="adminNote" style="display:none">Admin role has all permissions automatically.</p>
-        <div class="perm-grid" id="permGrid"></div>
-      </div>
+      <div class="modal-section-title">Permissions</div>
+      <p class="admin-note" id="adminNote" style="display:none">Admin role has all permissions automatically.</p>
+      <div class="perm-grid" id="permGrid"></div>
       <div class="modal-footer">
         <button class="btn" onclick="closeUserModal()">Cancel</button>
         <button class="btn btn-primary" onclick="saveUser()">Save user</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- My Profile Modal -->
+  <div class="modal-bg hidden" id="profileModal" role="dialog" aria-modal="true">
+    <div class="modal">
+      <h3>My profile</h3>
+      <p class="sub">Update your name, email, or PIN.</p>
+      <div class="form-row">
+        <div class="form-group"><label>Full name</label><input type="text" id="p-name"/></div>
+        <div class="form-group"><label>Email</label><input type="email" id="p-email"/></div>
+      </div>
+      <div class="form-group"><label>New PIN / Password <span style="font-size:11px;color:var(--muted)">(leave blank to keep current)</span></label><input type="password" id="p-pin" placeholder="Enter new PIN or leave blank"/></div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeProfileModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveProfile()">Save changes</button>
       </div>
     </div>
   </div>
@@ -327,19 +446,17 @@ const TYPE_ICON={
   dry:'<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>',
   ambient:'<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>'
 };
-
 const PERMISSIONS=[
-  {id:'viewItems',    label:'View items',         desc:'See the full items / inventory list'},
-  {id:'editItems',    label:'Edit items',          desc:'Create, update, and delete inventory items'},
-  {id:'viewTxns',     label:'View transactions',   desc:'See all recorded product movements'},
-  {id:'createTxns',   label:'Create transactions', desc:'Log new receives, transfers, and shipments'},
-  {id:'editTxns',     label:'Edit & delete transactions', desc:'Modify or remove existing transaction records'},
-  {id:'viewReports',  label:'View reports',        desc:'Access on-hand summaries and throughput reports'},
-  {id:'manageStorage',label:'Manage storage',      desc:'Add, edit, or remove storage locations'},
-  {id:'manageLegal',  label:'Manage legal docs',   desc:'Upload and manage compliance documents'},
-  {id:'manageUsers',  label:'Manage users',        desc:'Add, edit, or remove user accounts (admin only)'},
+  {id:'viewItems',    label:'View items',               desc:'See the full items / inventory list'},
+  {id:'editItems',    label:'Edit items',                desc:'Create, update, and delete inventory items'},
+  {id:'viewTxns',     label:'View transactions',         desc:'See all recorded product movements'},
+  {id:'createTxns',   label:'Create transactions',       desc:'Log new receives, transfers, and shipments'},
+  {id:'editTxns',     label:'Edit & delete transactions',desc:'Modify or remove existing transaction records'},
+  {id:'viewReports',  label:'View reports',              desc:'Access on-hand summaries and throughput reports'},
+  {id:'manageStorage',label:'Manage storage',            desc:'Add, edit, or remove storage locations'},
+  {id:'manageLegal',  label:'Manage legal docs',         desc:'Upload and manage compliance documents'},
+  {id:'manageUsers',  label:'Manage users',              desc:'Add, edit, or remove user accounts (admin only)'},
 ];
-
 const SECTIONS=[
   {id:'items',label:'Items',kicker:'Inventory',title:'Items',lede:'Everything you stock — carcasses, primal and retail cuts, processed goods and by-products — counted in pieces, pounds, and boxes.',empty:['No items defined yet.','Tell me how you want items organized and I\'ll build the structure here.']},
   {id:'transactions',label:'Transactions',kicker:'Movement',title:'Transactions',lede:'Receiving, production, internal transfers, and shipments — every movement of product in and out of the plant.'},
@@ -351,34 +468,69 @@ const SECTIONS=[
 let storages=JSON.parse(localStorage.getItem('pc_storages')||'[]');
 let transactions=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
 let users=JSON.parse(localStorage.getItem('pc_users')||'[]');
-
-// Seed a default admin if none exist
-if(users.length===0){
-  users=[{id:'user_default',name:'Administrator',email:'admin@facility.com',role:'admin',pin:'',perms:PERMISSIONS.reduce((a,p)=>{a[p.id]=true;return a},{})}];
-  localStorage.setItem('pc_users',JSON.stringify(users));
-}
-
+let currentUser=null;
 let editingStorageId=null,editingTxnId=null,editingUserId=null;
 let deletingId=null,deletingKind=null;
+
+// Seed default admin
+if(!users.length){
+  users=[{id:'user_default',name:'Administrator',email:'admin@facility.com',role:'admin',pin:'1234',perms:PERMISSIONS.reduce((a,p)=>{a[p.id]=true;return a},{})}];
+  localStorage.setItem('pc_users',JSON.stringify(users));
+}
 
 function saveStorages(){localStorage.setItem('pc_storages',JSON.stringify(storages))}
 function saveTxns(){localStorage.setItem('pc_transactions',JSON.stringify(transactions))}
 function saveUsers(){localStorage.setItem('pc_users',JSON.stringify(users))}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function initials(name){return name.trim().split(/\s+/).map(w=>w[0]).join('').substring(0,2).toUpperCase()}
 
+/* ===== LOGIN ===== */
+function attemptLogin(){
+  const email=document.getElementById('loginEmail').value.trim().toLowerCase();
+  const pin=document.getElementById('loginPin').value;
+  const err=document.getElementById('loginError');
+  const u=users.find(x=>x.email.toLowerCase()===email&&x.pin===pin);
+  if(!u){err.classList.add('show');return;}
+  err.classList.remove('show');
+  currentUser=u;
+  document.getElementById('loginScreen').classList.add('hidden');
+  document.getElementById('appShell').classList.add('visible');
+  document.getElementById('railAvatar').textContent=initials(u.name);
+  document.getElementById('railName').textContent=u.name;
+  document.getElementById('railRole').textContent=u.role.charAt(0).toUpperCase()+u.role.slice(1);
+  buildNav();
+  select('items');
+}
+
+document.getElementById('loginPin').addEventListener('keydown',e=>{if(e.key==='Enter')attemptLogin()});
+document.getElementById('loginEmail').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('loginPin').focus()});
+
+function logout(){
+  currentUser=null;
+  document.getElementById('appShell').classList.remove('visible');
+  document.getElementById('loginScreen').classList.remove('hidden');
+  document.getElementById('loginEmail').value='';
+  document.getElementById('loginPin').value='';
+  document.getElementById('loginEmail').focus();
+}
+
+/* ===== NAV ===== */
 const nav=document.getElementById('nav');
 const view=document.getElementById('view');
 const crumb=document.getElementById('crumb');
 
-SECTIONS.forEach((s,i)=>{
-  const b=document.createElement('button');
-  b.className='nav-item'+(i===0?' active':'');
-  b.dataset.id=s.id;
-  b.setAttribute('aria-current',i===0?'page':'false');
-  b.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[s.id]}</svg>${s.label}`;
-  b.addEventListener('click',()=>select(s.id));
-  nav.appendChild(b);
-});
+function buildNav(){
+  nav.innerHTML='<div class="nav-kicker">Menu</div>';
+  SECTIONS.forEach(s=>{
+    const b=document.createElement('button');
+    b.className='nav-item';
+    b.dataset.id=s.id;
+    b.setAttribute('aria-current','false');
+    b.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[s.id]}</svg>${s.label}`;
+    b.addEventListener('click',()=>select(s.id));
+    nav.appendChild(b);
+  });
+}
 
 function select(id){
   const s=SECTIONS.find(x=>x.id===id);
@@ -396,12 +548,19 @@ function select(id){
 
 /* ===== SETTINGS ===== */
 function renderSettings(){
-  const s=SECTIONS.find(x=>x.id==='settings');
   view.innerHTML=`
-    <div class="eyebrow">${s.kicker}</div>
-    <h2>${s.title}</h2>
-    <p class="lede">${s.lede}</p>
+    <div class="eyebrow">Configuration</div>
+    <h2>Settings</h2>
+    <p class="lede">Storage locations, users, and system configuration for the entire console.</p>
     <div class="settings-layout">
+
+      <div class="settings-section">
+        <div class="settings-section-head">
+          <div><h3>My account</h3><p>Your profile and login credentials.</p></div>
+        </div>
+        <div class="my-profile-card" id="myProfileCard"></div>
+      </div>
+
       <div class="settings-section">
         <div class="settings-section-head">
           <div><h3>Storage locations</h3><p>Physical areas where product is held — coolers, freezers, dry racks.</p></div>
@@ -411,273 +570,190 @@ function renderSettings(){
         </div>
         <ul class="storage-list" id="storageList"></ul>
       </div>
+
       <div class="settings-section">
         <div class="settings-section-head">
           <div><h3>Users &amp; permissions</h3><p>Manage who can access the console and what they can do.</p></div>
-          <button class="btn btn-primary btn-sm" onclick="openAddUserModal()">
-            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add user
-          </button>
+          ${currentUser&&currentUser.role==='admin'?`<button class="btn btn-primary btn-sm" onclick="openAddUserModal()"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add user</button>`:''}
         </div>
         <ul class="user-list" id="userList"></ul>
       </div>
+
     </div>`;
+  renderMyProfile();
   renderStorageList();
   renderUserList();
 }
 
-/* ===== STORAGE ===== */
-function typeBadge(type){
-  const l={cold:'Cold',frozen:'Frozen',dry:'Dry',ambient:'Ambient'};
-  return `<span class="storage-type-badge badge-${type}">${l[type]||type}</span>`;
-}
-function renderStorageList(){
-  const list=document.getElementById('storageList');
-  if(!list) return;
-  if(!storages.length){
-    list.innerHTML=`<li class="empty-list"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg><p>No locations yet. Click <strong>Add location</strong> to get started.</p></li>`;
-    return;
-  }
-  list.innerHTML=storages.map(loc=>`
-    <li class="storage-row">
-      <div class="storage-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${TYPE_ICON[loc.type]||TYPE_ICON.ambient}</svg></div>
-      <div class="storage-info"><div class="storage-name">${esc(loc.name)}</div><div class="storage-meta">${loc.zone?esc(loc.zone)+' · ':''}${loc.temp?esc(loc.temp)+' · ':''}${loc.capacity?Number(loc.capacity).toLocaleString()+' lb cap':'no capacity set'}</div></div>
-      ${typeBadge(loc.type)}
-      <div class="storage-actions">
-        <button class="btn btn-sm" onclick="openEditStorageModal('${loc.id}')" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-        <button class="btn btn-sm btn-danger" onclick="openDeleteModal('${loc.id}','storage')" title="Remove"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
+function renderMyProfile(){
+  const card=document.getElementById('myProfileCard'); if(!card||!currentUser) return;
+  const u=currentUser;
+  card.innerHTML=`
+    <div class="profile-avatar-lg ${u.role==='admin'?'avatar-admin':'avatar-user'}">${initials(u.name)}</div>
+    <div class="profile-info">
+      <div class="profile-name">${esc(u.name)}</div>
+      <div class="profile-email">${esc(u.email)}</div>
+      <div class="profile-role">${roleBadge(u.role)}</div>
+      <div class="profile-actions">
+        <button class="btn btn-sm" onclick="openProfileModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Edit profile
+        </button>
+        <button class="btn btn-sm btn-danger" onclick="logout()">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Sign out
+        </button>
       </div>
-    </li>`).join('');
-}
-function openAddStorageModal(){
-  editingStorageId=null;
-  document.getElementById('storageModalTitle').textContent='Add storage location';
-  ['s-name','s-capacity','s-temp','s-zone','s-notes'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('s-type').value='cold';
-  document.getElementById('storageModal').classList.remove('hidden');
-  document.getElementById('s-name').focus();
-}
-function openEditStorageModal(id){
-  const loc=storages.find(x=>x.id===id); if(!loc) return;
-  editingStorageId=id;
-  document.getElementById('storageModalTitle').textContent='Edit storage location';
-  document.getElementById('s-name').value=loc.name;
-  document.getElementById('s-type').value=loc.type;
-  document.getElementById('s-capacity').value=loc.capacity||'';
-  document.getElementById('s-temp').value=loc.temp||'';
-  document.getElementById('s-zone').value=loc.zone||'';
-  document.getElementById('s-notes').value=loc.notes||'';
-  document.getElementById('storageModal').classList.remove('hidden');
-  document.getElementById('s-name').focus();
-}
-function closeStorageModal(){document.getElementById('storageModal').classList.add('hidden')}
-function saveStorage(){
-  const name=document.getElementById('s-name').value.trim();
-  if(!name){document.getElementById('s-name').focus();return;}
-  const data={id:editingStorageId||('loc_'+Date.now()),name,type:document.getElementById('s-type').value,capacity:document.getElementById('s-capacity').value,temp:document.getElementById('s-temp').value.trim(),zone:document.getElementById('s-zone').value.trim(),notes:document.getElementById('s-notes').value.trim()};
-  if(editingStorageId){const i=storages.findIndex(x=>x.id===editingStorageId);storages[i]=data;}else storages.push(data);
-  saveStorages(); closeStorageModal(); renderStorageList();
+    </div>`;
 }
 
+/* ===== MY PROFILE MODAL ===== */
+function openProfileModal(){
+  document.getElementById('p-name').value=currentUser.name;
+  document.getElementById('p-email').value=currentUser.email;
+  document.getElementById('p-pin').value='';
+  document.getElementById('profileModal').classList.remove('hidden');
+  document.getElementById('p-name').focus();
+}
+function closeProfileModal(){document.getElementById('profileModal').classList.add('hidden')}
+function saveProfile(){
+  const name=document.getElementById('p-name').value.trim();
+  const email=document.getElementById('p-email').value.trim();
+  if(!name){document.getElementById('p-name').focus();return;}
+  const pin=document.getElementById('p-pin').value||currentUser.pin;
+  const idx=users.findIndex(x=>x.id===currentUser.id);
+  users[idx]={...users[idx],name,email,pin};
+  currentUser=users[idx];
+  saveUsers();
+  document.getElementById('railAvatar').textContent=initials(name);
+  document.getElementById('railName').textContent=name;
+  closeProfileModal();
+  renderMyProfile();
+}
+
+/* ===== STORAGE ===== */
+function typeBadge(type){const l={cold:'Cold',frozen:'Frozen',dry:'Dry',ambient:'Ambient'};return `<span class="storage-type-badge badge-${type}">${l[type]||type}</span>`}
+function renderStorageList(){
+  const list=document.getElementById('storageList');if(!list)return;
+  if(!storages.length){list.innerHTML=`<li class="empty-list"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg><p>No locations yet. Click <strong>Add location</strong> to get started.</p></li>`;return;}
+  list.innerHTML=storages.map(loc=>`<li class="storage-row">
+    <div class="storage-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${TYPE_ICON[loc.type]||TYPE_ICON.ambient}</svg></div>
+    <div class="storage-info"><div class="storage-name">${esc(loc.name)}</div><div class="storage-meta">${loc.zone?esc(loc.zone)+' · ':''}${loc.temp?esc(loc.temp)+' · ':''}${loc.capacity?Number(loc.capacity).toLocaleString()+' lb cap':'no capacity set'}</div></div>
+    ${typeBadge(loc.type)}
+    <div class="storage-actions">
+      <button class="btn btn-sm" onclick="openEditStorageModal('${loc.id}')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+      <button class="btn btn-sm btn-danger" onclick="openDeleteModal('${loc.id}','storage')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
+    </div>
+  </li>`).join('');
+}
+function openAddStorageModal(){editingStorageId=null;document.getElementById('storageModalTitle').textContent='Add storage location';['s-name','s-capacity','s-temp','s-zone','s-notes'].forEach(id=>document.getElementById(id).value='');document.getElementById('s-type').value='cold';document.getElementById('storageModal').classList.remove('hidden');document.getElementById('s-name').focus();}
+function openEditStorageModal(id){const loc=storages.find(x=>x.id===id);if(!loc)return;editingStorageId=id;document.getElementById('storageModalTitle').textContent='Edit storage location';document.getElementById('s-name').value=loc.name;document.getElementById('s-type').value=loc.type;document.getElementById('s-capacity').value=loc.capacity||'';document.getElementById('s-temp').value=loc.temp||'';document.getElementById('s-zone').value=loc.zone||'';document.getElementById('s-notes').value=loc.notes||'';document.getElementById('storageModal').classList.remove('hidden');document.getElementById('s-name').focus();}
+function closeStorageModal(){document.getElementById('storageModal').classList.add('hidden')}
+function saveStorage(){const name=document.getElementById('s-name').value.trim();if(!name){document.getElementById('s-name').focus();return;}const data={id:editingStorageId||('loc_'+Date.now()),name,type:document.getElementById('s-type').value,capacity:document.getElementById('s-capacity').value,temp:document.getElementById('s-temp').value.trim(),zone:document.getElementById('s-zone').value.trim(),notes:document.getElementById('s-notes').value.trim()};if(editingStorageId){const i=storages.findIndex(x=>x.id===editingStorageId);storages[i]=data;}else storages.push(data);saveStorages();closeStorageModal();renderStorageList();}
+
 /* ===== USERS ===== */
-function initials(name){return name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase()}
-function roleBadge(role){
-  const l={admin:'Admin',operator:'Operator',viewer:'Viewer'};
-  return `<span class="role-badge role-${role}">${l[role]||role}</span>`;
-}
-function permChips(u){
-  if(u.role==='admin') return '<span class="perm-chip">All permissions</span>';
-  return PERMISSIONS.filter(p=>u.perms&&u.perms[p.id]).map(p=>`<span class="perm-chip">${p.label}</span>`).join('')||'<span style="font-size:11px;color:var(--muted)">No permissions assigned</span>';
-}
+function roleBadge(role){const l={admin:'Admin',operator:'Operator',viewer:'Viewer'};return `<span class="role-badge role-${role}">${l[role]||role}</span>`}
+function permChips(u){if(u.role==='admin')return '<span class="perm-chip">All permissions</span>';return PERMISSIONS.filter(p=>u.perms&&u.perms[p.id]).map(p=>`<span class="perm-chip">${p.label}</span>`).join('')||'<span style="font-size:11px;color:var(--muted)">No permissions</span>';}
 function renderUserList(){
-  const list=document.getElementById('userList'); if(!list) return;
-  if(!users.length){
-    list.innerHTML=`<li class="empty-list"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><p>No users yet.</p></li>`;
-    return;
-  }
-  list.innerHTML=users.map(u=>`
-    <li class="user-row">
-      <div class="user-avatar avatar-${u.role==='admin'?'admin':'user'}">${initials(u.name)}</div>
-      <div class="user-info">
-        <div class="user-name">${esc(u.name)}</div>
-        <div class="user-email">${esc(u.email)}</div>
-        <div class="user-perms">${permChips(u)}</div>
-      </div>
-      ${roleBadge(u.role)}
-      <div class="user-actions">
-        <button class="btn btn-sm" onclick="openEditUserModal('${u.id}')" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-        <button class="btn btn-sm btn-danger" onclick="openDeleteModal('${u.id}','user')" title="Remove"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
-      </div>
-    </li>`).join('');
+  const list=document.getElementById('userList');if(!list)return;
+  if(!users.length){list.innerHTML=`<li class="empty-list"><p>No users.</p></li>`;return;}
+  const isAdmin=currentUser&&currentUser.role==='admin';
+  list.innerHTML=users.map(u=>`<li class="user-row">
+    <div class="user-avatar ${u.role==='admin'?'avatar-admin':'avatar-user'}">${initials(u.name)}</div>
+    <div class="user-info"><div class="user-name">${esc(u.name)}${u.id===currentUser?.id?' <span style="font-family:var(--mono);font-size:10px;color:var(--muted)">(you)</span>':''}</div><div class="user-email">${esc(u.email)}</div><div class="user-perms">${permChips(u)}</div></div>
+    ${roleBadge(u.role)}
+    ${isAdmin?`<div class="user-actions">
+      <button class="btn btn-sm" onclick="openEditUserModal('${u.id}')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+      ${u.id!==currentUser?.id?`<button class="btn btn-sm btn-danger" onclick="openDeleteModal('${u.id}','user')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`:''}
+    </div>`:''}
+  </li>`).join('');
 }
 function buildPermGrid(perms,isAdmin){
-  const grid=document.getElementById('permGrid');
   document.getElementById('adminNote').style.display=isAdmin?'block':'none';
-  grid.innerHTML=PERMISSIONS.map(p=>`
+  document.getElementById('permGrid').innerHTML=PERMISSIONS.map(p=>`
     <div class="perm-row${isAdmin?' admin-locked':''}">
       <div><div class="perm-label">${p.label}</div><div class="perm-desc">${p.desc}</div></div>
-      <label class="toggle-wrap" title="${p.label}">
-        <input type="checkbox" id="perm-${p.id}" ${(isAdmin||perms[p.id])?'checked':''} ${isAdmin?'disabled':''}>
-        <span class="toggle-track"></span>
-      </label>
+      <label class="toggle-wrap"><input type="checkbox" id="perm-${p.id}" ${(isAdmin||perms[p.id])?'checked':''} ${isAdmin?'disabled':''}><span class="toggle-track"></span></label>
     </div>`).join('');
 }
-function onRoleChange(){
-  const role=document.getElementById('u-role').value;
-  const currentPerms=PERMISSIONS.reduce((a,p)=>{a[p.id]=document.getElementById('perm-'+p.id)?.checked||false;return a},{});
-  buildPermGrid(currentPerms,role==='admin');
-}
-function openAddUserModal(){
-  editingUserId=null;
-  document.getElementById('userModalTitle').textContent='Add user';
-  ['u-name','u-email','u-pin'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('u-role').value='operator';
-  buildPermGrid({},false);
-  document.getElementById('userModal').classList.remove('hidden');
-  document.getElementById('u-name').focus();
-}
-function openEditUserModal(id){
-  const u=users.find(x=>x.id===id); if(!u) return;
-  editingUserId=id;
-  document.getElementById('userModalTitle').textContent='Edit user';
-  document.getElementById('u-name').value=u.name;
-  document.getElementById('u-email').value=u.email;
-  document.getElementById('u-role').value=u.role;
-  document.getElementById('u-pin').value='';
-  buildPermGrid(u.perms||{},u.role==='admin');
-  document.getElementById('userModal').classList.remove('hidden');
-  document.getElementById('u-name').focus();
-}
+function onRoleChange(){const role=document.getElementById('u-role').value;const cur=PERMISSIONS.reduce((a,p)=>{a[p.id]=document.getElementById('perm-'+p.id)?.checked||false;return a},{});buildPermGrid(cur,role==='admin');}
+function openAddUserModal(){editingUserId=null;document.getElementById('userModalTitle').textContent='Add user';['u-name','u-email','u-pin'].forEach(id=>document.getElementById(id).value='');document.getElementById('u-role').value='operator';buildPermGrid({},false);document.getElementById('userModal').classList.remove('hidden');document.getElementById('u-name').focus();}
+function openEditUserModal(id){const u=users.find(x=>x.id===id);if(!u)return;editingUserId=id;document.getElementById('userModalTitle').textContent='Edit user';document.getElementById('u-name').value=u.name;document.getElementById('u-email').value=u.email;document.getElementById('u-role').value=u.role;document.getElementById('u-pin').value='';buildPermGrid(u.perms||{},u.role==='admin');document.getElementById('userModal').classList.remove('hidden');document.getElementById('u-name').focus();}
 function closeUserModal(){document.getElementById('userModal').classList.add('hidden')}
 function saveUser(){
-  const name=document.getElementById('u-name').value.trim();
-  const email=document.getElementById('u-email').value.trim();
+  const name=document.getElementById('u-name').value.trim();const email=document.getElementById('u-email').value.trim();
   if(!name){document.getElementById('u-name').focus();return;}
   const role=document.getElementById('u-role').value;
   const perms=PERMISSIONS.reduce((a,p)=>{a[p.id]=role==='admin'?true:(document.getElementById('perm-'+p.id)?.checked||false);return a},{});
-  const data={id:editingUserId||('user_'+Date.now()),name,email,role,pin:document.getElementById('u-pin').value||'',perms};
-  if(editingUserId){const i=users.findIndex(x=>x.id===editingUserId);users[i]=data;}else users.push(data);
-  saveUsers(); closeUserModal(); renderUserList();
+  const existing=editingUserId?users.find(x=>x.id===editingUserId):null;
+  const pin=document.getElementById('u-pin').value||(existing?.pin||'');
+  const data={id:editingUserId||('user_'+Date.now()),name,email,role,pin,perms};
+  if(editingUserId){const i=users.findIndex(x=>x.id===editingUserId);users[i]=data;if(currentUser?.id===editingUserId)currentUser=data;}else users.push(data);
+  saveUsers();closeUserModal();renderUserList();
 }
 
 /* ===== TRANSACTIONS ===== */
 const TXN_TYPES={receive:'Receive',transfer:'Transfer',production:'Production',shipment:'Shipment',return:'Return',adjustment:'Adjustment'};
 function renderTransactions(){
   const s=SECTIONS.find(x=>x.id==='transactions');
-  view.innerHTML=`
-    <div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p>
+  view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p>
     <div class="txn-toolbar">
       <span style="font-family:var(--mono);font-size:11px;color:var(--muted)">${transactions.length} record${transactions.length!==1?'s':''}</span>
-      <button class="btn btn-primary" onclick="openAddTxnModal()">
-        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Create transaction
-      </button>
+      <button class="btn btn-primary" onclick="openAddTxnModal()"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Create transaction</button>
     </div>
     <div class="txn-table-wrap" id="txnTableWrap"></div>`;
   renderTxnTable();
 }
 function renderTxnTable(){
-  const wrap=document.getElementById('txnTableWrap'); if(!wrap) return;
-  if(!transactions.length){
-    wrap.innerHTML=`<div class="txn-empty"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3l4 4-4 4"/><path d="M21 7H7"/><path d="M7 21l-4-4 4-4"/><path d="M3 17h14"/></svg><p>No transactions yet. Click <strong>Create transaction</strong> to log the first movement.</p></div>`;
-    return;
-  }
+  const wrap=document.getElementById('txnTableWrap');if(!wrap)return;
+  if(!transactions.length){wrap.innerHTML=`<div class="txn-empty"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3l4 4-4 4"/><path d="M21 7H7"/><path d="M7 21l-4-4 4-4"/><path d="M3 17h14"/></svg><p>No transactions yet. Click <strong>Create transaction</strong> to log the first movement.</p></div>`;return;}
   const rows=[...transactions].reverse().map(t=>{
     const lOut=t.locOut==='external'?'External':storages.find(x=>x.id===t.locOut)?.name||t.locOut||'—';
     const lIn=t.locIn==='external'?'External':storages.find(x=>x.id===t.locIn)?.name||t.locIn||'—';
     const ds=t.date?new Date(t.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
-    return `<tr>
-      <td><div class="txn-num">${esc(t.num)||'—'}</div>${t.desc?`<div class="txn-desc">${esc(t.desc.substring(0,60))}${t.desc.length>60?'…':''}</div>`:''}</td>
-      <td><span class="type-badge type-${t.type}">${TXN_TYPES[t.type]||t.type}</span></td>
-      <td><span class="txn-loc"><b>${esc(lOut)}</b><span class="txn-arrow">→</span><b>${esc(lIn)}</b></span></td>
-      <td class="txn-date">${ds}</td>
-      <td><div class="txn-actions">
-        <button class="btn btn-sm" onclick="openEditTxnModal('${t.id}')" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-        <button class="btn btn-sm btn-danger" onclick="openDeleteModal('${t.id}','txn')" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
-      </div></td>
-    </tr>`;
+    return `<tr><td><div class="txn-num">${esc(t.num)||'—'}</div>${t.desc?`<div class="txn-desc">${esc(t.desc.substring(0,60))}${t.desc.length>60?'…':''}</div>`:''}</td><td><span class="type-badge type-${t.type}">${TXN_TYPES[t.type]||t.type}</span></td><td><span class="txn-loc"><b>${esc(lOut)}</b><span class="txn-arrow">→</span><b>${esc(lIn)}</b></span></td><td class="txn-date">${ds}</td><td><div class="txn-actions"><button class="btn btn-sm" onclick="openEditTxnModal('${t.id}')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button><button class="btn btn-sm btn-danger" onclick="openDeleteModal('${t.id}','txn')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button></div></td></tr>`;
   }).join('');
   wrap.innerHTML=`<table class="txn-table"><thead><tr><th>Transaction</th><th>Type</th><th>Movement</th><th>Date</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
 }
-function populateLocSelects(){
-  const opts=storages.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
-  document.getElementById('t-loc-out').innerHTML=`<option value="">— select —</option><option value="external">External / Supplier</option>${opts}`;
-  document.getElementById('t-loc-in').innerHTML=`<option value="">— select —</option><option value="external">External / Customer</option>${opts}`;
-}
-function openAddTxnModal(){
-  editingTxnId=null;
-  document.getElementById('txnModalTitle').textContent='Create transaction';
-  document.getElementById('t-num').value='TXN-'+String(transactions.length+1).padStart(4,'0');
-  document.getElementById('t-date').value=new Date().toISOString().slice(0,10);
-  document.getElementById('t-type').value='receive';
-  document.getElementById('t-desc').value='';
-  populateLocSelects();
-  document.getElementById('txnModal').classList.remove('hidden');
-  document.getElementById('t-num').focus();
-}
-function openEditTxnModal(id){
-  const t=transactions.find(x=>x.id===id); if(!t) return;
-  editingTxnId=id;
-  document.getElementById('txnModalTitle').textContent='Edit transaction';
-  document.getElementById('t-num').value=t.num||'';
-  document.getElementById('t-date').value=t.date||'';
-  document.getElementById('t-type').value=t.type||'receive';
-  document.getElementById('t-desc').value=t.desc||'';
-  populateLocSelects();
-  document.getElementById('t-loc-out').value=t.locOut||'';
-  document.getElementById('t-loc-in').value=t.locIn||'';
-  document.getElementById('txnModal').classList.remove('hidden');
-  document.getElementById('t-num').focus();
-}
+function populateLocSelects(){const opts=storages.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');document.getElementById('t-loc-out').innerHTML=`<option value="">— select —</option><option value="external">External / Supplier</option>${opts}`;document.getElementById('t-loc-in').innerHTML=`<option value="">— select —</option><option value="external">External / Customer</option>${opts}`;}
+function openAddTxnModal(){editingTxnId=null;document.getElementById('txnModalTitle').textContent='Create transaction';document.getElementById('t-num').value='TXN-'+String(transactions.length+1).padStart(4,'0');document.getElementById('t-date').value=new Date().toISOString().slice(0,10);document.getElementById('t-type').value='receive';document.getElementById('t-desc').value='';populateLocSelects();document.getElementById('txnModal').classList.remove('hidden');document.getElementById('t-num').focus();}
+function openEditTxnModal(id){const t=transactions.find(x=>x.id===id);if(!t)return;editingTxnId=id;document.getElementById('txnModalTitle').textContent='Edit transaction';document.getElementById('t-num').value=t.num||'';document.getElementById('t-date').value=t.date||'';document.getElementById('t-type').value=t.type||'receive';document.getElementById('t-desc').value=t.desc||'';populateLocSelects();document.getElementById('t-loc-out').value=t.locOut||'';document.getElementById('t-loc-in').value=t.locIn||'';document.getElementById('txnModal').classList.remove('hidden');document.getElementById('t-num').focus();}
 function closeTxnModal(){document.getElementById('txnModal').classList.add('hidden')}
-function saveTxn(){
-  const num=document.getElementById('t-num').value.trim();
-  if(!num){document.getElementById('t-num').focus();return;}
-  const data={id:editingTxnId||('txn_'+Date.now()),num,date:document.getElementById('t-date').value,type:document.getElementById('t-type').value,locOut:document.getElementById('t-loc-out').value,locIn:document.getElementById('t-loc-in').value,desc:document.getElementById('t-desc').value.trim()};
-  if(editingTxnId){const i=transactions.findIndex(x=>x.id===editingTxnId);transactions[i]=data;}else transactions.push(data);
-  saveTxns(); closeTxnModal(); renderTransactions();
-}
+function saveTxn(){const num=document.getElementById('t-num').value.trim();if(!num){document.getElementById('t-num').focus();return;}const data={id:editingTxnId||('txn_'+Date.now()),num,date:document.getElementById('t-date').value,type:document.getElementById('t-type').value,locOut:document.getElementById('t-loc-out').value,locIn:document.getElementById('t-loc-in').value,desc:document.getElementById('t-desc').value.trim()};if(editingTxnId){const i=transactions.findIndex(x=>x.id===editingTxnId);transactions[i]=data;}else transactions.push(data);saveTxns();closeTxnModal();renderTransactions();}
 
-/* ===== SHARED DELETE ===== */
+/* ===== DELETE ===== */
 function openDeleteModal(id,kind){
-  deletingId=id; deletingKind=kind;
-  if(kind==='txn'){
-    const t=transactions.find(x=>x.id===id);
-    document.getElementById('deleteTitle').textContent='Delete this transaction?';
-    document.getElementById('deleteMsg').textContent=`Transaction ${t?.num||''} will be permanently removed.`;
-  } else if(kind==='user'){
-    const u=users.find(x=>x.id===id);
-    document.getElementById('deleteTitle').textContent='Remove this user?';
-    document.getElementById('deleteMsg').textContent=`${u?.name||'This user'} will lose all access to Plant Console.`;
-  } else {
-    document.getElementById('deleteTitle').textContent='Remove this location?';
-    document.getElementById('deleteMsg').textContent='Transactions referencing this location will still be kept.';
-  }
+  deletingId=id;deletingKind=kind;
+  if(kind==='txn'){const t=transactions.find(x=>x.id===id);document.getElementById('deleteTitle').textContent='Delete this transaction?';document.getElementById('deleteMsg').textContent=`Transaction ${t?.num||''} will be permanently removed.`;}
+  else if(kind==='user'){const u=users.find(x=>x.id===id);document.getElementById('deleteTitle').textContent='Remove this user?';document.getElementById('deleteMsg').textContent=`${u?.name||'This user'} will lose all access to Plant Console.`;}
+  else{document.getElementById('deleteTitle').textContent='Remove this location?';document.getElementById('deleteMsg').textContent='Transactions referencing this location will still be kept.';}
   document.getElementById('deleteModal').classList.remove('hidden');
 }
-function closeDeleteModal(){document.getElementById('deleteModal').classList.add('hidden');deletingId=null;deletingKind=null}
+function closeDeleteModal(){document.getElementById('deleteModal').classList.add('hidden');deletingId=null;deletingKind=null;}
 function confirmDelete(){
   if(deletingKind==='txn'){transactions=transactions.filter(x=>x.id!==deletingId);saveTxns();closeDeleteModal();renderTransactions();}
   else if(deletingKind==='user'){users=users.filter(x=>x.id!==deletingId);saveUsers();closeDeleteModal();renderUserList();}
   else{storages=storages.filter(x=>x.id!==deletingId);saveStorages();closeDeleteModal();renderStorageList();}
 }
 
-['storageModal','txnModal','userModal','deleteModal'].forEach(id=>{
+['storageModal','txnModal','userModal','profileModal','deleteModal'].forEach(id=>{
   document.getElementById(id).addEventListener('click',e=>{
-    if(e.target===e.currentTarget){
-      if(id==='storageModal') closeStorageModal();
-      else if(id==='txnModal') closeTxnModal();
-      else if(id==='userModal') closeUserModal();
-      else closeDeleteModal();
-    }
+    if(e.target!==e.currentTarget)return;
+    if(id==='storageModal')closeStorageModal();
+    else if(id==='txnModal')closeTxnModal();
+    else if(id==='userModal')closeUserModal();
+    else if(id==='profileModal')closeProfileModal();
+    else closeDeleteModal();
   });
 });
 
-select('items');
+// Focus login on load
+window.addEventListener('load',()=>document.getElementById('loginEmail').focus());
+
 function tick(){
   const d=new Date();
   document.getElementById('time').textContent=d.toLocaleTimeString('en-US',{hour12:false});
   document.getElementById('date').textContent=d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
 }
-tick(); setInterval(tick,1000);
+tick();setInterval(tick,1000);
 </script>
 </body>
 </html>

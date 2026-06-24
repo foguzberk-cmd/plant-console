@@ -10,8 +10,8 @@ const CLIENT_ID = 'ABaDfcxMMeAaUHHtYONpvC2GJlVdE5SAfRhB0xHnN4EAfqZFhi';
 const CLIENT_SECRET = '7Ijp0nOfoxWxNf199PgpyHfBuCXfQ8nGhMTxSlze';
 
 // In-memory token store (persists while server is running)
-let accessToken = process.env.QB_ACCESS_TOKEN || '';
-let refreshToken = process.env.QB_REFRESH_TOKEN || 'RT1-73-H0-1790971810xrxelnls1051ngjsixxu';
+let accessToken = process.env.QB_ACCESS_TOKEN || 'eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2IiwieC5vcmciOiJIMCJ9..zBDlB5CfSoKxeUJLP7GU5Q.jdQicG2GWCElowlU_0m6lboB93Xojn99i2wv7Byd5z8BhBRbgW-cdLdFRW-r56CuAmaqOI_5gpt_nEBuOQMeZpg-Lqk4MjVflKGfd-1-PBMfoMEquAUEwB-96nkbH4I4I3Z126SY2kIPspcZs4iKvO4w3KpprbhouYJcOP2Rj3P4bQVZ_zxTGICdb1krNVDnGQfmhMakg4KXB3AsEXzDNkANpiZwvp9QMhxWCFxgI1BvvLicW1UDIK7rHpEkywr5k0dWIFhMDUIAi0ydAd15BzK3ugSeHUs62S9vMBZIrXVOWeAZ0u5_JHybipLYUl9OUdNpgcD4bLKtEQNuCfYRmgCkmUGJ8quMhMHewjWHlBzS-pkNCetaHzXrYSX1qnsxMpcxX9v5yiSW81-wwHdIb1f4FdveBrbU8BzpAKzi1dsyIh43kWdIo-Ks9Iyc2YAJM803I0sjC5JFFvaDw4JLmBFnCmjjiBLXystv-MHy-4k.wUtPUSC-s--tWL-bbzOIfQ';
+let refreshToken = process.env.QB_REFRESH_TOKEN || 'RT1-99-H0-1791043472ito2ow47kjunqymdqf7w';
 
 function httpsRequest(options, body) {
   return new Promise((resolve, reject) => {

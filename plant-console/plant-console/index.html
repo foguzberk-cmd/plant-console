@@ -626,15 +626,18 @@ async function qbFetchItems(retry){
   var base=window.location.origin;
   var resp = await fetch(base+'/api/qb/items');
 
-  if(!resp.ok){
-    if(status)status.textContent='Sync error '+resp.status+' — check server logs.';
-    if(btn)btn.disabled=false;
-    return;
-  }
+  var data;
+  try { data=await resp.json(); } catch(e){ data={}; }
 
-  var data=await resp.json();
-  if(data.error){
-    if(status)status.textContent='QB Error: '+data.error;
+  if(!resp.ok || data.error){
+    if(data.needsReconnect || resp.status===401){
+      if(status)status.innerHTML='QuickBooks connection expired. <a href="/connect" style="color:var(--cold);font-weight:700">Click here to reconnect</a>';
+      if(btn)btn.disabled=false;
+      // show a prominent reconnect button
+      showReconnectButton();
+      return;
+    }
+    if(status)status.textContent='Sync error: '+(data.error||resp.status);
     if(btn)btn.disabled=false;
     return;
   }
@@ -664,6 +667,23 @@ async function qbFetchItems(retry){
   if(status)status.textContent='Synced '+qbItems.length+' items ('+added+' new, '+updated+' updated)';
   if(btn)btn.disabled=false;
   renderItemsTable();
+}
+
+function showReconnectButton(){
+  var toolbar=document.getElementById('qbSyncBtn');
+  if(!toolbar) return;
+  if(document.getElementById('qbReconnectBtn')) return;
+  var btn=document.createElement('button');
+  btn.id='qbReconnectBtn';
+  btn.className='btn btn-primary';
+  btn.style.cssText='background:#0f6e40;border-color:#0f6e40';
+  btn.onclick=function(){window.location.href='/connect';};
+  btn.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg> Reconnect QuickBooks';
+  toolbar.parentElement.insertBefore(btn, toolbar);
+}
+
+function connectQuickBooks(){
+  window.location.href='/connect';
 }
 
 /* ===== LOGIN ===== */

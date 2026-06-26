@@ -242,6 +242,8 @@
   .type-return{background:rgba(200,140,0,.12);color:#8a5a00}
   .type-adjustment{background:rgba(136,135,128,.12);color:#5f5e5a}
   .type-opening{background:rgba(158,43,37,.12);color:var(--brand);font-weight:700}
+  .dots-btn{background:none;border:none;cursor:pointer;padding:6px;border-radius:6px;display:inline-grid;place-items:center;transition:background .14s}
+  .dots-btn:hover{background:var(--bg)}
   .item-search-wrap{position:relative}
   .item-search-input{width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;font-family:var(--sans)}
   .item-search-input:focus{border-color:var(--cold)}
@@ -546,7 +548,7 @@ let storages=JSON.parse(localStorage.getItem('pc_storages')||'[]');
 let transactions=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
 let users=JSON.parse(localStorage.getItem('pc_users')||'[]');
 let currentUser=null;
-let editingStorageId=null,editingTxnId=null,editingUserId=null;
+let editingStorageId=null,editingTxnId=null,editingUserId=null,editingDocId=null;
 let deletingId=null,deletingKind=null;
 
 // Always repair/seed default admin so login always works
@@ -1179,32 +1181,131 @@ function renderTransactions(){
     <div class="txn-table-wrap" id="txnTableWrap"></div>`;
   renderTxnTable();
 }
+function txnValue(t){
+  if(!t.itemId) return 0;
+  var fi=items.find(function(x){return x.id===t.itemId;});
+  if(!fi) return 0;
+  var qty=t.qty!==undefined&&t.qty!==''?Number(t.qty):0;
+  return qty*Number(fi.price||0);
+}
+
 function renderTxnTable(){
   const wrap=document.getElementById('txnTableWrap');if(!wrap)return;
   if(!transactions.length){wrap.innerHTML=`<div class="txn-empty"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3l4 4-4 4"/><path d="M21 7H7"/><path d="M7 21l-4-4 4-4"/><path d="M3 17h14"/></svg><p>No transactions yet. Click <strong>Create transaction</strong> to log the first movement.</p></div>`;return;}
-  const rows=[...transactions].reverse().map(t=>{
-    const lOut=t.locOut==='external'?'External':storages.find(x=>x.id===t.locOut)?.name||t.locOut||'—';
-    const lIn=t.locIn==='external'?'External':storages.find(x=>x.id===t.locIn)?.name||t.locIn||'—';
-    const ds=t.date?new Date(t.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
-    var itemName=''; var itemPrice=0;
-    if(t.itemId){var fi=items.find(function(x){return x.id===t.itemId;});if(fi){itemName=fi.name;itemPrice=Number(fi.price||0);}}
-    var qtyNum=t.qty!==undefined&&t.qty!==''?Number(t.qty):null;
-    var qtyCell=qtyNum!==null?qtyNum.toFixed(2)+' '+(t.unit||''):'—';
-    var value=qtyNum!==null&&itemPrice>0?'$'+(qtyNum*itemPrice).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'—';
-    var tid=t.id;
-    return '<tr>'
-      +'<td class="txn-date" style="white-space:nowrap;min-width:110px">'+ds+'</td>'
-      +'<td><div class="txn-num">'+esc(t.num||'—')+'</div>'+(itemName?'<div class="txn-desc">'+esc(itemName)+'</div>':t.desc?'<div class="txn-desc">'+esc(t.desc.substring(0,50))+'</div>':'')+'</td>'
-      +'<td><span class="type-badge type-'+t.type+'">'+(TXN_TYPES[t.type]||t.type)+'</span></td>'
-      +'<td style="font-family:var(--mono);font-size:12px;font-weight:600;text-align:right">'+qtyCell+'</td>'
-      +'<td style="font-family:var(--mono);font-size:12px;font-weight:700;text-align:right;color:var(--cold)">'+value+'</td>'
-      +'<td><span class="txn-loc"><b>'+esc(lOut)+'</b><span class="txn-arrow">&#8594;</span><b>'+esc(lIn)+'</b></span></td>'
-      +'<td><div class="txn-actions">'
-      +'<button class="btn btn-sm" onclick="openEditTxnModal(this.dataset.id)" data-id="'+tid+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>'
-      +'<button class="btn btn-sm btn-danger" onclick="openDeleteModal(this.dataset.id,&quot;txn&quot;)" data-id="'+tid+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>'
-      +'</div></td></tr>';
+
+  // Group transactions: opening counts grouped by docId, others standalone
+  var groups=[];
+  var docMap={};
+  transactions.forEach(function(t){
+    if(t.type==='opening'&&t.docId){
+      if(!docMap[t.docId]){docMap[t.docId]={isDoc:true,docId:t.docId,num:t.num,date:t.date,time:t.time,type:'opening',desc:t.desc,lines:[]};groups.push(docMap[t.docId]);}
+      docMap[t.docId].lines.push(t);
+    } else {
+      groups.push({isDoc:false,txn:t});
+    }
+  });
+  groups.reverse();
+
+  var rows=groups.map(function(g){
+    if(g.isDoc){
+      var ds=g.date?new Date(g.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
+      if(g.time) ds+=' '+g.time;
+      var total=g.lines.reduce(function(sum,t){return sum+txnValue(t);},0);
+      var valStr=total>0?'$'+total.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'—';
+      var itemCount=g.lines.length;
+      return '<tr>'
+        +'<td class="txn-date" style="white-space:nowrap;min-width:110px">'+ds+'</td>'
+        +'<td><div class="txn-num">'+esc(g.num||'—')+'</div><div class="txn-desc">'+itemCount+' item'+(itemCount!==1?'s':'')+(g.desc&&g.desc!=='Opening count'?' · '+esc(g.desc):'')+'</div></td>'
+        +'<td><span class="type-badge type-opening">Opening Count</span></td>'
+        +'<td style="font-family:var(--mono);font-size:12px;font-weight:700;text-align:right;color:var(--cold)">'+valStr+'</td>'
+        +'<td style="text-align:right;position:relative">'
+        +'<button class="dots-btn" onclick="toggleTxnMenu(event,this.dataset.doc)" data-doc="'+g.docId+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;stroke:var(--muted)"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>'
+        +'</td></tr>';
+    } else {
+      var t=g.txn;
+      var lOut=t.locOut==='external'?'External':storages.find(function(x){return x.id===t.locOut;})?storages.find(function(x){return x.id===t.locOut;}).name:(t.locOut||'—');
+      var lIn=t.locIn==='external'?'External':storages.find(function(x){return x.id===t.locIn;})?storages.find(function(x){return x.id===t.locIn;}).name:(t.locIn||'—');
+      var ds=t.date?new Date(t.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
+      if(t.time) ds+=' '+t.time;
+      var val=txnValue(t);
+      var valStr=val>0?'$'+val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'—';
+      return '<tr>'
+        +'<td class="txn-date" style="white-space:nowrap;min-width:110px">'+ds+'</td>'
+        +'<td><div class="txn-num">'+esc(t.num||'—')+'</div>'+(t.desc?'<div class="txn-desc">'+esc(t.desc.substring(0,50))+'</div>':'')+'</td>'
+        +'<td><span class="type-badge type-'+t.type+'">'+(TXN_TYPES[t.type]||t.type)+'</span></td>'
+        +'<td style="font-family:var(--mono);font-size:12px;font-weight:700;text-align:right;color:var(--cold)">'+valStr+'</td>'
+        +'<td style="text-align:right;position:relative">'
+        +'<button class="dots-btn" onclick="toggleTxnMenu(event,this.dataset.txn)" data-txn="'+t.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;stroke:var(--muted)"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>'
+        +'</td></tr>';
+    }
   }).join('');
-  wrap.innerHTML='<table class="txn-table"><thead><tr><th>Date</th><th>Transaction</th><th>Type</th><th style="text-align:right">Quantity</th><th style="text-align:right">Value</th><th>Movement</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
+  wrap.innerHTML='<table class="txn-table"><thead><tr><th>Date</th><th>Transaction</th><th>Type</th><th style="text-align:right">Value</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
+}
+
+function toggleTxnMenu(e,id){
+  e.stopPropagation();
+  closeAllTxnMenus();
+  var isDoc=e.currentTarget.dataset.doc!==undefined;
+  var rect=e.currentTarget.getBoundingClientRect();
+  var menu=document.createElement('div');
+  menu.className='txn-menu';
+  menu.style.cssText='position:fixed;top:'+(rect.bottom+4)+'px;left:'+(rect.left-120)+'px;background:var(--panel);border:1.5px solid var(--line);border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.18);z-index:9999;min-width:150px;overflow:hidden';
+  menu.innerHTML=''
+    +'<button onclick="editFromMenu(\''+id+'\','+isDoc+')" style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 16px;border:none;background:none;cursor:pointer;font-family:var(--sans);font-size:13px;color:var(--ink);text-align:left"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;stroke:currentColor"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Edit</button>'
+    +'<button onclick="deleteFromMenu(\''+id+'\','+isDoc+')" style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 16px;border:none;border-top:1px solid var(--line);background:none;cursor:pointer;font-family:var(--sans);font-size:13px;color:var(--brand-bright);text-align:left"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;stroke:currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Delete</button>';
+  document.body.appendChild(menu);
+}
+
+function closeAllTxnMenus(){
+  document.querySelectorAll('.txn-menu').forEach(function(el){el.remove();});
+}
+
+function editFromMenu(id,isDoc){
+  closeAllTxnMenus();
+  if(isDoc) openEditOpeningDoc(id);
+  else openEditTxnModal(id);
+}
+
+function deleteFromMenu(id,isDoc){
+  closeAllTxnMenus();
+  if(isDoc){
+    deletingId=id;deletingKind='doc';
+    document.getElementById('deleteTitle').textContent='Delete this opening count?';
+    document.getElementById('deleteMsg').textContent='All items in this opening count document will be removed.';
+    document.getElementById('deleteModal').classList.remove('hidden');
+  } else {
+    openDeleteModal(id,'txn');
+  }
+}
+
+function openEditOpeningDoc(docId){
+  var lines=transactions.filter(function(t){return t.docId===docId;});
+  if(!lines.length) return;
+  editingDocId=docId;
+  editingTxnId=null;
+  var first=lines[0];
+  document.getElementById('txnModalTitle').textContent='Edit Opening Count';
+  document.getElementById('t-num').value=first.num||'';
+  document.getElementById('t-date').value=first.date||'';
+  document.getElementById('t-time').value=first.time||'';
+  document.getElementById('t-type').value='opening';
+  document.getElementById('t-desc').value=(first.desc&&first.desc!=='Opening count')?first.desc:'';
+  populateLocSelects();
+  onTxnTypeChange();
+  // clear and rebuild item lines
+  document.getElementById('ocLines').innerHTML='';
+  document.querySelectorAll('.item-suggestions').forEach(function(el){el.remove();});
+  ocLineIndex=0;
+  lines.forEach(function(ln){
+    addOCLine();
+    var idx=ocLineIndex-1;
+    var it=items.find(function(x){return x.id===ln.itemId;});
+    document.getElementById('oc-item-'+idx).value=ln.itemId;
+    document.getElementById('oc-search-'+idx).value=it?it.name:'';
+    document.getElementById('oc-qty-'+idx).value=ln.qty;
+    document.getElementById('oc-unit-'+idx).value=ln.unit||'lbs';
+  });
+  document.getElementById('txnModal').classList.remove('hidden');
 }
 function populateLocSelects(){const opts=storages.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');document.getElementById('t-loc-out').innerHTML=`<option value="">— select —</option><option value="external">External / Supplier</option>${opts}`;document.getElementById('t-loc-in').innerHTML=`<option value="">— select —</option><option value="external">External / Customer</option>${opts}`;}
 function onTxnTypeChange(){
@@ -1220,7 +1321,7 @@ function onTxnTypeChange(){
 }
 
 function openAddTxnModal(){
-  editingTxnId=null;
+  editingTxnId=null;editingDocId=null;
   document.getElementById('txnModalTitle').textContent='Create transaction';
   document.getElementById('t-num').value='TXN-'+String(transactions.length+1).padStart(4,'0');
   document.getElementById('t-date').value=new Date().toISOString().slice(0,10);
@@ -1267,6 +1368,9 @@ function saveTxnOrOpening(){
     var date=document.getElementById('t-date').value;
     var notes=document.getElementById('t-desc').value.trim();
     if(!num){document.getElementById('t-num').focus();return;}
+    var docId=editingDocId||('doc_'+Date.now());
+    // If editing, remove old lines for this doc
+    if(editingDocId){transactions=transactions.filter(function(t){return t.docId!==editingDocId;});}
     var lines=document.getElementById('ocLines').children;
     var saved=0;
     for(var i=0;i<lines.length;i++){
@@ -1275,13 +1379,14 @@ function saveTxnOrOpening(){
       var qty=document.getElementById('oc-qty-'+lineId)?document.getElementById('oc-qty-'+lineId).value:'';
       var unit=document.getElementById('oc-unit-'+lineId)?document.getElementById('oc-unit-'+lineId).value:'lbs';
       if(!itemId||qty==='') continue;
-      var txn={id:'txn_'+Date.now()+'_'+i,num:num+(lines.length>1?'-'+(saved+1):''),date:date,time:document.getElementById('t-time').value,type:'opening',itemId:itemId,qty:qty,unit:unit,locOut:'',locIn:'',desc:notes||'Opening count'};
+      var txn={id:'txn_'+Date.now()+'_'+i,docId:docId,num:num,lineNum:saved+1,date:date,time:document.getElementById('t-time').value,type:'opening',itemId:itemId,qty:qty,unit:unit,locOut:'',locIn:'',desc:notes||'Opening count'};
       transactions.push(txn);
       var idx=items.findIndex(function(x){return x.id===itemId;});
       if(idx>=0){items[idx].qty=Number(qty);items[idx].openingDate=date;localStorage.setItem('pc_items',JSON.stringify(items));}
       saved++;
     }
     if(saved===0){alert('Please add at least one item with a quantity.');return;}
+    editingDocId=null;
     saveTxns();closeTxnModal();renderTransactions();
     return;
   }
@@ -1316,7 +1421,8 @@ function openDeleteModal(id,kind){
 }
 function closeDeleteModal(){document.getElementById('deleteModal').classList.add('hidden');deletingId=null;deletingKind=null;}
 function confirmDelete(){
-  if(deletingKind==='txn'){transactions=transactions.filter(x=>x.id!==deletingId);saveTxns();closeDeleteModal();renderTransactions();}
+  if(deletingKind==='doc'){transactions=transactions.filter(function(x){return x.docId!==deletingId;});saveTxns();closeDeleteModal();renderTransactions();}
+  else if(deletingKind==='txn'){transactions=transactions.filter(x=>x.id!==deletingId);saveTxns();closeDeleteModal();renderTransactions();}
   else if(deletingKind==='user'){users=users.filter(x=>x.id!==deletingId);saveUsers();closeDeleteModal();renderUserList();}
   else{storages=storages.filter(x=>x.id!==deletingId);saveStorages();closeDeleteModal();renderStorageList();}
 }
@@ -1336,8 +1442,9 @@ function confirmDelete(){
 // Close item suggestions when clicking outside
 document.addEventListener('click', function(e){
   document.querySelectorAll('.item-suggestions').forEach(function(el){
-    if(!el.parentElement.contains(e.target)) el.style.display='none';
+    if(el.parentElement&&!el.parentElement.contains(e.target)) el.style.display='none';
   });
+  if(!e.target.closest('.dots-btn')&&!e.target.closest('.txn-menu')) closeAllTxnMenus();
 });
 
 // Focus login on load

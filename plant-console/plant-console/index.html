@@ -659,6 +659,7 @@ async function qbFetchItems(retry){
       price: qi.UnitPrice||0,
       cost: qi.PurchaseCost||0,
       qty: qi.QtyOnHand||0,
+      qbQty: qi.QtyOnHand||0,
       active: qi.Active!==false,
       qbSynced: new Date().toISOString()
     };
@@ -687,6 +688,98 @@ function showReconnectButton(){
 
 function connectQuickBooks(){
   window.location.href='/connect';
+}
+
+// Pull Bills, Invoices, Sales Receipts, Credit Memos and turn them into transactions
+async function qbFetchDocuments(){
+  var btn=document.getElementById('qbDocsBtn');
+  var status=document.getElementById('qbStatus');
+  if(btn){btn.disabled=true;}
+  if(status)status.textContent='Syncing bills & sales from QuickBooks...';
+
+  var base=window.location.origin;
+  var resp;
+  try { resp=await fetch(base+'/api/qb/documents'); }
+  catch(e){ if(status)status.textContent='Network error reaching server.'; if(btn)btn.disabled=false; return; }
+
+  var data;
+  try { data=await resp.json(); } catch(e){ data={}; }
+
+  if(!resp.ok || data.error){
+    if(data.needsReconnect||resp.status===401){
+      if(status)status.innerHTML='QuickBooks connection expired. <a href="/connect" style="color:var(--cold);font-weight:700">Click here to reconnect</a>';
+      showReconnectButton();
+    } else {
+      if(status)status.textContent='Sync error: '+(data.error||resp.status);
+    }
+    if(btn)btn.disabled=false;
+    return;
+  }
+
+  // Build a lookup from QB item Id -> our local item
+  var byQbId={};
+  items.forEach(function(it){ if(it.qbId) byQbId[it.qbId]=it; });
+
+  // Map each QB doc type to a transaction type and direction
+  // Bill = purchase IN (receive). Invoice & SalesReceipt = sold OUT (shipment). CreditMemo = returned IN (return).
+  var docConfig=[
+    {key:'Bill', txnType:'receive', sign:1, numPrefix:'BILL'},
+    {key:'Invoice', txnType:'shipment', sign:-1, numPrefix:'INV'},
+    {key:'SalesReceipt', txnType:'shipment', sign:-1, numPrefix:'SR'},
+    {key:'CreditMemo', txnType:'return', sign:1, numPrefix:'CM'}
+  ];
+
+  // Remove previously-synced QB docs so re-syncing doesn't double-count
+  transactions=transactions.filter(function(t){ return !t.qbDoc; });
+
+  var added=0;
+  var skippedNoItem=0;
+
+  docConfig.forEach(function(cfg){
+    var docs=data[cfg.key]||[];
+    docs.forEach(function(doc){
+      var lines=doc.Line||[];
+      lines.forEach(function(line,li){
+        // Only item-based lines carry inventory movement
+        var detail=line.SalesItemLineDetail||line.ItemBasedExpenseLineDetail;
+        if(!detail||!detail.ItemRef) return;
+        var qbItemId=detail.ItemRef.value;
+        var local=byQbId[qbItemId];
+        if(!local){ skippedNoItem++; return; }
+        var qty=Number(detail.Qty||0);
+        if(!qty) return;
+        var unitPrice=Number(detail.UnitPrice|| (line.Amount&&qty?line.Amount/qty:0) ||0);
+        var docDate=doc.TxnDate||'';
+        var docNum=doc.DocNumber||doc.Id;
+        transactions.push({
+          id:'qb_'+cfg.key+'_'+doc.Id+'_'+li,
+          qbDoc:true,
+          qbDocType:cfg.key,
+          num:cfg.numPrefix+'-'+docNum,
+          date:docDate,
+          type:cfg.txnType,
+          itemId:local.id,
+          qty:qty,
+          unit:'',
+          unitPrice:unitPrice,
+          locOut: cfg.sign<0 ? (local.locationId||'') : '',
+          locIn: cfg.sign>0 ? (local.locationId||'') : '',
+          desc:cfg.key+' '+docNum+(doc.VendorRef?(' · '+(doc.VendorRef.name||'')):'')+(doc.CustomerRef?(' · '+(doc.CustomerRef.name||'')):'')
+        });
+        added++;
+      });
+    });
+  });
+
+  saveTxns();
+
+  // Now recalc all quantities from the full transaction history
+  recalcQuantities();
+
+  var counts=docConfig.map(function(c){return (data[c.key]||[]).length+' '+c.key.toLowerCase()+'s';}).join(', ');
+  if(status)status.textContent='Synced '+added+' line items from QuickBooks ('+counts+'). Quantities recalculated.';
+  if(btn)btn.disabled=false;
+  renderItemsTable();
 }
 
 /* ===== LOGIN ===== */
@@ -763,14 +856,13 @@ function select(id){
 
 /* ===== ITEMS ===== */
 function recalcQuantities(){
-  // Rebuild every item's quantity from the full transaction history
-  // Opening count = sets baseline (sum of all opening lines per item)
-  // receive/return/production = adds; shipment = subtracts; adjustment/transfer = sets
+  // Rebuild every item's quantity from the full transaction history.
+  // Baseline = opening count if one exists, otherwise the item's QuickBooks QtyOnHand.
+  // receive/return/production = adds; shipment = subtracts.
   var openingByItem={};
   var deltaByItem={};
   var allTxns=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
 
-  // Sort by date so we process in order
   allTxns.forEach(function(t){
     if(!t.itemId) return;
     var q=Number(t.qty||0);
@@ -789,12 +881,14 @@ function recalcQuantities(){
   var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
   var changed=0;
   allItems.forEach(function(it){
-    if(openingByItem[it.id]!==undefined){
-      var base=openingByItem[it.id];
-      var delta=deltaByItem[it.id]||0;
-      it.qty=base+delta;
-      changed++;
-    }
+    var hasOpening=openingByItem[it.id]!==undefined;
+    var hasDelta=deltaByItem[it.id]!==undefined;
+    if(!hasOpening&&!hasDelta) return; // nothing moved this item, leave as-is
+    // baseline: opening count if set, else current QB quantity
+    var base=hasOpening?openingByItem[it.id]:Number(it.qbQty!==undefined?it.qbQty:it.qty||0);
+    var delta=deltaByItem[it.id]||0;
+    it.qty=base+delta;
+    changed++;
   });
   localStorage.setItem('pc_items',JSON.stringify(allItems));
   items=allItems;
@@ -814,6 +908,10 @@ function renderItemsView(){
         <button class="btn" onclick="recalcQuantities()">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/></svg>
           Recalculate
+        </button>
+        <button id="qbDocsBtn" class="btn" onclick="qbFetchDocuments()">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+          Sync Bills &amp; Sales
         </button>
         <button id="qbSyncBtn" class="btn btn-primary" onclick="qbFetchItems(false)">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>

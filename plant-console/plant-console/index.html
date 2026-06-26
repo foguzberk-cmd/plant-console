@@ -409,6 +409,9 @@
       <div class="form-group"><label>Description / Notes</label><textarea id="t-desc" placeholder="Product details, lot numbers, weight, supplier…"></textarea></div>
       <div id="t-opening-section" style="display:none">
         <div style="border-top:1px solid var(--line);margin:14px 0 12px"></div>
+        <div class="form-group"><label>Storage location</label>
+          <select id="t-oc-location"><option value="">— select location —</option></select>
+        </div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
           <span style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)">Items on hand</span>
           <button class="btn btn-sm" onclick="addOCLine()">
@@ -1504,6 +1507,7 @@ function openEditOpeningDoc(docId){
   document.getElementById('t-desc').value=(first.desc&&first.desc!=='Opening count')?first.desc:'';
   populateLocSelects();
   onTxnTypeChange();
+  if(document.getElementById('t-oc-location')) document.getElementById('t-oc-location').value=first.locIn||'';
   // clear and rebuild item lines
   document.getElementById('ocLines').innerHTML='';
   document.querySelectorAll('.item-suggestions').forEach(function(el){el.remove();});
@@ -1528,9 +1532,21 @@ function onTxnTypeChange(){
   if(locRow) locRow.style.display=type==='opening'?'none':'grid';
   if(openSec) openSec.style.display=type==='opening'?'block':'none';
   if(type==='opening'){
+    populateOCLocation();
     var ocLines=document.getElementById('ocLines');
     if(ocLines&&ocLines.children.length===0) addOCLine();
   }
+}
+
+function populateOCLocation(){
+  var sel=document.getElementById('t-oc-location');
+  if(!sel) return;
+  var current=sel.value;
+  var opts='<option value="">— select location —</option>'+storages.map(function(s){
+    return '<option value="'+s.id+'">'+esc(s.name)+'</option>';
+  }).join('');
+  sel.innerHTML=opts;
+  if(current) sel.value=current;
 }
 
 function openAddTxnModal(){
@@ -1582,6 +1598,7 @@ function saveTxnOrOpening(){
     var notes=document.getElementById('t-desc').value.trim();
     if(!num){document.getElementById('t-num').focus();return;}
     var docId=editingDocId||('doc_'+Date.now());
+    var ocLocation=document.getElementById('t-oc-location')?document.getElementById('t-oc-location').value:'';
     // If editing, remove old lines for this doc
     if(editingDocId){transactions=transactions.filter(function(t){return t.docId!==editingDocId;});}
     var lines=document.getElementById('ocLines').children;
@@ -1594,17 +1611,17 @@ function saveTxnOrOpening(){
       var unit=document.getElementById('oc-unit-'+lineId)?document.getElementById('oc-unit-'+lineId).value:'lbs';
       if(!itemId||qty==='') continue;
       var price=document.getElementById('oc-price-'+lineId)?document.getElementById('oc-price-'+lineId).value:'';
-      var txn={id:'txn_'+Date.now()+'_'+i,docId:docId,num:num,lineNum:saved+1,date:date,time:document.getElementById('t-time').value,type:'opening',itemId:itemId,qty:qty,unit:unit,unitPrice:price,locOut:'',locIn:'',desc:notes||'Opening count'};
+      var txn={id:'txn_'+Date.now()+'_'+i,docId:docId,num:num,lineNum:saved+1,date:date,time:document.getElementById('t-time').value,type:'opening',itemId:itemId,qty:qty,unit:unit,unitPrice:price,locOut:'',locIn:ocLocation,desc:notes||'Opening count'};
       transactions.push(txn);
       // accumulate totals per item instead of overwriting
       if(itemTotals[itemId]===undefined) itemTotals[itemId]=0;
       itemTotals[itemId]+=Number(qty);
       saved++;
     }
-    // apply summed totals to each item
+    // apply summed totals to each item, and assign the storage location
     Object.keys(itemTotals).forEach(function(itemId){
       var idx=items.findIndex(function(x){return x.id===itemId;});
-      if(idx>=0){items[idx].qty=itemTotals[itemId];items[idx].openingDate=date;}
+      if(idx>=0){items[idx].qty=itemTotals[itemId];items[idx].openingDate=date;if(ocLocation)items[idx].locationId=ocLocation;}
     });
     localStorage.setItem('pc_items',JSON.stringify(items));
     if(saved===0){alert('Please add at least one item with a quantity.');return;}

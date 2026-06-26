@@ -619,34 +619,57 @@ async function qbRefreshAccessToken(){
   return false;
 }
 
-async function qbFetchItems(retry){
+// === UNIFIED SYNC: items + bills/sales + recalc, in one click ===
+async function syncEverything(){
   var btn=document.getElementById('qbSyncBtn');
   var status=document.getElementById('qbStatus');
   if(btn)btn.disabled=true;
-  if(status)status.textContent='Syncing from QuickBooks...';
 
-  // Use local proxy to avoid CORS
-  var base=window.location.origin;
-  var resp = await fetch(base+'/api/qb/items');
-
-  var data;
-  try { data=await resp.json(); } catch(e){ data={}; }
-
-  if(!resp.ok || data.error){
-    if(data.needsReconnect || resp.status===401){
+  // 1. Sync items
+  if(status)status.textContent='Step 1/3 — syncing items from QuickBooks…';
+  var itemsResult=await qbSyncItemsCore();
+  if(!itemsResult.ok){
+    if(itemsResult.needsReconnect){
       if(status)status.innerHTML='QuickBooks connection expired. <a href="/connect" style="color:var(--cold);font-weight:700">Click here to reconnect</a>';
-      if(btn)btn.disabled=false;
-      // show a prominent reconnect button
       showReconnectButton();
-      return;
-    }
-    if(status)status.textContent='Sync error: '+(data.error||resp.status);
+    } else if(status){status.textContent='Sync error (items): '+itemsResult.error;}
     if(btn)btn.disabled=false;
     return;
   }
-  var qbItems=(data.QueryResponse&&data.QueryResponse.Item)||[];
-  var added=0, updated=0;
 
+  // 2. Sync bills & sales (only movements on/after each item's opening count)
+  if(status)status.textContent='Step 2/3 — syncing bills, invoices & credit memos…';
+  var docsResult=await qbSyncDocumentsCore();
+  if(!docsResult.ok){
+    if(docsResult.needsReconnect){
+      if(status)status.innerHTML='QuickBooks connection expired. <a href="/connect" style="color:var(--cold);font-weight:700">Click here to reconnect</a>';
+      showReconnectButton();
+    } else if(status){status.textContent='Sync error (documents): '+docsResult.error;}
+    if(btn)btn.disabled=false;
+    return;
+  }
+
+  // 3. Recalculate quantities
+  if(status)status.textContent='Step 3/3 — recalculating quantities…';
+  recalcQuantities();
+
+  if(status)status.textContent='Sync complete — '+itemsResult.count+' items, '+docsResult.added+' movements applied'+(docsResult.skippedBeforeOpening?(' ('+docsResult.skippedBeforeOpening+' skipped before opening count)'):'')+'.';
+  if(btn)btn.disabled=false;
+  renderItemsTable();
+}
+
+// Core item sync — returns {ok, count, error, needsReconnect}
+async function qbSyncItemsCore(){
+  var base=window.location.origin;
+  var resp;
+  try { resp=await fetch(base+'/api/qb/items'); }
+  catch(e){ return {ok:false,error:'network error'}; }
+  var data;
+  try { data=await resp.json(); } catch(e){ data={}; }
+  if(!resp.ok || data.error){
+    return {ok:false, error:(data.error||resp.status), needsReconnect:(data.needsReconnect||resp.status===401)};
+  }
+  var qbItems=(data.QueryResponse&&data.QueryResponse.Item)||[];
   qbItems.forEach(function(qi){
     var existing=items.findIndex(function(x){return x.qbId===qi.Id});
     var mapped={
@@ -661,16 +684,19 @@ async function qbFetchItems(retry){
       qty: qi.QtyOnHand||0,
       qbQty: qi.QtyOnHand||0,
       active: qi.Active!==false,
-      qbSynced: new Date().toISOString()
+      qbSynced: new Date().toISOString(),
+      locationId: existing>=0 ? items[existing].locationId : undefined,
+      openingDate: existing>=0 ? items[existing].openingDate : undefined
     };
-    if(existing>=0){ items[existing]=mapped; updated++; }
-    else{ items.push(mapped); added++; }
+    if(existing>=0){ items[existing]=mapped; } else { items.push(mapped); }
   });
-
   localStorage.setItem('pc_items', JSON.stringify(items));
-  if(status)status.textContent='Synced '+qbItems.length+' items ('+added+' new, '+updated+' updated)';
-  if(btn)btn.disabled=false;
-  renderItemsTable();
+  return {ok:true, count:qbItems.length};
+}
+
+async function qbFetchItems(retry){
+  // kept for compatibility — now routes through unified sync
+  return syncEverything();
 }
 
 function showReconnectButton(){
@@ -690,35 +716,29 @@ function connectQuickBooks(){
   window.location.href='/connect';
 }
 
-// Pull Bills, Invoices, Sales Receipts, Credit Memos and turn them into transactions
-async function qbFetchDocuments(){
-  var btn=document.getElementById('qbDocsBtn');
-  var status=document.getElementById('qbStatus');
-  if(btn){btn.disabled=true;}
-  if(status)status.textContent='Syncing bills & sales from QuickBooks...';
-
+// Core document sync — returns {ok, added, skippedBeforeOpening, error, needsReconnect}
+async function qbSyncDocumentsCore(){
   var base=window.location.origin;
   var resp;
   try { resp=await fetch(base+'/api/qb/documents'); }
-  catch(e){ if(status)status.textContent='Network error reaching server.'; if(btn)btn.disabled=false; return; }
-
+  catch(e){ return {ok:false, error:'network error'}; }
   var data;
   try { data=await resp.json(); } catch(e){ data={}; }
-
   if(!resp.ok || data.error){
-    if(data.needsReconnect||resp.status===401){
-      if(status)status.innerHTML='QuickBooks connection expired. <a href="/connect" style="color:var(--cold);font-weight:700">Click here to reconnect</a>';
-      showReconnectButton();
-    } else {
-      if(status)status.textContent='Sync error: '+(data.error||resp.status);
-    }
-    if(btn)btn.disabled=false;
-    return;
+    return {ok:false, error:(data.error||resp.status), needsReconnect:(data.needsReconnect||resp.status===401)};
   }
 
   // Build a lookup from QB item Id -> our local item
   var byQbId={};
   items.forEach(function(it){ if(it.qbId) byQbId[it.qbId]=it; });
+
+  // Per-item earliest opening-count date — only movements on/after this count
+  var openDateByItem={};
+  transactions.forEach(function(t){
+    if(t.type==='opening'&&t.itemId&&t.date){
+      if(!openDateByItem[t.itemId]||t.date<openDateByItem[t.itemId]) openDateByItem[t.itemId]=t.date;
+    }
+  });
 
   // Map each QB doc type to a transaction type and direction
   // Bill = purchase IN (receive). Invoice & SalesReceipt = sold OUT (shipment). CreditMemo = returned IN (return).
@@ -734,6 +754,7 @@ async function qbFetchDocuments(){
 
   var added=0;
   var skippedNoItem=0;
+  var skippedBeforeOpening=0;
 
   docConfig.forEach(function(cfg){
     var docs=data[cfg.key]||[];
@@ -748,8 +769,11 @@ async function qbFetchDocuments(){
         if(!local){ skippedNoItem++; return; }
         var qty=Number(detail.Qty||0);
         if(!qty) return;
-        var unitPrice=Number(detail.UnitPrice|| (line.Amount&&qty?line.Amount/qty:0) ||0);
         var docDate=doc.TxnDate||'';
+        // Skip movements dated before this item's opening count
+        var openDate=openDateByItem[local.id];
+        if(openDate&&docDate&&docDate<openDate){ skippedBeforeOpening++; return; }
+        var unitPrice=Number(detail.UnitPrice|| (line.Amount&&qty?line.Amount/qty:0) ||0);
         var docNum=doc.DocNumber||doc.Id;
         transactions.push({
           id:'qb_'+cfg.key+'_'+doc.Id+'_'+li,
@@ -773,13 +797,7 @@ async function qbFetchDocuments(){
 
   saveTxns();
 
-  // Now recalc all quantities from the full transaction history
-  recalcQuantities();
-
-  var counts=docConfig.map(function(c){return (data[c.key]||[]).length+' '+c.key.toLowerCase()+'s';}).join(', ');
-  if(status)status.textContent='Synced '+added+' line items from QuickBooks ('+counts+'). Quantities recalculated.';
-  if(btn)btn.disabled=false;
-  renderItemsTable();
+  return {ok:true, added:added, skippedBeforeOpening:skippedBeforeOpening, skippedNoItem:skippedNoItem};
 }
 
 /* ===== LOGIN ===== */
@@ -905,15 +923,7 @@ function renderItemsView(){
     <div class="txn-toolbar">
       <span id="qbStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted)">${items.length} item${items.length!==1?'s':''} on file</span>
       <div style="display:flex;gap:8px">
-        <button class="btn" onclick="recalcQuantities()">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/></svg>
-          Recalculate
-        </button>
-        <button id="qbDocsBtn" class="btn" onclick="qbFetchDocuments()">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
-          Sync Bills &amp; Sales
-        </button>
-        <button id="qbSyncBtn" class="btn btn-primary" onclick="qbFetchItems(false)">
+        <button id="qbSyncBtn" class="btn btn-primary" onclick="syncEverything()">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           Sync from QuickBooks
         </button>

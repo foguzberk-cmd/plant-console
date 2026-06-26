@@ -686,25 +686,120 @@ function renderItemsView(){
         Sync from QuickBooks
       </button>
     </div>
-    <div class="txn-table-wrap" id="itemsTableWrap"></div>`;
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;align-items:center">
+      <div style="display:flex;align-items:center;gap:8px;background:var(--panel);border:1.5px solid var(--line);border-radius:8px;padding:7px 14px">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;stroke:var(--muted)"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="itemSearch" type="text" placeholder="Search by name or SKU…" oninput="renderItemsTable()" style="border:none;background:transparent;outline:none;font-family:var(--mono);font-size:12px;width:180px;color:var(--ink)"/>
+      </div>
+      <select id="itemLocFilter" onchange="renderItemsTable()" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);outline:none">
+        <option value="">All locations</option>
+        <option value="__none__">No location assigned</option>
+      </select>
+      <label style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--ink);cursor:pointer;background:var(--panel);border:1.5px solid var(--line);border-radius:8px;padding:7px 14px">
+        <input type="checkbox" id="hideZero" onchange="renderItemsTable()" style="width:14px;height:14px;accent-color:var(--cold)"/>
+        Hide zero quantity
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--cold);cursor:pointer;background:var(--cold-soft);border:1.5px solid var(--cold);border-radius:8px;padding:7px 14px">
+        <input type="checkbox" id="showZeroOnly" onchange="renderItemsTable()" style="width:14px;height:14px;accent-color:var(--cold)"/>
+        Zero qty only
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--ink);cursor:pointer;background:var(--panel);border:1.5px solid var(--line);border-radius:8px;padding:7px 14px">
+        <input type="checkbox" id="groupByLoc" onchange="renderItemsTable()" style="width:14px;height:14px;accent-color:var(--cold)"/>
+        Group by location
+      </label>
+    </div>
+    <div id="itemsTableWrap"></div>`;
+  populateLocFilter();
   renderItemsTable();
+}
+
+function populateLocFilter(){
+  var sel=document.getElementById('itemLocFilter'); if(!sel) return;
+  var base='<option value="">All locations</option><option value="__none__">No location assigned</option>';
+  var opts=storages.map(function(s){return '<option value="'+s.id+'">'+esc(s.name)+'</option>';}).join('');
+  sel.innerHTML=base+opts;
+}
+
+function itemRow(it){
+  var qtyColor=Number(it.qty||0)===0?'color:#c23b33':'color:var(--ink)';
+  return '<tr>'
+    +'<td style="font-family:var(--mono);font-size:12px;color:var(--cold)">'+esc(it.sku||'—')+'</td>'
+    +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
+    +'<td style="font-family:var(--mono);font-size:13px;text-align:right;'+qtyColor+'">'+Number(it.qty||0).toFixed(2)+'</td>'
+    +'<td style="font-family:var(--mono);font-size:13px;text-align:right">$'+Number(it.price||0).toFixed(2)+'</td>'
+    +'</tr>';
+}
+
+function itemsTable(list){
+  if(!list.length) return '<div style="padding:28px 24px;text-align:center;color:var(--muted);font-size:13px">No items match the current filters.</div>';
+  return '<table class="txn-table"><thead><tr><th>SKU</th><th>Product Name</th><th style="text-align:right">Quantity</th><th style="text-align:right">Cost</th></tr></thead><tbody>'+list.map(itemRow).join('')+'</tbody></table>';
 }
 
 function renderItemsTable(){
   var wrap=document.getElementById('itemsTableWrap'); if(!wrap) return;
   if(!items.length){
-    wrap.innerHTML=`<div class="txn-empty"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4v10l-9 4-9-4V7z"/><path d="M3 7l9 4 9-4M12 11v10"/></svg><p>No items yet. Click <strong>Sync from QuickBooks</strong> to import your inventory.</p></div>`;
+    wrap.innerHTML='<div class="txn-empty"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4v10l-9 4-9-4V7z"/><path d="M3 7l9 4 9-4M12 11v10"/></svg><p>No items yet. Click <strong>Sync from QuickBooks</strong> to import your inventory.</p></div>';
     return;
   }
-  var rows=items.map(function(it){
-    return '<tr>'
-      +'<td style="font-family:var(--mono);font-size:12px;color:var(--cold)">'+esc(it.sku||'—')+'</td>'
-      +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
-      +'<td style="font-family:var(--mono);font-size:13px;text-align:right">'+Number(it.qty||0).toFixed(2)+'</td>'
-      +'<td style="font-family:var(--mono);font-size:13px;text-align:right">$'+Number(it.price||0).toFixed(2)+'</td>'
-      +'</tr>';
-  }).join('');
-  wrap.innerHTML='<table class="txn-table"><thead><tr><th>SKU</th><th>Product Name</th><th style="text-align:right">Quantity</th><th style="text-align:right">Cost</th></tr></thead><tbody>'+rows+'</tbody></table>';
+
+  var search=(document.getElementById('itemSearch')?.value||'').toLowerCase().trim();
+  var locFilter=document.getElementById('itemLocFilter')?.value||'';
+  var hideZero=document.getElementById('hideZero')?.checked||false;
+  var showZeroOnly=document.getElementById('showZeroOnly')?.checked||false;
+  var groupByLoc=document.getElementById('groupByLoc')?.checked||false;
+
+  // sync checkboxes so they don't conflict
+  if(hideZero&&showZeroOnly){
+    var last=event&&event.target?event.target.id:'';
+    if(last==='hideZero') document.getElementById('showZeroOnly').checked=false, showZeroOnly=false;
+    else document.getElementById('hideZero').checked=false, hideZero=false;
+  }
+
+  var filtered=items.filter(function(it){
+    var qty=Number(it.qty||0);
+    if(hideZero&&qty===0) return false;
+    if(showZeroOnly&&qty!==0) return false;
+    if(locFilter==='__none__'&&it.locationId) return false;
+    if(locFilter&&locFilter!=='__none__'&&it.locationId!==locFilter) return false;
+    if(search&&!(it.name.toLowerCase().includes(search)||(it.sku||'').toLowerCase().includes(search))) return false;
+    return true;
+  });
+
+  // Update status count
+  var status=document.getElementById('qbStatus');
+  if(status) status.textContent=filtered.length+' of '+items.length+' item'+(items.length!==1?'s':'');
+
+  if(!groupByLoc){
+    wrap.innerHTML='<div class="txn-table-wrap">'+itemsTable(filtered)+'</div>';
+    return;
+  }
+
+  // Group by storage location
+  var groups={};
+  filtered.forEach(function(it){
+    var key=it.locationId||'__none__';
+    if(!groups[key]) groups[key]=[];
+    groups[key].push(it);
+  });
+
+  var html='';
+  // Named locations first
+  storages.forEach(function(s){
+    if(!groups[s.id]) return;
+    html+='<div style="margin-bottom:28px">'
+      +'<div style="font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--cold);padding:10px 0 8px;border-bottom:2px solid var(--cold-soft);margin-bottom:0;display:flex;align-items:center;gap:8px">'
+      +'<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;stroke:var(--cold)"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>'
+      +esc(s.name)+' <span style="color:var(--muted);font-weight:400">('+groups[s.id].length+' item'+(groups[s.id].length!==1?'s':'')+')</span></div>'
+      +'<div class="txn-table-wrap">'+itemsTable(groups[s.id])+'</div></div>';
+  });
+  // Unassigned
+  if(groups['__none__']){
+    html+='<div style="margin-bottom:28px">'
+      +'<div style="font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);padding:10px 0 8px;border-bottom:2px solid var(--line);margin-bottom:0">'
+      +'No location assigned <span style="font-weight:400">('+groups['__none__'].length+' item'+(groups['__none__'].length!==1?'s':'')+')</span></div>'
+      +'<div class="txn-table-wrap">'+itemsTable(groups['__none__'])+'</div></div>';
+  }
+  wrap.innerHTML=html||'<div style="padding:28px;text-align:center;color:var(--muted);font-size:13px">No items match the current filters.</div>';
 }
 
 /* ===== SETTINGS ===== */

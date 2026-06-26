@@ -408,11 +408,14 @@
       <div class="form-group"><label>Description / Notes</label><textarea id="t-desc" placeholder="Product details, lot numbers, weight, supplier…"></textarea></div>
       <div id="t-opening-section" style="display:none">
         <div style="border-top:1px solid var(--line);margin:14px 0 12px"></div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
           <span style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)">Items on hand</span>
           <button class="btn btn-sm" onclick="addOCLine()">
             <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add item
           </button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 80px 70px 90px 30px;gap:6px;margin-bottom:6px;font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">
+          <span>Product</span><span style="text-align:right">Qty</span><span>Unit</span><span style="text-align:right">Unit Price</span><span></span>
         </div>
         <div id="ocLines" style="display:flex;flex-direction:column;gap:8px;max-height:260px;overflow-y:auto"></div>
         <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px" id="ocLineCount">0 items</div>
@@ -881,17 +884,18 @@ function addOCLine(){
   var idx=ocLineIndex++;
   var line=document.createElement('div');
   line.id='oc-line-'+idx;
-  line.style.cssText='display:grid;grid-template-columns:1fr 100px 90px 36px;gap:8px;align-items:start';
+  line.style.cssText='display:grid;grid-template-columns:1fr 80px 70px 90px 30px;gap:6px;align-items:start';
   line.innerHTML=''
     +'<div class="item-search-wrap">'
-    +'<input type="text" id="oc-search-'+idx+'" class="item-search-input" placeholder="Type to search product..." autocomplete="off" oninput="filterOCItems('+idx+')" onkeydown="ocKeyNav(event,'+idx+')" onblur="hideOCSugg('+idx+')"/>'
+    +'<input type="text" id="oc-search-'+idx+'" class="item-search-input" placeholder="Search product..." autocomplete="off" oninput="filterOCItems('+idx+')" onkeydown="ocKeyNav(event,'+idx+')" onblur="hideOCSugg('+idx+')"/>'
     +'<input type="hidden" id="oc-item-'+idx+'" value=""/>'
     +'</div>'
-    +'<input type="number" id="oc-qty-'+idx+'" placeholder="Qty" min="0" step="0.01" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;text-align:right;width:100%"/>'
-    +'<select id="oc-unit-'+idx+'" style="padding:8px 6px;border:1.5px solid var(--line);border-radius:8px;font-size:12px;background:var(--bg);color:var(--ink);outline:none;width:100%">'
-    +'<option value="lbs">lbs</option><option value="pieces">pieces</option><option value="boxes">boxes</option><option value="cases">cases</option><option value="kg">kg</option></select>'
-    +'<button onclick="removeOCLine('+idx+')" style="width:32px;height:32px;border:1.5px solid var(--line);border-radius:8px;background:var(--bg);cursor:pointer;display:grid;place-items:center;color:var(--muted)" title="Remove">'
-    +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;stroke:currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
+    +'<input type="number" id="oc-qty-'+idx+'" placeholder="Qty" min="0" step="0.01" style="padding:8px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;text-align:right;width:100%"/>'
+    +'<select id="oc-unit-'+idx+'" style="padding:8px 4px;border:1.5px solid var(--line);border-radius:8px;font-size:11px;background:var(--bg);color:var(--ink);outline:none;width:100%">'
+    +'<option value="lbs">lbs</option><option value="pieces">pcs</option><option value="boxes">box</option><option value="cases">case</option><option value="kg">kg</option></select>'
+    +'<div style="position:relative"><span style="position:absolute;left:7px;top:8px;font-size:13px;color:var(--muted)">$</span><input type="number" id="oc-price-'+idx+'" placeholder="0.00" min="0" step="0.01" style="padding:8px 6px 8px 16px;border:1.5px solid var(--line);border-radius:8px;font-size:12px;background:var(--bg);color:var(--ink);outline:none;text-align:right;width:100%"/></div>'
+    +'<button onclick="removeOCLine('+idx+')" style="width:30px;height:32px;border:1.5px solid var(--line);border-radius:8px;background:var(--bg);cursor:pointer;display:grid;place-items:center;color:var(--muted)" title="Remove">'
+    +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
   document.getElementById('ocLines').appendChild(line);
   // Append suggestion div to body to avoid modal overflow clipping
   var suggDiv=document.createElement('div');
@@ -950,6 +954,9 @@ function selectOCItem(idx,el){
   document.getElementById('oc-search-'+idx).value=name;
   document.getElementById('oc-sugg-'+idx).style.display='none';
   document.getElementById('oc-search-'+idx).style.borderColor='var(--cold)';
+  // auto-fill suggested unit price from QuickBooks cost
+  var priceEl=document.getElementById('oc-price-'+idx);
+  if(it&&priceEl&&!priceEl.value){priceEl.value=Number(it.price||0).toFixed(2);}
   setTimeout(function(){document.getElementById('oc-qty-'+idx).focus();},50);
 }
 
@@ -1182,11 +1189,11 @@ function renderTransactions(){
   renderTxnTable();
 }
 function txnValue(t){
-  if(!t.itemId) return 0;
-  var fi=items.find(function(x){return x.id===t.itemId;});
-  if(!fi) return 0;
   var qty=t.qty!==undefined&&t.qty!==''?Number(t.qty):0;
-  return qty*Number(fi.price||0);
+  var price=0;
+  if(t.unitPrice!==undefined&&t.unitPrice!=='') price=Number(t.unitPrice);
+  else if(t.itemId){var fi=items.find(function(x){return x.id===t.itemId;});if(fi)price=Number(fi.price||0);}
+  return qty*price;
 }
 
 function renderTxnTable(){
@@ -1304,6 +1311,7 @@ function openEditOpeningDoc(docId){
     document.getElementById('oc-search-'+idx).value=it?it.name:'';
     document.getElementById('oc-qty-'+idx).value=ln.qty;
     document.getElementById('oc-unit-'+idx).value=ln.unit||'lbs';
+    if(document.getElementById('oc-price-'+idx)) document.getElementById('oc-price-'+idx).value=ln.unitPrice||'';
   });
   document.getElementById('txnModal').classList.remove('hidden');
 }
@@ -1379,7 +1387,8 @@ function saveTxnOrOpening(){
       var qty=document.getElementById('oc-qty-'+lineId)?document.getElementById('oc-qty-'+lineId).value:'';
       var unit=document.getElementById('oc-unit-'+lineId)?document.getElementById('oc-unit-'+lineId).value:'lbs';
       if(!itemId||qty==='') continue;
-      var txn={id:'txn_'+Date.now()+'_'+i,docId:docId,num:num,lineNum:saved+1,date:date,time:document.getElementById('t-time').value,type:'opening',itemId:itemId,qty:qty,unit:unit,locOut:'',locIn:'',desc:notes||'Opening count'};
+      var price=document.getElementById('oc-price-'+lineId)?document.getElementById('oc-price-'+lineId).value:'';
+      var txn={id:'txn_'+Date.now()+'_'+i,docId:docId,num:num,lineNum:saved+1,date:date,time:document.getElementById('t-time').value,type:'opening',itemId:itemId,qty:qty,unit:unit,unitPrice:price,locOut:'',locIn:'',desc:notes||'Opening count'};
       transactions.push(txn);
       var idx=items.findIndex(function(x){return x.id===itemId;});
       if(idx>=0){items[idx].qty=Number(qty);items[idx].openingDate=date;localStorage.setItem('pc_items',JSON.stringify(items));}

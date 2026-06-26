@@ -241,6 +241,7 @@
   .type-shipment{background:rgba(100,70,180,.12);color:#4a35a0}
   .type-return{background:rgba(200,140,0,.12);color:#8a5a00}
   .type-adjustment{background:rgba(136,135,128,.12);color:#5f5e5a}
+  .type-opening{background:rgba(158,43,37,.12);color:var(--brand);font-weight:700}
   .txn-date{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
   .txn-actions{display:flex;gap:6px;justify-content:flex-end}
   .txn-empty{padding:52px 24px;text-align:center;color:var(--muted)}
@@ -378,6 +379,7 @@
       </div>
       <div class="form-group"><label>Transaction type</label>
         <select id="t-type">
+          <option value="opening">Opening Count — set initial quantity on hand</option>
           <option value="receive">Receive — product coming in from supplier</option>
           <option value="transfer">Transfer — move between internal locations</option>
           <option value="production">Production — raw to processed product</option>
@@ -967,7 +969,7 @@ function saveUser(){
 }
 
 /* ===== TRANSACTIONS ===== */
-const TXN_TYPES={receive:'Receive',transfer:'Transfer',production:'Production',shipment:'Shipment',return:'Return',adjustment:'Adjustment'};
+const TXN_TYPES={opening:'Opening Count',receive:'Receive',transfer:'Transfer',production:'Production',shipment:'Shipment',return:'Return',adjustment:'Adjustment'};
 function renderTransactions(){
   const s=SECTIONS.find(x=>x.id==='transactions');
   view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p>
@@ -1008,7 +1010,7 @@ function openAddTxnModal(){
   document.getElementById('txnModalTitle').textContent='Create transaction';
   document.getElementById('t-num').value='TXN-'+String(transactions.length+1).padStart(4,'0');
   document.getElementById('t-date').value=new Date().toISOString().slice(0,10);
-  document.getElementById('t-type').value='receive';
+  document.getElementById('t-type').value='opening';
   document.getElementById('t-desc').value='';
   document.getElementById('t-qty').value='';
   document.getElementById('t-unit').value='lbs';
@@ -1058,17 +1060,15 @@ function saveTxn(){
     var idx=items.findIndex(function(x){return x.id===itemId;});
     if(idx>=0){
       var newQty=Number(qty);
-      var type=data.type;
-      if(type==='receive'||type==='return'||type==='production'){
-        items[idx].qty=newQty;
-      } else if(type==='shipment'||type==='adjustment'){
-        items[idx].qty=newQty;
-      } else if(type==='transfer'){
-        items[idx].qty=newQty;
-        if(data.locIn) items[idx].locationId=data.locIn;
+      // All types set the quantity directly (opening count sets the baseline)
+      items[idx].qty=newQty;
+      if(data.type==='transfer'&&data.locIn&&data.locIn!=='external'){
+        items[idx].locationId=data.locIn;
+      } else if(data.locIn&&data.locIn!=='external'){
+        items[idx].locationId=data.locIn;
       }
-      // assign location
-      if(data.locIn&&data.locIn!=='external') items[idx].locationId=data.locIn;
+      // Mark opening count date
+      if(data.type==='opening') items[idx].openingDate=data.date;
       localStorage.setItem('pc_items',JSON.stringify(items));
     }
   }

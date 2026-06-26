@@ -120,6 +120,57 @@ async function fetchQBItems(retry) {
   return { QueryResponse: { Item: allItems, maxResults: allItems.length } };
 }
 
+// Generic paginated query for any QB entity (Bill, Invoice, SalesReceipt, CreditMemo)
+async function fetchQBEntityPage(entity, startPosition, retry) {
+  const query = `SELECT * FROM ${entity} STARTPOSITION ${startPosition} MAXRESULTS 1000`;
+  const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
+  const res = await httpsRequest({
+    hostname: 'quickbooks.api.intuit.com',
+    path: reqPath,
+    method: 'GET',
+    headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/json' }
+  });
+  if (res.status === 401 && !retry) {
+    const ok = await refreshAccessToken();
+    if (ok) return fetchQBEntityPage(entity, startPosition, true);
+    throw new Error('NEEDS_RECONNECT');
+  }
+  if (res.status !== 200) throw new Error('QB API error ' + res.status + ' on ' + entity + ': ' + res.body);
+  return JSON.parse(res.body);
+}
+
+async function fetchQBEntity(entity) {
+  let all = [];
+  let start = 1;
+  const pageSize = 1000;
+  while (true) {
+    const data = await fetchQBEntityPage(entity, start, false);
+    const rows = (data.QueryResponse && data.QueryResponse[entity]) || [];
+    all = all.concat(rows);
+    if (rows.length < pageSize) break;
+    start += pageSize;
+    if (start > 20000) break;
+  }
+  return all;
+}
+
+// Fetch all purchase/sales documents that move inventory
+async function fetchQBDocuments() {
+  // Refresh once up front
+  if (!accessToken) await refreshAccessToken();
+  const result = { Bill: [], Invoice: [], SalesReceipt: [], CreditMemo: [], errors: {} };
+  const entities = ['Bill', 'Invoice', 'SalesReceipt', 'CreditMemo'];
+  for (const entity of entities) {
+    try {
+      result[entity] = await fetchQBEntity(entity);
+    } catch (e) {
+      result.errors[entity] = e.message;
+    }
+  }
+  return result;
+}
+
+
 // Diagnostic: run a minimal query and report exactly what QB says
 async function diagnose(retry) {
   // First refresh to guarantee a current access token
@@ -201,6 +252,20 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // QuickBooks documents endpoint — bills, invoices, sales receipts, credit memos
+  if (url === '/api/qb/documents') {
+    try {
+      const data = await fetchQBDocuments();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      const needsReconnect = err.message === 'NEEDS_RECONNECT';
+      res.writeHead(needsReconnect ? 401 : 500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message, needsReconnect: needsReconnect }));
     }
     return;
   }

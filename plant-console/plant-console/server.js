@@ -85,7 +85,7 @@ async function refreshAccessToken() {
 
 async function fetchQBItemsPage(startPosition, retry) {
   const query = `SELECT * FROM Item STARTPOSITION ${startPosition} MAXRESULTS 1000`;
-  const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=65`;
+  const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
   const res = await httpsRequest({
     hostname: 'quickbooks.api.intuit.com',
     path: reqPath,

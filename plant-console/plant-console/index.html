@@ -698,15 +698,13 @@ function renderItemsTable(){
   }
   var rows=items.map(function(it){
     return '<tr>'
-      +'<td><div class="txn-num">'+esc(it.name)+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
-      +'<td><span class="type-badge type-'+(it.type||'adjustment').toLowerCase()+'">'+esc(it.type||'—')+'</span></td>'
-      +'<td style="font-family:var(--mono);font-size:12px">'+esc(it.sku||'—')+'</td>'
-      +'<td style="font-family:var(--mono);font-size:12px">$'+Number(it.price||0).toFixed(2)+'</td>'
-      +'<td style="font-family:var(--mono);font-size:12px">'+Number(it.qty||0).toFixed(2)+'</td>'
-      +'<td><span style="font-family:var(--mono);font-size:10px;padding:3px 8px;border-radius:20px;background:'+(it.active?'rgba(30,140,80,.12)':'rgba(136,135,128,.12)')+';color:'+(it.active?'#0f6e40':'#5f5e5a')+'">'+(it.active?'Active':'Inactive')+'</span></td>'
+      +'<td style="font-family:var(--mono);font-size:12px;color:var(--cold)">'+esc(it.sku||'—')+'</td>'
+      +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
+      +'<td style="font-family:var(--mono);font-size:13px;text-align:right">'+Number(it.qty||0).toFixed(2)+'</td>'
+      +'<td style="font-family:var(--mono);font-size:13px;text-align:right">$'+Number(it.price||0).toFixed(2)+'</td>'
       +'</tr>';
   }).join('');
-  wrap.innerHTML='<table class="txn-table"><thead><tr><th>Name</th><th>Type</th><th>SKU</th><th>Price</th><th>Qty on Hand</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  wrap.innerHTML='<table class="txn-table"><thead><tr><th>SKU</th><th>Product Name</th><th style="text-align:right">Quantity</th><th style="text-align:right">Cost</th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
 /* ===== SETTINGS ===== */

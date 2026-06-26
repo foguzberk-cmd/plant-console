@@ -6,8 +6,8 @@ const querystring = require('querystring');
 
 const PORT = process.env.PORT || 3000;
 const QB_REALM = '9341455286904784';
-const CLIENT_ID = 'ABaDfcxMMeAaUHHtYONpvC2GJlVdE5SAfRhB0xHnN4EAfqZFhi';
-const CLIENT_SECRET = '7Ijp0nOfoxWxNf199PgpyHfBuCXfQ8nGhMTxSlze';
+const CLIENT_ID = 'ABWEkzwkl0wAchmXBFwVmvRGiiYCXihwdcEo8wsyhIWnZW1lKh';
+const CLIENT_SECRET = 'rstNRy7lvgmVE0FRdRYzDNXSo5IXV1B8hpubV54s';
 
 // In-memory token store (persists while server is running)
 let accessToken = process.env.QB_ACCESS_TOKEN || 'eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2IiwieC5vcmciOiJIMCJ9..zBDlB5CfSoKxeUJLP7GU5Q.jdQicG2GWCElowlU_0m6lboB93Xojn99i2wv7Byd5z8BhBRbgW-cdLdFRW-r56CuAmaqOI_5gpt_nEBuOQMeZpg-Lqk4MjVflKGfd-1-PBMfoMEquAUEwB-96nkbH4I4I3Z126SY2kIPspcZs4iKvO4w3KpprbhouYJcOP2Rj3P4bQVZ_zxTGICdb1krNVDnGQfmhMakg4KXB3AsEXzDNkANpiZwvp9QMhxWCFxgI1BvvLicW1UDIK7rHpEkywr5k0dWIFhMDUIAi0ydAd15BzK3ugSeHUs62S9vMBZIrXVOWeAZ0u5_JHybipLYUl9OUdNpgcD4bLKtEQNuCfYRmgCkmUGJ8quMhMHewjWHlBzS-pkNCetaHzXrYSX1qnsxMpcxX9v5yiSW81-wwHdIb1f4FdveBrbU8BzpAKzi1dsyIh43kWdIo-Ks9Iyc2YAJM803I0sjC5JFFvaDw4JLmBFnCmjjiBLXystv-MHy-4k.wUtPUSC-s--tWL-bbzOIfQ';

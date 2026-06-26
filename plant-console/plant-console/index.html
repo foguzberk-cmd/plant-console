@@ -245,7 +245,7 @@
   .item-search-wrap{position:relative}
   .item-search-input{width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;font-family:var(--sans)}
   .item-search-input:focus{border-color:var(--cold)}
-  .item-suggestions{position:absolute;top:100%;left:0;right:0;background:var(--panel);border:1.5px solid var(--cold);border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,.12);z-index:200;max-height:200px;overflow-y:auto;margin-top:3px}
+  .item-suggestions{position:fixed;background:var(--panel);border:1.5px solid var(--cold);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.18);z-index:9999;max-height:220px;overflow-y:auto;margin-top:3px;min-width:280px}
   .item-suggestion{padding:9px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--line)}
   .item-suggestion:last-child{border-bottom:none}
   .item-suggestion:hover,.item-suggestion.active{background:var(--cold-soft)}
@@ -260,7 +260,7 @@
   /* MODALS */
   .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.38);z-index:100;display:flex;align-items:center;justify-content:center}
   .modal-bg.hidden{display:none}
-  .modal{background:var(--panel);border-radius:16px;padding:30px 28px;width:100%;max-width:500px;box-shadow:0 8px 40px rgba(0,0,0,.18);max-height:92vh;overflow-y:auto}
+  .modal{background:var(--panel);border-radius:16px;padding:30px 28px;width:100%;max-width:500px;box-shadow:0 8px 40px rgba(0,0,0,.18);max-height:92vh;overflow-y:auto;overflow-x:visible}
   .modal h3{font-size:17px;font-weight:700;margin-bottom:4px}
   .modal .sub{color:var(--muted);font-size:13px;margin-bottom:22px}
   .form-group{margin-bottom:16px}
@@ -869,7 +869,11 @@ function openOpeningModal(){
   addOCLine();
 }
 
-function closeOpeningModal(){document.getElementById('openingModal').classList.add('hidden')}
+function closeOpeningModal(){
+  document.getElementById('openingModal').classList.add('hidden');
+  document.querySelectorAll('.item-suggestions').forEach(function(el){el.remove();});
+  ocLineIndex=0;
+}
 
 function addOCLine(){
   var idx=ocLineIndex++;
@@ -878,8 +882,7 @@ function addOCLine(){
   line.style.cssText='display:grid;grid-template-columns:1fr 100px 90px 36px;gap:8px;align-items:start';
   line.innerHTML=''
     +'<div class="item-search-wrap">'
-    +'<input type="text" id="oc-search-'+idx+'" class="item-search-input" placeholder="Type to search product..." autocomplete="off" oninput="filterOCItems('+idx+')" onkeydown="ocKeyNav(event,'+idx+')" data-item-id=""/>'
-    +'<div id="oc-sugg-'+idx+'" class="item-suggestions" style="display:none"></div>'
+    +'<input type="text" id="oc-search-'+idx+'" class="item-search-input" placeholder="Type to search product..." autocomplete="off" oninput="filterOCItems('+idx+')" onkeydown="ocKeyNav(event,'+idx+')" onblur="hideOCSugg('+idx+')"/>'
     +'<input type="hidden" id="oc-item-'+idx+'" value=""/>'
     +'</div>'
     +'<input type="number" id="oc-qty-'+idx+'" placeholder="Qty" min="0" step="0.01" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;text-align:right;width:100%"/>'
@@ -888,11 +891,24 @@ function addOCLine(){
     +'<button onclick="removeOCLine('+idx+')" style="width:32px;height:32px;border:1.5px solid var(--line);border-radius:8px;background:var(--bg);cursor:pointer;display:grid;place-items:center;color:var(--muted)" title="Remove">'
     +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;stroke:currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
   document.getElementById('ocLines').appendChild(line);
+  // Append suggestion div to body to avoid modal overflow clipping
+  var suggDiv=document.createElement('div');
+  suggDiv.id='oc-sugg-'+idx;
+  suggDiv.className='item-suggestions';
+  suggDiv.style.display='none';
+  document.body.appendChild(suggDiv);
   updateOCCount();
   setTimeout(function(){
     var inp=document.getElementById('oc-search-'+idx);
     if(inp) inp.focus();
   },50);
+}
+
+function hideOCSugg(idx){
+  setTimeout(function(){
+    var s=document.getElementById('oc-sugg-'+idx);
+    if(s) s.style.display='none';
+  },200);
 }
 
 function filterOCItems(idx){
@@ -906,8 +922,13 @@ function filterOCItems(idx){
   var matches=allItems.filter(function(it){
     return (it.name||'').toLowerCase().includes(q)||(it.sku||'').toLowerCase().includes(q);
   }).slice(0,12);
+  // Position suggestion box under the input using fixed coords
+  var rect=inp.getBoundingClientRect();
+  sugg.style.left=rect.left+'px';
+  sugg.style.top=(rect.bottom+4)+'px';
+  sugg.style.width=rect.width+'px';
   if(!matches.length){
-    sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted)">No matches found</div>';
+    sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No matches found</div>';
     sugg.style.display='block';
     return;
   }
@@ -946,6 +967,8 @@ function ocKeyNav(e,idx){
 function removeOCLine(idx){
   var el=document.getElementById('oc-line-'+idx);
   if(el) el.remove();
+  var sugg=document.getElementById('oc-sugg-'+idx);
+  if(sugg) sugg.remove();
   updateOCCount();
 }
 
@@ -1229,7 +1252,10 @@ function openEditTxnModal(id){
   document.getElementById('txnModal').classList.remove('hidden');
   document.getElementById('t-num').focus();
 }
-function closeTxnModal(){document.getElementById('txnModal').classList.add('hidden')}
+function closeTxnModal(){
+  document.getElementById('txnModal').classList.add('hidden');
+  document.querySelectorAll('.item-suggestions').forEach(function(el){el.remove();});
+}
 function saveTxnOrOpening(){
   var type=document.getElementById('t-type').value;
   if(type==='opening'){

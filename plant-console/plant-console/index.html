@@ -386,6 +386,26 @@
           <option value="adjustment">Adjustment — inventory correction</option>
         </select>
       </div>
+      <div class="form-group"><label>Product / Item</label>
+        <select id="t-item" onchange="onTxnItemChange()">
+          <option value="">— select item (optional) —</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Starting / Received Quantity</label>
+          <input type="number" id="t-qty" placeholder="e.g. 100" min="0" step="0.01"/>
+        </div>
+        <div class="form-group"><label>Unit</label>
+          <select id="t-unit">
+            <option value="lbs">lbs</option>
+            <option value="pieces">pieces</option>
+            <option value="boxes">boxes</option>
+            <option value="cases">cases</option>
+            <option value="kg">kg</option>
+            <option value="oz">oz</option>
+          </select>
+        </div>
+      </div>
       <div class="form-row">
         <div class="form-group"><label>Location out (from)</label><select id="t-loc-out"></select></div>
         <div class="form-group"><label>Location in (to)</label><select id="t-loc-in"></select></div>
@@ -965,15 +985,95 @@ function renderTxnTable(){
     const lOut=t.locOut==='external'?'External':storages.find(x=>x.id===t.locOut)?.name||t.locOut||'—';
     const lIn=t.locIn==='external'?'External':storages.find(x=>x.id===t.locIn)?.name||t.locIn||'—';
     const ds=t.date?new Date(t.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
-    return `<tr><td><div class="txn-num">${esc(t.num)||'—'}</div>${t.desc?`<div class="txn-desc">${esc(t.desc.substring(0,60))}${t.desc.length>60?'…':''}</div>`:''}</td><td><span class="type-badge type-${t.type}">${TXN_TYPES[t.type]||t.type}</span></td><td><span class="txn-loc"><b>${esc(lOut)}</b><span class="txn-arrow">→</span><b>${esc(lIn)}</b></span></td><td class="txn-date">${ds}</td><td><div class="txn-actions"><button class="btn btn-sm" onclick="openEditTxnModal('${t.id}')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button><button class="btn btn-sm btn-danger" onclick="openDeleteModal('${t.id}','txn')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button></div></td></tr>`;
+    var itemName='';
+    if(t.itemId){var fi=items.find(function(x){return x.id===t.itemId;});if(fi)itemName=fi.name;}
+    return '<tr>'
+      +'<td><div class="txn-num">'+esc(t.num||'—')+'</div>'+(itemName?'<div class="txn-desc">'+esc(itemName)+'</div>':t.desc?'<div class="txn-desc">'+esc(t.desc.substring(0,50))+'</div>':'')+'</td>'
+      +'<td><span class="type-badge type-'+t.type+'">'+(TXN_TYPES[t.type]||t.type)+'</span></td>'
+      +'<td style="font-family:var(--mono);font-size:12px;font-weight:600">'+(t.qty!==undefined&&t.qty!==''?Number(t.qty).toFixed(2)+' '+(t.unit||''):'—')+'</td>'
+      +'<td><span class="txn-loc"><b>'+esc(lOut)+'</b><span class="txn-arrow">→</span><b>'+esc(lIn)+'</b></span></td>'
+      +'<td class="txn-date">'+ds+'</td>'
+      +'<td><div class="txn-actions">'
+      +'<button class="btn btn-sm" onclick="openEditTxnModal(''+t.id+'')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>'
+      +'<button class="btn btn-sm btn-danger" onclick="openDeleteModal(''+t.id+'','txn')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>'
+      +'</div></td></tr>';
   }).join('');
-  wrap.innerHTML=`<table class="txn-table"><thead><tr><th>Transaction</th><th>Type</th><th>Movement</th><th>Date</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  wrap.innerHTML='<table class="txn-table"><thead><tr><th>Transaction</th><th>Type</th><th>Quantity</th><th>Movement</th><th>Date</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 function populateLocSelects(){const opts=storages.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');document.getElementById('t-loc-out').innerHTML=`<option value="">— select —</option><option value="external">External / Supplier</option>${opts}`;document.getElementById('t-loc-in').innerHTML=`<option value="">— select —</option><option value="external">External / Customer</option>${opts}`;}
-function openAddTxnModal(){editingTxnId=null;document.getElementById('txnModalTitle').textContent='Create transaction';document.getElementById('t-num').value='TXN-'+String(transactions.length+1).padStart(4,'0');document.getElementById('t-date').value=new Date().toISOString().slice(0,10);document.getElementById('t-type').value='receive';document.getElementById('t-desc').value='';populateLocSelects();document.getElementById('txnModal').classList.remove('hidden');document.getElementById('t-num').focus();}
-function openEditTxnModal(id){const t=transactions.find(x=>x.id===id);if(!t)return;editingTxnId=id;document.getElementById('txnModalTitle').textContent='Edit transaction';document.getElementById('t-num').value=t.num||'';document.getElementById('t-date').value=t.date||'';document.getElementById('t-type').value=t.type||'receive';document.getElementById('t-desc').value=t.desc||'';populateLocSelects();document.getElementById('t-loc-out').value=t.locOut||'';document.getElementById('t-loc-in').value=t.locIn||'';document.getElementById('txnModal').classList.remove('hidden');document.getElementById('t-num').focus();}
+function openAddTxnModal(){
+  editingTxnId=null;
+  document.getElementById('txnModalTitle').textContent='Create transaction';
+  document.getElementById('t-num').value='TXN-'+String(transactions.length+1).padStart(4,'0');
+  document.getElementById('t-date').value=new Date().toISOString().slice(0,10);
+  document.getElementById('t-type').value='receive';
+  document.getElementById('t-desc').value='';
+  document.getElementById('t-qty').value='';
+  document.getElementById('t-unit').value='lbs';
+  populateLocSelects();
+  document.getElementById('t-loc-in').value='';
+  document.getElementById('t-loc-out').value='external';
+  document.getElementById('txnModal').classList.remove('hidden');
+  document.getElementById('t-num').focus();
+}
+function openEditTxnModal(id){
+  var t=transactions.find(function(x){return x.id===id;});if(!t)return;
+  editingTxnId=id;
+  document.getElementById('txnModalTitle').textContent='Edit transaction';
+  document.getElementById('t-num').value=t.num||'';
+  document.getElementById('t-date').value=t.date||'';
+  document.getElementById('t-type').value=t.type||'receive';
+  document.getElementById('t-desc').value=t.desc||'';
+  document.getElementById('t-qty').value=t.qty||'';
+  document.getElementById('t-unit').value=t.unit||'lbs';
+  populateLocSelects();
+  document.getElementById('t-loc-out').value=t.locOut||'';
+  document.getElementById('t-loc-in').value=t.locIn||'';
+  document.getElementById('t-item').value=t.itemId||'';
+  document.getElementById('txnModal').classList.remove('hidden');
+  document.getElementById('t-num').focus();
+}
 function closeTxnModal(){document.getElementById('txnModal').classList.add('hidden')}
-function saveTxn(){const num=document.getElementById('t-num').value.trim();if(!num){document.getElementById('t-num').focus();return;}const data={id:editingTxnId||('txn_'+Date.now()),num,date:document.getElementById('t-date').value,type:document.getElementById('t-type').value,locOut:document.getElementById('t-loc-out').value,locIn:document.getElementById('t-loc-in').value,desc:document.getElementById('t-desc').value.trim()};if(editingTxnId){const i=transactions.findIndex(x=>x.id===editingTxnId);transactions[i]=data;}else transactions.push(data);saveTxns();closeTxnModal();renderTransactions();}
+function saveTxn(){
+  var num=document.getElementById('t-num').value.trim();
+  if(!num){document.getElementById('t-num').focus();return;}
+  var qty=document.getElementById('t-qty').value;
+  var itemId=document.getElementById('t-item').value;
+  var data={
+    id:editingTxnId||('txn_'+Date.now()),
+    num:num,
+    date:document.getElementById('t-date').value,
+    type:document.getElementById('t-type').value,
+    itemId:itemId,
+    qty:qty,
+    unit:document.getElementById('t-unit').value,
+    locOut:document.getElementById('t-loc-out').value,
+    locIn:document.getElementById('t-loc-in').value,
+    desc:document.getElementById('t-desc').value.trim()
+  };
+  // Update item quantity if item selected and qty provided
+  if(itemId && qty!==''){
+    var idx=items.findIndex(function(x){return x.id===itemId;});
+    if(idx>=0){
+      var newQty=Number(qty);
+      var type=data.type;
+      if(type==='receive'||type==='return'||type==='production'){
+        items[idx].qty=newQty;
+      } else if(type==='shipment'||type==='adjustment'){
+        items[idx].qty=newQty;
+      } else if(type==='transfer'){
+        items[idx].qty=newQty;
+        if(data.locIn) items[idx].locationId=data.locIn;
+      }
+      // assign location
+      if(data.locIn&&data.locIn!=='external') items[idx].locationId=data.locIn;
+      localStorage.setItem('pc_items',JSON.stringify(items));
+    }
+  }
+  if(editingTxnId){var i=transactions.findIndex(function(x){return x.id===editingTxnId;});transactions[i]=data;}
+  else transactions.push(data);
+  saveTxns();closeTxnModal();renderTransactions();
+}
 
 /* ===== DELETE ===== */
 function openDeleteModal(id,kind){

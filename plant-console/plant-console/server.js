@@ -83,8 +83,8 @@ async function refreshAccessToken() {
   return false;
 }
 
-async function fetchQBItems(retry) {
-  const query = 'SELECT * FROM Item MAXRESULTS 1000';
+async function fetchQBItemsPage(startPosition, retry) {
+  const query = `SELECT * FROM Item STARTPOSITION ${startPosition} MAXRESULTS 1000`;
   const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=65`;
   const res = await httpsRequest({
     hostname: 'quickbooks.api.intuit.com',
@@ -97,11 +97,27 @@ async function fetchQBItems(retry) {
   });
   if (res.status === 401 && !retry) {
     const ok = await refreshAccessToken();
-    if (ok) return fetchQBItems(true);
+    if (ok) return fetchQBItemsPage(startPosition, true);
     throw new Error('NEEDS_RECONNECT');
   }
   if (res.status !== 200) throw new Error('QB API error ' + res.status + ': ' + res.body);
   return JSON.parse(res.body);
+}
+
+async function fetchQBItems(retry) {
+  // Paginate through all items using STARTPOSITION (QB is 1-indexed)
+  let allItems = [];
+  let start = 1;
+  const pageSize = 1000;
+  while (true) {
+    const data = await fetchQBItemsPage(start, retry);
+    const items = (data.QueryResponse && data.QueryResponse.Item) || [];
+    allItems = allItems.concat(items);
+    if (items.length < pageSize) break; // last page
+    start += pageSize;
+    if (start > 10000) break; // safety cap
+  }
+  return { QueryResponse: { Item: allItems, maxResults: allItems.length } };
 }
 
 const server = http.createServer(async (req, res) => {

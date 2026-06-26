@@ -379,34 +379,15 @@
       </div>
       <div class="form-group"><label>Transaction type</label>
         <select id="t-type">
-          <option value="receive">Receive — product coming in from supplier</option>
-          <option value="transfer">Transfer — move between internal locations</option>
-          <option value="production">Production — raw to processed product</option>
-          <option value="shipment">Shipment — product leaving the plant</option>
-          <option value="return">Return — product coming back</option>
-          <option value="adjustment">Adjustment — inventory correction</option>
+          <option value="receive">Receive</option>
+          <option value="transfer">Transfer</option>
+          <option value="production">Production</option>
+          <option value="shipment">Shipment</option>
+          <option value="return">Return</option>
+          <option value="adjustment">Adjustment</option>
         </select>
       </div>
-      <div class="form-group"><label>Product / Item</label>
-        <select id="t-item" onchange="onTxnItemChange()">
-          <option value="">— select item (optional) —</option>
-        </select>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label>Starting / Received Quantity</label>
-          <input type="number" id="t-qty" placeholder="e.g. 100" min="0" step="0.01"/>
-        </div>
-        <div class="form-group"><label>Unit</label>
-          <select id="t-unit">
-            <option value="lbs">lbs</option>
-            <option value="pieces">pieces</option>
-            <option value="boxes">boxes</option>
-            <option value="cases">cases</option>
-            <option value="kg">kg</option>
-            <option value="oz">oz</option>
-          </select>
-        </div>
-      </div>
+
       <div class="form-row">
         <div class="form-group"><label>Location out (from)</label><select id="t-loc-out"></select></div>
         <div class="form-group"><label>Location in (to)</label><select id="t-loc-in"></select></div>

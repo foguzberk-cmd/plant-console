@@ -242,6 +242,15 @@
   .type-return{background:rgba(200,140,0,.12);color:#8a5a00}
   .type-adjustment{background:rgba(136,135,128,.12);color:#5f5e5a}
   .type-opening{background:rgba(158,43,37,.12);color:var(--brand);font-weight:700}
+  .item-search-wrap{position:relative}
+  .item-search-input{width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;font-family:var(--sans)}
+  .item-search-input:focus{border-color:var(--cold)}
+  .item-suggestions{position:absolute;top:100%;left:0;right:0;background:var(--panel);border:1.5px solid var(--cold);border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,.12);z-index:200;max-height:200px;overflow-y:auto;margin-top:3px}
+  .item-suggestion{padding:9px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--line)}
+  .item-suggestion:last-child{border-bottom:none}
+  .item-suggestion:hover,.item-suggestion.active{background:var(--cold-soft)}
+  .item-suggestion .sku{font-family:var(--mono);font-size:10px;color:var(--cold);margin-right:6px}
+  .item-suggestion .qty-hint{font-family:var(--mono);font-size:10px;color:var(--muted);float:right}
   .txn-date{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
   .txn-actions{display:flex;gap:6px;justify-content:flex-end}
   .txn-empty{padding:52px 24px;text-align:center;color:var(--muted)}
@@ -863,22 +872,68 @@ function closeOpeningModal(){document.getElementById('openingModal').classList.a
 
 function addOCLine(){
   var idx=ocLineIndex++;
-  var itemOpts='<option value="">— pick item —</option>'+items.map(function(it){
-    return '<option value="'+it.id+'">'+(it.sku?'['+esc(it.sku)+'] ':'')+esc(it.name)+'</option>';
-  }).join('');
   var line=document.createElement('div');
   line.id='oc-line-'+idx;
-  line.style.cssText='display:grid;grid-template-columns:1fr 100px 90px 36px;gap:8px;align-items:center';
+  line.style.cssText='display:grid;grid-template-columns:1fr 100px 90px 36px;gap:8px;align-items:start';
   line.innerHTML=''
-    +'<select id="oc-item-'+idx+'" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none">'+itemOpts+'</select>'
-    +'<input type="number" id="oc-qty-'+idx+'" placeholder="Qty" min="0" step="0.01" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;text-align:right"/>'
-    +'<select id="oc-unit-'+idx+'" style="padding:8px 6px;border:1.5px solid var(--line);border-radius:8px;font-size:12px;background:var(--bg);color:var(--ink);outline:none">'
+    +'<div class="item-search-wrap">'
+    +'<input type="text" id="oc-search-'+idx+'" class="item-search-input" placeholder="Type to search product..." autocomplete="off" oninput="filterOCItems('+idx+')" onkeydown="ocKeyNav(event,'+idx+')" data-item-id=""/>'
+    +'<div id="oc-sugg-'+idx+'" class="item-suggestions" style="display:none"></div>'
+    +'<input type="hidden" id="oc-item-'+idx+'" value=""/>'
+    +'</div>'
+    +'<input type="number" id="oc-qty-'+idx+'" placeholder="Qty" min="0" step="0.01" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;text-align:right;width:100%"/>'
+    +'<select id="oc-unit-'+idx+'" style="padding:8px 6px;border:1.5px solid var(--line);border-radius:8px;font-size:12px;background:var(--bg);color:var(--ink);outline:none;width:100%">'
     +'<option value="lbs">lbs</option><option value="pieces">pieces</option><option value="boxes">boxes</option><option value="cases">cases</option><option value="kg">kg</option></select>'
     +'<button onclick="removeOCLine('+idx+')" style="width:32px;height:32px;border:1.5px solid var(--line);border-radius:8px;background:var(--bg);cursor:pointer;display:grid;place-items:center;color:var(--muted)" title="Remove">'
     +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;stroke:currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
   document.getElementById('ocLines').appendChild(line);
   updateOCCount();
-  document.getElementById('oc-item-'+idx).focus();
+  setTimeout(function(){
+    var inp=document.getElementById('oc-search-'+idx);
+    if(inp) inp.focus();
+  },50);
+}
+
+function filterOCItems(idx){
+  var q=document.getElementById('oc-search-'+idx).value.toLowerCase().trim();
+  var sugg=document.getElementById('oc-sugg-'+idx);
+  document.getElementById('oc-item-'+idx).value=''; // clear selection
+  if(!q){sugg.style.display='none';return;}
+  var matches=items.filter(function(it){
+    return it.name.toLowerCase().includes(q)||(it.sku||'').toLowerCase().includes(q);
+  }).slice(0,10);
+  if(!matches.length){sugg.style.display='none';return;}
+  sugg.innerHTML=matches.map(function(it){
+    var safeName=it.name.replace(/\\/g,'').replace(/"/g,'&quot;');
+    return '<div class="item-suggestion" data-id="'+it.id+'" onmousedown="selectOCItem('+idx+',this)">'
+      +(it.sku?'<span class="sku">'+esc(it.sku)+'</span>':'')+esc(it.name)
+      +'<span class="qty-hint">'+Number(it.qty||0).toFixed(0)+' on hand</span></div>';
+  }).join('');
+  sugg.style.display='block';
+}
+
+function selectOCItem(idx,el){
+  var id=el.dataset.id;
+  var it=items.find(function(x){return x.id===id;});
+  var name=it?it.name:'';
+  document.getElementById('oc-item-'+idx).value=id;
+  document.getElementById('oc-search-'+idx).value=name;
+  document.getElementById('oc-sugg-'+idx).style.display='none';
+  document.getElementById('oc-search-'+idx).style.borderColor='var(--cold)';
+  setTimeout(function(){document.getElementById('oc-qty-'+idx).focus();},50);
+}
+
+function ocKeyNav(e,idx){
+  var sugg=document.getElementById('oc-sugg-'+idx);
+  if(sugg.style.display==='none') return;
+  var items2=sugg.querySelectorAll('.item-suggestion');
+  var active=sugg.querySelector('.item-suggestion.active');
+  var activeIdx=-1;
+  items2.forEach(function(el,i){if(el===active)activeIdx=i;});
+  if(e.key==='ArrowDown'){e.preventDefault();var next=activeIdx<items2.length-1?activeIdx+1:0;items2.forEach(function(el){el.classList.remove('active');});if(items2[next])items2[next].classList.add('active');}
+  else if(e.key==='ArrowUp'){e.preventDefault();var prev=activeIdx>0?activeIdx-1:items2.length-1;items2.forEach(function(el){el.classList.remove('active');});if(items2[prev])items2[prev].classList.add('active');}
+  else if(e.key==='Enter'&&active){e.preventDefault();active.dispatchEvent(new MouseEvent('mousedown'));}
+  else if(e.key==='Escape'){sugg.style.display='none';}
 }
 
 function removeOCLine(idx){
@@ -1237,6 +1292,13 @@ function confirmDelete(){
     else if(id==='profileModal')closeProfileModal();
     else if(id==='openingModal')closeOpeningModal();
     else closeDeleteModal();
+  });
+});
+
+// Close item suggestions when clicking outside
+document.addEventListener('click', function(e){
+  document.querySelectorAll('.item-suggestions').forEach(function(el){
+    if(!el.parentElement.contains(e.target)) el.style.display='none';
   });
 });
 

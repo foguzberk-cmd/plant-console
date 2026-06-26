@@ -1440,6 +1440,7 @@ function saveTxnOrOpening(){
     if(editingDocId){transactions=transactions.filter(function(t){return t.docId!==editingDocId;});}
     var lines=document.getElementById('ocLines').children;
     var saved=0;
+    var itemTotals={}; // sum quantities per item across all lines
     for(var i=0;i<lines.length;i++){
       var lineId=lines[i].id.replace('oc-line-','');
       var itemId=document.getElementById('oc-item-'+lineId)?document.getElementById('oc-item-'+lineId).value:'';
@@ -1449,10 +1450,17 @@ function saveTxnOrOpening(){
       var price=document.getElementById('oc-price-'+lineId)?document.getElementById('oc-price-'+lineId).value:'';
       var txn={id:'txn_'+Date.now()+'_'+i,docId:docId,num:num,lineNum:saved+1,date:date,time:document.getElementById('t-time').value,type:'opening',itemId:itemId,qty:qty,unit:unit,unitPrice:price,locOut:'',locIn:'',desc:notes||'Opening count'};
       transactions.push(txn);
-      var idx=items.findIndex(function(x){return x.id===itemId;});
-      if(idx>=0){items[idx].qty=Number(qty);items[idx].openingDate=date;localStorage.setItem('pc_items',JSON.stringify(items));}
+      // accumulate totals per item instead of overwriting
+      if(itemTotals[itemId]===undefined) itemTotals[itemId]=0;
+      itemTotals[itemId]+=Number(qty);
       saved++;
     }
+    // apply summed totals to each item
+    Object.keys(itemTotals).forEach(function(itemId){
+      var idx=items.findIndex(function(x){return x.id===itemId;});
+      if(idx>=0){items[idx].qty=itemTotals[itemId];items[idx].openingDate=date;}
+    });
+    localStorage.setItem('pc_items',JSON.stringify(items));
     if(saved===0){alert('Please add at least one item with a quantity.');return;}
     editingDocId=null;
     saveTxns();closeTxnModal();renderTransactions();

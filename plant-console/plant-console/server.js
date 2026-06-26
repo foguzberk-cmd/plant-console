@@ -120,6 +120,35 @@ async function fetchQBItems(retry) {
   return { QueryResponse: { Item: allItems, maxResults: allItems.length } };
 }
 
+// Diagnostic: run a minimal query and report exactly what QB says
+async function diagnose(retry) {
+  // First refresh to guarantee a current access token
+  if (!retry) { await refreshAccessToken(); }
+  const query = 'SELECT * FROM CompanyInfo';
+  const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
+  const res = await httpsRequest({
+    hostname: 'quickbooks.api.intuit.com',
+    path: reqPath,
+    method: 'GET',
+    headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/json' }
+  });
+  let companyName = null;
+  try {
+    const parsed = JSON.parse(res.body);
+    if (parsed.QueryResponse && parsed.QueryResponse.CompanyInfo) {
+      companyName = parsed.QueryResponse.CompanyInfo[0].CompanyName;
+    }
+  } catch (e) {}
+  return {
+    realmUsed: activeRealm,
+    hasAccessToken: !!accessToken,
+    accessTokenPreview: accessToken ? accessToken.slice(0, 12) + '...' : '(none)',
+    companyInfoStatus: res.status,
+    companyName: companyName,
+    rawResponse: res.body.slice(0, 800)
+  };
+}
+
 const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -160,6 +189,19 @@ const server = http.createServer(async (req, res) => {
   if (url === '/api/qb/status') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ connected: !!accessToken, realm: activeRealm }));
+    return;
+  }
+
+  // Diagnostic endpoint — visit this URL directly in the browser
+  if (url === '/api/qb/test') {
+    try {
+      const result = await diagnose(false);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result, null, 2));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
     return;
   }
 

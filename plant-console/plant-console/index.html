@@ -783,13 +783,16 @@ function itemRow(it){
     +'<td style="font-family:var(--mono);font-size:12px;color:var(--cold)">'+esc(it.sku||'—')+'</td>'
     +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
     +'<td style="font-family:var(--mono);font-size:13px;text-align:right;'+qtyColor+'">'+Number(it.qty||0).toFixed(2)+'</td>'
-    +'<td style="font-family:var(--mono);font-size:13px;text-align:right">$'+Number(it.price||0).toFixed(2)+'</td>'
+    +'<td style="font-family:var(--mono);font-size:13px;text-align:right">$'+Number(it.cost||it.price||0).toFixed(2)+'</td>'
+    +'<td style="text-align:right;position:relative;width:40px">'
+    +'<button class="dots-btn" onclick="toggleItemMenu(event,this.dataset.id)" data-id="'+it.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;stroke:var(--muted)"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>'
+    +'</td>'
     +'</tr>';
 }
 
 function itemsTable(list){
   if(!list.length) return '<div style="padding:28px 24px;text-align:center;color:var(--muted);font-size:13px">No items match the current filters.</div>';
-  return '<table class="txn-table"><thead><tr><th>SKU</th><th>Product Name</th><th style="text-align:right">Quantity</th><th style="text-align:right">Cost</th></tr></thead><tbody>'+list.map(itemRow).join('')+'</tbody></table>';
+  return '<table class="txn-table"><thead><tr><th>SKU</th><th>Product Name</th><th style="text-align:right">Quantity</th><th style="text-align:right">Cost</th><th></th></tr></thead><tbody>'+list.map(itemRow).join('')+'</tbody></table>';
 }
 
 function renderItemsTable(){
@@ -1248,6 +1251,61 @@ function renderTxnTable(){
     }
   }).join('');
   wrap.innerHTML='<table class="txn-table"><thead><tr><th>Date</th><th>Transaction</th><th>Type</th><th style="text-align:right">Value</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
+}
+
+function toggleItemMenu(e,itemId){
+  e.stopPropagation();
+  closeAllTxnMenus();
+  var rect=e.currentTarget.getBoundingClientRect();
+  var menu=document.createElement('div');
+  menu.className='txn-menu';
+  menu.style.cssText='position:fixed;top:'+(rect.bottom+4)+'px;left:'+(rect.left-160)+'px;background:var(--panel);border:1.5px solid var(--line);border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.18);z-index:9999;min-width:190px;overflow:hidden';
+  menu.innerHTML=''
+    +'<button onclick="newTxnForItem(\''+itemId+'\',\'receive\')" style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 16px;border:none;background:none;cursor:pointer;font-family:var(--sans);font-size:13px;color:var(--ink);text-align:left"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;stroke:#0f6e40"><path d="M12 5v14M5 12h14"/></svg>New transaction</button>'
+    +'<button onclick="newTxnForItem(\''+itemId+'\',\'opening\')" style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 16px;border:none;border-top:1px solid var(--line);background:none;cursor:pointer;font-family:var(--sans);font-size:13px;color:var(--ink);text-align:left"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;stroke:var(--brand)"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Set opening count</button>'
+    +'<button onclick="viewItemHistory(\''+itemId+'\')" style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 16px;border:none;border-top:1px solid var(--line);background:none;cursor:pointer;font-family:var(--sans);font-size:13px;color:var(--ink);text-align:left"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;stroke:var(--cold)"><path d="M12 8v4l3 3M3.05 11a9 9 0 1 1 .5 4"/><path d="M3 4v5h5"/></svg>View history</button>';
+  document.body.appendChild(menu);
+}
+
+function newTxnForItem(itemId,type){
+  closeAllTxnMenus();
+  select('transactions');
+  setTimeout(function(){
+    if(type==='opening'){
+      openAddTxnModal();
+      document.getElementById('t-type').value='opening';
+      onTxnTypeChange();
+      // prefill first line with this item
+      var ocLines=document.getElementById('ocLines');
+      if(ocLines&&ocLines.children.length>0){
+        var lineId=ocLines.children[0].id.replace('oc-line-','');
+        var it=items.find(function(x){return x.id===itemId;});
+        if(it){
+          document.getElementById('oc-item-'+lineId).value=itemId;
+          document.getElementById('oc-search-'+lineId).value=it.name;
+          document.getElementById('oc-price-'+lineId).value=Number(it.cost||0).toFixed(2);
+          document.getElementById('oc-qty-'+lineId).focus();
+        }
+      }
+    } else {
+      openAddTxnModal();
+      document.getElementById('t-type').value=type;
+      onTxnTypeChange();
+    }
+  },100);
+}
+
+function viewItemHistory(itemId){
+  closeAllTxnMenus();
+  var it=items.find(function(x){return x.id===itemId;});
+  var hist=transactions.filter(function(t){return t.itemId===itemId;});
+  var name=it?it.name:'Item';
+  if(!hist.length){alert(name+' has no transaction history yet.');return;}
+  var msg=name+' — Transaction history:\n\n';
+  hist.reverse().forEach(function(t){
+    msg+=(t.date||'')+'  '+(TXN_TYPES[t.type]||t.type)+'  '+Number(t.qty||0).toFixed(2)+' '+(t.unit||'')+'  ('+(t.num||'')+')\n';
+  });
+  alert(msg);
 }
 
 function toggleTxnMenu(e,id){

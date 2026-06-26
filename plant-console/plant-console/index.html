@@ -427,6 +427,13 @@
     </div>
   </div>
 
+  <!-- Product Report Modal -->
+  <div class="modal-bg hidden" id="reportModal" role="dialog" aria-modal="true" onclick="if(event.target===this)closeReportModal()">
+    <div class="modal" style="max-width:860px;width:96%">
+      <div id="reportBody"></div>
+    </div>
+  </div>
+
   <!-- User Modal -->
   <div class="modal-bg hidden" id="userModal" role="dialog" aria-modal="true">
     <div class="modal">
@@ -731,6 +738,47 @@ function select(id){
 
 
 /* ===== ITEMS ===== */
+function recalcQuantities(){
+  // Rebuild every item's quantity from the full transaction history
+  // Opening count = sets baseline (sum of all opening lines per item)
+  // receive/return/production = adds; shipment = subtracts; adjustment/transfer = sets
+  var openingByItem={};
+  var deltaByItem={};
+  var allTxns=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
+
+  // Sort by date so we process in order
+  allTxns.forEach(function(t){
+    if(!t.itemId) return;
+    var q=Number(t.qty||0);
+    if(t.type==='opening'){
+      if(openingByItem[t.itemId]===undefined) openingByItem[t.itemId]=0;
+      openingByItem[t.itemId]+=q;
+    } else if(t.type==='receive'||t.type==='return'||t.type==='production'){
+      if(deltaByItem[t.itemId]===undefined) deltaByItem[t.itemId]=0;
+      deltaByItem[t.itemId]+=q;
+    } else if(t.type==='shipment'){
+      if(deltaByItem[t.itemId]===undefined) deltaByItem[t.itemId]=0;
+      deltaByItem[t.itemId]-=q;
+    }
+  });
+
+  var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
+  var changed=0;
+  allItems.forEach(function(it){
+    if(openingByItem[it.id]!==undefined){
+      var base=openingByItem[it.id];
+      var delta=deltaByItem[it.id]||0;
+      it.qty=base+delta;
+      changed++;
+    }
+  });
+  localStorage.setItem('pc_items',JSON.stringify(allItems));
+  items=allItems;
+  renderItemsTable();
+  var status=document.getElementById('qbStatus');
+  if(status) status.textContent='Recalculated '+changed+' item quantities from transaction history';
+}
+
 function renderItemsView(){
   view.innerHTML=`
     <div class="eyebrow">Inventory</div>
@@ -738,10 +786,16 @@ function renderItemsView(){
     <p class="lede">Everything you stock — synced from QuickBooks and managed here.</p>
     <div class="txn-toolbar">
       <span id="qbStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted)">${items.length} item${items.length!==1?'s':''} on file</span>
-      <button id="qbSyncBtn" class="btn btn-primary" onclick="qbFetchItems(false)">
-        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-        Sync from QuickBooks
-      </button>
+      <div style="display:flex;gap:8px">
+        <button class="btn" onclick="recalcQuantities()">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/></svg>
+          Recalculate
+        </button>
+        <button id="qbSyncBtn" class="btn btn-primary" onclick="qbFetchItems(false)">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          Sync from QuickBooks
+        </button>
+      </div>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;align-items:center">
       <div style="display:flex;align-items:center;gap:8px;background:var(--panel);border:1.5px solid var(--line);border-radius:8px;padding:7px 14px">
@@ -1298,14 +1352,73 @@ function newTxnForItem(itemId,type){
 function viewItemHistory(itemId){
   closeAllTxnMenus();
   var it=items.find(function(x){return x.id===itemId;});
+  if(!it) return;
   var hist=transactions.filter(function(t){return t.itemId===itemId;});
-  var name=it?it.name:'Item';
-  if(!hist.length){alert(name+' has no transaction history yet.');return;}
-  var msg=name+' — Transaction history:\n\n';
-  hist.reverse().forEach(function(t){
-    msg+=(t.date||'')+'  '+(TXN_TYPES[t.type]||t.type)+'  '+Number(t.qty||0).toFixed(2)+' '+(t.unit||'')+'  ('+(t.num||'')+')\n';
+  // sort by date+time ascending for running balance
+  hist.sort(function(a,b){
+    var da=(a.date||'')+(a.time||''); var db=(b.date||'')+(b.time||'');
+    return da<db?-1:da>db?1:0;
   });
-  alert(msg);
+
+  var running=0;
+  var rows=hist.map(function(t){
+    var q=Number(t.qty||0);
+    var sign=1;
+    if(t.type==='shipment') sign=-1;
+    if(t.type==='opening'){running=running+q;} else {running=running+sign*q;}
+    var price=0;
+    if(t.unitPrice!==undefined&&t.unitPrice!=='') price=Number(t.unitPrice);
+    else price=Number(it.cost||it.price||0);
+    var val=q*price;
+    var ds=t.date?new Date(t.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
+    if(t.time) ds+='<div style="font-size:10px;color:var(--muted)">'+t.time+'</div>';
+    var loc='';
+    var lOut=t.locOut==='external'?'External':(storages.find(function(x){return x.id===t.locOut;})||{}).name||'';
+    var lIn=t.locIn==='external'?'External':(storages.find(function(x){return x.id===t.locIn;})||{}).name||'';
+    if(lOut||lIn) loc=esc(lOut||'—')+' &#8594; '+esc(lIn||'—');
+    return '<tr>'
+      +'<td style="font-size:12px">'+ds+'</td>'
+      +'<td style="font-family:var(--mono);font-size:11px;color:var(--cold)">'+esc(t.num||'—')+'</td>'
+      +'<td><span class="type-badge type-'+t.type+'">'+(TXN_TYPES[t.type]||t.type)+'</span></td>'
+      +'<td style="font-family:var(--mono);font-size:12px;text-align:right;color:'+(sign<0?'#c23b33':'var(--ink)')+'">'+(sign<0?'-':'+')+q.toFixed(2)+' '+(t.unit||'')+'</td>'
+      +'<td style="font-family:var(--mono);font-size:12px;text-align:right;font-weight:700">'+running.toFixed(2)+'</td>'
+      +'<td style="font-family:var(--mono);font-size:12px;text-align:right;color:var(--cold)">'+(val>0?'$'+val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'—')+'</td>'
+      +'<td style="font-size:11px;color:var(--muted)">'+loc+'</td>'
+      +'</tr>';
+  }).join('');
+
+  var totalVal=hist.reduce(function(s,t){
+    var q=Number(t.qty||0);
+    var price=(t.unitPrice!==undefined&&t.unitPrice!=='')?Number(t.unitPrice):Number(it.cost||it.price||0);
+    return s+q*price;
+  },0);
+
+  var body=document.getElementById('reportBody');
+  body.innerHTML=''
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">'
+      +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--cold)">Product Report</div>'
+      +'<h2 style="margin:6px 0 2px;font-size:22px">'+esc(it.name)+'</h2>'
+      +'<div style="color:var(--muted);font-size:13px">'+(it.sku?'SKU: '+esc(it.sku)+' · ':'')+'Current on hand: <b style="color:var(--ink)">'+Number(it.qty||0).toFixed(2)+'</b> · Unit cost: $'+Number(it.cost||it.price||0).toFixed(2)+'</div></div>'
+      +'<button class="btn" onclick="closeReportModal()" style="flex-shrink:0">Close</button>'
+    +'</div>';
+
+  if(!hist.length){
+    body.innerHTML+='<div class="txn-empty" style="margin-top:20px"><p>No transactions recorded for this product yet.</p></div>';
+  } else {
+    body.innerHTML+=''
+      +'<div style="display:flex;gap:14px;margin:18px 0 14px;flex-wrap:wrap">'
+        +'<div style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px"><div style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Transactions</div><div style="font-size:20px;font-weight:700;margin-top:2px">'+hist.length+'</div></div>'
+        +'<div style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px"><div style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">On hand now</div><div style="font-size:20px;font-weight:700;margin-top:2px">'+Number(it.qty||0).toFixed(2)+'</div></div>'
+        +'<div style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px"><div style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Total value moved</div><div style="font-size:20px;font-weight:700;margin-top:2px;color:var(--cold)">$'+totalVal.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div></div>'
+      +'</div>'
+      +'<table class="txn-table"><thead><tr><th>Date</th><th>Transaction</th><th>Type</th><th style="text-align:right">Change</th><th style="text-align:right">Balance</th><th style="text-align:right">Value</th><th>Movement</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  }
+
+  document.getElementById('reportModal').classList.remove('hidden');
+}
+
+function closeReportModal(){
+  document.getElementById('reportModal').classList.add('hidden');
 }
 
 function toggleTxnMenu(e,id){

@@ -244,6 +244,7 @@
   .type-opening{background:rgba(158,43,37,.12);color:var(--brand);font-weight:700}
   .dots-btn{background:none;border:none;cursor:pointer;padding:6px;border-radius:6px;display:inline-grid;place-items:center;transition:background .14s}
   .dots-btn:hover{background:var(--bg)}
+  #reportBody tbody tr:hover{background:var(--cold-soft)}
   .item-search-wrap{position:relative}
   .item-search-input{width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;font-family:var(--sans)}
   .item-search-input:focus{border-color:var(--cold)}
@@ -1376,9 +1377,10 @@ function viewItemHistory(itemId){
     var lOut=t.locOut==='external'?'External':(storages.find(function(x){return x.id===t.locOut;})||{}).name||'';
     var lIn=t.locIn==='external'?'External':(storages.find(function(x){return x.id===t.locIn;})||{}).name||'';
     if(lOut||lIn) loc=esc(lOut||'—')+' &#8594; '+esc(lIn||'—');
-    return '<tr>'
+    var openArg=t.docId?('\''+t.docId+'\',true'):('\''+t.id+'\',false');
+    return '<tr style="cursor:pointer" onclick="openBillFromReport('+openArg+')" title="Click to view / edit this bill">'
       +'<td style="font-size:12px">'+ds+'</td>'
-      +'<td style="font-family:var(--mono);font-size:11px;color:var(--cold)">'+esc(t.num||'—')+'</td>'
+      +'<td style="font-family:var(--mono);font-size:11px;color:var(--cold);text-decoration:underline">'+esc(t.num||'—')+'</td>'
       +'<td><span class="type-badge type-'+t.type+'">'+(TXN_TYPES[t.type]||t.type)+'</span></td>'
       +'<td style="font-family:var(--mono);font-size:12px;text-align:right;color:'+(sign<0?'#c23b33':'var(--ink)')+'">'+(sign<0?'-':'+')+q.toFixed(2)+' '+(t.unit||'')+'</td>'
       +'<td style="font-family:var(--mono);font-size:12px;text-align:right;font-weight:700">'+running.toFixed(2)+'</td>'
@@ -1415,6 +1417,17 @@ function viewItemHistory(itemId){
   }
 
   document.getElementById('reportModal').classList.remove('hidden');
+}
+
+function openBillFromReport(id,isDoc){
+  closeReportModal();
+  setTimeout(function(){
+    select('transactions');
+    setTimeout(function(){
+      if(isDoc) openEditOpeningDoc(id);
+      else openEditTxnModal(id);
+    },120);
+  },100);
 }
 
 function closeReportModal(){

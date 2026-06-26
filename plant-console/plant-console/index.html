@@ -1112,10 +1112,8 @@ function openAddTxnModal(){
   document.getElementById('txnModalTitle').textContent='Create transaction';
   document.getElementById('t-num').value='TXN-'+String(transactions.length+1).padStart(4,'0');
   document.getElementById('t-date').value=new Date().toISOString().slice(0,10);
-  document.getElementById('t-type').value='opening';
+  document.getElementById('t-type').value='receive';
   document.getElementById('t-desc').value='';
-  document.getElementById('t-qty').value='';
-  document.getElementById('t-unit').value='lbs';
   populateLocSelects();
   document.getElementById('t-loc-in').value='';
   document.getElementById('t-loc-out').value='external';
@@ -1130,12 +1128,9 @@ function openEditTxnModal(id){
   document.getElementById('t-date').value=t.date||'';
   document.getElementById('t-type').value=t.type||'receive';
   document.getElementById('t-desc').value=t.desc||'';
-  document.getElementById('t-qty').value=t.qty||'';
-  document.getElementById('t-unit').value=t.unit||'lbs';
   populateLocSelects();
   document.getElementById('t-loc-out').value=t.locOut||'';
   document.getElementById('t-loc-in').value=t.locIn||'';
-  document.getElementById('t-item').value=t.itemId||'';
   document.getElementById('txnModal').classList.remove('hidden');
   document.getElementById('t-num').focus();
 }
@@ -1143,37 +1138,15 @@ function closeTxnModal(){document.getElementById('txnModal').classList.add('hidd
 function saveTxn(){
   var num=document.getElementById('t-num').value.trim();
   if(!num){document.getElementById('t-num').focus();return;}
-  var qty=document.getElementById('t-qty').value;
-  var itemId=document.getElementById('t-item').value;
   var data={
     id:editingTxnId||('txn_'+Date.now()),
     num:num,
     date:document.getElementById('t-date').value,
     type:document.getElementById('t-type').value,
-    itemId:itemId,
-    qty:qty,
-    unit:document.getElementById('t-unit').value,
     locOut:document.getElementById('t-loc-out').value,
     locIn:document.getElementById('t-loc-in').value,
     desc:document.getElementById('t-desc').value.trim()
   };
-  // Update item quantity if item selected and qty provided
-  if(itemId && qty!==''){
-    var idx=items.findIndex(function(x){return x.id===itemId;});
-    if(idx>=0){
-      var newQty=Number(qty);
-      // All types set the quantity directly (opening count sets the baseline)
-      items[idx].qty=newQty;
-      if(data.type==='transfer'&&data.locIn&&data.locIn!=='external'){
-        items[idx].locationId=data.locIn;
-      } else if(data.locIn&&data.locIn!=='external'){
-        items[idx].locationId=data.locIn;
-      }
-      // Mark opening count date
-      if(data.type==='opening') items[idx].openingDate=data.date;
-      localStorage.setItem('pc_items',JSON.stringify(items));
-    }
-  }
   if(editingTxnId){var i=transactions.findIndex(function(x){return x.id===editingTxnId;});transactions[i]=data;}
   else transactions.push(data);
   saveTxns();closeTxnModal();renderTransactions();

@@ -643,6 +643,7 @@ async function qbFetchItems(retry){
       description: qi.Description||qi.FullyQualifiedName||'',
       sku: qi.Sku||'',
       price: qi.UnitPrice||0,
+      cost: qi.PurchaseCost||0,
       qty: qi.QtyOnHand||0,
       active: qi.Active!==false,
       qbSynced: new Date().toISOString()
@@ -954,9 +955,9 @@ function selectOCItem(idx,el){
   document.getElementById('oc-search-'+idx).value=name;
   document.getElementById('oc-sugg-'+idx).style.display='none';
   document.getElementById('oc-search-'+idx).style.borderColor='var(--cold)';
-  // auto-fill suggested unit price from QuickBooks cost
+  // auto-fill suggested unit COST from QuickBooks PurchaseCost
   var priceEl=document.getElementById('oc-price-'+idx);
-  if(it&&priceEl&&!priceEl.value){priceEl.value=Number(it.price||0).toFixed(2);}
+  if(it&&priceEl&&!priceEl.value){priceEl.value=Number(it.cost||0).toFixed(2);}
   setTimeout(function(){document.getElementById('oc-qty-'+idx).focus();},50);
 }
 
@@ -1192,7 +1193,7 @@ function txnValue(t){
   var qty=t.qty!==undefined&&t.qty!==''?Number(t.qty):0;
   var price=0;
   if(t.unitPrice!==undefined&&t.unitPrice!=='') price=Number(t.unitPrice);
-  else if(t.itemId){var fi=items.find(function(x){return x.id===t.itemId;});if(fi)price=Number(fi.price||0);}
+  else if(t.itemId){var fi=items.find(function(x){return x.id===t.itemId;});if(fi)price=Number(fi.cost||0);}
   return qty*price;
 }
 

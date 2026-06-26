@@ -386,6 +386,7 @@
         <div class="form-group"><label>Transaction #</label><input type="text" id="t-num" placeholder="e.g. TXN-0001"/></div>
         <div class="form-group"><label>Date</label><input type="date" id="t-date"/></div>
       </div>
+      <div class="form-group"><label>Time</label><input type="time" id="t-time" step="60"/></div>
       <div class="form-group"><label>Transaction type</label>
         <select id="t-type" onchange="onTxnTypeChange()">
           <option value="opening">Opening Count — physical count on hand</option>
@@ -895,16 +896,22 @@ function addOCLine(){
 }
 
 function filterOCItems(idx){
-  var q=document.getElementById('oc-search-'+idx).value.toLowerCase().trim();
+  var inp=document.getElementById('oc-search-'+idx);
   var sugg=document.getElementById('oc-sugg-'+idx);
-  document.getElementById('oc-item-'+idx).value=''; // clear selection
-  if(!q){sugg.style.display='none';return;}
-  var matches=items.filter(function(it){
-    return it.name.toLowerCase().includes(q)||(it.sku||'').toLowerCase().includes(q);
-  }).slice(0,10);
-  if(!matches.length){sugg.style.display='none';return;}
+  if(!inp||!sugg) return;
+  var q=inp.value.toLowerCase().trim();
+  document.getElementById('oc-item-'+idx).value='';
+  if(q.length<1){sugg.style.display='none';return;}
+  var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
+  var matches=allItems.filter(function(it){
+    return (it.name||'').toLowerCase().includes(q)||(it.sku||'').toLowerCase().includes(q);
+  }).slice(0,12);
+  if(!matches.length){
+    sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted)">No matches found</div>';
+    sugg.style.display='block';
+    return;
+  }
   sugg.innerHTML=matches.map(function(it){
-    var safeName=it.name.replace(/\\/g,'').replace(/"/g,'&quot;');
     return '<div class="item-suggestion" data-id="'+it.id+'" onmousedown="selectOCItem('+idx+',this)">'
       +(it.sku?'<span class="sku">'+esc(it.sku)+'</span>':'')+esc(it.name)
       +'<span class="qty-hint">'+Number(it.qty||0).toFixed(0)+' on hand</span></div>';
@@ -1193,6 +1200,7 @@ function openAddTxnModal(){
   document.getElementById('t-date').value=new Date().toISOString().slice(0,10);
   document.getElementById('t-type').value='receive';
   document.getElementById('t-desc').value='';
+  var now=new Date();document.getElementById('t-time').value=now.toTimeString().slice(0,5);
   populateLocSelects();
   document.getElementById('t-loc-in').value='';
   document.getElementById('t-loc-out').value='external';
@@ -1238,7 +1246,7 @@ function saveTxnOrOpening(){
       var qty=document.getElementById('oc-qty-'+lineId)?document.getElementById('oc-qty-'+lineId).value:'';
       var unit=document.getElementById('oc-unit-'+lineId)?document.getElementById('oc-unit-'+lineId).value:'lbs';
       if(!itemId||qty==='') continue;
-      var txn={id:'txn_'+Date.now()+'_'+i,num:num+(lines.length>1?'-'+(saved+1):''),date:date,type:'opening',itemId:itemId,qty:qty,unit:unit,locOut:'',locIn:'',desc:notes||'Opening count'};
+      var txn={id:'txn_'+Date.now()+'_'+i,num:num+(lines.length>1?'-'+(saved+1):''),date:date,time:document.getElementById('t-time').value,type:'opening',itemId:itemId,qty:qty,unit:unit,locOut:'',locIn:'',desc:notes||'Opening count'};
       transactions.push(txn);
       var idx=items.findIndex(function(x){return x.id===itemId;});
       if(idx>=0){items[idx].qty=Number(qty);items[idx].openingDate=date;localStorage.setItem('pc_items',JSON.stringify(items));}
@@ -1258,6 +1266,7 @@ function saveTxn(){
     id:editingTxnId||('txn_'+Date.now()),
     num:num,
     date:document.getElementById('t-date').value,
+    time:document.getElementById('t-time').value,
     type:document.getElementById('t-type').value,
     locOut:document.getElementById('t-loc-out').value,
     locIn:document.getElementById('t-loc-in').value,

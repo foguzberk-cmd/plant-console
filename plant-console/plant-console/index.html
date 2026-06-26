@@ -379,7 +379,6 @@
       </div>
       <div class="form-group"><label>Transaction type</label>
         <select id="t-type">
-          <option value="opening">Opening Count — set initial quantity on hand</option>
           <option value="receive">Receive — product coming in from supplier</option>
           <option value="transfer">Transfer — move between internal locations</option>
           <option value="production">Production — raw to processed product</option>
@@ -462,6 +461,33 @@
       <div class="modal-footer">
         <button class="btn" onclick="closeProfileModal()">Cancel</button>
         <button class="btn btn-primary" onclick="saveProfile()">Save changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Opening Count Modal -->
+  <div class="modal-bg hidden" id="openingModal" role="dialog" aria-modal="true">
+    <div class="modal" style="max-width:640px">
+      <h3 id="openingModalTitle">Opening Count</h3>
+      <p class="sub">Enter the physical quantity you have on hand for each item.</p>
+      <div class="form-row">
+        <div class="form-group"><label>Document #</label><input type="text" id="oc-num" placeholder="e.g. OC-0001"/></div>
+        <div class="form-group"><label>Date</label><input type="date" id="oc-date"/></div>
+      </div>
+      <div class="form-group"><label>Notes</label><input type="text" id="oc-notes" placeholder="e.g. Monthly physical count, Cooler A"/></div>
+      <div style="border-top:1px solid var(--line);margin:16px 0 12px"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <span style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)">Items</span>
+        <button class="btn btn-sm" onclick="addOCLine()">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Add item
+        </button>
+      </div>
+      <div id="ocLines" style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto;padding-right:4px"></div>
+      <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:10px" id="ocLineCount">0 items</div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeOpeningModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveOpeningCount()">Save opening count</button>
       </div>
     </div>
   </div>
@@ -824,6 +850,101 @@ function renderItemsTable(){
   wrap.innerHTML=html||'<div style="padding:28px;text-align:center;color:var(--muted);font-size:13px">No items match the current filters.</div>';
 }
 
+
+/* ===== OPENING COUNT ===== */
+var ocLineIndex=0;
+
+function openOpeningModal(){
+  ocLineIndex=0;
+  document.getElementById('openingModalTitle').textContent='Opening Count';
+  document.getElementById('oc-num').value='OC-'+String(transactions.filter(function(t){return t.type==='opening';}).length+1).padStart(4,'0');
+  document.getElementById('oc-date').value=new Date().toISOString().slice(0,10);
+  document.getElementById('oc-notes').value='';
+  document.getElementById('ocLines').innerHTML='';
+  document.getElementById('ocLineCount').textContent='0 items';
+  document.getElementById('openingModal').classList.remove('hidden');
+  addOCLine();
+}
+
+function closeOpeningModal(){document.getElementById('openingModal').classList.add('hidden')}
+
+function addOCLine(){
+  var idx=ocLineIndex++;
+  var itemOpts='<option value="">— pick item —</option>'+items.map(function(it){
+    return '<option value="'+it.id+'">'+(it.sku?'['+esc(it.sku)+'] ':'')+esc(it.name)+'</option>';
+  }).join('');
+  var line=document.createElement('div');
+  line.id='oc-line-'+idx;
+  line.style.cssText='display:grid;grid-template-columns:1fr 100px 90px 36px;gap:8px;align-items:center';
+  line.innerHTML=''
+    +'<select id="oc-item-'+idx+'" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none">'+itemOpts+'</select>'
+    +'<input type="number" id="oc-qty-'+idx+'" placeholder="Qty" min="0" step="0.01" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;text-align:right"/>'
+    +'<select id="oc-unit-'+idx+'" style="padding:8px 6px;border:1.5px solid var(--line);border-radius:8px;font-size:12px;background:var(--bg);color:var(--ink);outline:none">'
+    +'<option value="lbs">lbs</option><option value="pieces">pieces</option><option value="boxes">boxes</option><option value="cases">cases</option><option value="kg">kg</option></select>'
+    +'<button onclick="removeOCLine('+idx+')" style="width:32px;height:32px;border:1.5px solid var(--line);border-radius:8px;background:var(--bg);cursor:pointer;display:grid;place-items:center;color:var(--muted)" title="Remove">'
+    +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;stroke:currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
+  document.getElementById('ocLines').appendChild(line);
+  updateOCCount();
+  document.getElementById('oc-item-'+idx).focus();
+}
+
+function removeOCLine(idx){
+  var el=document.getElementById('oc-line-'+idx);
+  if(el) el.remove();
+  updateOCCount();
+}
+
+function updateOCCount(){
+  var count=document.getElementById('ocLines').children.length;
+  document.getElementById('ocLineCount').textContent=count+' item'+(count!==1?'s':'');
+}
+
+function saveOpeningCount(){
+  var num=document.getElementById('oc-num').value.trim();
+  var date=document.getElementById('oc-date').value;
+  var notes=document.getElementById('oc-notes').value.trim();
+  if(!num){document.getElementById('oc-num').focus();return;}
+
+  var lines=document.getElementById('ocLines').children;
+  var saved=0;
+  for(var i=0;i<lines.length;i++){
+    var lineId=lines[i].id.replace('oc-line-','');
+    var itemId=document.getElementById('oc-item-'+lineId)?.value||'';
+    var qty=document.getElementById('oc-qty-'+lineId)?.value||'';
+    var unit=document.getElementById('oc-unit-'+lineId)?.value||'lbs';
+    if(!itemId||qty==='') continue;
+
+    // Save as individual transaction per line
+    var txn={
+      id:'txn_'+Date.now()+'_'+i,
+      num:num+(lines.length>1?'-'+(saved+1):''),
+      date:date,
+      type:'opening',
+      itemId:itemId,
+      qty:qty,
+      unit:unit,
+      locOut:'',
+      locIn:'',
+      desc:notes||'Opening count'
+    };
+    transactions.push(txn);
+
+    // Update item quantity
+    var idx=items.findIndex(function(x){return x.id===itemId;});
+    if(idx>=0){
+      items[idx].qty=Number(qty);
+      items[idx].openingDate=date;
+      localStorage.setItem('pc_items',JSON.stringify(items));
+    }
+    saved++;
+  }
+
+  if(saved===0){alert('Please add at least one item with a quantity.');return;}
+  saveTxns();
+  closeOpeningModal();
+  renderTransactions();
+}
+
 /* ===== SETTINGS ===== */
 function renderSettings(){
   view.innerHTML=`
@@ -1092,13 +1213,14 @@ function confirmDelete(){
   else{storages=storages.filter(x=>x.id!==deletingId);saveStorages();closeDeleteModal();renderStorageList();}
 }
 
-['storageModal','txnModal','userModal','profileModal','deleteModal'].forEach(id=>{
+['storageModal','txnModal','userModal','profileModal','deleteModal','openingModal'].forEach(id=>{
   document.getElementById(id).addEventListener('click',e=>{
     if(e.target!==e.currentTarget)return;
     if(id==='storageModal')closeStorageModal();
     else if(id==='txnModal')closeTxnModal();
     else if(id==='userModal')closeUserModal();
     else if(id==='profileModal')closeProfileModal();
+    else if(id==='openingModal')closeOpeningModal();
     else closeDeleteModal();
   });
 });

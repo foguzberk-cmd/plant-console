@@ -378,7 +378,8 @@
         <div class="form-group"><label>Date</label><input type="date" id="t-date"/></div>
       </div>
       <div class="form-group"><label>Transaction type</label>
-        <select id="t-type">
+        <select id="t-type" onchange="onTxnTypeChange()">
+          <option value="opening">Opening Count — physical count on hand</option>
           <option value="receive">Receive</option>
           <option value="transfer">Transfer</option>
           <option value="production">Production</option>
@@ -388,14 +389,25 @@
         </select>
       </div>
 
-      <div class="form-row">
+      <div class="form-row" id="t-loc-row">
         <div class="form-group"><label>Location out (from)</label><select id="t-loc-out"></select></div>
         <div class="form-group"><label>Location in (to)</label><select id="t-loc-in"></select></div>
       </div>
-      <div class="form-group"><label>Description</label><textarea id="t-desc" placeholder="Product details, lot numbers, weight, supplier…"></textarea></div>
+      <div class="form-group"><label>Description / Notes</label><textarea id="t-desc" placeholder="Product details, lot numbers, weight, supplier…"></textarea></div>
+      <div id="t-opening-section" style="display:none">
+        <div style="border-top:1px solid var(--line);margin:14px 0 12px"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <span style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)">Items on hand</span>
+          <button class="btn btn-sm" onclick="addOCLine()">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add item
+          </button>
+        </div>
+        <div id="ocLines" style="display:flex;flex-direction:column;gap:8px;max-height:260px;overflow-y:auto"></div>
+        <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px" id="ocLineCount">0 items</div>
+      </div>
       <div class="modal-footer">
         <button class="btn" onclick="closeTxnModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="saveTxn()">Save transaction</button>
+        <button class="btn btn-primary" onclick="saveTxnOrOpening()">Save transaction</button>
       </div>
     </div>
   </div>
@@ -1107,6 +1119,18 @@ function renderTxnTable(){
   wrap.innerHTML='<table class="txn-table"><thead><tr><th>Transaction</th><th>Type</th><th>Quantity</th><th>Movement</th><th>Date</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 function populateLocSelects(){const opts=storages.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');document.getElementById('t-loc-out').innerHTML=`<option value="">— select —</option><option value="external">External / Supplier</option>${opts}`;document.getElementById('t-loc-in').innerHTML=`<option value="">— select —</option><option value="external">External / Customer</option>${opts}`;}
+function onTxnTypeChange(){
+  var type=document.getElementById('t-type').value;
+  var locRow=document.getElementById('t-loc-row');
+  var openSec=document.getElementById('t-opening-section');
+  if(locRow) locRow.style.display=type==='opening'?'none':'grid';
+  if(openSec) openSec.style.display=type==='opening'?'block':'none';
+  if(type==='opening'){
+    var ocLines=document.getElementById('ocLines');
+    if(ocLines&&ocLines.children.length===0) addOCLine();
+  }
+}
+
 function openAddTxnModal(){
   editingTxnId=null;
   document.getElementById('txnModalTitle').textContent='Create transaction';
@@ -1117,6 +1141,14 @@ function openAddTxnModal(){
   populateLocSelects();
   document.getElementById('t-loc-in').value='';
   document.getElementById('t-loc-out').value='external';
+  var locRow=document.getElementById('t-loc-row');
+  var openSec=document.getElementById('t-opening-section');
+  var ocLines=document.getElementById('ocLines');
+  if(locRow) locRow.style.display='grid';
+  if(openSec) openSec.style.display='none';
+  if(ocLines) ocLines.innerHTML='';
+  if(document.getElementById('ocLineCount')) document.getElementById('ocLineCount').textContent='0 items';
+  ocLineIndex=0;
   document.getElementById('txnModal').classList.remove('hidden');
   document.getElementById('t-num').focus();
 }
@@ -1135,6 +1167,35 @@ function openEditTxnModal(id){
   document.getElementById('t-num').focus();
 }
 function closeTxnModal(){document.getElementById('txnModal').classList.add('hidden')}
+function saveTxnOrOpening(){
+  var type=document.getElementById('t-type').value;
+  if(type==='opening'){
+    // save as opening count using existing OC logic but from main modal
+    var num=document.getElementById('t-num').value.trim();
+    var date=document.getElementById('t-date').value;
+    var notes=document.getElementById('t-desc').value.trim();
+    if(!num){document.getElementById('t-num').focus();return;}
+    var lines=document.getElementById('ocLines').children;
+    var saved=0;
+    for(var i=0;i<lines.length;i++){
+      var lineId=lines[i].id.replace('oc-line-','');
+      var itemId=document.getElementById('oc-item-'+lineId)?document.getElementById('oc-item-'+lineId).value:'';
+      var qty=document.getElementById('oc-qty-'+lineId)?document.getElementById('oc-qty-'+lineId).value:'';
+      var unit=document.getElementById('oc-unit-'+lineId)?document.getElementById('oc-unit-'+lineId).value:'lbs';
+      if(!itemId||qty==='') continue;
+      var txn={id:'txn_'+Date.now()+'_'+i,num:num+(lines.length>1?'-'+(saved+1):''),date:date,type:'opening',itemId:itemId,qty:qty,unit:unit,locOut:'',locIn:'',desc:notes||'Opening count'};
+      transactions.push(txn);
+      var idx=items.findIndex(function(x){return x.id===itemId;});
+      if(idx>=0){items[idx].qty=Number(qty);items[idx].openingDate=date;localStorage.setItem('pc_items',JSON.stringify(items));}
+      saved++;
+    }
+    if(saved===0){alert('Please add at least one item with a quantity.');return;}
+    saveTxns();closeTxnModal();renderTransactions();
+    return;
+  }
+  saveTxn();
+}
+
 function saveTxn(){
   var num=document.getElementById('t-num').value.trim();
   if(!num){document.getElementById('t-num').focus();return;}

@@ -1377,20 +1377,21 @@ function renderScaleLog(){
   const s=SECTIONS.find(x=>x.id==='scalelog');
   var totalWeight=scaleLogs.reduce(function(sum,l){return sum+Number(l.weight||0);},0);
   view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p>
-    <div style="display:grid;grid-template-columns:340px 1fr;gap:24px;align-items:start;margin-top:8px">
+    <!-- TOP: form + live label preview side by side -->
+    <div style="display:grid;grid-template-columns:1fr 2.4in;gap:28px;align-items:start;margin-top:8px;padding-bottom:22px;border-bottom:1px solid var(--line)">
       <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px">
         <div style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--cold);margin-bottom:14px">Print a label</div>
         <div class="form-group"><label>Product</label>
           <div class="item-search-wrap">
-            <input type="text" id="sl-search" class="item-search-input" placeholder="Search product..." autocomplete="off" oninput="filterScaleItems()" onblur="hideScaleSugg()"/>
+            <input type="text" id="sl-search" class="item-search-input" placeholder="Search product..." autocomplete="off" oninput="filterScaleItems();updateLabelPreview()" onblur="hideScaleSugg()"/>
             <input type="hidden" id="sl-item" value=""/>
           </div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label>Weight (lbs)</label><input type="number" id="sl-weight" placeholder="0.00" min="0" step="0.01" style="text-align:right"/></div>
-          <div class="form-group"><label>Packaging date</label><input type="date" id="sl-date"/></div>
+          <div class="form-group"><label>Weight (lbs)</label><input type="number" id="sl-weight" placeholder="0.00" min="0" step="0.01" style="text-align:right" oninput="updateLabelPreview()"/></div>
+          <div class="form-group"><label>Packaging date</label><input type="date" id="sl-date" oninput="updateLabelPreview()"/></div>
         </div>
-        <div class="form-group"><label>Lot / Batch (optional)</label><input type="text" id="sl-lot" placeholder="e.g. LOT-0627"/></div>
+        <div class="form-group"><label>Lot / Batch (optional)</label><input type="text" id="sl-lot" placeholder="e.g. LOT-0627" oninput="updateLabelPreview()"/></div>
         <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:6px" onclick="printScaleLabel()">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
           Print label &amp; log
@@ -1398,15 +1399,66 @@ function renderScaleLog(){
         <div id="sl-status" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:10px;min-height:14px"></div>
       </div>
       <div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-          <span style="font-family:var(--mono);font-size:11px;color:var(--muted)">${scaleLogs.length} label${scaleLogs.length!==1?'s':''} printed · ${totalWeight.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})} lbs total</span>
-          <input type="text" id="sl-filter" placeholder="Search log..." oninput="renderScaleLogTable()" style="padding:7px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;width:200px"/>
-        </div>
-        <div id="scaleLogTableWrap"></div>
+        <div style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Label preview · 2.4″ × 3.9″</div>
+        <div id="labelPreview" style="width:2.4in;min-height:3.9in;background:#fff;border:1px solid var(--line);box-shadow:0 4px 22px rgba(0,0,0,.12);border-radius:4px"></div>
       </div>
+    </div>
+    <!-- BOTTOM: the log -->
+    <div style="margin-top:22px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span style="font-family:var(--mono);font-size:11px;color:var(--muted)" id="sl-summary">${scaleLogs.length} label${scaleLogs.length!==1?'s':''} printed · ${totalWeight.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})} lbs total</span>
+        <input type="text" id="sl-filter" placeholder="Search log..." oninput="renderScaleLogTable()" style="padding:7px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;width:220px"/>
+      </div>
+      <div id="scaleLogTableWrap"></div>
     </div>`;
   document.getElementById('sl-date').value=new Date().toISOString().slice(0,10);
+  updateLabelPreview();
   renderScaleLogTable();
+}
+
+// Build the label markup (shared by preview and print)
+function buildLabelHTML(entry, forPrint){
+  var dateStr=entry.date?new Date(entry.date+'T12:00:00').toLocaleDateString('en-US',{month:'numeric',day:'numeric',year:'2-digit'}):'—';
+  var product=entry.product||'—';
+  var weight=(entry.weight!==''&&entry.weight!=null)?Number(entry.weight).toFixed(2):'0.00';
+  var scale=forPrint?1:1; // preview uses same in-based sizing
+  return ''
+    +'<div style="font-family:Arial,Helvetica,sans-serif;color:#000;padding:0.08in 0.1in;width:2.4in">'
+    +'<div style="display:flex;align-items:center;gap:6px;border-bottom:1.5px solid #000;padding-bottom:4px">'
+      +'<img src="'+LEADER_LOGO+'" style="width:0.62in;height:0.62in;object-fit:contain"/>'
+      +'<div style="flex:1;text-align:center">'
+        +'<div style="font-weight:bold;font-size:9.5pt;line-height:1.05">LEADER MEAT PACKING</div>'
+        +'<div style="font-size:7pt;line-height:1.1;margin-top:1px">254 Sykesville Road<br>Chesterfield, NJ 08515</div>'
+      +'</div>'
+    +'</div>'
+    +'<div style="text-align:center;margin:5px 0 3px"><div style="font-weight:bold;font-size:10pt">Packaging Date</div><div style="font-weight:bold;font-size:13pt;margin-top:1px">'+esc(dateStr)+'</div></div>'
+    +'<div style="text-align:center;font-weight:bold;font-size:14pt;margin:6px 0;line-height:1.1;word-wrap:break-word">'+esc(product)+'</div>'
+    +'<div style="display:flex;align-items:center;gap:6px;margin:6px 0">'
+      +'<div style="width:0.85in;height:0.85in;border:2.5px solid #000;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-size:5.4pt;font-weight:bold;line-height:1.15;flex-shrink:0;padding:3px">U.S.<br>INSPECTED<br>AND PASSED BY<br>DEPARTMENT OF<br>AGRICULTURE<br>EST. M-46585</div>'
+      +'<div style="flex:1;text-align:center"><span style="font-weight:bold;font-size:21pt;line-height:1">'+weight+'</span> <span style="font-weight:bold;font-size:12pt">lbs.</span></div>'
+    +'</div>'
+    +'<div style="text-align:center;font-weight:bold;font-size:9.5pt;border-top:1.5px solid #000;border-bottom:1.5px solid #000;padding:3px 0;margin:4px 0">Keep Refrigerated</div>'
+    +(entry.lot?('<div style="text-align:center;font-size:7pt;margin-top:3px;font-family:monospace">LOT: '+esc(entry.lot)+'</div>'):'')
+    +'<div style="text-align:center;font-weight:bold;font-size:8pt;margin:3px 0 2px">SAFE HANDLING INSTRUCTIONS</div>'
+    +'<div style="font-size:5.4pt;line-height:1.25;text-align:left">This product was prepared from inspected and passed meat and/or poultry. Some food products may contain bacteria that could cause illness if mishandled or cooked improperly. For your protection, follow these safe handling instructions.<br>'
+      +'&bull; Keep refrigerated or frozen. Thaw in the refrigerator or microwave.<br>'
+      +'&bull; Cook thoroughly to a safe internal temperature.<br>'
+      +'&bull; Keep raw meat and poultry separate from other foods.<br>'
+      +'&bull; Wash hands, utensils, and surfaces (including cutting boards) after handling raw meat or poultry.<br>'
+      +'&bull; Keep hot foods hot and refrigerate leftovers promptly or discard.</div>'
+    +'</div>';
+}
+
+function updateLabelPreview(){
+  var prev=document.getElementById('labelPreview');
+  if(!prev) return;
+  var entry={
+    product:document.getElementById('sl-search')?document.getElementById('sl-search').value.trim():'',
+    weight:document.getElementById('sl-weight')?document.getElementById('sl-weight').value:'',
+    date:document.getElementById('sl-date')?document.getElementById('sl-date').value:'',
+    lot:document.getElementById('sl-lot')?document.getElementById('sl-lot').value.trim():''
+  };
+  prev.innerHTML=buildLabelHTML(entry,false);
 }
 
 function renderScaleLogTable(){
@@ -1468,6 +1520,7 @@ function selectScaleItem(el){
   document.getElementById('sl-item').value=id;
   document.getElementById('sl-search').value=it?it.name:'';
   var s=document.getElementById('sl-sugg'); if(s) s.remove();
+  updateLabelPreview();
   document.getElementById('sl-weight').focus();
 }
 
@@ -1517,61 +1570,15 @@ function deleteScaleLog(id){
 }
 
 function doPrintLabel(entry){
-  var dateStr=entry.date?new Date(entry.date+'T12:00:00').toLocaleDateString('en-US',{month:'numeric',day:'numeric',year:'2-digit'}):'';
   var w=window.open('','_blank','width=400,height=640');
   if(!w){ alert('Please allow pop-ups for this site to print labels.'); return; }
-  var labelHTML=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Label — ${esc(entry.product)}</title>
-  <style>
-    @page { size: 2.4in 3.9in; margin: 0; }
-    * { margin:0; padding:0; box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-    html,body { width:2.4in; }
-    body { font-family: Arial, Helvetica, sans-serif; color:#000; padding:0.08in 0.1in; }
-    .lbl { width:100%; }
-    .hdr { display:flex; align-items:center; gap:6px; border-bottom:1.5px solid #000; padding-bottom:4px; }
-    .hdr img { width:0.62in; height:0.62in; object-fit:contain; }
-    .co { flex:1; text-align:center; }
-    .co .name { font-weight:bold; font-size:9.5pt; line-height:1.05; }
-    .co .addr { font-size:7pt; line-height:1.1; margin-top:1px; }
-    .pkg { text-align:center; margin:5px 0 3px; }
-    .pkg .t { font-weight:bold; font-size:10pt; }
-    .pkg .d { font-weight:bold; font-size:13pt; margin-top:1px; }
-    .prod { text-align:center; font-weight:bold; font-size:14pt; margin:6px 0; line-height:1.1; word-wrap:break-word; }
-    .mid { display:flex; align-items:center; gap:6px; margin:6px 0; }
-    .seal { width:0.85in; height:0.85in; border:2.5px solid #000; border-radius:50%; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; font-size:5.4pt; font-weight:bold; line-height:1.15; flex-shrink:0; padding:3px; }
-    .wt { flex:1; text-align:center; }
-    .wt .v { font-weight:bold; font-size:21pt; line-height:1; }
-    .wt .u { font-weight:bold; font-size:12pt; }
-    .keep { text-align:center; font-weight:bold; font-size:9.5pt; border-top:1.5px solid #000; border-bottom:1.5px solid #000; padding:3px 0; margin:4px 0; }
-    .sh-t { text-align:center; font-weight:bold; font-size:8pt; margin:3px 0 2px; }
-    .sh { font-size:5.4pt; line-height:1.25; text-align:left; }
-    .lot { text-align:center; font-size:7pt; margin-top:3px; font-family:'Courier New',monospace; }
-  </style></head>
-  <body onload="window.print(); setTimeout(function(){window.close();},300);">
-    <div class="lbl">
-      <div class="hdr">
-        <img src="${LEADER_LOGO}"/>
-        <div class="co">
-          <div class="name">LEADER MEAT PACKING</div>
-          <div class="addr">254 Sykesville Road<br>Chesterfield, NJ 08515</div>
-        </div>
-      </div>
-      <div class="pkg"><div class="t">Packaging Date</div><div class="d">${dateStr}</div></div>
-      <div class="prod">${esc(entry.product)}</div>
-      <div class="mid">
-        <div class="seal">U.S.<br>INSPECTED<br>AND PASSED BY<br>DEPARTMENT OF<br>AGRICULTURE<br>EST. M-46585</div>
-        <div class="wt"><span class="v">${Number(entry.weight).toFixed(2)}</span> <span class="u">lbs.</span></div>
-      </div>
-      <div class="keep">Keep Refrigerated</div>
-      ${entry.lot?('<div class="lot">LOT: '+esc(entry.lot)+'</div>'):''}
-      <div class="sh-t">SAFE HANDLING INSTRUCTIONS</div>
-      <div class="sh">This product was prepared from inspected and passed meat and/or poultry. Some food products may contain bacteria that could cause illness if mishandled or cooked improperly. For your protection, follow these safe handling instructions.<br>
-      &bull; Keep refrigerated or frozen. Thaw in the refrigerator or microwave.<br>
-      &bull; Cook thoroughly to a safe internal temperature.<br>
-      &bull; Keep raw meat and poultry separate from other foods.<br>
-      &bull; Wash hands, utensils, and surfaces (including cutting boards) after handling raw meat or poultry.<br>
-      &bull; Keep hot foods hot and refrigerate leftovers promptly or discard.</div>
-    </div>
-  </body></html>`;
+  var labelHTML='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Label — '+esc(entry.product)+'</title>'
+    +'<style>@page { size: 2.4in 3.9in; margin: 0; } '
+    +'* { margin:0; padding:0; box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; } '
+    +'html,body { width:2.4in; }</style></head>'
+    +'<body onload="window.print(); setTimeout(function(){window.close();},300);">'
+    +buildLabelHTML(entry,true)
+    +'</body></html>';
   w.document.write(labelHTML);
   w.document.close();
 }

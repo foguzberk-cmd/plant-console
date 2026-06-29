@@ -12,7 +12,7 @@ const REDIRECT_URI = process.env.QB_REDIRECT_URI || 'https://plant-console-app.o
 
 // In-memory token store (persists while server is running)
 let accessToken = process.env.QB_ACCESS_TOKEN || '';
-let refreshToken = process.env.QB_REFRESH_TOKEN || 'RT1-99-H0-1791043472ito2ow47kjunqymdqf7w';
+let refreshToken = process.env.QB_REFRESH_TOKEN || 'RT1-76-H0-1791468215k2xxhdx8wq5jcuwo5cqq';
 let activeRealm = QB_REALM;
 
 function httpsRequest(options, body) {

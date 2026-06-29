@@ -995,6 +995,35 @@ function renderDashboard(){
 
   html+='</div>'; // end two-col
 
+  // Per-location inventory breakdown
+  var locTotals={}; var locValues={};
+  allItems.forEach(function(it){
+    var lq=it.locQtys||{};
+    Object.keys(lq).forEach(function(k){
+      var amt=Number(lq[k]||0);
+      if(!amt) return;
+      if(locTotals[k]===undefined){locTotals[k]=0;locValues[k]=0;}
+      locTotals[k]+=amt;
+      locValues[k]+=amt*Number(it.cost||it.price||0);
+    });
+  });
+  var locKeys=Object.keys(locTotals);
+  if(locKeys.length){
+    html+='<div style="margin-top:22px"><div style="font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Inventory by location</div>';
+    html+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px">';
+    function locName(k){ if(k==='__none__') return 'No location assigned'; var s=storages.find(function(x){return x.id===k;}); return s?s.name:k; }
+    locKeys.sort(function(a,b){return locValues[b]-locValues[a];}).forEach(function(k){
+      html+='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px">'
+        +'<div style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700">'
+        +'<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;stroke:var(--cold)"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>'
+        +esc(locName(k))+'</div>'
+        +'<div style="font-family:var(--mono);font-size:18px;font-weight:800;margin-top:8px;color:var(--cold)">$'+locValues[k].toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div>'
+        +'<div style="font-size:12px;color:var(--muted);margin-top:2px">'+locTotals[k].toLocaleString('en-US',{maximumFractionDigits:0})+' on hand</div>'
+        +'</div>';
+    });
+    html+='</div></div>';
+  }
+
   // Alerts row
   if(alerts.length){
     html+='<div style="margin-top:22px"><div style="font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#c23b33;margin-bottom:10px">⚠ Negative stock — needs attention</div>';
@@ -1012,45 +1041,118 @@ function renderDashboard(){
 
 /* ===== ITEMS ===== */
 function recalcQuantities(){
-  // Rebuild every item's quantity from the full transaction history.
-  // Baseline = opening count if one exists, otherwise the item's QuickBooks QtyOnHand.
-  // receive/return/production = adds; shipment = subtracts.
-  var openingByItem={};
-  var deltaByItem={};
+  // Per-location quantity engine.
+  // Each item gets it.locQtys = { locationId: amount, ... } plus it.qty = grand total.
+  // opening  -> sets/adds the counted qty at its chosen location (locIn)
+  // receive  -> adds at destination (locIn); if locIn is external/blank, adds to "unassigned"
+  // return   -> adds at destination (locIn)
+  // production-> adds at destination (locIn)
+  // shipment -> subtracts from source (locOut)
+  // transfer -> subtracts from locOut, adds to locIn (total unchanged)
+  // adjustment-> adds (can be negative) at locIn, else locOut
   var allTxns=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
+  var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
+
+  // sort transactions chronologically so opening counts apply before later moves
+  allTxns.sort(function(a,b){
+    var da=(a.date||'')+(a.time||''); var db=(b.date||'')+(b.time||'');
+    return da<db?-1:da>db?1:0;
+  });
+
+  var UNASSIGNED='__none__';
+  function loc(v){ return (!v||v==='external')?UNASSIGNED:v; }
+
+  // Build per-item, per-location map
+  var map={}; // itemId -> { locId: qty }
+  var touched={}; // itemId -> true if any txn affected it
+  function add(itemId,locId,amt){
+    if(!map[itemId]) map[itemId]={};
+    if(map[itemId][locId]===undefined) map[itemId][locId]=0;
+    map[itemId][locId]+=amt;
+    touched[itemId]=true;
+  }
 
   allTxns.forEach(function(t){
     if(!t.itemId) return;
     var q=Number(t.qty||0);
-    if(t.type==='opening'){
-      if(openingByItem[t.itemId]===undefined) openingByItem[t.itemId]=0;
-      openingByItem[t.itemId]+=q;
-    } else if(t.type==='receive'||t.type==='return'||t.type==='production'){
-      if(deltaByItem[t.itemId]===undefined) deltaByItem[t.itemId]=0;
-      deltaByItem[t.itemId]+=q;
-    } else if(t.type==='shipment'){
-      if(deltaByItem[t.itemId]===undefined) deltaByItem[t.itemId]=0;
-      deltaByItem[t.itemId]-=q;
+    if(!q) return;
+    var li=loc(t.locIn), lo=loc(t.locOut);
+    switch(t.type){
+      case 'opening':   add(t.itemId, li, q); break;
+      case 'receive':   add(t.itemId, li, q); break;
+      case 'return':    add(t.itemId, li, q); break;
+      case 'production':add(t.itemId, li, q); break;
+      case 'shipment':  add(t.itemId, lo, -q); break;
+      case 'transfer':  add(t.itemId, lo, -q); add(t.itemId, li, q); break;
+      case 'adjustment':add(t.itemId, (t.locIn?li:lo), q); break;
+      default: break;
     }
   });
 
-  var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
   var changed=0;
   allItems.forEach(function(it){
-    var hasOpening=openingByItem[it.id]!==undefined;
-    var hasDelta=deltaByItem[it.id]!==undefined;
-    if(!hasOpening&&!hasDelta) return; // nothing moved this item, leave as-is
-    // baseline: opening count if set, else current QB quantity
-    var base=hasOpening?openingByItem[it.id]:Number(it.qbQty!==undefined?it.qbQty:it.qty||0);
-    var delta=deltaByItem[it.id]||0;
-    it.qty=base+delta;
+    if(!touched[it.id]){
+      // nothing moved this item: keep QB qty as a single unassigned bucket if not already set
+      if(it.locQtys===undefined){
+        var base=Number(it.qbQty!==undefined?it.qbQty:it.qty||0);
+        it.locQtys = base ? (function(){var o={};o[UNASSIGNED]=base;return o;})() : {};
+      }
+      it.qty=Object.keys(it.locQtys||{}).reduce(function(s,k){return s+Number(it.locQtys[k]||0);},0);
+      return;
+    }
+    it.locQtys=map[it.id];
+    // total across all locations
+    it.qty=Object.keys(it.locQtys).reduce(function(s,k){return s+Number(it.locQtys[k]||0);},0);
+    // primary location = the one holding the most (for the single-location filter & label default)
+    var best=null,bestQ=-Infinity;
+    Object.keys(it.locQtys).forEach(function(k){
+      if(k!==UNASSIGNED && it.locQtys[k]>bestQ){best=k;bestQ=it.locQtys[k];}
+    });
+    it.locationId = best || undefined;
     changed++;
   });
+
   localStorage.setItem('pc_items',JSON.stringify(allItems));
   items=allItems;
   renderItemsTable();
   var status=document.getElementById('qbStatus');
-  if(status) status.textContent='Recalculated '+changed+' item quantities from transaction history';
+  if(status) status.textContent='Recalculated '+changed+' item quantities across locations';
+}
+
+// Quantity of an item at a specific location (UNASSIGNED key = '__none__')
+function qtyAtLoc(it,locId){
+  if(!it.locQtys) return 0;
+  return Number(it.locQtys[locId]||0);
+}
+
+// Diagnostic: shows how transfers stored their locations and what the engine produced
+function diagnoseLocations(){
+  var allTxns=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
+  var moves=allTxns.filter(function(t){return t.type==='transfer'||t.type==='receive'||t.type==='shipment';});
+  function locName(id){ if(!id||id==='external') return '(external/none)'; var s=storages.find(function(x){return x.id===id;}); return s?s.name:('UNKNOWN ID: '+id); }
+  var msg='STORAGE LOCATIONS DEFINED:\n';
+  if(!storages.length) msg+='  (none — you have no storage locations set up!)\n';
+  storages.forEach(function(s){ msg+='  • '+s.name+'  [id: '+s.id+']\n'; });
+  msg+='\nMOVEMENT TRANSACTIONS:\n';
+  if(!moves.length) msg+='  (none found)\n';
+  moves.slice(-10).forEach(function(t){
+    var it=items.find(function(x){return x.id===t.itemId;});
+    msg+='  '+(t.num||'?')+' '+t.type.toUpperCase()+' — '+(it?it.name:'?')+' '+Number(t.qty||0)+'\n';
+    msg+='      OUT: '+locName(t.locOut)+'   IN: '+locName(t.locIn)+'\n';
+  });
+  // show one affected item's per-location breakdown
+  var anyItem=null;
+  moves.forEach(function(t){ if(!anyItem){var it=items.find(function(x){return x.id===t.itemId;}); if(it) anyItem=it;} });
+  if(anyItem){
+    msg+='\nEXAMPLE ITEM "'+anyItem.name+'":\n';
+    msg+='  total qty = '+Number(anyItem.qty||0)+'\n';
+    if(anyItem.locQtys){
+      Object.keys(anyItem.locQtys).forEach(function(k){ msg+='    '+locName(k)+': '+anyItem.locQtys[k]+'\n'; });
+    } else {
+      msg+='    locQtys = NONE (engine has not run — click Recalculate)\n';
+    }
+  }
+  alert(msg);
 }
 
 function renderItemsView(){
@@ -1061,6 +1163,14 @@ function renderItemsView(){
     <div class="txn-toolbar">
       <span id="qbStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted)">${items.length} item${items.length!==1?'s':''} on file</span>
       <div style="display:flex;gap:8px">
+        <button class="btn" onclick="recalcQuantities()" title="Rebuild per-location quantities from transaction history">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/></svg>
+          Recalculate
+        </button>
+        <button class="btn" onclick="diagnoseLocations()" title="Show how transfers and locations are stored">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          Check
+        </button>
         <button id="qbSyncBtn" class="btn btn-primary" onclick="syncEverything()">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           Sync from QuickBooks
@@ -1143,8 +1253,8 @@ function renderItemsTable(){
     var qty=Number(it.qty||0);
     if(hideZero&&qty===0) return false;
     if(showZeroOnly&&qty!==0) return false;
-    if(locFilter==='__none__'&&it.locationId) return false;
-    if(locFilter&&locFilter!=='__none__'&&it.locationId!==locFilter) return false;
+    if(locFilter==='__none__'&&qtyAtLoc(it,'__none__')===0) return false;
+    if(locFilter&&locFilter!=='__none__'&&qtyAtLoc(it,locFilter)===0) return false;
     if(search&&!(it.name.toLowerCase().includes(search)||(it.sku||'').toLowerCase().includes(search))) return false;
     return true;
   });
@@ -1158,32 +1268,62 @@ function renderItemsTable(){
     return;
   }
 
-  // Group by storage location
-  var groups={};
+  // Group by storage location using per-location quantities.
+  // An item appears under EVERY location where it has a non-zero quantity.
+  var groups={}; // locId -> [ {it, locQty} ]
   filtered.forEach(function(it){
-    var key=it.locationId||'__none__';
-    if(!groups[key]) groups[key]=[];
-    groups[key].push(it);
+    var lq=it.locQtys||{};
+    var keys=Object.keys(lq).filter(function(k){return Number(lq[k]||0)!==0;});
+    if(!keys.length){
+      // no per-location data — treat as unassigned
+      if(!groups['__none__']) groups['__none__']=[];
+      groups['__none__'].push({it:it,locQty:Number(it.qty||0)});
+      return;
+    }
+    keys.forEach(function(k){
+      if(!groups[k]) groups[k]=[];
+      groups[k].push({it:it,locQty:Number(lq[k])});
+    });
   });
 
   var html='';
   // Named locations first
   storages.forEach(function(s){
     if(!groups[s.id]) return;
+    var totLbs=groups[s.id].reduce(function(sum,r){return sum+r.locQty;},0);
     html+='<div style="margin-bottom:28px">'
       +'<div style="font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--cold);padding:10px 0 8px;border-bottom:2px solid var(--cold-soft);margin-bottom:0;display:flex;align-items:center;gap:8px">'
       +'<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;stroke:var(--cold)"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>'
-      +esc(s.name)+' <span style="color:var(--muted);font-weight:400">('+groups[s.id].length+' item'+(groups[s.id].length!==1?'s':'')+')</span></div>'
-      +'<div class="txn-table-wrap">'+itemsTable(groups[s.id])+'</div></div>';
+      +esc(s.name)+' <span style="color:var(--muted);font-weight:400">('+groups[s.id].length+' item'+(groups[s.id].length!==1?'s':'')+' · '+totLbs.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:2})+' on hand)</span></div>'
+      +'<div class="txn-table-wrap">'+itemsTableLoc(groups[s.id])+'</div></div>';
   });
   // Unassigned
   if(groups['__none__']){
+    var totU=groups['__none__'].reduce(function(sum,r){return sum+r.locQty;},0);
     html+='<div style="margin-bottom:28px">'
       +'<div style="font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);padding:10px 0 8px;border-bottom:2px solid var(--line);margin-bottom:0">'
-      +'No location assigned <span style="font-weight:400">('+groups['__none__'].length+' item'+(groups['__none__'].length!==1?'s':'')+')</span></div>'
-      +'<div class="txn-table-wrap">'+itemsTable(groups['__none__'])+'</div></div>';
+      +'No location assigned <span style="font-weight:400">('+groups['__none__'].length+' item'+(groups['__none__'].length!==1?'s':'')+' · '+totU.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:2})+')</span></div>'
+      +'<div class="txn-table-wrap">'+itemsTableLoc(groups['__none__'])+'</div></div>';
   }
   wrap.innerHTML=html||'<div style="padding:28px;text-align:center;color:var(--muted);font-size:13px">No items match the current filters.</div>';
+}
+
+// Table for grouped view — shows the quantity AT THIS location (not the grand total)
+function itemsTableLoc(rows){
+  if(!rows.length) return '<div style="padding:28px 24px;text-align:center;color:var(--muted);font-size:13px">No items here.</div>';
+  var body=rows.map(function(r){
+    var it=r.it;
+    var qtyColor=Number(r.locQty||0)<0?'color:#c23b33':'color:var(--ink)';
+    return '<tr>'
+      +'<td style="font-family:var(--mono);font-size:12px;color:var(--cold)">'+esc(it.sku||'—')+'</td>'
+      +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
+      +'<td style="font-family:var(--mono);font-size:13px;text-align:right;'+qtyColor+'">'+Number(r.locQty||0).toFixed(2)+'</td>'
+      +'<td style="font-family:var(--mono);font-size:13px;text-align:right">$'+Number(it.cost||it.price||0).toFixed(2)+'</td>'
+      +'<td style="text-align:right;position:relative;width:40px">'
+      +'<button class="dots-btn" onclick="toggleItemMenu(event,this.dataset.id)" data-id="'+it.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;stroke:var(--muted)"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>'
+      +'</td></tr>';
+  }).join('');
+  return '<table class="txn-table"><thead><tr><th>SKU</th><th>Product Name</th><th style="text-align:right">Qty here</th><th style="text-align:right">Cost</th><th></th></tr></thead><tbody>'+body+'</tbody></table>';
 }
 
 
@@ -2203,7 +2343,6 @@ function saveTxnOrOpening(){
 
   if(type==='opening'){
     var ocLocation=document.getElementById('t-oc-location')?document.getElementById('t-oc-location').value:'';
-    var itemTotals={};
     for(var i=0;i<lines.length;i++){
       var lineId=lines[i].id.replace('oc-line-','');
       var itemId=document.getElementById('oc-item-'+lineId)?document.getElementById('oc-item-'+lineId).value:'';
@@ -2212,18 +2351,12 @@ function saveTxnOrOpening(){
       if(!itemId||qty==='') continue;
       var price=document.getElementById('oc-price-'+lineId)?document.getElementById('oc-price-'+lineId).value:'';
       transactions.push({id:'txn_'+Date.now()+'_'+i,docId:docId,num:num,lineNum:saved+1,date:date,time:time,type:'opening',itemId:itemId,qty:qty,unit:unit,unitPrice:price,locOut:'',locIn:ocLocation,desc:notes||'Opening count'});
-      if(itemTotals[itemId]===undefined) itemTotals[itemId]=0;
-      itemTotals[itemId]+=Number(qty);
       saved++;
     }
-    Object.keys(itemTotals).forEach(function(itemId){
-      var idx=items.findIndex(function(x){return x.id===itemId;});
-      if(idx>=0){items[idx].qty=itemTotals[itemId];items[idx].openingDate=date;if(ocLocation)items[idx].locationId=ocLocation;}
-    });
-    localStorage.setItem('pc_items',JSON.stringify(items));
     if(saved===0){alert('Please add at least one item with a quantity.');return;}
     editingDocId=null;
     saveTxns();closeTxnModal();renderTransactions();
+    recalcQuantities(); // engine assigns per-location quantities
     return;
   }
 

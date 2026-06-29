@@ -534,6 +534,7 @@
 console.log("Plant Console BUILD-1604 — scale log v2: weight auto-select + product dropdown hints");
 
 const ICON={
+  dashboard:'<rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>',
   items:'<path d="M3 7l9-4 9 4v10l-9 4-9-4V7z"/><path d="M3 7l9 4 9-4M12 11v10"/>',
   transactions:'<path d="M17 3l4 4-4 4"/><path d="M21 7H7"/><path d="M7 21l-4-4 4-4"/><path d="M3 17h14"/>',
   scalelog:'<path d="M3 6h18l-2 13a2 2 0 0 1-2 1.7H7a2 2 0 0 1-2-1.7L3 6z"/><path d="M3 6l1.5-3h15L21 6"/><path d="M9 11h6"/>',
@@ -559,6 +560,7 @@ const PERMISSIONS=[
   {id:'manageUsers',  label:'Manage users',              desc:'Add, edit, or remove user accounts (admin only)'},
 ];
 const SECTIONS=[
+  {id:'dashboard',label:'Dashboard',kicker:'Overview',title:'Dashboard',lede:'A live snapshot of your plant — inventory value, stock levels, recent movement, and production activity at a glance.'},
   {id:'items',label:'Items',kicker:'Inventory',title:'Items',lede:'Everything you stock — carcasses, primal and retail cuts, processed goods and by-products — counted in pieces, pounds, and boxes.',empty:['No items defined yet.','Tell me how you want items organized and I\'ll build the structure here.']},
   {id:'transactions',label:'Transactions',kicker:'Movement',title:'Transactions',lede:'Receiving, production, internal transfers, and shipments — every movement of product in and out of the plant.'},
   {id:'scalelog',label:'Scale Log',kicker:'Production',title:'Scale Log',lede:'Print product labels and log every package scaled — date, time, product, and weight captured the moment a label is printed.'},
@@ -834,7 +836,7 @@ function attemptLogin(){
   document.getElementById('railName').textContent=found.name;
   document.getElementById('railRole').textContent=found.role.charAt(0).toUpperCase()+found.role.slice(1);
   buildNav();
-  select('items');
+  select('dashboard');
 }
 function resetAndLogin(){
   localStorage.clear();
@@ -883,10 +885,130 @@ function select(id){
   else if(id==='transactions') renderTransactions();
   else if(id==='items') renderItemsView();
   else if(id==='scalelog') renderScaleLog();
+  else if(id==='dashboard') renderDashboard();
   else view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p><div class="empty"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICON[id]}</svg></div><div><h3>${s.empty[0]}</h3><p>${s.empty[1]}</p></div></div>`;
   view.focus({preventScroll:true});
 }
 
+
+/* ===== DASHBOARD ===== */
+function renderDashboard(){
+  const s=SECTIONS.find(x=>x.id==='dashboard');
+  var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
+  var allTxns=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
+  var allLogs=JSON.parse(localStorage.getItem('pc_scalelogs')||'[]');
+
+  // Metrics
+  var totalItems=allItems.length;
+  var inStock=allItems.filter(function(it){return Number(it.qty||0)>0;}).length;
+  var zeroStock=allItems.filter(function(it){return Number(it.qty||0)===0;}).length;
+  var negStock=allItems.filter(function(it){return Number(it.qty||0)<0;}).length;
+  var totalValue=allItems.reduce(function(sum,it){return sum+Number(it.qty||0)*Number(it.cost||it.price||0);},0);
+  var totalWeight=allItems.reduce(function(sum,it){return sum+(Number(it.qty||0)>0?Number(it.qty||0):0);},0);
+
+  var today=new Date().toISOString().slice(0,10);
+  var labelsToday=allLogs.filter(function(l){return l.date===today;});
+  var weightToday=labelsToday.reduce(function(sum,l){return sum+Number(l.weight||0);},0);
+
+  // Recent transactions (group by docId)
+  var docs={};var docList=[];
+  allTxns.forEach(function(t){
+    var key=t.docId||t.id;
+    if(!docs[key]){docs[key]={num:t.num,date:t.date,time:t.time,type:t.type,lines:[]};docList.push(docs[key]);}
+    docs[key].lines.push(t);
+  });
+  docList.sort(function(a,b){var da=(a.date||'')+(a.time||'');var db=(b.date||'')+(b.time||'');return da<db?1:da>db?-1:0;});
+  var recent=docList.slice(0,6);
+
+  // Top value items
+  var valued=allItems.map(function(it){return {name:it.name,qty:Number(it.qty||0),val:Number(it.qty||0)*Number(it.cost||it.price||0)};})
+    .filter(function(x){return x.val>0;}).sort(function(a,b){return b.val-a.val;}).slice(0,6);
+
+  // Low / negative stock alerts
+  var alerts=allItems.filter(function(it){return Number(it.qty||0)<0;}).sort(function(a,b){return Number(a.qty)-Number(b.qty);}).slice(0,6);
+
+  function card(label,value,sub,color){
+    return '<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px">'
+      +'<div style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)">'+label+'</div>'
+      +'<div style="font-size:26px;font-weight:800;margin-top:6px;color:'+(color||'var(--ink)')+'">'+value+'</div>'
+      +(sub?'<div style="font-size:12px;color:var(--muted);margin-top:2px">'+sub+'</div>':'')
+      +'</div>';
+  }
+
+  var html='<div class="eyebrow">'+s.kicker+'</div><h2>'+s.title+'</h2><p class="lede">'+s.lede+'</p>';
+
+  if(!totalItems){
+    html+='<div class="empty" style="margin-top:10px"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">'+ICON.dashboard+'</svg></div><div><h3>No data yet</h3><p>Connect QuickBooks and run <strong>Sync</strong> on the Items tab. Your dashboard will fill in automatically.</p></div></div>';
+    view.innerHTML=html;
+    return;
+  }
+
+  // KPI cards
+  html+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:8px 0 22px">'
+    +card('Total inventory value','$'+totalValue.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}),totalWeight.toLocaleString('en-US',{maximumFractionDigits:0})+' lbs on hand','var(--cold)')
+    +card('Products in stock',inStock.toLocaleString(),'of '+totalItems+' total items')
+    +card('Out of stock',zeroStock.toLocaleString(),'zero quantity',zeroStock>0?'#c23b33':'var(--ink)')
+    +card('Labels printed today',labelsToday.length.toLocaleString(),weightToday.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0})+' lbs scaled')
+    +'</div>';
+
+  // Two-column layout: recent activity + top value
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start">';
+
+  // Recent activity
+  html+='<div><div style="font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Recent activity</div>';
+  if(!recent.length){
+    html+='<div style="color:var(--muted);font-size:13px">No transactions yet.</div>';
+  } else {
+    html+='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden">';
+    recent.forEach(function(d,i){
+      var ds=d.date?new Date(d.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
+      if(d.time) ds+=' '+d.time;
+      var total=d.lines.reduce(function(sum,t){return sum+txnValue(t);},0);
+      var valStr=total>0?'$'+total.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+      html+='<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px'+(i<recent.length-1?';border-bottom:1px solid var(--line)':'')+'">'
+        +'<div><div style="font-size:13px;font-weight:600">'+esc(d.num||'—')+' <span class="type-badge type-'+d.type+'" style="margin-left:4px">'+(TXN_TYPES[d.type]||d.type)+'</span></div>'
+        +'<div style="font-size:11px;color:var(--muted);margin-top:2px">'+ds+' · '+d.lines.length+' item'+(d.lines.length!==1?'s':'')+'</div></div>'
+        +'<div style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--cold)">'+valStr+'</div>'
+        +'</div>';
+    });
+    html+='</div>';
+  }
+  html+='<button class="btn btn-sm" style="margin-top:12px" onclick="select(\'transactions\')">View all transactions</button></div>';
+
+  // Top value items
+  html+='<div><div style="font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Top inventory by value</div>';
+  if(!valued.length){
+    html+='<div style="color:var(--muted);font-size:13px">No valued inventory yet. Run a sync and recalculate.</div>';
+  } else {
+    var maxVal=valued[0].val||1;
+    html+='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px">';
+    valued.forEach(function(v,i){
+      var pct=Math.round((v.val/maxVal)*100);
+      html+='<div style="margin-bottom:'+(i<valued.length-1?'12px':'0')+'">'
+        +'<div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px"><span style="font-weight:600;max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(v.name)+'</span><span style="font-family:var(--mono);color:var(--cold);font-weight:700">$'+v.val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span></div>'
+        +'<div style="height:6px;background:var(--bg);border-radius:3px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:var(--cold);border-radius:3px"></div></div>'
+        +'</div>';
+    });
+    html+='</div>';
+  }
+  html+='</div>';
+
+  html+='</div>'; // end two-col
+
+  // Alerts row
+  if(alerts.length){
+    html+='<div style="margin-top:22px"><div style="font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#c23b33;margin-bottom:10px">⚠ Negative stock — needs attention</div>';
+    html+='<div style="background:rgba(194,59,51,.06);border:1px solid rgba(194,59,51,.25);border-radius:14px;padding:6px 4px">';
+    alerts.forEach(function(it,i){
+      html+='<div style="display:flex;justify-content:space-between;padding:9px 16px'+(i<alerts.length-1?';border-bottom:1px solid rgba(194,59,51,.12)':'')+'">'
+        +'<span style="font-size:13px;font-weight:600">'+esc(it.name)+'</span>'
+        +'<span style="font-family:var(--mono);font-size:13px;color:#c23b33;font-weight:700">'+Number(it.qty).toFixed(2)+'</span></div>';
+    });
+    html+='</div><div style="font-size:11px;color:var(--muted);margin-top:8px">Negative quantities usually mean sales were synced before an opening count was set. Set opening counts or recalculate.</div></div>';
+  }
+
+  view.innerHTML=html;
+}
 
 /* ===== ITEMS ===== */
 function recalcQuantities(){

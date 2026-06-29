@@ -11,7 +11,7 @@ const CLIENT_SECRET = process.env.QB_CLIENT_SECRET || 'rstNRy7lvgmVE0FRdRYzDNXSo
 const REDIRECT_URI = process.env.QB_REDIRECT_URI || 'https://plant-console-app.onrender.com/callback';
 
 // In-memory token store (persists while server is running)
-let accessToken = process.env.QB_ACCESS_TOKEN || '';
+let accessToken = process.env.QB_ACCESS_TOKEN || 'eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2IiwieC5vcmciOiJIMCJ9..5HeNoqIq2dNH_ywSUn07BA.2UqmIwUlqtSLpWe25ejJCjnOdu99Sgb0P1JQ0nS76Yj_OqrhBmaBUKjbh92pTZFbtVxx5TyBnZ-07qdHAcqEmwYcQjckZ4nZieXUTiQrK6vtMVNViIVOLtNIXEO6faCFYgk61U0MkOjLCrRoAKZ-2wg4UAIwIMJ2sLEPR4pLA--JoxLq7grYVRJqnUGL2i9i392di9L4_lxF8mXleS1KC4UEwDTJL-TluC-TscxJIMhaAEh9G9n-smzRbszx2DHdJ3e_dITU9X1KIICyCsdAsBXKxlzrUR7MwPMnkCgjm9ydLse2yPvHVSKnEswuE1pD7CnxfL6Ir4MLvEqdeo2W1m66e-12RdAUIoAqB_N-l0K1-YqYJacAhmkRO0FatsTj-Wl1D8fRm43uPrPudlFZQKMY_YnF_ENJHJ-JuMCYme1MzRHpX0vupS7Z05uecpbKxAaU0D9o8Cxraa74E51llEd60dGzsBHD4VPQV8O2bFo.H4Nx-fR1jI0UGwn95uqh6g';
 let refreshToken = process.env.QB_REFRESH_TOKEN || 'RT1-76-H0-1791468215k2xxhdx8wq5jcuwo5cqq';
 let activeRealm = QB_REALM;
 
@@ -84,7 +84,7 @@ async function refreshAccessToken() {
 }
 
 async function fetchQBItemsPage(startPosition, retry) {
-  const query = `SELECT * FROM Item STARTPOSITION ${startPosition} MAXRESULTS 1000`;
+  const query = `SELECT * FROM Item STARTPOSITION ${startPosition} MAXRESULTS 100`;
   const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
   const res = await httpsRequest({
     hostname: 'quickbooks.api.intuit.com',
@@ -108,7 +108,7 @@ async function fetchQBItems(retry) {
   // Paginate through all items using STARTPOSITION (QB is 1-indexed)
   let allItems = [];
   let start = 1;
-  const pageSize = 1000;
+  const pageSize = 100;
   while (true) {
     const data = await fetchQBItemsPage(start, retry);
     const items = (data.QueryResponse && data.QueryResponse.Item) || [];
@@ -122,7 +122,7 @@ async function fetchQBItems(retry) {
 
 // Generic paginated query for any QB entity (Bill, Invoice, SalesReceipt, CreditMemo)
 async function fetchQBEntityPage(entity, startPosition, retry) {
-  const query = `SELECT * FROM ${entity} STARTPOSITION ${startPosition} MAXRESULTS 1000`;
+  const query = `SELECT * FROM ${entity} STARTPOSITION ${startPosition} MAXRESULTS 100`;
   const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
   const res = await httpsRequest({
     hostname: 'quickbooks.api.intuit.com',
@@ -142,7 +142,7 @@ async function fetchQBEntityPage(entity, startPosition, retry) {
 async function fetchQBEntity(entity) {
   let all = [];
   let start = 1;
-  const pageSize = 1000;
+  const pageSize = 100;
   while (true) {
     const data = await fetchQBEntityPage(entity, start, false);
     const rows = (data.QueryResponse && data.QueryResponse[entity]) || [];
@@ -175,28 +175,45 @@ async function fetchQBDocuments() {
 async function diagnose(retry) {
   // First refresh to guarantee a current access token
   if (!retry) { await refreshAccessToken(); }
-  const query = 'SELECT * FROM CompanyInfo';
-  const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
-  const res = await httpsRequest({
-    hostname: 'quickbooks.api.intuit.com',
-    path: reqPath,
-    method: 'GET',
-    headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/json' }
-  });
+
+  async function runQuery(q) {
+    const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(q)}&minorversion=75`;
+    const res = await httpsRequest({
+      hostname: 'quickbooks.api.intuit.com',
+      path: reqPath,
+      method: 'GET',
+      headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/json' }
+    });
+    return { status: res.status, body: res.body.slice(0, 300) };
+  }
+
+  const company = await runQuery('SELECT * FROM CompanyInfo');
+  const itemCount = await runQuery('SELECT COUNT(*) FROM Item');
+  const item1 = await runQuery('SELECT * FROM Item MAXRESULTS 1');
+  const item100 = await runQuery('SELECT * FROM Item STARTPOSITION 1 MAXRESULTS 100');
+  const item1000 = await runQuery('SELECT * FROM Item STARTPOSITION 1 MAXRESULTS 1000');
+
   let companyName = null;
   try {
-    const parsed = JSON.parse(res.body);
+    const parsed = JSON.parse(company.body);
     if (parsed.QueryResponse && parsed.QueryResponse.CompanyInfo) {
       companyName = parsed.QueryResponse.CompanyInfo[0].CompanyName;
     }
   } catch (e) {}
+
   return {
     realmUsed: activeRealm,
     hasAccessToken: !!accessToken,
     accessTokenPreview: accessToken ? accessToken.slice(0, 12) + '...' : '(none)',
-    companyInfoStatus: res.status,
     companyName: companyName,
-    rawResponse: res.body.slice(0, 800)
+    tests: {
+      'CompanyInfo': company.status,
+      'COUNT(*) Item': itemCount.status + ' → ' + itemCount.body,
+      'Item MAXRESULTS 1': item1.status,
+      'Item MAXRESULTS 100': item100.status,
+      'Item MAXRESULTS 1000': item1000.status
+    },
+    sampleError: (item1000.status !== 200 ? item1000.body : (item100.status !== 200 ? item100.body : ''))
   };
 }
 

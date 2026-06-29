@@ -670,7 +670,11 @@ async function syncEverything(){
   if(status)status.textContent='Step 3/3 — recalculating quantities…';
   recalcQuantities();
 
-  if(status)status.textContent='Sync complete — '+itemsResult.count+' items, '+docsResult.added+' movements applied'+(docsResult.skippedBeforeOpening?(' ('+docsResult.skippedBeforeOpening+' skipped before opening count)'):'')+'.';
+  if(status){
+    var dc=docsResult.docCounts||{};
+    var breakdown=' — QB docs: '+(dc.Bill||0)+' bills, '+(dc.Invoice||0)+' invoices, '+(dc.SalesReceipt||0)+' sales receipts, '+(dc.CreditMemo||0)+' credit memos';
+    status.textContent='Sync complete — '+itemsResult.count+' items, '+docsResult.added+' movements applied'+(docsResult.skippedBeforeOpening?(' ('+docsResult.skippedBeforeOpening+' skipped before opening count)'):'')+breakdown;
+  }
   if(btn)btn.disabled=false;
   renderItemsTable();
 }
@@ -772,26 +776,42 @@ async function qbSyncDocumentsCore(){
   var added=0;
   var skippedNoItem=0;
   var skippedBeforeOpening=0;
+  var skippedNoQty=0;
+  var lineItemsSeen=0;
+  var unmatchedIds={}; // qbItemId -> count, for diagnosis
 
   docConfig.forEach(function(cfg){
     var docs=data[cfg.key]||[];
     docs.forEach(function(doc){
       var lines=doc.Line||[];
       lines.forEach(function(line,li){
-        // Only item-based lines carry inventory movement
-        var detail=line.SalesItemLineDetail||line.ItemBasedExpenseLineDetail;
+        // Item-based lines carry inventory movement. QB uses different detail
+        // objects: SalesItemLineDetail (invoice/salesreceipt/creditmemo),
+        // ItemBasedExpenseLineDetail (bill). Some bills use AccountBasedExpenseLineDetail (skip).
+        var detail=line.SalesItemLineDetail||line.ItemBasedExpenseLineDetail||line.ItemLineDetail;
         if(!detail||!detail.ItemRef) return;
+        lineItemsSeen++;
         var qbItemId=detail.ItemRef.value;
         var local=byQbId[qbItemId];
-        if(!local){ skippedNoItem++; return; }
+        if(!local){
+          skippedNoItem++;
+          unmatchedIds[qbItemId]=(unmatchedIds[qbItemId]||0)+1;
+          return;
+        }
         var qty=Number(detail.Qty||0);
-        if(!qty) return;
+        if(!qty){
+          // Some sales lines omit Qty but have an amount — treat amount/price as qty fallback isn't safe,
+          // so we skip but count it for diagnosis.
+          skippedNoQty++;
+          return;
+        }
         var docDate=doc.TxnDate||'';
         // Skip movements dated before this item's opening count
         var openDate=openDateByItem[local.id];
         if(openDate&&docDate&&docDate<openDate){ skippedBeforeOpening++; return; }
         var unitPrice=Number(detail.UnitPrice|| (line.Amount&&qty?line.Amount/qty:0) ||0);
         var docNum=doc.DocNumber||doc.Id;
+        var account=(doc.VendorRef&&doc.VendorRef.name)||(doc.CustomerRef&&doc.CustomerRef.name)||'';
         transactions.push({
           id:'qb_'+cfg.key+'_'+doc.Id+'_'+li,
           qbDoc:true,
@@ -803,9 +823,10 @@ async function qbSyncDocumentsCore(){
           qty:qty,
           unit:'',
           unitPrice:unitPrice,
+          account:account,
           locOut: cfg.sign<0 ? (local.locationId||'') : '',
           locIn: cfg.sign>0 ? (local.locationId||'') : '',
-          desc:cfg.key+' '+docNum+(doc.VendorRef?(' · '+(doc.VendorRef.name||'')):'')+(doc.CustomerRef?(' · '+(doc.CustomerRef.name||'')):'')
+          desc:cfg.key+' '+docNum+(account?(' · '+account):'')
         });
         added++;
       });
@@ -814,7 +835,24 @@ async function qbSyncDocumentsCore(){
 
   saveTxns();
 
-  return {ok:true, added:added, skippedBeforeOpening:skippedBeforeOpening, skippedNoItem:skippedNoItem};
+  var docCounts={
+    Bill:(data.Bill||[]).length,
+    Invoice:(data.Invoice||[]).length,
+    SalesReceipt:(data.SalesReceipt||[]).length,
+    CreditMemo:(data.CreditMemo||[]).length
+  };
+  // Stash a diagnostic snapshot for the Check button
+  window.__lastDocSync={
+    docCounts:docCounts,
+    serverErrors:data.errors||{},
+    lineItemsSeen:lineItemsSeen,
+    added:added,
+    skippedNoItem:skippedNoItem,
+    skippedNoQty:skippedNoQty,
+    skippedBeforeOpening:skippedBeforeOpening,
+    unmatchedSample:Object.keys(unmatchedIds).slice(0,8)
+  };
+  return {ok:true, added:added, skippedBeforeOpening:skippedBeforeOpening, skippedNoItem:skippedNoItem, docCounts:docCounts};
 }
 
 /* ===== LOGIN ===== */
@@ -1150,6 +1188,30 @@ function diagnoseLocations(){
       Object.keys(anyItem.locQtys).forEach(function(k){ msg+='    '+locName(k)+': '+anyItem.locQtys[k]+'\n'; });
     } else {
       msg+='    locQtys = NONE (engine has not run — click Recalculate)\n';
+    }
+  }
+
+  // Document sync diagnostic
+  msg+='\n=== LAST QUICKBOOKS DOCUMENT SYNC ===\n';
+  var d=window.__lastDocSync;
+  if(!d){
+    msg+='  No document sync run yet this session. Click "Sync from QuickBooks".\n';
+  } else {
+    msg+='  Documents pulled: '+d.docCounts.Bill+' bills, '+d.docCounts.Invoice+' invoices, '+d.docCounts.SalesReceipt+' sales receipts, '+d.docCounts.CreditMemo+' credit memos\n';
+    msg+='  Item lines seen: '+d.lineItemsSeen+'\n';
+    msg+='  Movements added: '+d.added+'\n';
+    msg+='  Skipped (item not matched): '+d.skippedNoItem+'\n';
+    msg+='  Skipped (no quantity on line): '+d.skippedNoQty+'\n';
+    msg+='  Skipped (dated before opening count): '+d.skippedBeforeOpening+'\n';
+    if(d.serverErrors&&Object.keys(d.serverErrors).length){
+      msg+='  SERVER FETCH ERRORS:\n';
+      Object.keys(d.serverErrors).forEach(function(k){ msg+='    '+k+': '+d.serverErrors[k]+'\n'; });
+    }
+    if(d.docCounts.Invoice===0&&d.docCounts.SalesReceipt===0){
+      msg+='\n  >> QuickBooks returned ZERO invoices and sales receipts.\n     Either no sales exist for these items, or sales are recorded differently.\n';
+    }
+    if(d.skippedNoItem>0){
+      msg+='\n  >> '+d.skippedNoItem+' line(s) referenced items not in your synced list.\n     Sample QB item IDs: '+d.unmatchedSample.join(', ')+'\n     Run Sync from QuickBooks to refresh items first.\n';
     }
   }
   alert(msg);
@@ -2125,10 +2187,16 @@ function viewItemHistory(itemId){
     var lIn=t.locIn==='external'?'External':(storages.find(function(x){return x.id===t.locIn;})||{}).name||'';
     if(lOut||lIn) loc=esc(lOut||'—')+' &#8594; '+esc(lIn||'—');
     var openArg=t.docId?('\''+t.docId+'\',true'):('\''+t.id+'\',false');
+    var acct=t.account||'';
+    if(!acct){
+      // derive from desc for older records: text after " · "
+      if(t.desc&&t.desc.indexOf(' · ')>=0) acct=t.desc.split(' · ').slice(1).join(' · ');
+    }
     return '<tr style="cursor:pointer" onclick="openBillFromReport('+openArg+')" title="Click to view / edit this bill">'
       +'<td style="font-size:12px">'+ds+'</td>'
       +'<td style="font-family:var(--mono);font-size:11px;color:var(--cold);text-decoration:underline">'+esc(t.num||'—')+'</td>'
       +'<td><span class="type-badge type-'+t.type+'">'+(TXN_TYPES[t.type]||t.type)+'</span></td>'
+      +'<td style="font-size:11.5px">'+(acct?esc(acct):'<span style="color:var(--muted)">—</span>')+'</td>'
       +'<td style="font-family:var(--mono);font-size:12px;text-align:right;color:'+(sign<0?'#c23b33':'var(--ink)')+'">'+(sign<0?'-':'+')+q.toFixed(2)+' '+(t.unit||'')+'</td>'
       +'<td style="font-family:var(--mono);font-size:12px;text-align:right;font-weight:700">'+running.toFixed(2)+'</td>'
       +'<td style="font-family:var(--mono);font-size:12px;text-align:right;color:var(--cold)">'+(val>0?'$'+val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'—')+'</td>'
@@ -2160,7 +2228,7 @@ function viewItemHistory(itemId){
         +'<div style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px"><div style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">On hand now</div><div style="font-size:20px;font-weight:700;margin-top:2px">'+Number(it.qty||0).toFixed(2)+'</div></div>'
         +'<div style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px"><div style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Total value moved</div><div style="font-size:20px;font-weight:700;margin-top:2px;color:var(--cold)">$'+totalVal.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div></div>'
       +'</div>'
-      +'<table class="txn-table"><thead><tr><th>Date</th><th>Transaction</th><th>Type</th><th style="text-align:right">Change</th><th style="text-align:right">Balance</th><th style="text-align:right">Value</th><th>Movement</th></tr></thead><tbody>'+rows+'</tbody></table>';
+      +'<table class="txn-table"><thead><tr><th>Date</th><th>Transaction</th><th>Type</th><th>Account</th><th style="text-align:right">Change</th><th style="text-align:right">Balance</th><th style="text-align:right">Value</th><th>Movement</th></tr></thead><tbody>'+rows+'</tbody></table>';
   }
 
   document.getElementById('reportModal').classList.remove('hidden');

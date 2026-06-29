@@ -402,9 +402,13 @@
         </select>
       </div>
 
-      <div class="form-row" id="t-loc-row">
-        <div class="form-group"><label>Location out (from)</label><select id="t-loc-out"></select></div>
-        <div class="form-group"><label>Location in (to)</label><select id="t-loc-in"></select></div>
+      <div id="t-loc-row" style="display:none">
+        <div style="border-top:1px solid var(--line);margin:14px 0 12px"></div>
+        <div style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Movement</div>
+        <div class="form-row">
+          <div class="form-group"><label>Location out (from)</label><select id="t-loc-out"></select></div>
+          <div class="form-group"><label>Location in (to)</label><select id="t-loc-in"></select></div>
+        </div>
       </div>
       <div class="form-group"><label>Description / Notes</label><textarea id="t-desc" placeholder="Product details, lot numbers, weight, supplier…"></textarea></div>
       <div id="t-opening-section" style="display:none">
@@ -1984,7 +1988,7 @@ function onTxnTypeChange(){
   var type=document.getElementById('t-type').value;
   var locRow=document.getElementById('t-loc-row');
   var openSec=document.getElementById('t-opening-section');
-  if(locRow) locRow.style.display=type==='opening'?'none':'grid';
+  if(locRow) locRow.style.display=type==='opening'?'none':'block';
   if(openSec) openSec.style.display=type==='opening'?'block':'none';
   if(type==='opening'){
     populateOCLocation();
@@ -2018,7 +2022,7 @@ function openAddTxnModal(){
   var locRow=document.getElementById('t-loc-row');
   var openSec=document.getElementById('t-opening-section');
   var ocLines=document.getElementById('ocLines');
-  if(locRow) locRow.style.display='grid';
+  if(locRow) locRow.style.display='block';
   if(openSec) openSec.style.display='none';
   if(ocLines) ocLines.innerHTML='';
   if(document.getElementById('ocLineCount')) document.getElementById('ocLineCount').textContent='0 items';

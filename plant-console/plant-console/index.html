@@ -1166,6 +1166,56 @@ function qtyAtLoc(it,locId){
 // Diagnostic: shows how transfers stored their locations and what the engine produced
 function diagnoseLocations(){
   var allTxns=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
+
+  // Count what TYPES of transactions actually exist in storage
+  var typeCounts={};
+  var qbTypeCounts={};
+  allTxns.forEach(function(t){
+    typeCounts[t.type]=(typeCounts[t.type]||0)+1;
+    if(t.qbDocType) qbTypeCounts[t.qbDocType]=(qbTypeCounts[t.qbDocType]||0)+1;
+  });
+
+  var msg='=== WHAT IS IN YOUR TRANSACTIONS ===\n';
+  msg+='Total transaction lines: '+allTxns.length+'\n\n';
+  msg+='By movement type:\n';
+  Object.keys(typeCounts).sort().forEach(function(k){ msg+='  '+k+': '+typeCounts[k]+'\n'; });
+  msg+='\nBy QuickBooks document type:\n';
+  if(!Object.keys(qbTypeCounts).length) msg+='  (none from QuickBooks)\n';
+  Object.keys(qbTypeCounts).sort().forEach(function(k){ msg+='  '+k+': '+qbTypeCounts[k]+'\n'; });
+
+  // The decisive answer about sales:
+  var invCount=qbTypeCounts['Invoice']||0;
+  var srCount=qbTypeCounts['SalesReceipt']||0;
+  var cmCount=qbTypeCounts['CreditMemo']||0;
+  var billCount=qbTypeCounts['Bill']||0;
+  msg+='\n=== SALES DIAGNOSIS ===\n';
+  if(invCount===0 && srCount===0){
+    msg+='>> NO invoices or sales receipts were parsed.\n';
+    if(cmCount>0) msg+='   But '+cmCount+' credit memos (returns) WERE parsed.\n   This means invoices are failing while returns/bills work.\n';
+    else msg+='   No sales documents of any kind were parsed.\n';
+  } else {
+    msg+='>> Invoices/sales receipts ARE present ('+invCount+' inv, '+srCount+' SR).\n   If a product shows no sale, it simply was not sold in QB.\n';
+  }
+
+  // Server-side sync snapshot (what QB actually returned)
+  var d=window.__lastDocSync;
+  msg+='\n=== LAST SERVER SYNC (what QuickBooks returned) ===\n';
+  if(!d){
+    msg+='  No sync run this session. Click "Sync from QuickBooks", then Check again.\n';
+  } else {
+    msg+='  Returned: '+d.docCounts.Bill+' bills, '+d.docCounts.Invoice+' invoices, '+d.docCounts.SalesReceipt+' sales receipts, '+d.docCounts.CreditMemo+' credit memos\n';
+    if(d.serverErrors&&Object.keys(d.serverErrors).length){
+      msg+='  SERVER FETCH ERRORS:\n';
+      Object.keys(d.serverErrors).forEach(function(k){ msg+='    '+k+': '+d.serverErrors[k]+'\n'; });
+    } else {
+      msg+='  (no server fetch errors)\n';
+    }
+  }
+  alert(msg);
+}
+
+function diagnoseLocationsOLD(){
+  var allTxns=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
   var moves=allTxns.filter(function(t){return t.type==='transfer'||t.type==='receive'||t.type==='shipment';});
   function locName(id){ if(!id||id==='external') return '(external/none)'; var s=storages.find(function(x){return x.id===id;}); return s?s.name:('UNKNOWN ID: '+id); }
   var msg='STORAGE LOCATIONS DEFINED:\n';

@@ -682,6 +682,10 @@ async function doSync(incremental){
   showSyncProgress(50,'Step 2 of 3 — fetching documents…');
   var docLabels={Bill:'bills',Invoice:'invoices',SalesReceipt:'sales receipts',CreditMemo:'credit memos'};
   var docsResult=await qbSyncDocumentsCore(function(typeName,idx,total,runningCount){
+    if(typeName==='__processing__'){
+      showSyncProgress(84,'Processing documents — this can take a moment on large data…');
+      return;
+    }
     var pct=50+Math.round((idx/total)*33);
     var label='Step 2 of 3 — fetching '+(docLabels[typeName]||typeName);
     if(runningCount) label+=' ('+runningCount.toLocaleString()+')';
@@ -853,6 +857,9 @@ async function qbSyncDocumentsCore(onProgress, since){
       startPos+=pageSize;
     }
   }
+  // Let the browser repaint, then process (heavy step on large datasets)
+  if(onProgress) onProgress('__processing__',3,4,null);
+  await new Promise(function(r){setTimeout(r,50);});
   return finishDocSync(data);
 }
 

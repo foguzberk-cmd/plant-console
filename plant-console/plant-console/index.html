@@ -936,17 +936,6 @@ function finishDocSync(data){
   var byQbId={};
   items.forEach(function(it){ if(it.qbId) byQbId[it.qbId]=it; });
 
-  // Per-item start point = the LATEST opening-count date.
-  // Only QuickBooks movements on/after this date adjust the balance, so a
-  // physical re-count resets the baseline. Items with no opening count have
-  // no cutoff (their full history syncs).
-  var openDateByItem={};
-  transactions.forEach(function(t){
-    if(t.type==='opening'&&t.itemId&&t.date){
-      if(!openDateByItem[t.itemId]||t.date>openDateByItem[t.itemId]) openDateByItem[t.itemId]=t.date;
-    }
-  });
-
   // Map each QB doc type to a transaction type and direction
   // Bill = purchase IN (receive). Invoice & SalesReceipt = sold OUT (shipment). CreditMemo = returned IN (return).
   var docConfig=[
@@ -1007,16 +996,11 @@ function finishDocSync(data){
           return;
         }
         var docDate=doc.TxnDate||'';
-        // Skip movements dated before this item's opening count
-        var openDate=openDateByItem[local.id];
-        if(openDate&&docDate&&docDate<openDate){ skippedBeforeOpening++; return; }
-        var unitPrice=Number(detail.UnitPrice|| (line.Amount&&qty?line.Amount/qty:0) ||0);
-        var docNum=doc.DocNumber||doc.Id;
-        var account=(doc.VendorRef&&doc.VendorRef.name)||(doc.CustomerRef&&doc.CustomerRef.name)||'';
         // QuickBooks bills/invoices carry only a DATE (TxnDate), no time-of-day.
-        // Use MetaData.CreateTime (full timestamp of when the record was first
-        // entered). We deliberately do NOT fall back to LastUpdatedTime — editing
-        // a bill in QuickBooks bumps LastUpdatedTime but must not change its order.
+        // Capture MetaData.CreateTime (full timestamp of when the record was
+        // first entered in QuickBooks) so we can DISPLAY it. We do NOT skip or
+        // shift anything — every synced document is shown, and you can see from
+        // the Created column whether it landed before or after the opening count.
         var createTime=(doc.MetaData&&doc.MetaData.CreateTime)||'';
         var timeStr='';
         var createSort='';
@@ -1026,9 +1010,12 @@ function finishDocSync(data){
             var hh=String(ct.getHours()).padStart(2,'0');
             var mm=String(ct.getMinutes()).padStart(2,'0');
             timeStr=hh+':'+mm;
-            createSort=createTime; // full ISO for precise tiebreak
+            createSort=createTime; // full ISO timestamp, kept for sorting + display
           }
         }
+        var unitPrice=Number(detail.UnitPrice|| (line.Amount&&qty?line.Amount/qty:0) ||0);
+        var docNum=doc.DocNumber||doc.Id;
+        var account=(doc.VendorRef&&doc.VendorRef.name)||(doc.CustomerRef&&doc.CustomerRef.name)||'';
         transactions.push({
           id:'qb_'+cfg.key+'_'+doc.Id+'_'+li,
           qbDoc:true,
@@ -1310,9 +1297,12 @@ function recalcQuantities(){
   var allTxns=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
   var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
 
-  // sort transactions chronologically so opening counts apply before later moves.
-  // Same date -> order by precise creation time (QuickBooks CreateTime).
+  // Sort so each item's OPENING COUNT applies before any of its movements,
+  // then order remaining transactions by date and precise creation time.
   allTxns.sort(function(a,b){
+    var ao=(a.type==='opening')?0:1;
+    var bo=(b.type==='opening')?0:1;
+    if(ao!==bo) return ao-bo;
     var da=(a.date||''), db=(b.date||'');
     if(da!==db) return da<db?-1:1;
     var ca=a.createTime||((a.date||'')+'T'+(a.time||'00:00'));
@@ -2538,6 +2528,9 @@ function viewItemHistory(itemId){
   // full precision) so same-day documents appear in the order they were entered.
   // Manual entries fall back to their date+time.
   hist.sort(function(a,b){
+    // Pure chronological: business date, then precise creation time.
+    // The sync already drops anything before the opening count, so the opening
+    // naturally sorts first and every synced movement falls after it.
     var da=(a.date||''), db=(b.date||'');
     if(da!==db) return da<db?-1:1;
     var ca=a.createTime||((a.date||'')+'T'+(a.time||'00:00'));
@@ -2564,6 +2557,15 @@ function viewItemHistory(itemId){
     var lIn=t.locIn==='external'?'External':(storages.find(function(x){return x.id===t.locIn;})||{}).name||'';
     if(lOut||lIn) loc=esc(lOut||'—')+' &#8594; '+esc(lIn||'—');
     var openArg=t.docId?('\''+t.docId+'\',true'):('\''+t.id+'\',false');
+    // Full creation timestamp (QuickBooks CreateTime) for the Created column.
+    var created='—';
+    if(t.createTime){
+      var cd=new Date(t.createTime);
+      if(!isNaN(cd.getTime())){
+        created=cd.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})
+          +' '+cd.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+      }
+    }
     var acct=t.account||'';
     if(!acct){
       // derive from desc for older records: text after " · "
@@ -2571,6 +2573,7 @@ function viewItemHistory(itemId){
     }
     return '<tr style="cursor:pointer" onclick="openBillFromReport('+openArg+')" title="Click to view / edit this bill">'
       +'<td style="font-size:12px">'+ds+'</td>'
+      +'<td style="font-size:11px;color:var(--muted);white-space:nowrap">'+created+'</td>'
       +'<td style="font-family:var(--mono);font-size:11px;color:var(--cold);text-decoration:underline">'+esc(t.num||'—')+'</td>'
       +'<td><span class="type-badge type-'+t.type+'">'+(TXN_TYPES[t.type]||t.type)+'</span></td>'
       +'<td style="font-size:11.5px">'+(acct?esc(acct):'<span style="color:var(--muted)">—</span>')+'</td>'
@@ -2605,7 +2608,7 @@ function viewItemHistory(itemId){
         +'<div style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px"><div style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">On hand now</div><div style="font-size:20px;font-weight:700;margin-top:2px">'+Number(it.qty||0).toFixed(2)+'</div></div>'
         +'<div style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px"><div style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Total value moved</div><div style="font-size:20px;font-weight:700;margin-top:2px;color:var(--cold)">$'+totalVal.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div></div>'
       +'</div>'
-      +'<table class="txn-table"><thead><tr><th>Date</th><th>Transaction</th><th>Type</th><th>Account</th><th style="text-align:right">Change</th><th style="text-align:right">Balance</th><th style="text-align:right">Value</th><th>Movement</th></tr></thead><tbody>'+rows+'</tbody></table>';
+      +'<table class="txn-table"><thead><tr><th>Date</th><th>Created</th><th>Transaction</th><th>Type</th><th>Account</th><th style="text-align:right">Change</th><th style="text-align:right">Balance</th><th style="text-align:right">Value</th><th>Movement</th></tr></thead><tbody>'+rows+'</tbody></table>';
   }
 
   document.getElementById('reportModal').classList.remove('hidden');

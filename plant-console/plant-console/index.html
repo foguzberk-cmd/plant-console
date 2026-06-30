@@ -431,7 +431,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add item
           </button>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 80px 70px 90px 30px;gap:6px;margin-bottom:6px;font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">
+        <div id="ocHeader" style="display:grid;grid-template-columns:1fr 80px 70px 90px 30px;gap:6px;margin-bottom:6px;font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">
           <span>Product</span><span style="text-align:right">Qty</span><span>Unit</span><span style="text-align:right">Unit Price</span><span></span>
         </div>
         <div id="ocLines" style="display:flex;flex-direction:column;gap:8px;max-height:260px;overflow-y:auto"></div>
@@ -1725,7 +1725,8 @@ function addOCLine(){
   var idx=ocLineIndex++;
   var line=document.createElement('div');
   line.id='oc-line-'+idx;
-  line.style.cssText='display:grid;grid-template-columns:1fr 80px 70px 90px 30px;gap:6px;align-items:start';
+  line.className='oc-line';
+  line.style.cssText='display:grid;grid-template-columns:'+OC_GRID_STD+';gap:6px;align-items:start';
   line.innerHTML=''
     +'<div class="item-search-wrap">'
     +'<input type="text" id="oc-search-'+idx+'" class="item-search-input" placeholder="Search product..." autocomplete="off" oninput="filterOCItems('+idx+')" onkeydown="ocKeyNav(event,'+idx+')" onblur="hideOCSugg('+idx+')"/>'
@@ -1734,26 +1735,46 @@ function addOCLine(){
     +'<input type="number" id="oc-qty-'+idx+'" placeholder="Qty" min="0" step="0.01" oninput="updatePhysicalDiff('+idx+')" style="padding:8px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;text-align:right;width:100%"/>'
     +'<select id="oc-unit-'+idx+'" style="padding:8px 4px;border:1.5px solid var(--line);border-radius:8px;font-size:11px;background:var(--bg);color:var(--ink);outline:none;width:100%">'
     +'<option value="lbs">lbs</option><option value="pieces">pcs</option><option value="boxes">box</option><option value="cases">case</option><option value="kg">kg</option></select>'
-    +'<div style="position:relative"><span style="position:absolute;left:7px;top:8px;font-size:13px;color:var(--muted)">$</span><input type="number" id="oc-price-'+idx+'" placeholder="0.00" min="0" step="0.01" style="padding:8px 6px 8px 16px;border:1.5px solid var(--line);border-radius:8px;font-size:12px;background:var(--bg);color:var(--ink);outline:none;text-align:right;width:100%"/></div>'
+    // On record (physical count only)
+    +'<div class="pc-cell" id="oc-onrec-'+idx+'" style="display:none;font-family:var(--mono);font-size:12px;text-align:right;padding-top:9px;color:var(--muted)">—</div>'
+    // Difference (physical count only)
+    +'<div class="pc-cell" id="oc-diffv-'+idx+'" style="display:none;font-family:var(--mono);font-size:12px;text-align:right;padding-top:9px;font-weight:700">—</div>'
+    // Cost / unit price
+    +'<div style="position:relative"><span style="position:absolute;left:7px;top:8px;font-size:13px;color:var(--muted)">$</span><input type="number" id="oc-price-'+idx+'" placeholder="0.00" min="0" step="0.01" oninput="updatePhysicalDiff('+idx+')" style="padding:8px 6px 8px 16px;border:1.5px solid var(--line);border-radius:8px;font-size:12px;background:var(--bg);color:var(--ink);outline:none;text-align:right;width:100%"/></div>'
+    // Value (physical count only)
+    +'<div class="pc-cell" id="oc-valv-'+idx+'" style="display:none;font-family:var(--mono);font-size:12px;text-align:right;padding-top:9px;font-weight:700">—</div>'
     +'<button onclick="removeOCLine('+idx+')" style="width:30px;height:32px;border:1.5px solid var(--line);border-radius:8px;background:var(--bg);cursor:pointer;display:grid;place-items:center;color:var(--muted)" title="Remove">'
     +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
   document.getElementById('ocLines').appendChild(line);
-  // Live +/- difference readout for physical-count mode (spans full width under the line)
-  var diff=document.createElement('div');
-  diff.id='oc-diff-'+idx;
-  diff.style.cssText='display:none;font-family:var(--mono);font-size:11px;margin:4px 0 2px 2px';
-  document.getElementById('ocLines').appendChild(diff);
   // Append suggestion div to body to avoid modal overflow clipping
   var suggDiv=document.createElement('div');
   suggDiv.id='oc-sugg-'+idx;
   suggDiv.className='item-suggestions';
   suggDiv.style.display='none';
   document.body.appendChild(suggDiv);
+  applyLineMode(idx);
   updateOCCount();
   setTimeout(function(){
     var inp=document.getElementById('oc-search-'+idx);
     if(inp) inp.focus();
   },50);
+}
+
+// Grid templates: standard 5-col, physical-count 8-col (adds On record / Diff / Value)
+var OC_GRID_STD='1fr 80px 70px 90px 30px';
+var OC_GRID_PC ='1.25fr 68px 50px 70px 76px 70px 82px 28px';
+
+// Switch a single line between standard and physical-count column layout
+function applyLineMode(idx){
+  var line=document.getElementById('oc-line-'+idx);
+  if(!line) return;
+  var type=document.getElementById('t-type')?document.getElementById('t-type').value:'';
+  var isPC=(type==='adjustment');
+  line.style.gridTemplateColumns=isPC?OC_GRID_PC:OC_GRID_STD;
+  ['oc-onrec-'+idx,'oc-diffv-'+idx,'oc-valv-'+idx].forEach(function(id){
+    var el=document.getElementById(id);
+    if(el) el.style.display=isPC?'block':'none';
+  });
 }
 
 function hideOCSugg(idx){
@@ -2794,44 +2815,68 @@ function onTxnTypeChange(){
   if(isOpening) populateOCLocation();
   var ocLines=document.getElementById('ocLines');
   if(ocLines&&ocLines.children.length===0) addOCLine();
-  if(isAdjust) updateAllPhysicalDiffs();
+  updateOCHeader();
+  updateAllPhysicalDiffs();
 }
 
-// Recompute the +/- difference readout for every product line (physical count)
+// Recompute layout + the +/- cells for every product line
 function updateAllPhysicalDiffs(){
   var lines=document.getElementById('ocLines');
   if(!lines) return;
   Array.prototype.forEach.call(lines.children,function(ln){
     var idx=ln.id.replace('oc-line-','');
+    applyLineMode(idx);
     updatePhysicalDiff(idx);
   });
+  updateOCHeader();
 }
 
-// Show "on record vs counted -> +/- difference (volume & value)" for one line
+// Header labels switch between standard and physical-count column sets
+function updateOCHeader(){
+  var hdr=document.getElementById('ocHeader');
+  if(!hdr) return;
+  var type=document.getElementById('t-type')?document.getElementById('t-type').value:'';
+  if(type==='adjustment'){
+    hdr.style.gridTemplateColumns=OC_GRID_PC;
+    hdr.innerHTML='<span>Product</span><span style="text-align:right">Counted</span><span>Unit</span><span style="text-align:right">On record</span><span style="text-align:right">Difference</span><span style="text-align:right">Cost</span><span style="text-align:right">Value</span><span></span>';
+  } else {
+    hdr.style.gridTemplateColumns=OC_GRID_STD;
+    hdr.innerHTML='<span>Product</span><span style="text-align:right">Qty</span><span>Unit</span><span style="text-align:right">Unit Price</span><span></span>';
+  }
+}
+
+// Fill the inline On record / Difference / Value cells for one physical-count line
 function updatePhysicalDiff(idx){
   var type=document.getElementById('t-type')?document.getElementById('t-type').value:'';
-  var box=document.getElementById('oc-diff-'+idx);
-  if(!box) return;
-  if(type!=='adjustment'){ box.style.display='none'; return; }
+  var onrecEl=document.getElementById('oc-onrec-'+idx);
+  var diffEl=document.getElementById('oc-diffv-'+idx);
+  var valEl=document.getElementById('oc-valv-'+idx);
+  if(!onrecEl||!diffEl||!valEl) return;
+  if(type!=='adjustment') return; // cells are hidden anyway in other modes
   var itemId=document.getElementById('oc-item-'+idx)?document.getElementById('oc-item-'+idx).value:'';
   var loc=document.getElementById('t-adjust-loc')?document.getElementById('t-adjust-loc').value:'';
   var physVal=document.getElementById('oc-qty-'+idx)?document.getElementById('oc-qty-'+idx).value:'';
-  if(!itemId||loc===''||physVal===''){ box.style.display='none'; return; }
+  var priceVal=document.getElementById('oc-price-'+idx)?document.getElementById('oc-price-'+idx).value:'';
+  if(!itemId||loc===''||physVal===''){
+    onrecEl.textContent='—'; onrecEl.style.color='var(--muted)';
+    diffEl.textContent='—'; diffEl.style.color='var(--muted)';
+    valEl.textContent='—'; valEl.style.color='var(--muted)';
+    return;
+  }
   var it=items.find(function(x){return x.id===itemId;});
-  if(!it){ box.style.display='none'; return; }
-  var onRecord=qtyAtLoc(it,loc);
+  var onRecord=it?qtyAtLoc(it,loc):0;
   var physical=Number(physVal)||0;
   var diff=physical-onRecord;
-  var cost=Number(it.cost||it.price||0);
+  var cost=(priceVal!==''?Number(priceVal):Number(it&&(it.cost||it.price)||0));
   var diffVal=diff*cost;
   var color=diff>0?'#0f6e40':(diff<0?'#c23b33':'var(--muted)');
-  var sign=diff>0?'+':'';
-  box.style.display='block';
-  box.style.color=color;
-  box.innerHTML='On record: <b>'+onRecord.toFixed(2)+'</b> · Counted: <b>'+physical.toFixed(2)+'</b> · '
-    +'Difference: <b>'+sign+diff.toFixed(2)+'</b> '+(it.unit||'')
-    +' · Value: <b>'+sign+'$'+Math.abs(diffVal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</b>'
-    +(diff<0?' (loss)':(diff>0?' (gain)':' (match)'));
+  var sign=diff>0?'+':(diff<0?'':'');
+  onrecEl.textContent=onRecord.toFixed(2);
+  onrecEl.style.color='var(--muted)';
+  diffEl.textContent=(diff>0?'+':'')+diff.toFixed(2);
+  diffEl.style.color=color;
+  valEl.textContent=(diff>0?'+':(diff<0?'-':''))+'$'+Math.abs(diffVal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  valEl.style.color=color;
 }
 
 function populateAdjustLocation(){

@@ -707,6 +707,7 @@ async function qbSyncItemsCore(){
       active: qi.Active!==false,
       qbSynced: new Date().toISOString(),
       locationId: existing>=0 ? items[existing].locationId : undefined,
+      locQtys: existing>=0 ? items[existing].locQtys : undefined,
       openingDate: existing>=0 ? items[existing].openingDate : undefined
     };
     if(existing>=0){ items[existing]=mapped; } else { items.push(mapped); }

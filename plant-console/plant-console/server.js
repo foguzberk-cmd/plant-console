@@ -132,11 +132,14 @@ async function fetchQBItems(retry) {
 }
 
 // Generic paginated query for any QB entity (Bill, Invoice, SalesReceipt, CreditMemo)
-// If `since` (ISO timestamp) is provided, only fetch records changed at/after it.
-async function fetchQBEntityPage(entity, startPosition, retry, since) {
+// `since`: only records changed at/after this timestamp (incremental).
+// `from`:  only records with TxnDate on/after this date (inventory start floor).
+async function fetchQBEntityPage(entity, startPosition, retry, since, from) {
   if (!retry) await ensureFreshToken(); // keep token alive during long paged syncs
-  let where = '';
-  if (since) where = ` WHERE MetaData.LastUpdatedTime >= '${since}'`;
+  const clauses = [];
+  if (since) clauses.push(`MetaData.LastUpdatedTime >= '${since}'`);
+  if (from)  clauses.push(`TxnDate >= '${from}'`);
+  const where = clauses.length ? (' WHERE ' + clauses.join(' AND ')) : '';
   const query = `SELECT * FROM ${entity}${where} STARTPOSITION ${startPosition} MAXRESULTS 100`;
   const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
   const res = await httpsRequest({
@@ -147,19 +150,19 @@ async function fetchQBEntityPage(entity, startPosition, retry, since) {
   });
   if (res.status === 401 && !retry) {
     const ok = await refreshAccessToken();
-    if (ok) return fetchQBEntityPage(entity, startPosition, true, since);
+    if (ok) return fetchQBEntityPage(entity, startPosition, true, since, from);
     throw new Error('NEEDS_RECONNECT');
   }
   if (res.status !== 200) throw new Error('QB API error ' + res.status + ' on ' + entity + ': ' + res.body);
   return JSON.parse(res.body);
 }
 
-async function fetchQBEntity(entity, since) {
+async function fetchQBEntity(entity, since, from) {
   let all = [];
   let start = 1;
   const pageSize = 100;
   while (true) {
-    const data = await fetchQBEntityPage(entity, start, false, since);
+    const data = await fetchQBEntityPage(entity, start, false, since, from);
     const rows = (data.QueryResponse && data.QueryResponse[entity]) || [];
     all = all.concat(rows);
     if (rows.length < pageSize) break;
@@ -297,12 +300,13 @@ const server = http.createServer(async (req, res) => {
     try {
       const ent = queryParams.entity;
       const since = queryParams.since || null;
+      const from = queryParams.from || null;
       const startPos = queryParams.startposition ? parseInt(queryParams.startposition, 10) : null;
       if (ent && ['Bill','Invoice','SalesReceipt','CreditMemo'].indexOf(ent) >= 0) {
         if (!accessToken) await refreshAccessToken();
         // Single-page mode: return just one page so each HTTP request is fast.
         if (startPos !== null && !isNaN(startPos)) {
-          const data = await fetchQBEntityPage(ent, startPos, false, since);
+          const data = await fetchQBEntityPage(ent, startPos, false, since, from);
           const rows = (data.QueryResponse && data.QueryResponse[ent]) || [];
           res.writeHead(200, { 'Content-Type': 'application/json' });
           const out = {}; out[ent] = rows; out.pageSize = 100; out.startPosition = startPos;
@@ -310,7 +314,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         // Fetch-all mode (kept for small types)
-        const rows = await fetchQBEntity(ent, since);
+        const rows = await fetchQBEntity(ent, since, from);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         const out = {}; out[ent] = rows;
         res.end(JSON.stringify(out));

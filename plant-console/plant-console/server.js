@@ -14,6 +14,7 @@ const REDIRECT_URI = process.env.QB_REDIRECT_URI || 'https://plant-console-app.o
 let accessToken = process.env.QB_ACCESS_TOKEN || 'eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2IiwieC5vcmciOiJIMCJ9..5HeNoqIq2dNH_ywSUn07BA.2UqmIwUlqtSLpWe25ejJCjnOdu99Sgb0P1JQ0nS76Yj_OqrhBmaBUKjbh92pTZFbtVxx5TyBnZ-07qdHAcqEmwYcQjckZ4nZieXUTiQrK6vtMVNViIVOLtNIXEO6faCFYgk61U0MkOjLCrRoAKZ-2wg4UAIwIMJ2sLEPR4pLA--JoxLq7grYVRJqnUGL2i9i392di9L4_lxF8mXleS1KC4UEwDTJL-TluC-TscxJIMhaAEh9G9n-smzRbszx2DHdJ3e_dITU9X1KIICyCsdAsBXKxlzrUR7MwPMnkCgjm9ydLse2yPvHVSKnEswuE1pD7CnxfL6Ir4MLvEqdeo2W1m66e-12RdAUIoAqB_N-l0K1-YqYJacAhmkRO0FatsTj-Wl1D8fRm43uPrPudlFZQKMY_YnF_ENJHJ-JuMCYme1MzRHpX0vupS7Z05uecpbKxAaU0D9o8Cxraa74E51llEd60dGzsBHD4VPQV8O2bFo.H4Nx-fR1jI0UGwn95uqh6g';
 let refreshToken = process.env.QB_REFRESH_TOKEN || 'RT1-76-H0-1791468215k2xxhdx8wq5jcuwo5cqq';
 let activeRealm = QB_REALM;
+let tokenRefreshedAt = 0; // ms timestamp of last successful token refresh
 
 function httpsRequest(options, body) {
   return new Promise((resolve, reject) => {
@@ -76,11 +77,21 @@ async function refreshAccessToken() {
   if (data.access_token) {
     accessToken = data.access_token;
     if (data.refresh_token) refreshToken = data.refresh_token;
+    tokenRefreshedAt = Date.now();
     console.log('Token refreshed successfully');
     return true;
   }
   console.error('Token refresh failed:', res.body);
   return false;
+}
+
+// Proactively refresh if the token is older than ~45 min (tokens live 60 min).
+// Called before each page during long syncs so the token never expires mid-loop.
+async function ensureFreshToken() {
+  var ageMs = Date.now() - tokenRefreshedAt;
+  if (!tokenRefreshedAt || ageMs > 45 * 60 * 1000) {
+    await refreshAccessToken();
+  }
 }
 
 async function fetchQBItemsPage(startPosition, retry) {
@@ -123,6 +134,7 @@ async function fetchQBItems(retry) {
 // Generic paginated query for any QB entity (Bill, Invoice, SalesReceipt, CreditMemo)
 // If `since` (ISO timestamp) is provided, only fetch records changed at/after it.
 async function fetchQBEntityPage(entity, startPosition, retry, since) {
+  if (!retry) await ensureFreshToken(); // keep token alive during long paged syncs
   let where = '';
   if (since) where = ` WHERE MetaData.LastUpdatedTime >= '${since}'`;
   const query = `SELECT * FROM ${entity}${where} STARTPOSITION ${startPosition} MAXRESULTS 100`;

@@ -1163,12 +1163,156 @@ function select(id){
   else if(id==='items') renderItemsView();
   else if(id==='scalelog') renderScaleLog();
   else if(id==='dashboard') renderDashboard();
+  else if(id==='reports') renderReports();
   else view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p><div class="empty"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICON[id]}</svg></div><div><h3>${s.empty[0]}</h3><p>${s.empty[1]}</p></div></div>`;
   view.focus({preventScroll:true});
 }
 
 
 /* ===== DASHBOARD ===== */
+/* ===== REPORTS (balance-sheet style) ===== */
+function renderReports(){
+  const s=SECTIONS.find(x=>x.id==='reports');
+  // Default date range: from earliest opening count (or 30 days ago) to today
+  var today=new Date().toISOString().slice(0,10);
+  var firstOpen=earliestOpeningDate()||today;
+  view.innerHTML='<div class="eyebrow">'+s.kicker+'</div><h2>'+s.title+'</h2>'
+    +'<p class="lede">Inventory movement statement — opening value, what came in, what went out, and the net change over a period.</p>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
+      +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">From (opening date)</label>'
+      +'<input type="date" id="rpt-from" value="'+firstOpen+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
+      +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">To (closing date)</label>'
+      +'<input type="date" id="rpt-to" value="'+today+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
+      +'<button class="btn btn-primary" onclick="buildBalanceReport()">Run report</button>'
+      +'<button class="btn" onclick="printBalanceReport()">Print</button>'
+    +'</div>'
+    +'<div id="rpt-body"></div>';
+  buildBalanceReport();
+}
+
+// Positive (inflow) types add stock; negative (outflow) types remove it.
+// Physical Count (adjustment) is split by the sign of its stored difference.
+function buildBalanceReport(){
+  var fromD=document.getElementById('rpt-from')?document.getElementById('rpt-from').value:'';
+  var toD=document.getElementById('rpt-to')?document.getElementById('rpt-to').value:'';
+  var body=document.getElementById('rpt-body');
+  if(!body) return;
+
+  var allTxns=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
+
+  // Opening value = value of all OPENING COUNT lines dated on/before the From date.
+  // Closing value = on-hand value as of the To date (opening + inflows − outflows up to To).
+  function lineValue(t){
+    var q=Math.abs(Number(t.qty||0));
+    var price=(t.unitPrice!==undefined&&t.unitPrice!=='')?Number(t.unitPrice):0;
+    if(!price){var fi=items.find(function(x){return x.id===t.itemId;});if(fi)price=Number(fi.cost||fi.price||0);}
+    return q*price;
+  }
+
+  // Inflow types (positive) and outflow types (negative)
+  var INFLOW={receive:'Receivings / Purchases',return:'Returns',production:'Production'};
+  var OUTFLOW={shipment:'Shipments / Sold / Invoiced'};
+
+  // Accumulators
+  var openingValue=0;
+  var inflowGroups={}, outflowGroups={};
+  var inflowTotal=0, outflowTotal=0;
+  // physical count split
+  var pcPos=0, pcNeg=0;
+
+  allTxns.forEach(function(t){
+    var d=t.date||'';
+    if(!d) return;
+    // Opening value: opening counts up to the From date establish the starting balance
+    if(t.type==='opening'){
+      if(d<=fromD) openingValue+=lineValue(t);
+      return;
+    }
+    // Only movements within [from, to] count toward the period statement
+    if(d<fromD || d>toD) return;
+    var v=lineValue(t);
+    if(t.type==='adjustment'){
+      // physical count: sign of stored qty difference
+      var diff=Number(t.qty||0);
+      if(diff>=0){ pcPos+=v; } else { pcNeg+=v; }
+      return;
+    }
+    if(INFLOW[t.type]){
+      inflowGroups[t.type]=(inflowGroups[t.type]||0)+v;
+      inflowTotal+=v;
+    } else if(OUTFLOW[t.type]){
+      outflowGroups[t.type]=(outflowGroups[t.type]||0)+v;
+      outflowTotal+=v;
+    }
+  });
+  // Fold physical-count positive into inflows, negative into outflows
+  if(pcPos>0){ inflowGroups['adjustment_pos']=pcPos; inflowTotal+=pcPos; }
+  if(pcNeg>0){ outflowGroups['adjustment_neg']=pcNeg; outflowTotal+=pcNeg; }
+
+  var net=inflowTotal-outflowTotal;
+  var closingValue=openingValue+net;
+
+  function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  function rowLine(label,val,color){
+    return '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line)">'
+      +'<span style="font-size:13px">'+label+'</span>'
+      +'<span style="font-family:var(--mono);font-size:13px;font-weight:600;'+(color?'color:'+color:'')+'">'+money(val)+'</span></div>';
+  }
+  var labelMap={receive:'Receivings / Purchases',return:'Returns',production:'Production',shipment:'Shipments / Sold / Invoiced',adjustment_pos:'Physical Count — gains',adjustment_neg:'Physical Count — losses'};
+
+  var fromDisp=fromD?new Date(fromD+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—';
+  var toDisp=toD?new Date(toD+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—';
+
+  var html='<div id="rpt-print" style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:26px 28px;max-width:640px">';
+  html+='<div style="text-align:center;margin-bottom:18px"><div style="font-size:18px;font-weight:800">Inventory Movement Statement</div>'
+    +'<div style="font-size:12px;color:var(--muted);margin-top:3px">'+esc(fromDisp)+' &ndash; '+esc(toDisp)+'</div></div>';
+
+  // Opening
+  html+='<div style="display:flex;justify-content:space-between;padding:10px 0;border-top:2px solid var(--ink);border-bottom:2px solid var(--ink);margin-bottom:14px">'
+    +'<span style="font-weight:700;font-size:14px">Opening count value ('+esc(fromDisp)+')</span>'
+    +'<span style="font-family:var(--mono);font-weight:800;font-size:14px">'+money(openingValue)+'</span></div>';
+
+  // Inflows
+  html+='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#0f6e40;margin:6px 0 4px">Additions (+)</div>';
+  var inKeys=Object.keys(inflowGroups);
+  if(!inKeys.length) html+='<div style="font-size:12px;color:var(--muted);padding:8px 0;border-bottom:1px solid var(--line)">No additions in this period.</div>';
+  inKeys.forEach(function(k){ html+=rowLine(labelMap[k]||k, inflowGroups[k], '#0f6e40'); });
+  html+='<div style="display:flex;justify-content:space-between;padding:9px 0;font-weight:700"><span>Total additions</span><span style="font-family:var(--mono);color:#0f6e40">'+money(inflowTotal)+'</span></div>';
+
+  // Outflows
+  html+='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#c23b33;margin:14px 0 4px">Subtractions (−)</div>';
+  var outKeys=Object.keys(outflowGroups);
+  if(!outKeys.length) html+='<div style="font-size:12px;color:var(--muted);padding:8px 0;border-bottom:1px solid var(--line)">No subtractions in this period.</div>';
+  outKeys.forEach(function(k){ html+=rowLine(labelMap[k]||k, outflowGroups[k], '#c23b33'); });
+  html+='<div style="display:flex;justify-content:space-between;padding:9px 0;font-weight:700"><span>Total subtractions</span><span style="font-family:var(--mono);color:#c23b33">'+money(outflowTotal)+'</span></div>';
+
+  // Net + closing
+  var netColor=net>=0?'#0f6e40':'#c23b33';
+  html+='<div style="display:flex;justify-content:space-between;padding:11px 0;border-top:2px solid var(--ink);margin-top:10px">'
+    +'<span style="font-weight:700;font-size:14px">Net change (+/−)</span>'
+    +'<span style="font-family:var(--mono);font-weight:800;font-size:14px;color:'+netColor+'">'+(net>=0?'+':'−')+money(Math.abs(net)).slice(1)+'</span></div>';
+  html+='<div style="display:flex;justify-content:space-between;padding:11px 0;border-top:2px solid var(--ink);border-bottom:3px double var(--ink)">'
+    +'<span style="font-weight:800;font-size:15px">Closing count value ('+esc(toDisp)+')</span>'
+    +'<span style="font-family:var(--mono);font-weight:800;font-size:15px">'+money(closingValue)+'</span></div>';
+
+  html+='<div style="font-size:10px;color:var(--muted);margin-top:14px;line-height:1.5">Opening value = opening counts on/before the from date. Additions and subtractions are valued at unit cost. Physical counts are split into gains (+) and losses (−). Closing = opening + net change.</div>';
+  html+='</div>';
+
+  body.innerHTML=html;
+}
+
+function printBalanceReport(){
+  var el=document.getElementById('rpt-print');
+  if(!el) return;
+  var w=window.open('','_blank');
+  w.document.write('<html><head><title>Inventory Movement Statement</title>'
+    +'<style>body{font-family:Arial,sans-serif;padding:40px;color:#222}div{box-sizing:border-box}</style></head><body>'
+    +el.outerHTML+'</body></html>');
+  w.document.close();
+  w.focus();
+  setTimeout(function(){w.print();},250);
+}
+
 function renderDashboard(){
   const s=SECTIONS.find(x=>x.id==='dashboard');
   var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');

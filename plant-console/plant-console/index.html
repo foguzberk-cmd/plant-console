@@ -731,16 +731,23 @@ function showSyncProgress(pct,label){
   if(!box){
     box=document.createElement('div');
     box.id='syncProgressBox';
-    box.style.cssText='position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:9999;width:min(440px,90vw);background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.22);padding:16px 18px';
+    box.style.cssText='position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:9999;width:min(440px,90vw);background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.22);padding:0 0 16px 0;overflow:hidden';
     box.innerHTML=''
-      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
-      +'<span id="syncProgressLabel" style="font-size:13px;font-weight:600;color:var(--ink)">Syncing…</span>'
-      +'<span id="syncProgressPct" style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--cold)">0%</span>'
+      +'<div id="syncProgressHandle" style="cursor:grab;user-select:none;display:flex;align-items:center;gap:8px;padding:9px 14px;background:var(--bg);border-bottom:1px solid var(--line)">'
+        +'<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>'
+        +'<span style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">QuickBooks Sync · drag to move</span>'
       +'</div>'
-      +'<div style="height:10px;background:var(--bg);border-radius:6px;overflow:hidden">'
-      +'<div id="syncProgressFill" style="height:100%;width:0%;background:linear-gradient(90deg,var(--cold),#1a9c6b);border-radius:6px;transition:width .35s ease"></div>'
+      +'<div style="padding:14px 18px 0 18px">'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
+        +'<span id="syncProgressLabel" style="font-size:13px;font-weight:600;color:var(--ink)">Syncing…</span>'
+        +'<span id="syncProgressPct" style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--cold)">0%</span>'
+        +'</div>'
+        +'<div style="height:10px;background:var(--bg);border-radius:6px;overflow:hidden">'
+        +'<div id="syncProgressFill" style="height:100%;width:0%;background:linear-gradient(90deg,var(--cold),#1a9c6b);border-radius:6px;transition:width .35s ease"></div>'
+        +'</div>'
       +'</div>';
     document.body.appendChild(box);
+    makeSyncBoxDraggable(box);
   }
   box.style.display='block';
   var fill=document.getElementById('syncProgressFill');
@@ -749,6 +756,48 @@ function showSyncProgress(pct,label){
   if(fill) fill.style.width=pct+'%';
   if(pctEl) pctEl.textContent=Math.round(pct)+'%';
   if(labelEl&&label) labelEl.textContent=label;
+}
+
+function makeSyncBoxDraggable(box){
+  var handle=document.getElementById('syncProgressHandle');
+  if(!handle) return;
+  var dragging=false, startX=0, startY=0, startLeft=0, startTop=0;
+  function pin(){
+    // Switch from centered/bottom anchoring to absolute top/left so we can move freely
+    var r=box.getBoundingClientRect();
+    box.style.transform='none';
+    box.style.left=r.left+'px';
+    box.style.top=r.top+'px';
+    box.style.bottom='auto';
+  }
+  function down(e){
+    dragging=true;
+    pin();
+    var p=e.touches?e.touches[0]:e;
+    startX=p.clientX; startY=p.clientY;
+    var r=box.getBoundingClientRect();
+    startLeft=r.left; startTop=r.top;
+    handle.style.cursor='grabbing';
+    e.preventDefault();
+  }
+  function move(e){
+    if(!dragging) return;
+    var p=e.touches?e.touches[0]:e;
+    var nx=startLeft+(p.clientX-startX);
+    var ny=startTop+(p.clientY-startY);
+    // keep it on screen
+    nx=Math.max(4,Math.min(window.innerWidth-box.offsetWidth-4,nx));
+    ny=Math.max(4,Math.min(window.innerHeight-box.offsetHeight-4,ny));
+    box.style.left=nx+'px';
+    box.style.top=ny+'px';
+  }
+  function up(){ dragging=false; handle.style.cursor='grab'; }
+  handle.addEventListener('mousedown',down);
+  document.addEventListener('mousemove',move);
+  document.addEventListener('mouseup',up);
+  handle.addEventListener('touchstart',down,{passive:false});
+  document.addEventListener('touchmove',move,{passive:false});
+  document.addEventListener('touchend',up);
 }
 function hideSyncProgress(){
   var box=document.getElementById('syncProgressBox');

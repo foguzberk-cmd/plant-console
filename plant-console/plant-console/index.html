@@ -2009,10 +2009,33 @@ function renderTransactions(){
   const s=SECTIONS.find(x=>x.id==='transactions');
   view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p>
     <div class="txn-toolbar">
-      <span style="font-family:var(--mono);font-size:11px;color:var(--muted)">${transactions.length} record${transactions.length!==1?'s':''}</span>
+      <span id="txnCount" style="font-family:var(--mono);font-size:11px;color:var(--muted)">${transactions.length} record${transactions.length!==1?'s':''}</span>
       <button class="btn btn-primary" onclick="openAddTxnModal()"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Create transaction</button>
     </div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;align-items:center">
+      <input type="text" id="txnSearch" placeholder="Search transaction #, product, customer/vendor..." oninput="renderTxnTable()" style="flex:1;min-width:240px;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
+      <select id="txnTypeFilter" onchange="renderTxnTable()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none">
+        <option value="">All types</option>
+        <option value="opening">Opening Count</option>
+        <option value="receive">Receive</option>
+        <option value="transfer">Transfer</option>
+        <option value="production">Production</option>
+        <option value="shipment">Shipment</option>
+        <option value="return">Return</option>
+        <option value="adjustment">Adjustment</option>
+      </select>
+      <input type="date" id="txnDateFrom" onchange="renderTxnTable()" title="From date" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
+      <span style="color:var(--muted);font-size:12px">to</span>
+      <input type="date" id="txnDateTo" onchange="renderTxnTable()" title="To date" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
+      <button class="btn btn-sm" onclick="clearTxnFilters()">Clear</button>
+    </div>
     <div class="txn-table-wrap" id="txnTableWrap"></div>`;
+  renderTxnTable();
+}
+
+function clearTxnFilters(){
+  var ids=['txnSearch','txnTypeFilter','txnDateFrom','txnDateTo'];
+  ids.forEach(function(id){var el=document.getElementById(id);if(el)el.value='';});
   renderTxnTable();
 }
 function txnValue(t){
@@ -2027,10 +2050,30 @@ function renderTxnTable(){
   const wrap=document.getElementById('txnTableWrap');if(!wrap)return;
   if(!transactions.length){wrap.innerHTML=`<div class="txn-empty"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3l4 4-4 4"/><path d="M21 7H7"/><path d="M7 21l-4-4 4-4"/><path d="M3 17h14"/></svg><p>No transactions yet. Click <strong>Create transaction</strong> to log the first movement.</p></div>`;return;}
 
+  // Read filters
+  var q=(document.getElementById('txnSearch')&&document.getElementById('txnSearch').value||'').toLowerCase().trim();
+  var typeF=(document.getElementById('txnTypeFilter')&&document.getElementById('txnTypeFilter').value)||'';
+  var dFrom=(document.getElementById('txnDateFrom')&&document.getElementById('txnDateFrom').value)||'';
+  var dTo=(document.getElementById('txnDateTo')&&document.getElementById('txnDateTo').value)||'';
+
+  // Pre-filter individual transactions
+  var itemNameCache={};
+  function itemName(id){ if(itemNameCache[id]!==undefined) return itemNameCache[id]; var it=items.find(function(x){return x.id===id;}); itemNameCache[id]=it?it.name.toLowerCase():''; return itemNameCache[id]; }
+  var filtered=transactions.filter(function(t){
+    if(typeF&&t.type!==typeF) return false;
+    if(dFrom&&(t.date||'')<dFrom) return false;
+    if(dTo&&(t.date||'')>dTo) return false;
+    if(q){
+      var hay=(t.num||'').toLowerCase()+' '+(t.desc||'').toLowerCase()+' '+(t.account||'').toLowerCase()+' '+itemName(t.itemId);
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
   // Group transactions: any with a docId group into one bill; others standalone
   var groups=[];
   var docMap={};
-  transactions.forEach(function(t){
+  filtered.forEach(function(t){
     if(t.docId){
       if(!docMap[t.docId]){docMap[t.docId]={isDoc:true,docId:t.docId,num:t.num,date:t.date,time:t.time,type:t.type,desc:t.desc,lines:[]};groups.push(docMap[t.docId]);}
       docMap[t.docId].lines.push(t);
@@ -2040,7 +2083,19 @@ function renderTxnTable(){
   });
   groups.reverse();
 
-  var rows=groups.map(function(g){
+  // Update the count display
+  var countEl=document.getElementById('txnCount');
+  if(countEl){
+    var anyFilter=q||typeF||dFrom||dTo;
+    countEl.textContent=anyFilter?(groups.length+' of '+'~'+transactions.length+' shown'):(transactions.length+' record'+(transactions.length!==1?'s':''));
+  }
+
+  // Cap rendering for performance (24k+ records)
+  var CAP=300;
+  var capped=groups.length>CAP;
+  var shownGroups=capped?groups.slice(0,CAP):groups;
+
+  var rows=shownGroups.map(function(g){
     if(g.isDoc){
       var ds=g.date?new Date(g.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
       if(g.time) ds+=' '+g.time;
@@ -2108,7 +2163,12 @@ function renderTxnTable(){
       return mainRow+detailRow;
     }
   }).join('');
-  wrap.innerHTML='<table class="txn-table"><thead><tr><th>Date</th><th>Transaction</th><th>Type</th><th style="text-align:right">Value</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
+  if(!shownGroups.length){
+    wrap.innerHTML='<div class="txn-empty"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg><p>No transactions match your search or filters. <a href="#" onclick="clearTxnFilters();return false;" style="color:var(--cold)">Clear filters</a></p></div>';
+    return;
+  }
+  var capNotice=capped?'<div style="padding:12px 16px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--muted);background:var(--bg);border-top:1px solid var(--line)">Showing first '+CAP+' of '+groups.length+' matching bills. Use search or filters to narrow down.</div>':'';
+  wrap.innerHTML='<table class="txn-table"><thead><tr><th>Date</th><th>Transaction</th><th>Type</th><th style="text-align:right">Value</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>'+capNotice;
 }
 
 var expandedTxn=null;

@@ -398,7 +398,7 @@
           <option value="production">Production</option>
           <option value="shipment">Shipment</option>
           <option value="return">Return</option>
-          <option value="adjustment">Adjustment</option>
+          <option value="adjustment">Physical Count</option>
         </select>
       </div>
 
@@ -415,15 +415,9 @@
 
       <div id="t-adjust-row" style="display:none">
         <div style="border-top:1px solid var(--line);margin:14px 0 12px"></div>
-        <div style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Adjustment</div>
-        <div class="form-group"><label>Location</label><select id="t-adjust-loc"></select></div>
-        <div class="form-group"><label>Direction</label>
-          <select id="t-adjust-dir">
-            <option value="add">Add (+) — increase quantity</option>
-            <option value="subtract">Subtract (−) — decrease quantity</option>
-          </select>
-        </div>
-        <div style="font-size:11px;color:var(--muted);margin-top:-4px">Enter a positive quantity below; the direction sets whether it's added or removed at this location.</div>
+        <div style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Physical Count</div>
+        <div class="form-group"><label>Location</label><select id="t-adjust-loc" onchange="updateAllPhysicalDiffs()"></select></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:-4px">Enter the quantity you physically counted for each product. The bill shows the difference (+/−) against what's on record.</div>
       </div>
 
       <div id="t-opening-section" style="display:none">
@@ -1737,13 +1731,18 @@ function addOCLine(){
     +'<input type="text" id="oc-search-'+idx+'" class="item-search-input" placeholder="Search product..." autocomplete="off" oninput="filterOCItems('+idx+')" onkeydown="ocKeyNav(event,'+idx+')" onblur="hideOCSugg('+idx+')"/>'
     +'<input type="hidden" id="oc-item-'+idx+'" value=""/>'
     +'</div>'
-    +'<input type="number" id="oc-qty-'+idx+'" placeholder="Qty" min="0" step="0.01" style="padding:8px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;text-align:right;width:100%"/>'
+    +'<input type="number" id="oc-qty-'+idx+'" placeholder="Qty" min="0" step="0.01" oninput="updatePhysicalDiff('+idx+')" style="padding:8px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;text-align:right;width:100%"/>'
     +'<select id="oc-unit-'+idx+'" style="padding:8px 4px;border:1.5px solid var(--line);border-radius:8px;font-size:11px;background:var(--bg);color:var(--ink);outline:none;width:100%">'
     +'<option value="lbs">lbs</option><option value="pieces">pcs</option><option value="boxes">box</option><option value="cases">case</option><option value="kg">kg</option></select>'
     +'<div style="position:relative"><span style="position:absolute;left:7px;top:8px;font-size:13px;color:var(--muted)">$</span><input type="number" id="oc-price-'+idx+'" placeholder="0.00" min="0" step="0.01" style="padding:8px 6px 8px 16px;border:1.5px solid var(--line);border-radius:8px;font-size:12px;background:var(--bg);color:var(--ink);outline:none;text-align:right;width:100%"/></div>'
     +'<button onclick="removeOCLine('+idx+')" style="width:30px;height:32px;border:1.5px solid var(--line);border-radius:8px;background:var(--bg);cursor:pointer;display:grid;place-items:center;color:var(--muted)" title="Remove">'
     +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
   document.getElementById('ocLines').appendChild(line);
+  // Live +/- difference readout for physical-count mode (spans full width under the line)
+  var diff=document.createElement('div');
+  diff.id='oc-diff-'+idx;
+  diff.style.cssText='display:none;font-family:var(--mono);font-size:11px;margin:4px 0 2px 2px';
+  document.getElementById('ocLines').appendChild(diff);
   // Append suggestion div to body to avoid modal overflow clipping
   var suggDiv=document.createElement('div');
   suggDiv.id='oc-sugg-'+idx;
@@ -1804,6 +1803,7 @@ function selectOCItem(idx,el){
   // auto-fill suggested unit COST from QuickBooks PurchaseCost
   var priceEl=document.getElementById('oc-price-'+idx);
   if(it&&priceEl&&!priceEl.value){priceEl.value=Number(it.cost||0).toFixed(2);}
+  updatePhysicalDiff(idx);
   setTimeout(function(){document.getElementById('oc-qty-'+idx).focus();},50);
 }
 
@@ -2323,7 +2323,7 @@ function doPrintLabel(entry){
 }
 
 /* ===== TRANSACTIONS ===== */
-const TXN_TYPES={opening:'Opening Count',receive:'Receive',transfer:'Transfer',production:'Production',shipment:'Shipment',return:'Return',adjustment:'Adjustment'};
+const TXN_TYPES={opening:'Opening Count',receive:'Receive',transfer:'Transfer',production:'Production',shipment:'Shipment',return:'Return',adjustment:'Physical Count'};
 function renderTransactions(){
   const s=SECTIONS.find(x=>x.id==='transactions');
   view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p>
@@ -2341,7 +2341,7 @@ function renderTransactions(){
         <option value="production">Production</option>
         <option value="shipment">Shipment</option>
         <option value="return">Return</option>
-        <option value="adjustment">Adjustment</option>
+        <option value="adjustment">Physical Count</option>
       </select>
       <input type="date" id="txnDateFrom" onchange="renderTxnTable()" title="From date" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
       <span style="color:var(--muted);font-size:12px">to</span>
@@ -2744,8 +2744,6 @@ function openEditDoc(docId){
     if(document.getElementById('t-oc-location')) document.getElementById('t-oc-location').value=first.locIn||'';
   } else if(isAdjustEdit){
     if(document.getElementById('t-adjust-loc')) document.getElementById('t-adjust-loc').value=first.locIn||'';
-    var dir=first.adjustDir||((Number(first.qty)||0)<0?'subtract':'add');
-    if(document.getElementById('t-adjust-dir')) document.getElementById('t-adjust-dir').value=dir;
   } else {
     if(document.getElementById('t-loc-out')) document.getElementById('t-loc-out').value=first.locOut||'';
     if(document.getElementById('t-loc-in')) document.getElementById('t-loc-in').value=first.locIn||'';
@@ -2760,11 +2758,16 @@ function openEditDoc(docId){
     var it=items.find(function(x){return x.id===ln.itemId;});
     document.getElementById('oc-item-'+idx).value=ln.itemId;
     document.getElementById('oc-search-'+idx).value=it?it.name:'';
-    // adjustments store a signed qty; show the absolute value in the edit field
-    document.getElementById('oc-qty-'+idx).value=isAdjustEdit?Math.abs(Number(ln.qty)||0):ln.qty;
+    // physical count shows the COUNTED amount (stored physicalCount), not the delta
+    if(isAdjustEdit && ln.physicalCount!==undefined){
+      document.getElementById('oc-qty-'+idx).value=ln.physicalCount;
+    } else {
+      document.getElementById('oc-qty-'+idx).value=ln.qty;
+    }
     document.getElementById('oc-unit-'+idx).value=ln.unit||'lbs';
     if(document.getElementById('oc-price-'+idx)) document.getElementById('oc-price-'+idx).value=ln.unitPrice||'';
   });
+  if(isAdjustEdit) updateAllPhysicalDiffs();
   document.getElementById('txnModal').classList.remove('hidden');
 }
 function populateLocSelects(){const opts=storages.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');document.getElementById('t-loc-out').innerHTML=`<option value="">— select —</option><option value="external">External / Supplier</option>${opts}`;document.getElementById('t-loc-in').innerHTML=`<option value="">— select —</option><option value="external">External / Customer</option>${opts}`;}
@@ -2787,10 +2790,48 @@ function onTxnTypeChange(){
   // Storage-location single dropdown only for opening count
   if(ocLocGroup) ocLocGroup.style.display=isOpening?'block':'none';
   // Label changes per context
-  if(itemsLabel) itemsLabel.textContent=isOpening?'Items on hand':'Products';
+  if(itemsLabel) itemsLabel.textContent=isOpening?'Items on hand':(isAdjust?'Counted products':'Products');
   if(isOpening) populateOCLocation();
   var ocLines=document.getElementById('ocLines');
   if(ocLines&&ocLines.children.length===0) addOCLine();
+  if(isAdjust) updateAllPhysicalDiffs();
+}
+
+// Recompute the +/- difference readout for every product line (physical count)
+function updateAllPhysicalDiffs(){
+  var lines=document.getElementById('ocLines');
+  if(!lines) return;
+  Array.prototype.forEach.call(lines.children,function(ln){
+    var idx=ln.id.replace('oc-line-','');
+    updatePhysicalDiff(idx);
+  });
+}
+
+// Show "on record vs counted -> +/- difference (volume & value)" for one line
+function updatePhysicalDiff(idx){
+  var type=document.getElementById('t-type')?document.getElementById('t-type').value:'';
+  var box=document.getElementById('oc-diff-'+idx);
+  if(!box) return;
+  if(type!=='adjustment'){ box.style.display='none'; return; }
+  var itemId=document.getElementById('oc-item-'+idx)?document.getElementById('oc-item-'+idx).value:'';
+  var loc=document.getElementById('t-adjust-loc')?document.getElementById('t-adjust-loc').value:'';
+  var physVal=document.getElementById('oc-qty-'+idx)?document.getElementById('oc-qty-'+idx).value:'';
+  if(!itemId||loc===''||physVal===''){ box.style.display='none'; return; }
+  var it=items.find(function(x){return x.id===itemId;});
+  if(!it){ box.style.display='none'; return; }
+  var onRecord=qtyAtLoc(it,loc);
+  var physical=Number(physVal)||0;
+  var diff=physical-onRecord;
+  var cost=Number(it.cost||it.price||0);
+  var diffVal=diff*cost;
+  var color=diff>0?'#0f6e40':(diff<0?'#c23b33':'var(--muted)');
+  var sign=diff>0?'+':'';
+  box.style.display='block';
+  box.style.color=color;
+  box.innerHTML='On record: <b>'+onRecord.toFixed(2)+'</b> · Counted: <b>'+physical.toFixed(2)+'</b> · '
+    +'Difference: <b>'+sign+diff.toFixed(2)+'</b> '+(it.unit||'')
+    +' · Value: <b>'+sign+'$'+Math.abs(diffVal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</b>'
+    +(diff<0?' (loss)':(diff>0?' (gain)':' (match)'));
 }
 
 function populateAdjustLocation(){
@@ -2900,12 +2941,12 @@ function saveTxnOrOpening(){
     return;
   }
 
-  // Movement types (transfer, receive, production, shipment, return, adjustment)
-  var isAdjust=(type==='adjustment');
-  var adjustLoc='', adjustDir='add';
+  // Movement types (transfer, receive, production, shipment, physical count)
+  var isAdjust=(type==='adjustment'); // 'adjustment' type = Physical Count
+  var adjustLoc='';
   if(isAdjust){
     adjustLoc=document.getElementById('t-adjust-loc')?document.getElementById('t-adjust-loc').value:'';
-    adjustDir=document.getElementById('t-adjust-dir')?document.getElementById('t-adjust-dir').value:'add';
+    if(!adjustLoc){alert('Please select the location you counted.');return;}
   }
   var locOut=document.getElementById('t-loc-out').value;
   var locIn=document.getElementById('t-loc-in').value;
@@ -2917,14 +2958,21 @@ function saveTxnOrOpening(){
     if(!iid||q==='') continue;
     var p=document.getElementById('oc-price-'+lid)?document.getElementById('oc-price-'+lid).value:'';
     var rowLocOut=locOut, rowLocIn=locIn, rowQty=q;
+    var extra={};
     if(isAdjust){
-      // Adjustment uses ONE location. Direction decides sign.
-      // Store as a signed quantity at a single location (locIn), locOut empty.
-      var qn=Math.abs(Number(q)||0);
-      rowQty = (adjustDir==='subtract') ? (-qn) : qn;
+      // PHYSICAL COUNT: store the signed difference (counted − on record) at the
+      // single location. The engine adds this delta so the location lands on the
+      // counted amount, and the report shows the +/- volume/value for shrink reports.
+      var itObj=items.find(function(x){return x.id===iid;});
+      var onRecord=itObj?qtyAtLoc(itObj,adjustLoc):0;
+      var physical=Number(q)||0;
+      rowQty = physical - onRecord;           // signed difference
       rowLocOut=''; rowLocIn=adjustLoc;
+      extra={ physicalCount:physical, onRecord:onRecord };
     }
-    transactions.push({id:'txn_'+Date.now()+'_'+j,docId:docId,num:num,lineNum:saved+1,date:date,time:(preservedTime!==null?preservedTime:time),createTime:entryCreate,type:type,itemId:iid,qty:rowQty,unit:u,unitPrice:p,locOut:rowLocOut,locIn:rowLocIn,adjustDir:(isAdjust?adjustDir:undefined),desc:notes});
+    var row={id:'txn_'+Date.now()+'_'+j,docId:docId,num:num,lineNum:saved+1,date:date,time:(preservedTime!==null?preservedTime:time),createTime:entryCreate,type:type,itemId:iid,qty:rowQty,unit:u,unitPrice:p,locOut:rowLocOut,locIn:rowLocIn,desc:notes};
+    if(isAdjust){ row.physicalCount=extra.physicalCount; row.onRecord=extra.onRecord; }
+    transactions.push(row);
     saved++;
   }
   if(saved===0){alert('Please add at least one product with a quantity.');return;}

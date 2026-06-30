@@ -2081,7 +2081,14 @@ function renderTxnTable(){
       groups.push({isDoc:false,txn:t});
     }
   });
-  groups.reverse();
+  // Sort by date+time according to the chosen direction
+  function gKey(g){ var d=g.isDoc?g:g.txn; return (d.date||'')+(d.time||''); }
+  groups.sort(function(a,b){
+    var ka=gKey(a), kb=gKey(b);
+    if(ka<kb) return txnSortDir==='asc'?-1:1;
+    if(ka>kb) return txnSortDir==='asc'?1:-1;
+    return 0;
+  });
 
   // Update the count display
   var countEl=document.getElementById('txnCount');
@@ -2168,10 +2175,17 @@ function renderTxnTable(){
     return;
   }
   var capNotice=capped?'<div style="padding:12px 16px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--muted);background:var(--bg);border-top:1px solid var(--line)">Showing first '+CAP+' of '+groups.length+' matching bills. Use search or filters to narrow down.</div>':'';
-  wrap.innerHTML='<table class="txn-table"><thead><tr><th>Date</th><th>Transaction</th><th>Type</th><th style="text-align:right">Value</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>'+capNotice;
+  var sortArrow=txnSortDir==='asc'?'&#9650;':'&#9660;';
+  var dateHeader='<th style="cursor:pointer;user-select:none" onclick="toggleTxnSort()" title="Click to sort by date">Date <span style="color:var(--cold);font-size:10px">'+sortArrow+'</span></th>';
+  wrap.innerHTML='<table class="txn-table"><thead><tr>'+dateHeader+'<th>Transaction</th><th>Type</th><th style="text-align:right">Value</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>'+capNotice;
 }
 
 var expandedTxn=null;
+var txnSortDir='desc'; // 'desc' = newest first, 'asc' = oldest first
+function toggleTxnSort(){
+  txnSortDir = (txnSortDir==='desc') ? 'asc' : 'desc';
+  renderTxnTable();
+}
 function toggleTxnExpand(id){
   expandedTxn = (expandedTxn===id) ? null : id;
   renderTxnTable();

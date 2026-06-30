@@ -274,8 +274,19 @@ const server = http.createServer(async (req, res) => {
   }
 
   // QuickBooks documents endpoint — bills, invoices, sales receipts, credit memos
+  // Supports ?entity=Bill (or Invoice/SalesReceipt/CreditMemo) to fetch one type
+  // at a time, which avoids long single requests that hit gateway timeouts.
   if (url === '/api/qb/documents') {
     try {
+      const ent = queryParams.entity;
+      if (ent && ['Bill','Invoice','SalesReceipt','CreditMemo'].indexOf(ent) >= 0) {
+        if (!accessToken) await refreshAccessToken();
+        const rows = await fetchQBEntity(ent);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        const out = {}; out[ent] = rows;
+        res.end(JSON.stringify(out));
+        return;
+      }
       const data = await fetchQBDocuments();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(data));

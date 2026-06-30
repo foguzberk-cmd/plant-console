@@ -637,14 +637,32 @@ async function qbRefreshAccessToken(){
 }
 
 // === UNIFIED SYNC: items + bills/sales + recalc, in one click ===
-async function syncEverything(){
+// Public entry points
+function syncEverything(){ return doSync(false); }      // Full re-pull (default button)
+function syncIncremental(){ return doSync(true); }       // Only changed since last sync
+
+async function doSync(incremental){
   var btn=document.getElementById('qbSyncBtn');
+  var btn2=document.getElementById('qbSyncIncBtn');
   var status=document.getElementById('qbStatus');
   if(btn)btn.disabled=true;
-  showSyncProgress(5,'Starting sync…');
+  if(btn2)btn2.disabled=true;
 
-  // 1. Sync items
-  if(status)status.textContent='Step 1/3 — syncing items from QuickBooks…';
+  // Determine the "since" timestamp for incremental mode
+  var lastSync=localStorage.getItem('pc_lastSync')||'';
+  if(incremental && !lastSync){
+    // No prior sync recorded — fall back to full so we have a complete baseline
+    incremental=false;
+  }
+  window.__incrementalSync = incremental;
+  var since = incremental ? lastSync : '';
+  // Capture the time we START, so the next incremental picks up anything since now
+  var syncStartedAt = new Date().toISOString();
+
+  showSyncProgress(5, incremental?'Starting quick sync…':'Starting full sync…');
+
+  // 1. Sync items (always full — item list is small)
+  if(status)status.textContent='Step 1/3 — syncing items…';
   showSyncProgress(15,'Step 1 of 3 — syncing items…');
   var itemsResult=await qbSyncItemsCore();
   if(!itemsResult.ok){
@@ -653,26 +671,31 @@ async function syncEverything(){
       if(status)status.innerHTML='QuickBooks connection expired. <a href="/connect" style="color:var(--cold);font-weight:700">Click here to reconnect</a>';
       showReconnectButton();
     } else if(status){status.textContent='Sync error (items): '+itemsResult.error;}
-    if(btn)btn.disabled=false;
+    if(btn)btn.disabled=false; if(btn2)btn2.disabled=false;
+    window.__incrementalSync=false;
     return;
   }
   showSyncProgress(45,'Items synced ('+itemsResult.count+') — fetching documents…');
 
-  // 2. Sync bills & sales (only movements on/after each item's opening count)
+  // 2. Sync documents (incremental fetches only changed since last sync)
   if(status)status.textContent='Step 2/3 — syncing bills, invoices & credit memos…';
   showSyncProgress(50,'Step 2 of 3 — fetching documents…');
   var docLabels={Bill:'bills',Invoice:'invoices',SalesReceipt:'sales receipts',CreditMemo:'credit memos'};
-  var docsResult=await qbSyncDocumentsCore(function(typeName,idx,total){
-    var pct=50+Math.round((idx/total)*33); // 50 -> 83 across the 4 types
-    showSyncProgress(pct,'Step 2 of 3 — fetching '+(docLabels[typeName]||typeName)+'…');
-  });
+  var docsResult=await qbSyncDocumentsCore(function(typeName,idx,total,runningCount){
+    var pct=50+Math.round((idx/total)*33);
+    var label='Step 2 of 3 — fetching '+(docLabels[typeName]||typeName);
+    if(runningCount) label+=' ('+runningCount.toLocaleString()+')';
+    label+='…';
+    showSyncProgress(pct,label);
+  }, since);
   if(!docsResult.ok){
     hideSyncProgress();
     if(docsResult.needsReconnect){
       if(status)status.innerHTML='QuickBooks connection expired. <a href="/connect" style="color:var(--cold);font-weight:700">Click here to reconnect</a>';
       showReconnectButton();
     } else if(status){status.textContent='Sync error (documents): '+docsResult.error;}
-    if(btn)btn.disabled=false;
+    if(btn)btn.disabled=false; if(btn2)btn2.disabled=false;
+    window.__incrementalSync=false;
     return;
   }
   showSyncProgress(85,'Documents synced — recalculating…');
@@ -683,12 +706,17 @@ async function syncEverything(){
   recalcQuantities();
   showSyncProgress(100,'Sync complete');
 
+  // Record the sync time so the next incremental knows where to resume
+  localStorage.setItem('pc_lastSync', syncStartedAt);
+
   if(status){
     var dc=docsResult.docCounts||{};
     var breakdown=' — QB docs: '+(dc.Bill||0)+' bills, '+(dc.Invoice||0)+' invoices, '+(dc.SalesReceipt||0)+' sales receipts, '+(dc.CreditMemo||0)+' credit memos';
-    status.textContent='Sync complete — '+itemsResult.count+' items, '+docsResult.added+' movements applied'+(docsResult.skippedBeforeOpening?(' ('+docsResult.skippedBeforeOpening+' skipped before opening count)'):'')+breakdown;
+    var mode=incremental?'Quick sync':'Full sync';
+    status.textContent=mode+' complete — '+itemsResult.count+' items, '+docsResult.added+' movement'+(docsResult.added!==1?'s':'')+(incremental?' updated':' applied')+(docsResult.skippedBeforeOpening?(' ('+docsResult.skippedBeforeOpening+' skipped before opening count)'):'')+breakdown;
   }
-  if(btn)btn.disabled=false;
+  if(btn)btn.disabled=false; if(btn2)btn2.disabled=false;
+  window.__incrementalSync=false;
   renderItemsTable();
   setTimeout(hideSyncProgress,1500);
 }
@@ -783,30 +811,46 @@ function connectQuickBooks(){
 }
 
 // Core document sync — returns {ok, added, skippedBeforeOpening, error, needsReconnect}
-async function qbSyncDocumentsCore(onProgress){
+// If `since` (ISO timestamp) is passed, only changed docs are fetched (incremental).
+async function qbSyncDocumentsCore(onProgress, since){
   var base=window.location.origin;
-  var data;
-  // Fetch each document type separately with its own timeout, so one slow/large
-  // type can't hang the whole sync, and we can report progress per type.
+  var sinceParam = since ? ('&since='+encodeURIComponent(since)) : '';
   var types=['Bill','Invoice','SalesReceipt','CreditMemo'];
-  data={Bill:[],Invoice:[],SalesReceipt:[],CreditMemo:[],errors:{}};
+  var data={Bill:[],Invoice:[],SalesReceipt:[],CreditMemo:[],errors:{}};
+
   for(var ti=0;ti<types.length;ti++){
     var t=types[ti];
     if(onProgress) onProgress(t,ti,types.length);
-    var ctrl=new AbortController();
-    var timer=setTimeout(function(){ctrl.abort();},120000); // 2 min per type
-    try{
-      var r=await fetch(base+'/api/qb/documents?entity='+t,{signal:ctrl.signal});
-      clearTimeout(timer);
-      if(r.status===401){ return {ok:false, error:'connection expired', needsReconnect:true}; }
-      var jd=await r.json();
-      if(jd && jd[t]) data[t]=jd[t];
-      else if(jd && jd.QueryResponse && jd.QueryResponse[t]) data[t]=jd.QueryResponse[t];
-      if(jd && jd.error) data.errors[t]=jd.error;
-    }catch(e){
-      clearTimeout(timer);
-      data.errors[t]=(e.name==='AbortError'?'timed out after 2 min':e.message||'fetch failed');
-      // keep going with the other types rather than failing the whole sync
+    // Page through this type, one 100-row request at a time. Each request is
+    // small and fast, so it never hits a gateway/timeout limit even for tens of
+    // thousands of invoices.
+    var startPos=1;
+    var pageSize=100;
+    var safety=0;
+    while(true){
+      safety++;
+      if(safety>1000) break; // hard cap (~100k rows)
+      var ctrl=new AbortController();
+      var timer=setTimeout(function(){ctrl.abort();},60000); // 1 min per PAGE
+      var pageRows=null;
+      try{
+        var r=await fetch(base+'/api/qb/documents?entity='+t+'&startposition='+startPos+sinceParam,{signal:ctrl.signal});
+        clearTimeout(timer);
+        if(r.status===401){ return {ok:false, error:'connection expired', needsReconnect:true}; }
+        var jd=await r.json();
+        if(jd && jd.error){ data.errors[t]=jd.error; break; }
+        pageRows=(jd && jd[t]) ? jd[t] : [];
+      }catch(e){
+        clearTimeout(timer);
+        data.errors[t]=(e.name==='AbortError'?('page timed out at row '+startPos):(e.message||'fetch failed'));
+        break; // stop this type, keep what we got, move on
+      }
+      if(!pageRows || !pageRows.length) break;
+      data[t]=data[t].concat(pageRows);
+      // progress within the type: show running count
+      if(onProgress) onProgress(t,ti,types.length,data[t].length);
+      if(pageRows.length<pageSize) break; // last page
+      startPos+=pageSize;
     }
   }
   return finishDocSync(data);
@@ -838,8 +882,23 @@ function finishDocSync(data){
     {key:'CreditMemo', txnType:'return', sign:1, numPrefix:'CM'}
   ];
 
-  // Remove previously-synced QB docs so re-syncing doesn't double-count
-  transactions=transactions.filter(function(t){ return !t.qbDoc; });
+  // Remove previously-synced QB docs so re-syncing doesn't double-count.
+  // Full sync: drop ALL qbDoc transactions and rebuild.
+  // Incremental: only drop qbDoc transactions belonging to documents present
+  // in THIS batch (changed docs), so unchanged history is preserved.
+  if(window.__incrementalSync){
+    var incomingDocIds={};
+    ['Bill','Invoice','SalesReceipt','CreditMemo'].forEach(function(k){
+      (data[k]||[]).forEach(function(doc){ incomingDocIds[k+'_'+doc.Id]=true; });
+    });
+    transactions=transactions.filter(function(t){
+      if(!t.qbDoc) return true;
+      var key=(t.qbDocType||'')+'_'+(t.id||'').split('_')[2];
+      return !incomingDocIds[key]; // drop only the changed docs; keep the rest
+    });
+  } else {
+    transactions=transactions.filter(function(t){ return !t.qbDoc; });
+  }
 
   var added=0;
   var skippedNoItem=0;
@@ -1368,9 +1427,13 @@ function renderItemsView(){
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
           Check
         </button>
-        <button id="qbSyncBtn" class="btn btn-primary" onclick="syncEverything()">
+        <button id="qbSyncIncBtn" class="btn btn-primary" onclick="syncIncremental()" title="Fast — pulls only documents changed since your last sync">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          Quick sync
+        </button>
+        <button id="qbSyncBtn" class="btn" onclick="syncEverything()" title="Pulls all documents from scratch — use if something looks off">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-          Sync from QuickBooks
+          Full sync
         </button>
       </div>
     </div>

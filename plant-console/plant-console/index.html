@@ -1202,11 +1202,26 @@ function buildBalanceReport(){
 
   // Opening value = value of all OPENING COUNT lines dated on/before the From date.
   // Closing value = on-hand value as of the To date (opening + inflows − outflows up to To).
+  // Valuation rule:
+  //  - Shipments / sold / invoiced  -> the invoice's SALE price (what it sold for)
+  //  - Everything else (opening, receive, return, production, physical count)
+  //    -> the item's COST price.
+  // This makes the net change a REAL result: cost going in vs. sale value going out.
   function lineValue(t){
     var q=Math.abs(Number(t.qty||0));
-    var price=(t.unitPrice!==undefined&&t.unitPrice!=='')?Number(t.unitPrice):0;
-    if(!price){var fi=items.find(function(x){return x.id===t.itemId;});if(fi)price=Number(fi.cost||fi.price||0);}
-    return q*price;
+    var fi=items.find(function(x){return x.id===t.itemId;});
+    if(t.type==='shipment'){
+      // sale price: prefer the price stored on the line (from the QuickBooks invoice)
+      var sale=(t.unitPrice!==undefined&&t.unitPrice!=='')?Number(t.unitPrice):0;
+      if(!sale && fi) sale=Number(fi.price||fi.cost||0); // fallback to item sale price, then cost
+      return q*sale;
+    }
+    // cost basis for opening, receive, return, production, physical count
+    var cost=fi?Number(fi.cost||0):0;
+    if(!cost){ // fallback to line price if item has no cost on file
+      cost=(t.unitPrice!==undefined&&t.unitPrice!=='')?Number(t.unitPrice):0;
+    }
+    return q*cost;
   }
 
   // Inflow types (positive) and outflow types (negative)
@@ -1295,7 +1310,7 @@ function buildBalanceReport(){
     +'<span style="font-weight:800;font-size:15px">Closing count value ('+esc(toDisp)+')</span>'
     +'<span style="font-family:var(--mono);font-weight:800;font-size:15px">'+money(closingValue)+'</span></div>';
 
-  html+='<div style="font-size:10px;color:var(--muted);margin-top:14px;line-height:1.5">Opening value = opening counts on/before the from date. Additions and subtractions are valued at unit cost. Physical counts are split into gains (+) and losses (−). Closing = opening + net change.</div>';
+  html+='<div style="font-size:10px;color:var(--muted);margin-top:14px;line-height:1.5">Opening value, receivings, returns, production and physical counts are valued at <b>cost price</b>. Shipments / sold / invoiced are valued at the <b>invoice sale price</b>. Net change = total additions (cost) − total subtractions (sale value), so a positive net reflects real margin earned over the period.</div>';
   html+='</div>';
 
   body.innerHTML=html;

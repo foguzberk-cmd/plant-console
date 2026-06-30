@@ -264,6 +264,7 @@
   .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.38);z-index:100;display:flex;align-items:center;justify-content:center}
   .modal-bg.hidden{display:none}
   .modal{background:var(--panel);border-radius:16px;padding:30px 28px;width:100%;max-width:500px;box-shadow:0 8px 40px rgba(0,0,0,.18);max-height:92vh;overflow-y:auto;overflow-x:visible}
+  .modal.modal-wide{max-width:min(860px,94vw)}
   .modal h3{font-size:17px;font-weight:700;margin-bottom:4px}
   .modal .sub{color:var(--muted);font-size:13px;margin-bottom:22px}
   .form-group{margin-bottom:16px}
@@ -382,7 +383,7 @@
 
   <!-- Transaction Modal -->
   <div class="modal-bg hidden" id="txnModal" role="dialog" aria-modal="true">
-    <div class="modal">
+    <div class="modal" id="txnModalPanel">
       <h3 id="txnModalTitle">Create transaction</h3>
       <p class="sub">Record a product movement in or out of a storage location.</p>
       <div class="form-row">
@@ -2815,6 +2816,9 @@ function onTxnTypeChange(){
   if(isOpening) populateOCLocation();
   var ocLines=document.getElementById('ocLines');
   if(ocLines&&ocLines.children.length===0) addOCLine();
+  // Physical count shows extra columns — widen the modal so nothing scrolls.
+  var panel=document.getElementById('txnModalPanel');
+  if(panel) panel.classList.toggle('modal-wide', isAdjust);
   updateOCHeader();
   updateAllPhysicalDiffs();
 }

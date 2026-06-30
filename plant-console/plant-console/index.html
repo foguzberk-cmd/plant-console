@@ -936,6 +936,21 @@ function finishDocSync(data){
   var byQbId={};
   items.forEach(function(it){ if(it.qbId) byQbId[it.qbId]=it; });
 
+  // Per-item start point. A product's tracking begins at its opening count, so
+  // any document dated before that product's opening count must NOT appear in
+  // its history. We use the LATEST opening count per item (a re-count resets the
+  // baseline) and compare by whichever is earlier — business date or creation time.
+  var openInfoByItem={}; // itemId -> { date, sortTime }
+  transactions.forEach(function(t){
+    if(t.type==='opening'&&t.itemId&&t.date){
+      var st=txnSortTime(t);
+      var existing=openInfoByItem[t.itemId];
+      if(!existing||t.date>existing.date){
+        openInfoByItem[t.itemId]={date:t.date, sortTime:st};
+      }
+    }
+  });
+
   // Map each QB doc type to a transaction type and direction
   // Bill = purchase IN (receive). Invoice & SalesReceipt = sold OUT (shipment). CreditMemo = returned IN (return).
   var docConfig=[
@@ -1016,6 +1031,16 @@ function finishDocSync(data){
         var unitPrice=Number(detail.UnitPrice|| (line.Amount&&qty?line.Amount/qty:0) ||0);
         var docNum=doc.DocNumber||doc.Id;
         var account=(doc.VendorRef&&doc.VendorRef.name)||(doc.CustomerRef&&doc.CustomerRef.name)||'';
+        // PER-ITEM CUTOFF: a product is only tracked from its opening count
+        // forward. Drop this line if it predates THIS item's opening count,
+        // judged by whichever is earlier — business date or creation time.
+        var openInfo=openInfoByItem[local.id];
+        if(openInfo){
+          var rowSort=createSort?Date.parse(createSort):Date.parse((docDate||'')+'T12:00:00');
+          var beforeByDate = docDate && docDate < openInfo.date;
+          var beforeByCreate = !isNaN(rowSort) && rowSort < openInfo.sortTime;
+          if(beforeByDate || beforeByCreate){ skippedBeforeOpening++; return; }
+        }
         transactions.push({
           id:'qb_'+cfg.key+'_'+doc.Id+'_'+li,
           qbDoc:true,

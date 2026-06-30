@@ -754,11 +754,14 @@ async function qbSyncDocumentsCore(){
   var byQbId={};
   items.forEach(function(it){ if(it.qbId) byQbId[it.qbId]=it; });
 
-  // Per-item earliest opening-count date — only movements on/after this count
+  // Per-item start point = the LATEST opening-count date.
+  // Only QuickBooks movements on/after this date adjust the balance, so a
+  // physical re-count resets the baseline. Items with no opening count have
+  // no cutoff (their full history syncs).
   var openDateByItem={};
   transactions.forEach(function(t){
     if(t.type==='opening'&&t.itemId&&t.date){
-      if(!openDateByItem[t.itemId]||t.date<openDateByItem[t.itemId]) openDateByItem[t.itemId]=t.date;
+      if(!openDateByItem[t.itemId]||t.date>openDateByItem[t.itemId]) openDateByItem[t.itemId]=t.date;
     }
   });
 
@@ -1101,6 +1104,16 @@ function recalcQuantities(){
   var UNASSIGNED='__none__';
   function loc(v){ return (!v||v==='external')?UNASSIGNED:v; }
 
+  // Determine each item's start point = its LATEST opening-count date.
+  // Movements before that date are ignored (the opening count is the baseline).
+  var startByItem={};
+  allTxns.forEach(function(t){
+    if(t.type==='opening'&&t.itemId&&t.date){
+      var k=(t.date||'')+(t.time||'');
+      if(!startByItem[t.itemId]||k>startByItem[t.itemId]) startByItem[t.itemId]=k;
+    }
+  });
+
   // Build per-item, per-location map
   var map={}; // itemId -> { locId: qty }
   var touched={}; // itemId -> true if any txn affected it
@@ -1115,6 +1128,13 @@ function recalcQuantities(){
     if(!t.itemId) return;
     var q=Number(t.qty||0);
     if(!q) return;
+    // Respect the opening-count start point: skip non-opening movements that
+    // predate the item's latest opening count.
+    var start=startByItem[t.itemId];
+    if(start && t.type!=='opening'){
+      var tk=(t.date||'')+(t.time||'');
+      if(tk<start) return;
+    }
     var li=loc(t.locIn), lo=loc(t.locOut);
     switch(t.type){
       case 'opening':   add(t.itemId, li, q); break;
@@ -1597,10 +1617,9 @@ function saveOpeningCount(){
     };
     transactions.push(txn);
 
-    // Update item quantity
+    // Record opening date as the item's start point; the engine sets quantities.
     var idx=items.findIndex(function(x){return x.id===itemId;});
     if(idx>=0){
-      items[idx].qty=Number(qty);
       items[idx].openingDate=date;
       localStorage.setItem('pc_items',JSON.stringify(items));
     }
@@ -1611,6 +1630,7 @@ function saveOpeningCount(){
   saveTxns();
   closeOpeningModal();
   renderTransactions();
+  recalcQuantities(); // auto-recalculate from the new opening-count start point
 }
 
 /* ===== SETTINGS ===== */

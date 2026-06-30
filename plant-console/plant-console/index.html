@@ -641,11 +641,14 @@ async function syncEverything(){
   var btn=document.getElementById('qbSyncBtn');
   var status=document.getElementById('qbStatus');
   if(btn)btn.disabled=true;
+  showSyncProgress(5,'Starting sync…');
 
   // 1. Sync items
   if(status)status.textContent='Step 1/3 — syncing items from QuickBooks…';
+  showSyncProgress(15,'Step 1 of 3 — syncing items…');
   var itemsResult=await qbSyncItemsCore();
   if(!itemsResult.ok){
+    hideSyncProgress();
     if(itemsResult.needsReconnect){
       if(status)status.innerHTML='QuickBooks connection expired. <a href="/connect" style="color:var(--cold);font-weight:700">Click here to reconnect</a>';
       showReconnectButton();
@@ -653,11 +656,18 @@ async function syncEverything(){
     if(btn)btn.disabled=false;
     return;
   }
+  showSyncProgress(45,'Items synced ('+itemsResult.count+') — fetching documents…');
 
   // 2. Sync bills & sales (only movements on/after each item's opening count)
   if(status)status.textContent='Step 2/3 — syncing bills, invoices & credit memos…';
+  showSyncProgress(55,'Step 2 of 3 — syncing bills, invoices & credit memos…');
+  // The documents fetch is one long server call; creep the bar so it feels live.
+  var creep=55;
+  var creepTimer=setInterval(function(){ creep=Math.min(creep+1.5,83); showSyncProgress(creep,'Step 2 of 3 — fetching documents from QuickBooks…'); },600);
   var docsResult=await qbSyncDocumentsCore();
+  clearInterval(creepTimer);
   if(!docsResult.ok){
+    hideSyncProgress();
     if(docsResult.needsReconnect){
       if(status)status.innerHTML='QuickBooks connection expired. <a href="/connect" style="color:var(--cold);font-weight:700">Click here to reconnect</a>';
       showReconnectButton();
@@ -665,10 +675,13 @@ async function syncEverything(){
     if(btn)btn.disabled=false;
     return;
   }
+  showSyncProgress(85,'Documents synced — recalculating…');
 
   // 3. Recalculate quantities
   if(status)status.textContent='Step 3/3 — recalculating quantities…';
+  showSyncProgress(95,'Step 3 of 3 — recalculating quantities…');
   recalcQuantities();
+  showSyncProgress(100,'Sync complete');
 
   if(status){
     var dc=docsResult.docCounts||{};
@@ -677,6 +690,37 @@ async function syncEverything(){
   }
   if(btn)btn.disabled=false;
   renderItemsTable();
+  setTimeout(hideSyncProgress,1500);
+}
+
+// ===== Sync progress bar =====
+function showSyncProgress(pct,label){
+  var box=document.getElementById('syncProgressBox');
+  if(!box){
+    box=document.createElement('div');
+    box.id='syncProgressBox';
+    box.style.cssText='position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:9999;width:min(440px,90vw);background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.22);padding:16px 18px';
+    box.innerHTML=''
+      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
+      +'<span id="syncProgressLabel" style="font-size:13px;font-weight:600;color:var(--ink)">Syncing…</span>'
+      +'<span id="syncProgressPct" style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--cold)">0%</span>'
+      +'</div>'
+      +'<div style="height:10px;background:var(--bg);border-radius:6px;overflow:hidden">'
+      +'<div id="syncProgressFill" style="height:100%;width:0%;background:linear-gradient(90deg,var(--cold),#1a9c6b);border-radius:6px;transition:width .35s ease"></div>'
+      +'</div>';
+    document.body.appendChild(box);
+  }
+  box.style.display='block';
+  var fill=document.getElementById('syncProgressFill');
+  var pctEl=document.getElementById('syncProgressPct');
+  var labelEl=document.getElementById('syncProgressLabel');
+  if(fill) fill.style.width=pct+'%';
+  if(pctEl) pctEl.textContent=Math.round(pct)+'%';
+  if(labelEl&&label) labelEl.textContent=label;
+}
+function hideSyncProgress(){
+  var box=document.getElementById('syncProgressBox');
+  if(box) box.style.display='none';
 }
 
 // Core item sync — returns {ok, count, error, needsReconnect}

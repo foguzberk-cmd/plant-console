@@ -1297,12 +1297,9 @@ function recalcQuantities(){
   var allTxns=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
   var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
 
-  // Sort so each item's OPENING COUNT applies before any of its movements,
-  // then order remaining transactions by date and normalized creation time.
+  // Order purely by date then normalized creation time. Opening counts now
+  // carry a real createTime, so they sort by their actual time like everything else.
   allTxns.sort(function(a,b){
-    var ao=(a.type==='opening')?0:1;
-    var bo=(b.type==='opening')?0:1;
-    if(ao!==bo) return ao-bo;
     var da=(a.date||''), db=(b.date||'');
     if(da!==db) return da<db?-1:1;
     return txnSortTime(a)-txnSortTime(b);
@@ -1814,10 +1811,12 @@ function saveOpeningCount(){
     if(!itemId||qty==='') continue;
 
     // Save as individual transaction per line
+    var ocCreate=(function(){var iso=(date||new Date().toISOString().slice(0,10))+'T12:00:00';return isNaN(Date.parse(iso))?'':iso;})();
     var txn={
       id:'txn_'+Date.now()+'_'+i,
       num:num+(lines.length>1?'-'+(saved+1):''),
       date:date,
+      createTime:ocCreate,
       type:'opening',
       itemId:itemId,
       qty:qty,
@@ -2563,10 +2562,12 @@ function viewItemHistory(itemId){
     var lIn=t.locIn==='external'?'External':(storages.find(function(x){return x.id===t.locIn;})||{}).name||'';
     if(lOut||lIn) loc=esc(lOut||'—')+' &#8594; '+esc(lIn||'—');
     var openArg=t.docId?('\''+t.docId+'\',true'):('\''+t.id+'\',false');
-    // Full creation timestamp (QuickBooks CreateTime) for the Created column.
+    // Full creation timestamp for the Created column. Synced bills have a real
+    // QuickBooks CreateTime; manual entries fall back to their date + time.
     var created='—';
-    if(t.createTime){
-      var cd=new Date(t.createTime);
+    var ctSource=t.createTime||((t.date||'')+'T'+(t.time||'12:00'));
+    var cd=new Date(ctSource);
+    if(t.createTime||t.date){
       if(!isNaN(cd.getTime())){
         created=cd.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})
           +' '+cd.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
@@ -2802,6 +2803,16 @@ function saveTxnOrOpening(){
   // CreateTime is set once and must survive edits.
   var preservedCreate = (editingDocId && editingDocMeta) ? (editingDocMeta.createTime||'') : '';
   var preservedTime = (editingDocId && editingDocMeta && editingDocMeta.time) ? editingDocMeta.time : null;
+  // For NEW manual entries, build a real createTime from the entered date+time
+  // so it sorts correctly against synced bills (which have full ISO timestamps).
+  function buildCreate(){
+    if(preservedCreate) return preservedCreate;
+    var d=date||new Date().toISOString().slice(0,10);
+    var tm=(preservedTime!==null?preservedTime:time)||'00:00';
+    var iso=d+'T'+(tm.length===5?tm+':00':tm);
+    return isNaN(Date.parse(iso))?'':iso;
+  }
+  var entryCreate=buildCreate();
   // If editing, remove old lines for this doc
   if(editingDocId){transactions=transactions.filter(function(t){return t.docId!==editingDocId;});}
 
@@ -2817,7 +2828,7 @@ function saveTxnOrOpening(){
       var unit=document.getElementById('oc-unit-'+lineId)?document.getElementById('oc-unit-'+lineId).value:'lbs';
       if(!itemId||qty==='') continue;
       var price=document.getElementById('oc-price-'+lineId)?document.getElementById('oc-price-'+lineId).value:'';
-      transactions.push({id:'txn_'+Date.now()+'_'+i,docId:docId,num:num,lineNum:saved+1,date:date,time:(preservedTime!==null?preservedTime:time),createTime:preservedCreate,type:'opening',itemId:itemId,qty:qty,unit:unit,unitPrice:price,locOut:'',locIn:ocLocation,desc:notes||'Opening count'});
+      transactions.push({id:'txn_'+Date.now()+'_'+i,docId:docId,num:num,lineNum:saved+1,date:date,time:(preservedTime!==null?preservedTime:time),createTime:entryCreate,type:'opening',itemId:itemId,qty:qty,unit:unit,unitPrice:price,locOut:'',locIn:ocLocation,desc:notes||'Opening count'});
       saved++;
     }
     if(saved===0){alert('Please add at least one item with a quantity.');return;}
@@ -2837,7 +2848,7 @@ function saveTxnOrOpening(){
     var u=document.getElementById('oc-unit-'+lid)?document.getElementById('oc-unit-'+lid).value:'lbs';
     if(!iid||q==='') continue;
     var p=document.getElementById('oc-price-'+lid)?document.getElementById('oc-price-'+lid).value:'';
-    transactions.push({id:'txn_'+Date.now()+'_'+j,docId:docId,num:num,lineNum:saved+1,date:date,time:(preservedTime!==null?preservedTime:time),createTime:preservedCreate,type:type,itemId:iid,qty:q,unit:u,unitPrice:p,locOut:locOut,locIn:locIn,desc:notes});
+    transactions.push({id:'txn_'+Date.now()+'_'+j,docId:docId,num:num,lineNum:saved+1,date:date,time:(preservedTime!==null?preservedTime:time),createTime:entryCreate,type:type,itemId:iid,qty:q,unit:u,unitPrice:p,locOut:locOut,locIn:locIn,desc:notes});
     saved++;
   }
   if(saved===0){alert('Please add at least one product with a quantity.');return;}

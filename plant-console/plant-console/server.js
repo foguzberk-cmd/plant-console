@@ -121,8 +121,11 @@ async function fetchQBItems(retry) {
 }
 
 // Generic paginated query for any QB entity (Bill, Invoice, SalesReceipt, CreditMemo)
-async function fetchQBEntityPage(entity, startPosition, retry) {
-  const query = `SELECT * FROM ${entity} STARTPOSITION ${startPosition} MAXRESULTS 100`;
+// If `since` (ISO timestamp) is provided, only fetch records changed at/after it.
+async function fetchQBEntityPage(entity, startPosition, retry, since) {
+  let where = '';
+  if (since) where = ` WHERE MetaData.LastUpdatedTime >= '${since}'`;
+  const query = `SELECT * FROM ${entity}${where} STARTPOSITION ${startPosition} MAXRESULTS 100`;
   const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
   const res = await httpsRequest({
     hostname: 'quickbooks.api.intuit.com',
@@ -132,19 +135,19 @@ async function fetchQBEntityPage(entity, startPosition, retry) {
   });
   if (res.status === 401 && !retry) {
     const ok = await refreshAccessToken();
-    if (ok) return fetchQBEntityPage(entity, startPosition, true);
+    if (ok) return fetchQBEntityPage(entity, startPosition, true, since);
     throw new Error('NEEDS_RECONNECT');
   }
   if (res.status !== 200) throw new Error('QB API error ' + res.status + ' on ' + entity + ': ' + res.body);
   return JSON.parse(res.body);
 }
 
-async function fetchQBEntity(entity) {
+async function fetchQBEntity(entity, since) {
   let all = [];
   let start = 1;
   const pageSize = 100;
   while (true) {
-    const data = await fetchQBEntityPage(entity, start, false);
+    const data = await fetchQBEntityPage(entity, start, false, since);
     const rows = (data.QueryResponse && data.QueryResponse[entity]) || [];
     all = all.concat(rows);
     if (rows.length < pageSize) break;
@@ -274,14 +277,28 @@ const server = http.createServer(async (req, res) => {
   }
 
   // QuickBooks documents endpoint — bills, invoices, sales receipts, credit memos
-  // Supports ?entity=Bill (or Invoice/SalesReceipt/CreditMemo) to fetch one type
-  // at a time, which avoids long single requests that hit gateway timeouts.
+  // ?entity=Invoice                  -> fetch ALL pages of that type (may be slow)
+  // ?entity=Invoice&startposition=1  -> fetch ONE page (100 rows) starting at N
+  //                                     (client drives pagination = no timeouts)
+  // &since=ISO                       -> only records changed since that time
   if (url === '/api/qb/documents') {
     try {
       const ent = queryParams.entity;
+      const since = queryParams.since || null;
+      const startPos = queryParams.startposition ? parseInt(queryParams.startposition, 10) : null;
       if (ent && ['Bill','Invoice','SalesReceipt','CreditMemo'].indexOf(ent) >= 0) {
         if (!accessToken) await refreshAccessToken();
-        const rows = await fetchQBEntity(ent);
+        // Single-page mode: return just one page so each HTTP request is fast.
+        if (startPos !== null && !isNaN(startPos)) {
+          const data = await fetchQBEntityPage(ent, startPos, false, since);
+          const rows = (data.QueryResponse && data.QueryResponse[ent]) || [];
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          const out = {}; out[ent] = rows; out.pageSize = 100; out.startPosition = startPos;
+          res.end(JSON.stringify(out));
+          return;
+        }
+        // Fetch-all mode (kept for small types)
+        const rows = await fetchQBEntity(ent, since);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         const out = {}; out[ent] = rows;
         res.end(JSON.stringify(out));

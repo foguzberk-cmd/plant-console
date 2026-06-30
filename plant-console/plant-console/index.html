@@ -413,6 +413,19 @@
         </div>
       </div>
 
+      <div id="t-adjust-row" style="display:none">
+        <div style="border-top:1px solid var(--line);margin:14px 0 12px"></div>
+        <div style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Adjustment</div>
+        <div class="form-group"><label>Location</label><select id="t-adjust-loc"></select></div>
+        <div class="form-group"><label>Direction</label>
+          <select id="t-adjust-dir">
+            <option value="add">Add (+) — increase quantity</option>
+            <option value="subtract">Subtract (−) — decrease quantity</option>
+          </select>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:-4px">Enter a positive quantity below; the direction sets whether it's added or removed at this location.</div>
+      </div>
+
       <div id="t-opening-section" style="display:none">
         <div style="border-top:1px solid var(--line);margin:14px 0 12px"></div>
         <div class="form-group" id="t-oc-location-group"><label>Storage location</label>
@@ -1372,7 +1385,7 @@ function recalcQuantities(){
       case 'production':add(t.itemId, li, q); break;
       case 'shipment':  add(t.itemId, lo, -q); break;
       case 'transfer':  add(t.itemId, lo, -q); add(t.itemId, li, q); break;
-      case 'adjustment':add(t.itemId, (t.locIn?li:lo), q); break;
+      case 'adjustment':add(t.itemId, li, q); break; // q is signed (+/-), li = the single adjust location
       default: break;
     }
   });
@@ -2575,11 +2588,14 @@ function viewItemHistory(itemId){
     var q=Number(t.qty||0);
     var sign=1;
     if(t.type==='shipment') sign=-1;
-    if(t.type==='opening'){running=running+q;} else {running=running+sign*q;}
+    // effect = the signed quantity change. Adjustment qty is already signed
+    // (+/-), shipment subtracts, everything else adds.
+    var effect = (t.type==='shipment') ? -Math.abs(q) : q;
+    running = running + effect;
     var price=0;
     if(t.unitPrice!==undefined&&t.unitPrice!=='') price=Number(t.unitPrice);
     else price=Number(it.cost||it.price||0);
-    var val=q*price;
+    var val=Math.abs(q)*price;
     var ds=t.date?new Date(t.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
     if(t.time) ds+='<div style="font-size:10px;color:var(--muted)">'+t.time+'</div>';
     var loc='';
@@ -2609,7 +2625,7 @@ function viewItemHistory(itemId){
       +'<td style="font-family:var(--mono);font-size:11px;color:var(--cold);text-decoration:underline">'+esc(t.num||'—')+'</td>'
       +'<td><span class="type-badge type-'+t.type+'">'+(TXN_TYPES[t.type]||t.type)+'</span></td>'
       +'<td style="font-size:11.5px">'+(acct?esc(acct):'<span style="color:var(--muted)">—</span>')+'</td>'
-      +'<td style="font-family:var(--mono);font-size:12px;text-align:right;color:'+(sign<0?'#c23b33':'var(--ink)')+'">'+(sign<0?'-':'+')+q.toFixed(2)+' '+(t.unit||'')+'</td>'
+      +'<td style="font-family:var(--mono);font-size:12px;text-align:right;color:'+(effect<0?'#c23b33':'var(--ink)')+'">'+(effect<0?'-':'+')+Math.abs(q).toFixed(2)+' '+(t.unit||'')+'</td>'
       +'<td style="font-family:var(--mono);font-size:12px;text-align:right;font-weight:700">'+running.toFixed(2)+'</td>'
       +'<td style="font-family:var(--mono);font-size:12px;text-align:right;color:var(--cold)">'+(val>0?'$'+val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'—')+'</td>'
       +'<td style="font-size:11px;color:var(--muted)">'+loc+'</td>'
@@ -2723,8 +2739,13 @@ function openEditDoc(docId){
   document.getElementById('t-desc').value=(first.desc&&first.desc!=='Opening count')?first.desc:'';
   populateLocSelects();
   onTxnTypeChange();
+  var isAdjustEdit=(type==='adjustment');
   if(type==='opening'){
     if(document.getElementById('t-oc-location')) document.getElementById('t-oc-location').value=first.locIn||'';
+  } else if(isAdjustEdit){
+    if(document.getElementById('t-adjust-loc')) document.getElementById('t-adjust-loc').value=first.locIn||'';
+    var dir=first.adjustDir||((Number(first.qty)||0)<0?'subtract':'add');
+    if(document.getElementById('t-adjust-dir')) document.getElementById('t-adjust-dir').value=dir;
   } else {
     if(document.getElementById('t-loc-out')) document.getElementById('t-loc-out').value=first.locOut||'';
     if(document.getElementById('t-loc-in')) document.getElementById('t-loc-in').value=first.locIn||'';
@@ -2739,7 +2760,8 @@ function openEditDoc(docId){
     var it=items.find(function(x){return x.id===ln.itemId;});
     document.getElementById('oc-item-'+idx).value=ln.itemId;
     document.getElementById('oc-search-'+idx).value=it?it.name:'';
-    document.getElementById('oc-qty-'+idx).value=ln.qty;
+    // adjustments store a signed qty; show the absolute value in the edit field
+    document.getElementById('oc-qty-'+idx).value=isAdjustEdit?Math.abs(Number(ln.qty)||0):ln.qty;
     document.getElementById('oc-unit-'+idx).value=ln.unit||'lbs';
     if(document.getElementById('oc-price-'+idx)) document.getElementById('oc-price-'+idx).value=ln.unitPrice||'';
   });
@@ -2749,13 +2771,18 @@ function populateLocSelects(){const opts=storages.map(s=>`<option value="${s.id}
 function onTxnTypeChange(){
   var type=document.getElementById('t-type').value;
   var locRow=document.getElementById('t-loc-row');
+  var adjustRow=document.getElementById('t-adjust-row');
   var openSec=document.getElementById('t-opening-section');
   var ocLocGroup=document.getElementById('t-oc-location-group');
   var itemsLabel=document.getElementById('t-items-label');
   var isOpening=(type==='opening');
-  // Location out/in row shows for movement types (everything except opening)
-  if(locRow) locRow.style.display=isOpening?'none':'block';
-  // The line-item section shows for ALL types now (product, qty, unit, price)
+  var isAdjust=(type==='adjustment');
+  // Out/In movement row: all movement types EXCEPT opening and adjustment
+  if(locRow) locRow.style.display=(isOpening||isAdjust)?'none':'block';
+  // Single-location adjust row: only for adjustment
+  if(adjustRow) adjustRow.style.display=isAdjust?'block':'none';
+  if(isAdjust) populateAdjustLocation();
+  // The line-item section shows for ALL types (product, qty, unit, price)
   if(openSec) openSec.style.display='block';
   // Storage-location single dropdown only for opening count
   if(ocLocGroup) ocLocGroup.style.display=isOpening?'block':'none';
@@ -2764,6 +2791,16 @@ function onTxnTypeChange(){
   if(isOpening) populateOCLocation();
   var ocLines=document.getElementById('ocLines');
   if(ocLines&&ocLines.children.length===0) addOCLine();
+}
+
+function populateAdjustLocation(){
+  var sel=document.getElementById('t-adjust-loc');
+  if(!sel) return;
+  var current=sel.value;
+  sel.innerHTML='<option value="">— select location —</option>'+storages.map(function(s){
+    return '<option value="'+s.id+'">'+esc(s.name)+'</option>';
+  }).join('');
+  if(current) sel.value=current;
 }
 
 function populateOCLocation(){
@@ -2864,6 +2901,12 @@ function saveTxnOrOpening(){
   }
 
   // Movement types (transfer, receive, production, shipment, return, adjustment)
+  var isAdjust=(type==='adjustment');
+  var adjustLoc='', adjustDir='add';
+  if(isAdjust){
+    adjustLoc=document.getElementById('t-adjust-loc')?document.getElementById('t-adjust-loc').value:'';
+    adjustDir=document.getElementById('t-adjust-dir')?document.getElementById('t-adjust-dir').value:'add';
+  }
   var locOut=document.getElementById('t-loc-out').value;
   var locIn=document.getElementById('t-loc-in').value;
   for(var j=0;j<lines.length;j++){
@@ -2873,7 +2916,15 @@ function saveTxnOrOpening(){
     var u=document.getElementById('oc-unit-'+lid)?document.getElementById('oc-unit-'+lid).value:'lbs';
     if(!iid||q==='') continue;
     var p=document.getElementById('oc-price-'+lid)?document.getElementById('oc-price-'+lid).value:'';
-    transactions.push({id:'txn_'+Date.now()+'_'+j,docId:docId,num:num,lineNum:saved+1,date:date,time:(preservedTime!==null?preservedTime:time),createTime:entryCreate,type:type,itemId:iid,qty:q,unit:u,unitPrice:p,locOut:locOut,locIn:locIn,desc:notes});
+    var rowLocOut=locOut, rowLocIn=locIn, rowQty=q;
+    if(isAdjust){
+      // Adjustment uses ONE location. Direction decides sign.
+      // Store as a signed quantity at a single location (locIn), locOut empty.
+      var qn=Math.abs(Number(q)||0);
+      rowQty = (adjustDir==='subtract') ? (-qn) : qn;
+      rowLocOut=''; rowLocIn=adjustLoc;
+    }
+    transactions.push({id:'txn_'+Date.now()+'_'+j,docId:docId,num:num,lineNum:saved+1,date:date,time:(preservedTime!==null?preservedTime:time),createTime:entryCreate,type:type,itemId:iid,qty:rowQty,unit:u,unitPrice:p,locOut:rowLocOut,locIn:rowLocIn,adjustDir:(isAdjust?adjustDir:undefined),desc:notes});
     saved++;
   }
   if(saved===0){alert('Please add at least one product with a quantity.');return;}

@@ -660,12 +660,12 @@ async function syncEverything(){
 
   // 2. Sync bills & sales (only movements on/after each item's opening count)
   if(status)status.textContent='Step 2/3 — syncing bills, invoices & credit memos…';
-  showSyncProgress(55,'Step 2 of 3 — syncing bills, invoices & credit memos…');
-  // The documents fetch is one long server call; creep the bar so it feels live.
-  var creep=55;
-  var creepTimer=setInterval(function(){ creep=Math.min(creep+1.5,83); showSyncProgress(creep,'Step 2 of 3 — fetching documents from QuickBooks…'); },600);
-  var docsResult=await qbSyncDocumentsCore();
-  clearInterval(creepTimer);
+  showSyncProgress(50,'Step 2 of 3 — fetching documents…');
+  var docLabels={Bill:'bills',Invoice:'invoices',SalesReceipt:'sales receipts',CreditMemo:'credit memos'};
+  var docsResult=await qbSyncDocumentsCore(function(typeName,idx,total){
+    var pct=50+Math.round((idx/total)*33); // 50 -> 83 across the 4 types
+    showSyncProgress(pct,'Step 2 of 3 — fetching '+(docLabels[typeName]||typeName)+'…');
+  });
   if(!docsResult.ok){
     hideSyncProgress();
     if(docsResult.needsReconnect){
@@ -783,17 +783,37 @@ function connectQuickBooks(){
 }
 
 // Core document sync — returns {ok, added, skippedBeforeOpening, error, needsReconnect}
-async function qbSyncDocumentsCore(){
+async function qbSyncDocumentsCore(onProgress){
   var base=window.location.origin;
-  var resp;
-  try { resp=await fetch(base+'/api/qb/documents'); }
-  catch(e){ return {ok:false, error:'network error'}; }
   var data;
-  try { data=await resp.json(); } catch(e){ data={}; }
-  if(!resp.ok || data.error){
-    return {ok:false, error:(data.error||resp.status), needsReconnect:(data.needsReconnect||resp.status===401)};
+  // Fetch each document type separately with its own timeout, so one slow/large
+  // type can't hang the whole sync, and we can report progress per type.
+  var types=['Bill','Invoice','SalesReceipt','CreditMemo'];
+  data={Bill:[],Invoice:[],SalesReceipt:[],CreditMemo:[],errors:{}};
+  for(var ti=0;ti<types.length;ti++){
+    var t=types[ti];
+    if(onProgress) onProgress(t,ti,types.length);
+    var ctrl=new AbortController();
+    var timer=setTimeout(function(){ctrl.abort();},120000); // 2 min per type
+    try{
+      var r=await fetch(base+'/api/qb/documents?entity='+t,{signal:ctrl.signal});
+      clearTimeout(timer);
+      if(r.status===401){ return {ok:false, error:'connection expired', needsReconnect:true}; }
+      var jd=await r.json();
+      if(jd && jd[t]) data[t]=jd[t];
+      else if(jd && jd.QueryResponse && jd.QueryResponse[t]) data[t]=jd.QueryResponse[t];
+      if(jd && jd.error) data.errors[t]=jd.error;
+    }catch(e){
+      clearTimeout(timer);
+      data.errors[t]=(e.name==='AbortError'?'timed out after 2 min':e.message||'fetch failed');
+      // keep going with the other types rather than failing the whole sync
+    }
   }
+  return finishDocSync(data);
+}
 
+// Process fetched documents into transactions (shared by single & per-type fetch)
+function finishDocSync(data){
   // Build a lookup from QB item Id -> our local item
   var byQbId={};
   items.forEach(function(it){ if(it.qbId) byQbId[it.qbId]=it; });

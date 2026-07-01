@@ -2924,13 +2924,26 @@ function viewItemHistory(itemId){
       // derive from desc for older records: text after " · "
       if(t.desc&&t.desc.indexOf(' · ')>=0) acct=t.desc.split(' · ').slice(1).join(' · ');
     }
+    // Amount column: most transaction types show a signed +/- change. A
+    // physical count is different — it SETS the balance to whatever was
+    // counted, it doesn't apply a change on top of what came before. So show
+    // the counted amount itself (no +/- sign) rather than the computed delta;
+    // the delta is still what drives the Balance column math above, it just
+    // isn't what belongs in this cell for a count.
+    var amountCell;
+    if(t.type==='adjustment'){
+      var setVal=(t.physicalCount!==undefined)?Number(t.physicalCount):running;
+      amountCell='<td style="font-family:var(--mono);font-size:12px;text-align:right;'+(!counts?'color:var(--muted)':'')+'">'+(!counts?'('+setVal.toFixed(2)+')':setVal.toFixed(2))+' '+(t.unit||'')+'</td>';
+    } else {
+      amountCell='<td style="font-family:var(--mono);font-size:12px;text-align:right;color:'+(!counts?'var(--muted)':(effect<0?'#c23b33':'var(--ink)'))+'">'+(!counts?'('+(effect<0?'-':'+')+Math.abs(effect).toFixed(2)+')':((effect<0?'-':'+')+Math.abs(effect).toFixed(2)))+' '+(t.unit||'')+'</td>';
+    }
     return '<tr style="cursor:pointer" onclick="openBillFromReport('+openArg+')" title="Click to view / edit this bill">'
       +'<td style="font-size:12px">'+ds+'</td>'
       +'<td style="font-size:11px;color:var(--muted);white-space:nowrap">'+created+'</td>'
       +'<td style="font-family:var(--mono);font-size:11px;color:var(--cold);text-decoration:underline">'+esc(t.num||'—')+'</td>'
       +'<td><span class="type-badge type-'+t.type+'">'+(TXN_TYPES[t.type]||t.type)+'</span></td>'
       +'<td style="font-size:11.5px">'+(acct?esc(acct):'<span style="color:var(--muted)">—</span>')+'</td>'
-      +'<td style="font-family:var(--mono);font-size:12px;text-align:right;color:'+(!counts?'var(--muted)':(effect<0?'#c23b33':'var(--ink)'))+'">'+(!counts?'('+(effect<0?'-':'+')+Math.abs(effect).toFixed(2)+')':((effect<0?'-':'+')+Math.abs(effect).toFixed(2)))+' '+(t.unit||'')+'</td>'
+      +amountCell
       +'<td style="font-family:var(--mono);font-size:12px;text-align:right;font-weight:700">'+running.toFixed(2)+'</td>'
       +'<td style="font-family:var(--mono);font-size:12px;text-align:right;color:var(--cold)">'+(val>0?'$'+val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'—')+'</td>'
       +'<td style="font-size:11px;color:var(--muted)">'+loc+'</td>'

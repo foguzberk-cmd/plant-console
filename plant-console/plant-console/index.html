@@ -1540,14 +1540,7 @@ function recalcQuantities(){
     if(start && t.type!=='opening' && (t.date||'') < start){ return; }
     var li=loc(t.locIn), lo=loc(t.locOut);
     switch(t.type){
-      case 'opening':
-        // OPENING COUNT: authoritative starting balance. SET the location to the
-        // counted amount (not add), so duplicate opening counts or a running
-        // balance can't distort it. It establishes the baseline at its location.
-        var openCounted=q;
-        var openCur=(map[t.itemId]&&map[t.itemId][li]!==undefined)?map[t.itemId][li]:0;
-        add(t.itemId, li, openCounted-openCur); // set to counted
-        break;
+      case 'opening':   add(t.itemId, li, q); break; // opening lines SUM together as the baseline
       case 'receive':   add(t.itemId, li, q); break;
       case 'return':    add(t.itemId, li, q); break;
       case 'production':add(t.itemId, li, q); break;
@@ -2812,8 +2805,7 @@ function viewItemHistory(itemId){
     var effect;
     if(t.type==='shipment') effect=-Math.abs(q);
     else if(t.type==='adjustment') effect=(t.countedDiff!==undefined?Number(t.countedDiff):q);
-    else if(t.type==='opening') effect=(Number(t.qty)||0)-running; // set balance to counted
-    else effect=q;
+    else effect=q; // opening, receive, return, production all add
     running = running + effect;
     var price=0;
     if(t.unitPrice!==undefined&&t.unitPrice!=='') price=Number(t.unitPrice);
@@ -3174,6 +3166,10 @@ function saveTxnOrOpening(){
 
   if(type==='opening'){
     var ocLocation=document.getElementById('t-oc-location')?document.getElementById('t-oc-location').value:'';
+    // Merge duplicate products: if the same item appears on multiple rows,
+    // sum their quantities into a single line (440 + 440 = 880 on one row).
+    var merged={}; // itemId -> {qty, unit, price}
+    var order=[];  // preserve first-seen order
     for(var i=0;i<lines.length;i++){
       var lineId=lines[i].id.replace('oc-line-','');
       var itemId=document.getElementById('oc-item-'+lineId)?document.getElementById('oc-item-'+lineId).value:'';
@@ -3181,9 +3177,19 @@ function saveTxnOrOpening(){
       var unit=document.getElementById('oc-unit-'+lineId)?document.getElementById('oc-unit-'+lineId).value:'lbs';
       if(!itemId||qty==='') continue;
       var price=document.getElementById('oc-price-'+lineId)?document.getElementById('oc-price-'+lineId).value:'';
-      transactions.push({id:'txn_'+Date.now()+'_'+i,docId:docId,num:num,lineNum:saved+1,date:date,time:(preservedTime!==null?preservedTime:time),createTime:entryCreate,type:'opening',itemId:itemId,qty:qty,unit:unit,unitPrice:price,locOut:'',locIn:ocLocation,desc:notes||'Opening count'});
-      saved++;
+      if(merged[itemId]){
+        merged[itemId].qty += Number(qty)||0;      // sum quantities
+        if(price!=='') merged[itemId].price=price; // keep latest non-empty price
+      } else {
+        merged[itemId]={qty:Number(qty)||0, unit:unit, price:price};
+        order.push(itemId);
+      }
     }
+    order.forEach(function(itemId,k){
+      var m=merged[itemId];
+      transactions.push({id:'txn_'+Date.now()+'_'+k,docId:docId,num:num,lineNum:saved+1,date:date,time:(preservedTime!==null?preservedTime:time),createTime:entryCreate,type:'opening',itemId:itemId,qty:m.qty,unit:m.unit,unitPrice:m.price,locOut:'',locIn:ocLocation,desc:notes||'Opening count'});
+      saved++;
+    });
     if(saved===0){alert('Please add at least one item with a quantity.');return;}
     editingDocId=null;editingDocMeta=null;
     saveTxns();closeTxnModal();renderTransactions();
@@ -3200,6 +3206,9 @@ function saveTxnOrOpening(){
   }
   var locOut=document.getElementById('t-loc-out').value;
   var locIn=document.getElementById('t-loc-in').value;
+  // Merge duplicate products: same item on multiple rows sums into one line.
+  var mMerged={}; // itemId -> {qty, unit, price}
+  var mOrder=[];
   for(var j=0;j<lines.length;j++){
     var lid=lines[j].id.replace('oc-line-','');
     var iid=document.getElementById('oc-item-'+lid)?document.getElementById('oc-item-'+lid).value:'';
@@ -3207,7 +3216,17 @@ function saveTxnOrOpening(){
     var u=document.getElementById('oc-unit-'+lid)?document.getElementById('oc-unit-'+lid).value:'lbs';
     if(!iid||q==='') continue;
     var p=document.getElementById('oc-price-'+lid)?document.getElementById('oc-price-'+lid).value:'';
-    var rowLocOut=locOut, rowLocIn=locIn, rowQty=q;
+    if(mMerged[iid]){
+      mMerged[iid].qty += Number(q)||0;
+      if(p!=='') mMerged[iid].price=p;
+    } else {
+      mMerged[iid]={qty:Number(q)||0, unit:u, price:p};
+      mOrder.push(iid);
+    }
+  }
+  mOrder.forEach(function(iid,k){
+    var m=mMerged[iid];
+    var rowLocOut=locOut, rowLocIn=locIn, rowQty=m.qty;
     var extra={};
     if(isAdjust){
       // PHYSICAL COUNT: store the signed difference (counted − on record) at the
@@ -3215,16 +3234,16 @@ function saveTxnOrOpening(){
       // counted amount, and the report shows the +/- volume/value for shrink reports.
       var itObj=items.find(function(x){return x.id===iid;});
       var onRecord=itObj?qtyAtLoc(itObj,adjustLoc):0;
-      var physical=Number(q)||0;
+      var physical=m.qty;
       rowQty = physical - onRecord;           // signed difference
       rowLocOut=''; rowLocIn=adjustLoc;
       extra={ physicalCount:physical, onRecord:onRecord };
     }
-    var row={id:'txn_'+Date.now()+'_'+j,docId:docId,num:num,lineNum:saved+1,date:date,time:(preservedTime!==null?preservedTime:time),createTime:entryCreate,type:type,itemId:iid,qty:rowQty,unit:u,unitPrice:p,locOut:rowLocOut,locIn:rowLocIn,desc:notes};
+    var row={id:'txn_'+Date.now()+'_'+k,docId:docId,num:num,lineNum:saved+1,date:date,time:(preservedTime!==null?preservedTime:time),createTime:entryCreate,type:type,itemId:iid,qty:rowQty,unit:m.unit,unitPrice:m.price,locOut:rowLocOut,locIn:rowLocIn,desc:notes};
     if(isAdjust){ row.physicalCount=extra.physicalCount; row.onRecord=extra.onRecord; }
     transactions.push(row);
     saved++;
-  }
+  });
   if(saved===0){alert('Please add at least one product with a quantity.');return;}
   editingDocId=null;editingDocMeta=null;
   saveTxns();closeTxnModal();renderTransactions();

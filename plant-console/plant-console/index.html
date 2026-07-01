@@ -1540,7 +1540,14 @@ function recalcQuantities(){
     if(start && t.type!=='opening' && (t.date||'') < start){ return; }
     var li=loc(t.locIn), lo=loc(t.locOut);
     switch(t.type){
-      case 'opening':   add(t.itemId, li, q); break;
+      case 'opening':
+        // OPENING COUNT: authoritative starting balance. SET the location to the
+        // counted amount (not add), so duplicate opening counts or a running
+        // balance can't distort it. It establishes the baseline at its location.
+        var openCounted=q;
+        var openCur=(map[t.itemId]&&map[t.itemId][li]!==undefined)?map[t.itemId][li]:0;
+        add(t.itemId, li, openCounted-openCur); // set to counted
+        break;
       case 'receive':   add(t.itemId, li, q); break;
       case 'return':    add(t.itemId, li, q); break;
       case 'production':add(t.itemId, li, q); break;
@@ -2805,6 +2812,7 @@ function viewItemHistory(itemId){
     var effect;
     if(t.type==='shipment') effect=-Math.abs(q);
     else if(t.type==='adjustment') effect=(t.countedDiff!==undefined?Number(t.countedDiff):q);
+    else if(t.type==='opening') effect=(Number(t.qty)||0)-running; // set balance to counted
     else effect=q;
     running = running + effect;
     var price=0;

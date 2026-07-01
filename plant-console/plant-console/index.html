@@ -1570,6 +1570,12 @@ function recalcQuantities(){
           var realDiff=counted-currentBal;
           add(t.itemId, li, realDiff);      // set balance to counted
           t.countedDiff=realDiff;           // store the true difference for the report
+          // Persist the reconstructed balance AT THIS POINT IN THE TIMELINE as the
+          // authoritative "on record" for this count. Because it's rebuilt from the
+          // full transaction history every recalc, it is correct for old counts too
+          // (not just ones saved after a snapshot field existed) and stays accurate
+          // even if later bills change today's live inventory.
+          t.onRecordAtCount=currentBal;
         } else {
           add(t.itemId, li, q);             // legacy adjustments: signed delta
           t.countedDiff=q;
@@ -1994,6 +2000,10 @@ function filterOCItems(idx){
   if(!inp||!sugg) return;
   var q=inp.value.toLowerCase().trim();
   document.getElementById('oc-item-'+idx).value='';
+  // Product is being retyped: invalidate any saved on-record snapshot so a newly
+  // chosen product recomputes its difference against current inventory.
+  var _onrecEl=document.getElementById('oc-onrec-'+idx);
+  if(_onrecEl) delete _onrecEl.dataset.snapshot;
   if(q.length<1){sugg.style.display='none';return;}
   var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
   var matches=allItems.filter(function(it){
@@ -2023,6 +2033,10 @@ function selectOCItem(idx,el){
   var name=it?it.name:'';
   document.getElementById('oc-item-'+idx).value=id;
   document.getElementById('oc-search-'+idx).value=name;
+  // Product changed on this line: the saved on-record snapshot no longer applies,
+  // so drop it and let the difference recompute against live inventory.
+  var _onrecEl=document.getElementById('oc-onrec-'+idx);
+  if(_onrecEl) delete _onrecEl.dataset.snapshot;
   document.getElementById('oc-sugg-'+idx).style.display='none';
   document.getElementById('oc-search-'+idx).style.borderColor='var(--cold)';
   // auto-fill suggested unit COST from QuickBooks PurchaseCost
@@ -3000,6 +3014,18 @@ function openEditDoc(docId){
     } else {
       document.getElementById('oc-qty-'+idx).value=ln.qty;
     }
+    // Show the "on record" quantity as it was AT THE TIME THIS COUNT WAS TAKEN,
+    // not the current live balance. Prefer onRecordAtCount, which recalcQuantities
+    // reconstructs from the full transaction timeline (so it's correct for old
+    // counts too); fall back to the onRecord value stored at save time.
+    if(isAdjustEdit){
+      var _snap=(ln.onRecordAtCount!==undefined)?ln.onRecordAtCount
+               :(ln.onRecord!==undefined?ln.onRecord:undefined);
+      if(_snap!==undefined){
+        var _onrecEl=document.getElementById('oc-onrec-'+idx);
+        if(_onrecEl) _onrecEl.dataset.snapshot=String(_snap);
+      }
+    }
     document.getElementById('oc-unit-'+idx).value=ln.unit||'lbs';
     if(document.getElementById('oc-price-'+idx)) document.getElementById('oc-price-'+idx).value=ln.unitPrice||'';
   });
@@ -3083,7 +3109,18 @@ function updatePhysicalDiff(idx){
     return;
   }
   var it=items.find(function(x){return x.id===itemId;});
-  var onRecord=it?qtyAtLoc(it,loc):0;
+  // "On record" is a point-in-time snapshot: what the system believed was on hand
+  // at the moment the count was taken. When editing an existing count, that value
+  // was stored on the transaction (stashed here as data-snapshot) — use it so the
+  // difference stays historically accurate even if live inventory has since moved.
+  // For new lines (or after changing the product) there is no snapshot, so fall
+  // back to the current balance, which is the correct baseline for a fresh count.
+  var onRecord;
+  if(onrecEl.dataset.snapshot!==undefined && onrecEl.dataset.snapshot!==''){
+    onRecord=Number(onrecEl.dataset.snapshot)||0;
+  } else {
+    onRecord=it?qtyAtLoc(it,loc):0;
+  }
   var physical=Number(physVal)||0;
   var diff=physical-onRecord;
   var cost=(priceVal!==''?Number(priceVal):Number(it&&(it.cost||it.price)||0));
@@ -3281,11 +3318,15 @@ function saveTxnOrOpening(){
     var u=document.getElementById('oc-unit-'+lid)?document.getElementById('oc-unit-'+lid).value:'lbs';
     if(!iid||q==='') continue;
     var p=document.getElementById('oc-price-'+lid)?document.getElementById('oc-price-'+lid).value:'';
+    // Preserve the original "on record" snapshot for an edited count (if present),
+    // so re-saving doesn't replace the historical baseline with live inventory.
+    var snapEl=document.getElementById('oc-onrec-'+lid);
+    var snap=(snapEl&&snapEl.dataset.snapshot!==undefined&&snapEl.dataset.snapshot!=='')?Number(snapEl.dataset.snapshot):undefined;
     if(mMerged[iid]){
       mMerged[iid].qty += Number(q)||0;
       if(p!=='') mMerged[iid].price=p;
     } else {
-      mMerged[iid]={qty:Number(q)||0, unit:u, price:p};
+      mMerged[iid]={qty:Number(q)||0, unit:u, price:p, snapshot:snap};
       mOrder.push(iid);
     }
   }
@@ -3298,7 +3339,10 @@ function saveTxnOrOpening(){
       // single location. The engine adds this delta so the location lands on the
       // counted amount, and the report shows the +/- volume/value for shrink reports.
       var itObj=items.find(function(x){return x.id===iid;});
-      var onRecord=itObj?qtyAtLoc(itObj,adjustLoc):0;
+      // On record = the historical snapshot if this line came from an existing
+      // count (preserved through the edit), otherwise the current balance for a
+      // brand-new count.
+      var onRecord=(m.snapshot!==undefined)?m.snapshot:(itObj?qtyAtLoc(itObj,adjustLoc):0);
       var physical=m.qty;
       rowQty = physical - onRecord;           // signed difference
       rowLocOut=''; rowLocIn=adjustLoc;

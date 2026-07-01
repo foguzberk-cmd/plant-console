@@ -384,6 +384,10 @@
   <!-- Transaction Modal -->
   <div class="modal-bg hidden" id="txnModal" role="dialog" aria-modal="true">
     <div class="modal" id="txnModalPanel">
+      <div id="txnDragHandle" style="cursor:move;user-select:none;margin:-30px -28px 0;padding:14px 28px 0;display:flex;align-items:center;gap:8px">
+        <svg viewBox="0 0 24 24" width="14" height="14" style="stroke:var(--muted);opacity:.6" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+        <span style="font-family:var(--mono);font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)">Drag to move</span>
+      </div>
       <h3 id="txnModalTitle">Create transaction</h3>
       <p class="sub">Record a product movement in or out of a storage location.</p>
       <div class="form-row">
@@ -3001,6 +3005,7 @@ function openEditDoc(docId){
   });
   if(isAdjustEdit) updateAllPhysicalDiffs();
   document.getElementById('txnModal').classList.remove('hidden');
+  makeDraggable('txnModalPanel','txnDragHandle');
 }
 function populateLocSelects(){const opts=storages.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');document.getElementById('t-loc-out').innerHTML=`<option value="">— select —</option><option value="external">External / Supplier</option>${opts}`;document.getElementById('t-loc-in').innerHTML=`<option value="">— select —</option><option value="external">External / Customer</option>${opts}`;}
 function onTxnTypeChange(){
@@ -3132,6 +3137,7 @@ function openAddTxnModal(){
   ocLineIndex=0;
   onTxnTypeChange();
   document.getElementById('txnModal').classList.remove('hidden');
+  makeDraggable('txnModalPanel','txnDragHandle');
   document.getElementById('t-num').focus();
 }
 function openEditTxnModal(id){
@@ -3146,12 +3152,54 @@ function openEditTxnModal(id){
   document.getElementById('t-loc-out').value=t.locOut||'';
   document.getElementById('t-loc-in').value=t.locIn||'';
   document.getElementById('txnModal').classList.remove('hidden');
+  makeDraggable('txnModalPanel','txnDragHandle');
   document.getElementById('t-num').focus();
 }
 function closeTxnModal(){
   document.getElementById('txnModal').classList.add('hidden');
   document.querySelectorAll('.item-suggestions').forEach(function(el){el.remove();});
   editingDocMeta=null;
+  // Reset any dragged position so the modal reopens centered
+  var panel=document.getElementById('txnModalPanel');
+  if(panel){ panel.style.transform=''; panel.style.margin=''; }
+}
+
+// Make a modal panel draggable by a handle element. The panel moves via a
+// translate transform so it doesn't fight the flexbox centering.
+function makeDraggable(panelId, handleId){
+  var panel=document.getElementById(panelId);
+  var handle=document.getElementById(handleId);
+  if(!panel||!handle||handle.dataset.dragBound) return;
+  handle.dataset.dragBound='1';
+  var startX=0, startY=0, curX=0, curY=0, dragging=false;
+  function readTransform(){
+    var m=/translate\(([-\d.]+)px,\s*([-\d.]+)px\)/.exec(panel.style.transform||'');
+    curX=m?parseFloat(m[1]):0; curY=m?parseFloat(m[2]):0;
+  }
+  function down(e){
+    dragging=true;
+    readTransform();
+    var pt=e.touches?e.touches[0]:e;
+    startX=pt.clientX; startY=pt.clientY;
+    document.addEventListener('mousemove',move); document.addEventListener('mouseup',up);
+    document.addEventListener('touchmove',move,{passive:false}); document.addEventListener('touchend',up);
+    e.preventDefault();
+  }
+  function move(e){
+    if(!dragging) return;
+    var pt=e.touches?e.touches[0]:e;
+    var nx=curX+(pt.clientX-startX);
+    var ny=curY+(pt.clientY-startY);
+    panel.style.transform='translate('+nx+'px, '+ny+'px)';
+    if(e.cancelable) e.preventDefault();
+  }
+  function up(){
+    dragging=false;
+    document.removeEventListener('mousemove',move); document.removeEventListener('mouseup',up);
+    document.removeEventListener('touchmove',move); document.removeEventListener('touchend',up);
+  }
+  handle.addEventListener('mousedown',down);
+  handle.addEventListener('touchstart',down,{passive:false});
 }
 function saveTxnOrOpening(){
   var type=document.getElementById('t-type').value;

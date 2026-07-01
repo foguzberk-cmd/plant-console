@@ -1505,6 +1505,23 @@ function recalcQuantities(){
   var allTxns=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
   var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
 
+  // ONE-TIME MIGRATION: earlier versions of this engine recomputed
+  // onRecordAtCount on every single recalc, so a bill could show a different
+  // "on record" number each time the app reran this function (e.g. after a
+  // QuickBooks sync or opening a report). Any onRecordAtCount value already
+  // sitting in storage may therefore be stale/wrong. Clear it out exactly
+  // once (never touching the truly immutable onRecord field saved at bill
+  // creation time) so the corrected lock-once logic below can compute it
+  // fresh, correctly, one last time — after which it freezes forever.
+  if(!localStorage.getItem('pc_onrecord_lock_migrated')){
+    allTxns.forEach(function(t){
+      if(t.type==='adjustment' && t.onRecord===undefined){
+        delete t.onRecordAtCount;
+      }
+    });
+    localStorage.setItem('pc_onrecord_lock_migrated','1');
+  }
+
   // Order purely by date then normalized creation time. Opening counts now
   // carry a real createTime, so they sort by their actual time like everything else.
   allTxns.sort(function(a,b){
@@ -1574,10 +1591,15 @@ function recalcQuantities(){
       case 'adjustment':
         if(t.physicalCount!==undefined){
           var histBal=(histMap[t.itemId]&&histMap[t.itemId][li]!==undefined)?histMap[t.itemId][li]:0;
-          // The true point-in-time "on record" value, computed from the full,
-          // unbroken chronological history — accurate for old bills even when a
-          // later opening count has since reset the item's live balance.
-          t.onRecordAtCount=histBal;
+          // LOCK-ONCE: "on record" is a permanent historical fact about a saved
+          // bill — once it has ever been set (either at save time as t.onRecord,
+          // or by an earlier recalc as t.onRecordAtCount), it must never change
+          // again, no matter how many times this engine reruns or what new
+          // transactions get added anywhere else in the timeline afterward.
+          // Only a count that has NEVER had a snapshot gets one assigned here.
+          if(t.onRecord===undefined && t.onRecordAtCount===undefined){
+            t.onRecordAtCount=histBal;
+          }
           addHist(t.itemId, li, Number(t.physicalCount)-histBal);
         } else {
           addHist(t.itemId, li, q);
@@ -3048,12 +3070,14 @@ function openEditDoc(docId){
       document.getElementById('oc-qty-'+idx).value=ln.qty;
     }
     // Show the "on record" quantity as it was AT THE TIME THIS COUNT WAS TAKEN,
-    // not the current live balance. Prefer onRecordAtCount, which recalcQuantities
-    // reconstructs from the full transaction timeline (so it's correct for old
-    // counts too); fall back to the onRecord value stored at save time.
+    // not the current live balance. Prefer the onRecord value captured at save
+    // time (the most authoritative, truly immutable record of what this bill
+    // showed when issued); fall back to onRecordAtCount, a lock-once value the
+    // recalc engine assigns for older bills that predate the onRecord field.
+    // Both are frozen the first time they're set and never change afterward.
     if(isAdjustEdit){
-      var _snap=(ln.onRecordAtCount!==undefined)?ln.onRecordAtCount
-               :(ln.onRecord!==undefined?ln.onRecord:undefined);
+      var _snap=(ln.onRecord!==undefined)?ln.onRecord
+               :(ln.onRecordAtCount!==undefined?ln.onRecordAtCount:undefined);
       if(_snap!==undefined){
         var _onrecEl=document.getElementById('oc-onrec-'+idx);
         if(_onrecEl) _onrecEl.dataset.snapshot=String(_snap);

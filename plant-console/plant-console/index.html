@@ -2961,7 +2961,7 @@ function viewItemHistory(itemId){
         +'<div style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px"><div style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">On hand now</div><div style="font-size:20px;font-weight:700;margin-top:2px">'+Number(it.qty||0).toFixed(2)+'</div></div>'
         +'<div style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px"><div style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Total value moved</div><div style="font-size:20px;font-weight:700;margin-top:2px;color:var(--cold)">$'+totalVal.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div></div>'
       +'</div>'
-      +'<table class="txn-table"><thead><tr><th>Date</th><th>Created</th><th>Transaction</th><th>Type</th><th>Account</th><th style="text-align:right">Change</th><th style="text-align:right">Balance</th><th style="text-align:right">Value</th><th>Movement</th></tr></thead><tbody>'+rows+'</tbody></table>';
+      +'<table class="txn-table"><thead><tr><th>Date</th><th>Created</th><th>Transaction</th><th>Type</th><th>Account</th><th style="text-align:right">Amount</th><th style="text-align:right">Balance</th><th style="text-align:right">Value</th><th>Movement</th></tr></thead><tbody>'+rows+'</tbody></table>';
   }
 
   document.getElementById('reportModal').classList.remove('hidden');

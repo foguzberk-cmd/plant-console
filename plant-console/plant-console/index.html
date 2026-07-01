@@ -1178,6 +1178,9 @@ function select(id){
 /* ===== REPORTS (balance-sheet style) ===== */
 function renderReports(){
   const s=SECTIONS.find(x=>x.id==='reports');
+  // Recompute balances first so physical-count differences (countedDiff) reflect
+  // the current data before the report reads them.
+  try{ recalcQuantities(); }catch(e){}
   // Default date range: from earliest opening count (or 30 days ago) to today
   var today=new Date().toISOString().slice(0,10);
   var firstOpen=earliestOpeningDate()||today;
@@ -1188,7 +1191,7 @@ function renderReports(){
       +'<input type="date" id="rpt-from" value="'+firstOpen+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
       +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">To (closing date)</label>'
       +'<input type="date" id="rpt-to" value="'+today+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
-      +'<button class="btn btn-primary" onclick="buildBalanceReport()">Run report</button>'
+      +'<button class="btn btn-primary" onclick="try{recalcQuantities();}catch(e){} buildBalanceReport()">Run report</button>'
       +'<button class="btn" onclick="printBalanceReport()">Print</button>'
     +'</div>'
     +'<div id="rpt-body"></div>';

@@ -1541,17 +1541,56 @@ function recalcQuantities(){
     touched[itemId]=true;
   }
 
+  // Second, UNFILTERED balance tracker used only to snapshot "on record" values
+  // for physical counts. The main `map` above deliberately skips movements that
+  // occurred before an item's latest opening reset (so current stock reflects
+  // only post-reset activity). But an OLD count taken before that later reset
+  // still needs its true historical "on record" value — the balance as it
+  // actually stood at that moment in real chronological order, unaffected by a
+  // reset that happened afterward. histMap replays every transaction with no
+  // skipping at all, purely so old bills keep an accurate snapshot.
+  var histMap={};
+  function addHist(itemId,locId,amt){
+    if(!histMap[itemId]) histMap[itemId]={};
+    if(histMap[itemId][locId]===undefined) histMap[itemId][locId]=0;
+    histMap[itemId][locId]+=amt;
+  }
+
   allTxns.forEach(function(t){
     if(!t.itemId) return;
     var q=Number(t.qty||0);
     // Physical counts must always run (even a zero-difference count is meaningful).
     if(!q && t.type!=='adjustment') return;
+    var li=loc(t.locIn), lo=loc(t.locOut);
+
+    // --- Unfiltered historical replay (always runs, never skipped) ---
+    switch(t.type){
+      case 'opening':   addHist(t.itemId, li, q); break;
+      case 'receive':   addHist(t.itemId, li, q); break;
+      case 'return':    addHist(t.itemId, li, q); break;
+      case 'production':addHist(t.itemId, li, q); break;
+      case 'shipment':  addHist(t.itemId, lo, -q); break;
+      case 'transfer':  addHist(t.itemId, lo, -q); addHist(t.itemId, li, q); break;
+      case 'adjustment':
+        if(t.physicalCount!==undefined){
+          var histBal=(histMap[t.itemId]&&histMap[t.itemId][li]!==undefined)?histMap[t.itemId][li]:0;
+          // The true point-in-time "on record" value, computed from the full,
+          // unbroken chronological history — accurate for old bills even when a
+          // later opening count has since reset the item's live balance.
+          t.onRecordAtCount=histBal;
+          addHist(t.itemId, li, Number(t.physicalCount)-histBal);
+        } else {
+          addHist(t.itemId, li, q);
+        }
+        break;
+      default: break;
+    }
+
     // Respect the opening-count start point using the full TIMESTAMP: skip a
     // non-opening movement only if it occurred at or before the opening count's
     // moment. A same-day receive entered AFTER the opening count still counts.
     var start=startByItem[t.itemId];
     if(start!==undefined && t.type!=='opening' && txnSortTime(t) <= start){ return; }
-    var li=loc(t.locIn), lo=loc(t.locOut);
     switch(t.type){
       case 'opening':   add(t.itemId, li, q); break; // opening lines SUM together as the baseline
       case 'receive':   add(t.itemId, li, q); break;
@@ -1570,12 +1609,6 @@ function recalcQuantities(){
           var realDiff=counted-currentBal;
           add(t.itemId, li, realDiff);      // set balance to counted
           t.countedDiff=realDiff;           // store the true difference for the report
-          // Persist the reconstructed balance AT THIS POINT IN THE TIMELINE as the
-          // authoritative "on record" for this count. Because it's rebuilt from the
-          // full transaction history every recalc, it is correct for old counts too
-          // (not just ones saved after a snapshot field existed) and stays accurate
-          // even if later bills change today's live inventory.
-          t.onRecordAtCount=currentBal;
         } else {
           add(t.itemId, li, q);             // legacy adjustments: signed delta
           t.countedDiff=q;

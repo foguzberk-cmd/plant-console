@@ -1013,8 +1013,13 @@ function finishDocSync(data){
         }
         var qty=Number(detail.Qty||0);
         if(!qty){
-          // Some sales lines omit Qty but have an amount — treat amount/price as qty fallback isn't safe,
-          // so we skip but count it for diagnosis.
+          // Some bill/invoice lines record only an Amount + UnitPrice, no Qty.
+          // Derive quantity = Amount / UnitPrice so receives aren't dropped.
+          var amt=Number(line.Amount||0);
+          var up=Number(detail.UnitPrice||0);
+          if(amt && up){ qty=amt/up; }
+        }
+        if(!qty){
           skippedNoQty++;
           return;
         }
@@ -1618,6 +1623,11 @@ function diagnoseLocations(){
     msg+='  No sync run this session. Click "Sync from QuickBooks", then Check again.\n';
   } else {
     msg+='  Returned: '+d.docCounts.Bill+' bills, '+d.docCounts.Invoice+' invoices, '+d.docCounts.SalesReceipt+' sales receipts, '+d.docCounts.CreditMemo+' credit memos\n';
+    msg+='  Item lines seen: '+d.lineItemsSeen+'\n';
+    msg+='  Movements added: '+d.added+'\n';
+    msg+='  Skipped (item not matched): '+d.skippedNoItem+'\n';
+    msg+='  Skipped (no quantity on line): '+d.skippedNoQty+'\n';
+    msg+='  Skipped (dated before opening count): '+d.skippedBeforeOpening+'\n';
     if(d.serverErrors&&Object.keys(d.serverErrors).length){
       msg+='  SERVER FETCH ERRORS:\n';
       Object.keys(d.serverErrors).forEach(function(k){ msg+='    '+k+': '+d.serverErrors[k]+'\n'; });

@@ -1040,14 +1040,14 @@ function finishDocSync(data){
         var docNum=doc.DocNumber||doc.Id;
         var account=(doc.VendorRef&&doc.VendorRef.name)||(doc.CustomerRef&&doc.CustomerRef.name)||'';
         // PER-ITEM CUTOFF: a product is only tracked from its opening count
-        // forward. Drop this line if it predates THIS item's opening count,
-        // judged by whichever is earlier — business date or creation time.
+        // forward. Drop this line only if its BUSINESS DATE (TxnDate) is before
+        // this item's opening-count date. (Creation time is used only for
+        // ordering within a day, never for the cutoff — otherwise a bill dated
+        // after the opening count but entered earlier could be wrongly skipped.)
         var openInfo=openInfoByItem[local.id];
-        if(openInfo){
-          var rowSort=createSort?Date.parse(createSort):Date.parse((docDate||'')+'T12:00:00');
-          var beforeByDate = docDate && docDate < openInfo.date;
-          var beforeByCreate = !isNaN(rowSort) && rowSort < openInfo.sortTime;
-          if(beforeByDate || beforeByCreate){ skippedBeforeOpening++; return; }
+        if(openInfo && docDate && openInfo.date && docDate < openInfo.date){
+          skippedBeforeOpening++;
+          return;
         }
         transactions.push({
           id:'qb_'+cfg.key+'_'+doc.Id+'_'+li,
@@ -1500,13 +1500,12 @@ function recalcQuantities(){
   var UNASSIGNED='__none__';
   function loc(v){ return (!v||v==='external')?UNASSIGNED:v; }
 
-  // Determine each item's start point = its LATEST opening-count date.
-  // Movements before that date are ignored (the opening count is the baseline).
+  // Determine each item's start point = its LATEST opening-count DATE.
+  // Movements dated before that date are ignored (opening count is the baseline).
   var startByItem={};
   allTxns.forEach(function(t){
     if(t.type==='opening'&&t.itemId&&t.date){
-      var k=(t.date||'')+(t.time||'');
-      if(!startByItem[t.itemId]||k>startByItem[t.itemId]) startByItem[t.itemId]=k;
+      if(!startByItem[t.itemId]||t.date>startByItem[t.itemId]) startByItem[t.itemId]=t.date;
     }
   });
 
@@ -1524,13 +1523,11 @@ function recalcQuantities(){
     if(!t.itemId) return;
     var q=Number(t.qty||0);
     if(!q) return;
-    // Respect the opening-count start point: skip non-opening movements that
-    // predate the item's latest opening count.
+    // Respect the opening-count start point: skip non-opening movements whose
+    // BUSINESS DATE is before the item's latest opening-count date. Compare
+    // dates directly (YYYY-MM-DD sorts correctly); never concatenate with time.
     var start=startByItem[t.itemId];
-    if(start && t.type!=='opening'){
-      var tk=(t.date||'')+(t.time||'');
-      if(tk<start) return;
-    }
+    if(start && t.type!=='opening' && (t.date||'') < start){ return; }
     var li=loc(t.locIn), lo=loc(t.locOut);
     switch(t.type){
       case 'opening':   add(t.itemId, li, q); break;

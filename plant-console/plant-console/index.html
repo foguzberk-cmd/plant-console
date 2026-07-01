@@ -1509,12 +1509,18 @@ function recalcQuantities(){
   var UNASSIGNED='__none__';
   function loc(v){ return (!v||v==='external')?UNASSIGNED:v; }
 
-  // Determine each item's start point = its LATEST opening-count DATE.
-  // Movements dated before that date are ignored (opening count is the baseline).
-  var startByItem={};
+  // Determine each item's start point = its LATEST opening count, as a full
+  // timestamp (date + creation time). Movements at or before this exact moment
+  // are pre-baseline; movements after it (even same day) adjust the balance.
+  var startByItem={};   // itemId -> opening timestamp (epoch ms)
+  var startDateByItem={}; // itemId -> opening date (YYYY-MM-DD) for reference
   allTxns.forEach(function(t){
     if(t.type==='opening'&&t.itemId&&t.date){
-      if(!startByItem[t.itemId]||t.date>startByItem[t.itemId]) startByItem[t.itemId]=t.date;
+      var ts=txnSortTime(t);
+      if(startByItem[t.itemId]===undefined || ts>startByItem[t.itemId]){
+        startByItem[t.itemId]=ts;
+        startDateByItem[t.itemId]=t.date;
+      }
     }
   });
 
@@ -1533,12 +1539,11 @@ function recalcQuantities(){
     var q=Number(t.qty||0);
     // Physical counts must always run (even a zero-difference count is meaningful).
     if(!q && t.type!=='adjustment') return;
-    // Respect the opening-count start point: the opening count is the baseline
-    // as of its date, so skip any non-opening movement dated ON OR BEFORE the
-    // item's latest opening-count date. Only movements AFTER the opening count
-    // date adjust the balance. Compare dates directly (YYYY-MM-DD sorts right).
+    // Respect the opening-count start point using the full TIMESTAMP: skip a
+    // non-opening movement only if it occurred at or before the opening count's
+    // moment. A same-day receive entered AFTER the opening count still counts.
     var start=startByItem[t.itemId];
-    if(start && t.type!=='opening' && (t.date||'') <= start){ return; }
+    if(start!==undefined && t.type!=='opening' && txnSortTime(t) <= start){ return; }
     var li=loc(t.locIn), lo=loc(t.locOut);
     switch(t.type){
       case 'opening':   add(t.itemId, li, q); break; // opening lines SUM together as the baseline
@@ -2796,10 +2801,11 @@ function viewItemHistory(itemId){
     return ca-cb;
   });
 
-  // Item's opening start date = latest opening-count date. Movements on/before
-  // it don't affect the running balance (opening count is the start point).
-  var histStart='';
-  hist.forEach(function(t){ if(t.type==='opening'&&t.date&&t.date>histStart) histStart=t.date; });
+  // Item's opening start point = latest opening count, as a full timestamp.
+  // Movements at or before this moment are pre-baseline (don't move the balance);
+  // movements after it — even same day — count.
+  var histStartTs=null;
+  hist.forEach(function(t){ if(t.type==='opening'){ var ts=txnSortTime(t); if(histStartTs===null||ts>histStartTs) histStartTs=ts; } });
 
   var running=0;
   var rows=hist.map(function(t){
@@ -2810,9 +2816,9 @@ function viewItemHistory(itemId){
     if(t.type==='shipment') effect=-Math.abs(q);
     else if(t.type==='adjustment') effect=(t.countedDiff!==undefined?Number(t.countedDiff):q);
     else effect=q; // opening, receive, return, production all add
-    // A non-opening movement dated on/before the opening count is pre-baseline:
+    // A non-opening movement at or before the opening count is pre-baseline:
     // show it but don't let it move the balance.
-    var counts=!(histStart && t.type!=='opening' && (t.date||'')<=histStart);
+    var counts=!(histStartTs!==null && t.type!=='opening' && txnSortTime(t)<=histStartTs);
     if(counts) running = running + effect;
     var displayEffect = counts ? effect : 0;
     var price=0;

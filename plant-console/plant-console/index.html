@@ -1533,11 +1533,12 @@ function recalcQuantities(){
     var q=Number(t.qty||0);
     // Physical counts must always run (even a zero-difference count is meaningful).
     if(!q && t.type!=='adjustment') return;
-    // Respect the opening-count start point: skip non-opening movements whose
-    // BUSINESS DATE is before the item's latest opening-count date. Compare
-    // dates directly (YYYY-MM-DD sorts correctly); never concatenate with time.
+    // Respect the opening-count start point: the opening count is the baseline
+    // as of its date, so skip any non-opening movement dated ON OR BEFORE the
+    // item's latest opening-count date. Only movements AFTER the opening count
+    // date adjust the balance. Compare dates directly (YYYY-MM-DD sorts right).
     var start=startByItem[t.itemId];
-    if(start && t.type!=='opening' && (t.date||'') < start){ return; }
+    if(start && t.type!=='opening' && (t.date||'') <= start){ return; }
     var li=loc(t.locIn), lo=loc(t.locOut);
     switch(t.type){
       case 'opening':   add(t.itemId, li, q); break; // opening lines SUM together as the baseline
@@ -2795,18 +2796,25 @@ function viewItemHistory(itemId){
     return ca-cb;
   });
 
+  // Item's opening start date = latest opening-count date. Movements on/before
+  // it don't affect the running balance (opening count is the start point).
+  var histStart='';
+  hist.forEach(function(t){ if(t.type==='opening'&&t.date&&t.date>histStart) histStart=t.date; });
+
   var running=0;
   var rows=hist.map(function(t){
     var q=Number(t.qty||0);
-    var sign=1;
-    if(t.type==='shipment') sign=-1;
     // effect = signed quantity change. Shipment subtracts; physical count uses
     // its true computed difference (countedDiff); everything else adds.
     var effect;
     if(t.type==='shipment') effect=-Math.abs(q);
     else if(t.type==='adjustment') effect=(t.countedDiff!==undefined?Number(t.countedDiff):q);
     else effect=q; // opening, receive, return, production all add
-    running = running + effect;
+    // A non-opening movement dated on/before the opening count is pre-baseline:
+    // show it but don't let it move the balance.
+    var counts=!(histStart && t.type!=='opening' && (t.date||'')<=histStart);
+    if(counts) running = running + effect;
+    var displayEffect = counts ? effect : 0;
     var price=0;
     if(t.unitPrice!==undefined&&t.unitPrice!=='') price=Number(t.unitPrice);
     else price=Number(it.cost||it.price||0);
@@ -2840,7 +2848,7 @@ function viewItemHistory(itemId){
       +'<td style="font-family:var(--mono);font-size:11px;color:var(--cold);text-decoration:underline">'+esc(t.num||'—')+'</td>'
       +'<td><span class="type-badge type-'+t.type+'">'+(TXN_TYPES[t.type]||t.type)+'</span></td>'
       +'<td style="font-size:11.5px">'+(acct?esc(acct):'<span style="color:var(--muted)">—</span>')+'</td>'
-      +'<td style="font-family:var(--mono);font-size:12px;text-align:right;color:'+(effect<0?'#c23b33':'var(--ink)')+'">'+(effect<0?'-':'+')+Math.abs(effect).toFixed(2)+' '+(t.unit||'')+'</td>'
+      +'<td style="font-family:var(--mono);font-size:12px;text-align:right;color:'+(!counts?'var(--muted)':(effect<0?'#c23b33':'var(--ink)'))+'">'+(!counts?'('+(effect<0?'-':'+')+Math.abs(effect).toFixed(2)+')':((effect<0?'-':'+')+Math.abs(effect).toFixed(2)))+' '+(t.unit||'')+'</td>'
       +'<td style="font-family:var(--mono);font-size:12px;text-align:right;font-weight:700">'+running.toFixed(2)+'</td>'
       +'<td style="font-family:var(--mono);font-size:12px;text-align:right;color:var(--cold)">'+(val>0?'$'+val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'—')+'</td>'
       +'<td style="font-size:11px;color:var(--muted)">'+loc+'</td>'

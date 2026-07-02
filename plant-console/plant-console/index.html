@@ -654,16 +654,35 @@ async function pullFromServer(){
     if(!res.ok) return false;
     var data=await res.json();
     if(!data||typeof data!=='object') return false;
-    if(Array.isArray(data.items)) items=data.items;
-    if(Array.isArray(data.transactions)) transactions=data.transactions;
-    if(Array.isArray(data.storages)) storages=data.storages;
-    // Never let an empty server users list wipe out a locally-seeded admin —
-    // only adopt the server's users once it actually has some.
+    // IMPORTANT: an empty array from the server must never wipe out data we
+    // already have locally. This happens for real — e.g. if the server's
+    // shared file ever gets reset (a redeploy without a persistent disk, a
+    // fresh server restart, etc.) — and without this guard, the very next
+    // background sync tick would silently erase every browser's locations,
+    // items, and transactions even though nothing was actually wrong with
+    // the local data. Only adopt the server's copy once it actually has
+    // something in it; otherwise assume it just hasn't caught up yet.
+    if(Array.isArray(data.items)&&data.items.length) items=data.items;
+    if(Array.isArray(data.transactions)&&data.transactions.length) transactions=data.transactions;
+    if(Array.isArray(data.storages)&&data.storages.length) storages=data.storages;
     if(Array.isArray(data.users)&&data.users.length) users=data.users;
     localStorage.setItem('pc_items',JSON.stringify(items));
     localStorage.setItem('pc_transactions',JSON.stringify(transactions));
     localStorage.setItem('pc_storages',JSON.stringify(storages));
     localStorage.setItem('pc_users',JSON.stringify(users));
+    // Self-heal: if the server came back empty for something we actually have
+    // locally, its copy is stale/reset — push ours back up right away so it
+    // (and every other browser) recovers, instead of waiting for an unrelated
+    // local change to happen to trigger the next push.
+    var serverIsMissingData =
+      (Array.isArray(data.items)&&!data.items.length&&items.length) ||
+      (Array.isArray(data.transactions)&&!data.transactions.length&&transactions.length) ||
+      (Array.isArray(data.storages)&&!data.storages.length&&storages.length) ||
+      (Array.isArray(data.users)&&!data.users.length&&users.length);
+    if(serverIsMissingData){
+      _lastPushedSnapshot=''; // force the next push through even if nothing local changed
+      pushToServer();
+    }
     return true;
   }catch(e){
     // Server unreachable (offline, or run outside the Node server) — keep

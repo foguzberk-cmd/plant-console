@@ -642,7 +642,13 @@ function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').
 //    store — called after every save, and on a timer as a safety net.
 var SYNC_URL='/api/data';
 var _lastPushedSnapshot='';
+var __syncBusy=false; // true while a QuickBooks sync is actively running
 async function pullFromServer(){
+  // Never pull while a sync is in progress — the shared server copy is stale
+  // (or still empty, on a first-ever sync) compared to what's being built up
+  // locally right now, so pulling here would overwrite freshly-synced data
+  // with the older/emptier server copy right as the sync finishes.
+  if(__syncBusy) return false;
   try{
     var res=await fetch(SYNC_URL,{cache:'no-store'});
     if(!res.ok) return false;
@@ -726,6 +732,7 @@ async function doSync(incremental){
   var status=document.getElementById('qbStatus');
   if(btn)btn.disabled=true;
   if(btn2)btn2.disabled=true;
+  __syncBusy=true; // block the background pull timer until this sync is done
 
   // Determine the "since" timestamp for incremental mode
   var lastSync=localStorage.getItem('pc_lastSync')||'';
@@ -756,6 +763,7 @@ async function doSync(incremental){
     } else if(status){status.textContent='Sync error (items): '+itemsResult.error;}
     if(btn)btn.disabled=false; if(btn2)btn2.disabled=false;
     window.__incrementalSync=false;
+    __syncBusy=false;
     return;
   }
   showSyncProgress(45,'Items synced ('+itemsResult.count+') — fetching documents…');
@@ -788,6 +796,7 @@ async function doSync(incremental){
     } else if(status){status.textContent='Sync error (documents): '+docsResult.error;}
     if(btn)btn.disabled=false; if(btn2)btn2.disabled=false;
     window.__incrementalSync=false;
+    __syncBusy=false;
     return;
   }
   showSyncProgress(96,'Documents synced — recalculating…');
@@ -809,8 +818,10 @@ async function doSync(incremental){
   }
   if(btn)btn.disabled=false; if(btn2)btn2.disabled=false;
   window.__incrementalSync=false;
+  __syncBusy=false; // safe for the background timer to pull again now
   renderItemsTable();
   setTimeout(hideSyncProgress,1500);
+  pushToServer(); // share the freshly-synced data right away, don't wait for the timer
 }
 
 // ===== Sync progress bar =====

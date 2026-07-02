@@ -766,7 +766,12 @@ async function doSync(incremental){
   var docLabels={Bill:'bills',Invoice:'invoices',SalesReceipt:'sales receipts',CreditMemo:'credit memos'};
   var docsResult=await qbSyncDocumentsCore(function(typeName,idx,total,runningCount){
     if(typeName==='__processing__'){
-      showSyncProgress(84,'Processing documents — this can take a moment on large data…');
+      if(total>0 && runningCount!==null){
+        var pct=84+Math.round((idx/total)*10); // 84% -> 94% while processing documents
+        showSyncProgress(pct,'Processing documents ('+idx.toLocaleString()+' of '+total.toLocaleString()+')…');
+      } else {
+        showSyncProgress(84,'Processing documents — this can take a moment on large data…');
+      }
       return;
     }
     var pct=50+Math.round((idx/total)*33);
@@ -1002,14 +1007,20 @@ async function qbSyncDocumentsCore(onProgress, since, dateFloor){
       startPos+=pageSize;
     }
   }
-  // Let the browser repaint, then process (heavy step on large datasets)
+  // Let the browser repaint, then process (heavy step on large datasets).
+  // This is done in small async chunks (see finishDocSync below) so the tab
+  // never looks frozen and the progress bar keeps moving even when there
+  // are years of QuickBooks history to process.
   if(onProgress) onProgress('__processing__',3,4,null);
   await new Promise(function(r){setTimeout(r,50);});
-  return finishDocSync(data);
+  return await finishDocSync(data, onProgress);
 }
 
-// Process fetched documents into transactions (shared by single & per-type fetch)
-function finishDocSync(data){
+// Process fetched documents into transactions (shared by single & per-type fetch).
+// Runs in small chunks with a yield back to the browser between them, so a
+// large document set (years of QuickBooks history) never blocks the tab or
+// leaves the progress bar stuck at one percentage.
+async function finishDocSync(data, onProgress){
   // Build a lookup from QB item Id -> our local item
   var byQbId={};
   items.forEach(function(it){ if(it.qbId) byQbId[it.qbId]=it; });
@@ -1063,89 +1074,108 @@ function finishDocSync(data){
   var lineItemsSeen=0;
   var unmatchedIds={}; // qbItemId -> count, for diagnosis
 
+  // Flatten every (doc, config) pair across all four document types into one
+  // list so we can chunk the work and report a single combined progress bar,
+  // instead of one uninterrupted pass per type.
+  var allDocs=[];
   docConfig.forEach(function(cfg){
-    var docs=data[cfg.key]||[];
-    docs.forEach(function(doc){
-      var lines=doc.Line||[];
-      lines.forEach(function(line,li){
-        // Item-based lines carry inventory movement. QB uses different detail
-        // objects: SalesItemLineDetail (invoice/salesreceipt/creditmemo),
-        // ItemBasedExpenseLineDetail (bill). Some bills use AccountBasedExpenseLineDetail (skip).
-        var detail=line.SalesItemLineDetail||line.ItemBasedExpenseLineDetail||line.ItemLineDetail;
-        if(!detail||!detail.ItemRef) return;
-        lineItemsSeen++;
-        var qbItemId=detail.ItemRef.value;
-        var local=byQbId[qbItemId];
-        if(!local){
-          skippedNoItem++;
-          unmatchedIds[qbItemId]=(unmatchedIds[qbItemId]||0)+1;
-          return;
-        }
-        var qty=Number(detail.Qty||0);
-        if(!qty){
-          // Some bill/invoice lines record only an Amount + UnitPrice, no Qty.
-          // Derive quantity = Amount / UnitPrice so receives aren't dropped.
-          var amt=Number(line.Amount||0);
-          var up=Number(detail.UnitPrice||0);
-          if(amt && up){ qty=amt/up; }
-        }
-        if(!qty){
-          skippedNoQty++;
-          return;
-        }
-        var docDate=doc.TxnDate||'';
-        // QuickBooks bills/invoices carry only a DATE (TxnDate), no time-of-day.
-        // Capture MetaData.CreateTime (full timestamp of when the record was
-        // first entered in QuickBooks) so we can DISPLAY it. We do NOT skip or
-        // shift anything — every synced document is shown, and you can see from
-        // the Created column whether it landed before or after the opening count.
-        var createTime=(doc.MetaData&&doc.MetaData.CreateTime)||'';
-        var timeStr='';
-        var createSort='';
-        if(createTime){
-          var ct=new Date(createTime);
-          if(!isNaN(ct.getTime())){
-            var hh=String(ct.getHours()).padStart(2,'0');
-            var mm=String(ct.getMinutes()).padStart(2,'0');
-            timeStr=hh+':'+mm;
-            createSort=createTime; // full ISO timestamp, kept for sorting + display
-          }
-        }
-        var unitPrice=Number(detail.UnitPrice|| (line.Amount&&qty?line.Amount/qty:0) ||0);
-        var docNum=doc.DocNumber||doc.Id;
-        var account=(doc.VendorRef&&doc.VendorRef.name)||(doc.CustomerRef&&doc.CustomerRef.name)||'';
-        // PER-ITEM CUTOFF: a product is only tracked from its opening count
-        // forward. Drop this line only if its BUSINESS DATE (TxnDate) is before
-        // this item's opening-count date. (Creation time is used only for
-        // ordering within a day, never for the cutoff — otherwise a bill dated
-        // after the opening count but entered earlier could be wrongly skipped.)
-        var openInfo=openInfoByItem[local.id];
-        if(openInfo && docDate && openInfo.date && docDate < openInfo.date){
-          skippedBeforeOpening++;
-          return;
-        }
-        transactions.push({
-          id:'qb_'+cfg.key+'_'+doc.Id+'_'+li,
-          qbDoc:true,
-          qbDocType:cfg.key,
-          num:cfg.numPrefix+'-'+docNum,
-          date:docDate,
-          time:timeStr,
-          createTime:createSort,
-          type:cfg.txnType,
-          itemId:local.id,
-          qty:qty,
-          unit:'',
-          unitPrice:unitPrice,
-          account:account,
-          locOut: cfg.sign<0 ? (local.locationId||'') : '',
-          locIn: cfg.sign>0 ? (local.locationId||'') : '',
-          desc:cfg.key+' '+docNum+(account?(' · '+account):'')
-        });
-        added++;
-      });
-    });
+    (data[cfg.key]||[]).forEach(function(doc){ allDocs.push({cfg:cfg, doc:doc}); });
   });
+  var totalDocs=allDocs.length;
+  var CHUNK_SIZE=250; // docs processed per tick before yielding to the browser
+
+  for(var di=0; di<allDocs.length; di++){
+    var cfg=allDocs[di].cfg, doc=allDocs[di].doc;
+    var lines=doc.Line||[];
+    for(var li=0; li<lines.length; li++){
+      var line=lines[li];
+      // Item-based lines carry inventory movement. QB uses different detail
+      // objects: SalesItemLineDetail (invoice/salesreceipt/creditmemo),
+      // ItemBasedExpenseLineDetail (bill). Some bills use AccountBasedExpenseLineDetail (skip).
+      var detail=line.SalesItemLineDetail||line.ItemBasedExpenseLineDetail||line.ItemLineDetail;
+      if(!detail||!detail.ItemRef) continue;
+      lineItemsSeen++;
+      var qbItemId=detail.ItemRef.value;
+      var local=byQbId[qbItemId];
+      if(!local){
+        skippedNoItem++;
+        unmatchedIds[qbItemId]=(unmatchedIds[qbItemId]||0)+1;
+        continue;
+      }
+      var qty=Number(detail.Qty||0);
+      if(!qty){
+        // Some bill/invoice lines record only an Amount + UnitPrice, no Qty.
+        // Derive quantity = Amount / UnitPrice so receives aren't dropped.
+        var amt=Number(line.Amount||0);
+        var up=Number(detail.UnitPrice||0);
+        if(amt && up){ qty=amt/up; }
+      }
+      if(!qty){
+        skippedNoQty++;
+        continue;
+      }
+      var docDate=doc.TxnDate||'';
+      // QuickBooks bills/invoices carry only a DATE (TxnDate), no time-of-day.
+      // Capture MetaData.CreateTime (full timestamp of when the record was
+      // first entered in QuickBooks) so we can DISPLAY it. We do NOT skip or
+      // shift anything — every synced document is shown, and you can see from
+      // the Created column whether it landed before or after the opening count.
+      var createTime=(doc.MetaData&&doc.MetaData.CreateTime)||'';
+      var timeStr='';
+      var createSort='';
+      if(createTime){
+        var ct=new Date(createTime);
+        if(!isNaN(ct.getTime())){
+          var hh=String(ct.getHours()).padStart(2,'0');
+          var mm=String(ct.getMinutes()).padStart(2,'0');
+          timeStr=hh+':'+mm;
+          createSort=createTime; // full ISO timestamp, kept for sorting + display
+        }
+      }
+      var unitPrice=Number(detail.UnitPrice|| (line.Amount&&qty?line.Amount/qty:0) ||0);
+      var docNum=doc.DocNumber||doc.Id;
+      var account=(doc.VendorRef&&doc.VendorRef.name)||(doc.CustomerRef&&doc.CustomerRef.name)||'';
+      // PER-ITEM CUTOFF: a product is only tracked from its opening count
+      // forward. Drop this line only if its BUSINESS DATE (TxnDate) is before
+      // this item's opening-count date. (Creation time is used only for
+      // ordering within a day, never for the cutoff — otherwise a bill dated
+      // after the opening count but entered earlier could be wrongly skipped.)
+      var openInfo=openInfoByItem[local.id];
+      if(openInfo && docDate && openInfo.date && docDate < openInfo.date){
+        skippedBeforeOpening++;
+        continue;
+      }
+      transactions.push({
+        id:'qb_'+cfg.key+'_'+doc.Id+'_'+li,
+        qbDoc:true,
+        qbDocType:cfg.key,
+        num:cfg.numPrefix+'-'+docNum,
+        date:docDate,
+        time:timeStr,
+        createTime:createSort,
+        type:cfg.txnType,
+        itemId:local.id,
+        qty:qty,
+        unit:'',
+        unitPrice:unitPrice,
+        account:account,
+        locOut: cfg.sign<0 ? (local.locationId||'') : '',
+        locIn: cfg.sign>0 ? (local.locationId||'') : '',
+        desc:cfg.key+' '+docNum+(account?(' · '+account):'')
+      });
+      added++;
+    }
+    // Yield back to the browser every CHUNK_SIZE documents so the tab stays
+    // responsive and the progress bar visibly advances, even on a dataset
+    // large enough that this step would otherwise take a long time in one go.
+    if(di>0 && di%CHUNK_SIZE===0){
+      if(onProgress){
+        var pct=84+Math.round((di/totalDocs)*10); // 84% -> 94% while processing
+        onProgress('__processing__', di, totalDocs, di);
+      }
+      await new Promise(function(r){ setTimeout(r,0); });
+    }
+  }
 
   saveTxns();
 

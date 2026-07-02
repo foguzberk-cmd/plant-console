@@ -1480,7 +1480,7 @@ function buildBalanceReport(){
     +'<div onclick="toggleReportRow(\'rpt-open-detail\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:10px 0">'
       +'<span style="font-weight:700;font-size:14px;display:flex;align-items:center;gap:6px">'
         +'<svg id="rpt-open-detail-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:var(--ink);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
-        +'Opening count value ('+esc(fromDisp)+')</span>'
+        +'Starting value ('+esc(fromDisp)+')</span>'
       +'<span style="font-family:var(--mono);font-weight:800;font-size:14px">'+money(openingValue)+'</span></div>'
     +'<div id="rpt-open-detail" style="display:none;padding-bottom:6px">'+detailRows(openingBreakdown)+'</div>'
   +'</div>';
@@ -1511,7 +1511,7 @@ function buildBalanceReport(){
     +'<span style="font-weight:700;font-size:14px">Net change (+/−)</span>'
     +'<span style="font-family:var(--mono);font-weight:800;font-size:14px;color:'+netColor+'">'+(net>=0?'+':'−')+money(Math.abs(net)).slice(1)+'</span></div>';
   html+='<div style="display:flex;justify-content:space-between;padding:11px 0;border-top:2px solid var(--ink);border-bottom:3px double var(--ink)">'
-    +'<span style="font-weight:800;font-size:15px">Closing count value ('+esc(toDisp)+')</span>'
+    +'<span style="font-weight:800;font-size:15px">Ending value ('+esc(toDisp)+')</span>'
     +'<span style="font-family:var(--mono);font-weight:800;font-size:15px">'+money(closingValue)+'</span></div>';
 
   html+='<div style="font-size:10px;color:var(--muted);margin-top:14px;line-height:1.5">Opening value, receivings, returns, production, physical counts, and transfers are valued at <b>cost price</b>. Shipments / sold / invoiced are valued at the <b>invoice sale price</b>. Net change = total additions (cost) − total subtractions (sale value), so a positive net reflects real margin earned over the period.'+(deptSel?' Transfers between departments show as an outflow for the sending department and an inflow for the receiving one; transfers within the same department are internal and not shown.':'')+'</div>';

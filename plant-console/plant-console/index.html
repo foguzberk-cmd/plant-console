@@ -358,6 +358,12 @@
       <h3 id="storageModalTitle">Add storage location</h3>
       <p class="sub">Define a new physical storage area in your facility.</p>
       <div class="form-group"><label>Location name</label><input type="text" id="s-name" placeholder="e.g. Cooler A, Freezer 2"/></div>
+      <div class="form-group"><label>Department</label>
+        <select id="s-dept">
+          <option value="">— No department —</option>
+        </select>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Which department this location physically belongs to. Drives department reports and how transfers between locations are counted (out of one department, into another).</div>
+      </div>
       <div class="form-row">
         <div class="form-group"><label>Type</label>
           <select id="s-type">
@@ -525,23 +531,6 @@
       <div class="modal-footer">
         <button class="btn" onclick="closeOpeningModal()">Cancel</button>
         <button class="btn btn-primary" onclick="saveOpeningCount()">Save opening count</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Set Department Modal -->
-  <div class="modal-bg hidden" id="deptModal" role="dialog" aria-modal="true">
-    <div class="modal" style="max-width:420px">
-      <h3>Set department</h3>
-      <p class="sub" id="deptModalItemName">Assign this item to a department so it shows up on that department's report.</p>
-      <div class="form-group"><label>Department</label>
-        <select id="dept-select">
-          <option value="">— No department —</option>
-        </select>
-      </div>
-      <div class="modal-footer">
-        <button class="btn" onclick="closeDeptModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="saveItemDepartment()">Save</button>
       </div>
     </div>
   </div>
@@ -870,7 +859,6 @@ async function qbSyncItemsCore(){
       active: qi.Active!==false,
       qbSynced: new Date().toISOString(),
       locationId: existing>=0 ? items[existing].locationId : undefined,
-      department: existing>=0 ? items[existing].department : undefined,
       locQtys: existing>=0 ? items[existing].locQtys : undefined,
       openingDate: existing>=0 ? items[existing].openingDate : undefined
     };
@@ -1239,23 +1227,35 @@ function buildBalanceReport(){
   var body=document.getElementById('rpt-body');
   if(!body) return;
 
-  // Department scoping: when a department is picked, only transactions whose
-  // item belongs to that department feed the statement below. "" = all
-  // departments (plant-wide); "__none__" = items with no department set.
-  function inDept(itemId){
-    if(!deptSel) return true;
-    var fi=items.find(function(x){return x.id===itemId;});
-    if(deptSel==='__none__') return !fi||!fi.department;
-    return !!(fi&&fi.department===deptSel);
+  // Department now lives on the STORAGE LOCATION, not the item — a location is
+  // physically inside one department, so whichever location a transaction
+  // touches tells you which department it belongs to. This also lets a
+  // Transfer correctly cross departments: it's an outflow for the source
+  // location's department and an inflow for the destination location's
+  // department, even though it's the exact same item both sides.
+  function locDept(locId){
+    if(!locId) return undefined;
+    var loc=storages.find(function(s){return s.id===locId;});
+    return loc?loc.department:undefined;
+  }
+  function matchesDept(dept){
+    if(!deptSel) return true; // All departments: everything counts
+    if(deptSel==='__none__') return !dept;
+    return dept===deptSel;
   }
 
-  var allTxns=JSON.parse(localStorage.getItem('pc_transactions')||'[]').filter(function(t){return inDept(t.itemId);});
+  // Full, UNFILTERED transaction list. We need every item's complete history
+  // across every location to correctly reconstruct location-level balances
+  // (a transfer moves stock between locations that may belong to different
+  // departments), then apply department scoping only when deciding which
+  // locations' values actually count toward this report.
+  var fullTxns=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
 
   // Opening value = value of all OPENING COUNT lines dated on/before the From date.
   // Closing value = on-hand value as of the To date (opening + inflows − outflows up to To).
   // Valuation rule:
   //  - Shipments / sold / invoiced  -> the invoice's SALE price (what it sold for)
-  //  - Everything else (opening, receive, return, production, physical count)
+  //  - Everything else (opening, receive, return, production, physical count, transfer)
   //    -> the item's COST price.
   // This makes the net change a REAL result: cost going in vs. sale value going out.
   function lineValue(t){
@@ -1267,7 +1267,7 @@ function buildBalanceReport(){
       if(!sale && fi) sale=Number(fi.price||fi.cost||0); // fallback to item sale price, then cost
       return q*sale;
     }
-    // cost basis for opening, receive, return, production, physical count
+    // cost basis for opening, receive, return, production, physical count, transfer
     var cost=fi?Number(fi.cost||0):0;
     if(!cost){ // fallback to line price if item has no cost on file
       cost=(t.unitPrice!==undefined&&t.unitPrice!=='')?Number(t.unitPrice):0;
@@ -1285,16 +1285,18 @@ function buildBalanceReport(){
   var inflowTotal=0, outflowTotal=0;
   // physical count split
   var pcPos=0, pcNeg=0;
+  // transfer split (only meaningful when a specific department is selected —
+  // for the plant-wide "All departments" view, transfers net to zero and are
+  // excluded, same as before)
+  var trIn=0, trOut=0;
 
-  // OPENING VALUE = the TRUE quantity actually on hand for each item as of the
-  // "From" date, not just whatever was entered on an opening-count line. That
-  // means replaying every transaction for the item up through that date —
-  // opening count, plus any receives/returns/production/shipments/physical
-  // counts that happened afterward but still on or before the From date —
-  // so a report starting weeks after the last opening count reflects reality
-  // on that starting date, not a stale count from further back.
-  function qtyAsOfDate(itemId, asOfDate){
-    var hist=allTxns.filter(function(t){return t.itemId===itemId && t.date && t.date<=asOfDate;});
+  // OPENING VALUE = the TRUE quantity actually on hand, PER LOCATION, as of
+  // the "From" date — not just whatever was entered on an opening-count line.
+  // Replays every transaction for the item (receive/return/production/
+  // shipment/transfer/physical count) up through that date, tracked
+  // separately per location, so department scoping (by location) is accurate.
+  function locBalancesAsOfDate(itemId, asOfDate){
+    var hist=fullTxns.filter(function(t){return t.itemId===itemId && t.date && t.date<=asOfDate;});
     hist.sort(function(a,b){
       var da=a.date||'', db=b.date||'';
       if(da!==db) return da<db?-1:1;
@@ -1304,16 +1306,20 @@ function buildBalanceReport(){
     // baseline, so movements before it don't carry forward.
     var startTs=null;
     hist.forEach(function(t){ if(t.type==='opening'){ var ts=txnSortTime(t); if(startTs===null||ts>startTs) startTs=ts; } });
-    var bal=0;
+    var bal={};
+    function add(locId,amt){ locId=locId||''; bal[locId]=(bal[locId]||0)+amt; }
     hist.forEach(function(t){
       var q=Number(t.qty||0);
-      if(t.type==='opening'){ bal+=q; return; } // opening lines for the same item sum together
+      var li=t.locIn||'', lo=t.locOut||'';
+      if(t.type==='opening'){ add(li,q); return; } // opening lines for the same item sum together
       if(startTs!==null && txnSortTime(t)<=startTs) return; // pre-baseline, excluded
       switch(t.type){
-        case 'receive': case 'return': case 'production': bal+=q; break;
-        case 'shipment': bal-=Math.abs(q); break;
+        case 'receive': case 'return': case 'production': add(li,q); break;
+        case 'shipment': add(lo,-Math.abs(q)); break;
+        case 'transfer': add(lo,-Math.abs(q)); add(li,Math.abs(q)); break;
         case 'adjustment':
-          bal=(t.physicalCount!==undefined)?Number(t.physicalCount):(bal+q);
+          if(t.physicalCount!==undefined) bal[li]=Number(t.physicalCount);
+          else add(li,q);
           break;
         default: break;
       }
@@ -1321,16 +1327,21 @@ function buildBalanceReport(){
     return bal;
   }
   var itemIdsInScope={};
-  allTxns.forEach(function(t){ if(t.itemId) itemIdsInScope[t.itemId]=true; });
+  fullTxns.forEach(function(t){ if(t.itemId) itemIdsInScope[t.itemId]=true; });
   var openingBreakdown=[];
   Object.keys(itemIdsInScope).forEach(function(id){
-    var bal=qtyAsOfDate(id, fromD);
-    if(!bal) return;
+    var locBal=locBalancesAsOfDate(id, fromD);
     var fi=items.find(function(x){return x.id===id;});
     var cost=fi?Number(fi.cost||fi.price||0):0;
-    var val=bal*cost;
-    openingValue+=val;
-    openingBreakdown.push({name:fi?fi.name:id,qty:bal,value:val});
+    Object.keys(locBal).forEach(function(locId){
+      var qty=locBal[locId];
+      if(!qty) return;
+      if(!matchesDept(locDept(locId||undefined))) return;
+      var val=qty*cost;
+      openingValue+=val;
+      var locName=locId?((storages.find(function(s){return s.id===locId;})||{}).name||locId):'(no location)';
+      openingBreakdown.push({name:(fi?fi.name:id)+' — '+locName,qty:qty,value:val});
+    });
   });
   openingBreakdown.sort(function(a,b){return Math.abs(b.value)-Math.abs(a.value);});
 
@@ -1338,8 +1349,9 @@ function buildBalanceReport(){
   var inflowItems={receive:{},return:{},production:{}};
   var outflowItems={shipment:{}};
   var pcPosItems={}, pcNegItems={};
+  var trInItems={}, trOutItems={};
 
-  allTxns.forEach(function(t){
+  fullTxns.forEach(function(t){
     var d=t.date||'';
     if(!d) return;
     // Opening lines never count as a period movement — they're a reset point,
@@ -1347,11 +1359,38 @@ function buildBalanceReport(){
     if(t.type==='opening') return;
     // Only movements within [from, to] count toward the period statement
     if(d<fromD || d>toD) return;
-    var v=lineValue(t);
+
     var fi=items.find(function(x){return x.id===t.itemId;});
     var nm=fi?fi.name:(t.desc||t.itemId||'—');
     var q=Math.abs(Number(t.qty||0));
+
+    if(t.type==='transfer'){
+      // A transfer is an outflow for the SOURCE location's department and an
+      // inflow for the DESTINATION location's department — the same item,
+      // counted on both sides, exactly like a shipment out of one department
+      // is a receiving into another. If both locations share a department
+      // (or neither has one), it's purely internal — no reportable movement.
+      // For the plant-wide "All departments" view, transfers always net to
+      // zero and are excluded entirely, same as before.
+      if(!deptSel) return;
+      var outDept=locDept(t.locOut), inDept_=locDept(t.locIn);
+      if(outDept===inDept_) return; // internal move within the same department
+      var v=lineValue(t);
+      if(matchesDept(outDept)){
+        trOut+=v;
+        if(!trOutItems[t.itemId]) trOutItems[t.itemId]={name:nm,qty:0,value:0};
+        trOutItems[t.itemId].qty+=q; trOutItems[t.itemId].value+=v;
+      }
+      if(matchesDept(inDept_)){
+        trIn+=v;
+        if(!trInItems[t.itemId]) trInItems[t.itemId]={name:nm,qty:0,value:0};
+        trInItems[t.itemId].qty+=q; trInItems[t.itemId].value+=v;
+      }
+      return;
+    }
+
     if(t.type==='adjustment'){
+      if(!matchesDept(locDept(t.locIn))) return;
       // PHYSICAL COUNT: use the true difference computed during recalculation
       // (counted − actual balance at that point), valued at cost price.
       var diff=(t.countedDiff!==undefined)?Number(t.countedDiff):Number(t.qty||0);
@@ -1364,13 +1403,17 @@ function buildBalanceReport(){
       if(diff>=0){ pcPos+=pcVal; } else { pcNeg+=pcVal; }
       return;
     }
+
+    var v=lineValue(t);
     if(INFLOW[t.type]){
+      if(!matchesDept(locDept(t.locIn))) return;
       inflowGroups[t.type]=(inflowGroups[t.type]||0)+v;
       inflowTotal+=v;
       if(!inflowItems[t.type][t.itemId]) inflowItems[t.type][t.itemId]={name:nm,qty:0,value:0};
       inflowItems[t.type][t.itemId].qty+=q;
       inflowItems[t.type][t.itemId].value+=v;
     } else if(OUTFLOW[t.type]){
+      if(!matchesDept(locDept(t.locOut))) return;
       outflowGroups[t.type]=(outflowGroups[t.type]||0)+v;
       outflowTotal+=v;
       if(!outflowItems[t.type][t.itemId]) outflowItems[t.type][t.itemId]={name:nm,qty:0,value:0};
@@ -1381,6 +1424,9 @@ function buildBalanceReport(){
   // Fold physical-count positive into inflows, negative into outflows
   if(pcPos>0){ inflowGroups['adjustment_pos']=pcPos; inflowTotal+=pcPos; inflowItems['adjustment_pos']=pcPosItems; }
   if(pcNeg>0){ outflowGroups['adjustment_neg']=pcNeg; outflowTotal+=pcNeg; outflowItems['adjustment_neg']=pcNegItems; }
+  // Fold transfers in/out — only present at all when a specific department is selected
+  if(trIn>0){ inflowGroups['transfer_in']=trIn; inflowTotal+=trIn; inflowItems['transfer_in']=trInItems; }
+  if(trOut>0){ outflowGroups['transfer_out']=trOut; outflowTotal+=trOut; outflowItems['transfer_out']=trOutItems; }
 
   var net=inflowTotal-outflowTotal;
   var closingValue=openingValue+net;
@@ -1417,7 +1463,7 @@ function buildBalanceReport(){
   }
   window.toggleReportRow=toggleReportRow;
 
-  var labelMap={receive:'Receivings / Purchases',return:'Returns',production:'Production',shipment:'Shipments / Sold / Invoiced',adjustment_pos:'Physical Count — gains',adjustment_neg:'Physical Count — losses'};
+  var labelMap={receive:'Receivings / Purchases',return:'Returns',production:'Production',shipment:'Shipments / Sold / Invoiced',adjustment_pos:'Physical Count — gains',adjustment_neg:'Physical Count — losses',transfer_in:'Transfers In (from other departments)',transfer_out:'Transfers Out (to other departments)'};
 
   var fromDisp=fromD?new Date(fromD+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—';
   var toDisp=toD?new Date(toD+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—';
@@ -1468,7 +1514,7 @@ function buildBalanceReport(){
     +'<span style="font-weight:800;font-size:15px">Closing count value ('+esc(toDisp)+')</span>'
     +'<span style="font-family:var(--mono);font-weight:800;font-size:15px">'+money(closingValue)+'</span></div>';
 
-  html+='<div style="font-size:10px;color:var(--muted);margin-top:14px;line-height:1.5">Opening value, receivings, returns, production and physical counts are valued at <b>cost price</b>. Shipments / sold / invoiced are valued at the <b>invoice sale price</b>. Net change = total additions (cost) − total subtractions (sale value), so a positive net reflects real margin earned over the period.</div>';
+  html+='<div style="font-size:10px;color:var(--muted);margin-top:14px;line-height:1.5">Opening value, receivings, returns, production, physical counts, and transfers are valued at <b>cost price</b>. Shipments / sold / invoiced are valued at the <b>invoice sale price</b>. Net change = total additions (cost) − total subtractions (sale value), so a positive net reflects real margin earned over the period.'+(deptSel?' Transfers between departments show as an outflow for the sending department and an inflow for the receiving one; transfers within the same department are internal and not shown.':'')+'</div>';
   html+='</div>';
 
   body.innerHTML=html;
@@ -1966,10 +2012,6 @@ function renderItemsView(){
         <option value="">All locations</option>
         <option value="__none__">No location assigned</option>
       </select>
-      <select id="itemDeptFilter" onchange="renderItemsTable()" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);outline:none">
-        <option value="">All departments</option>
-        <option value="__none__">No department assigned</option>
-      </select>
       <label style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--ink);cursor:pointer;background:var(--panel);border:1.5px solid var(--line);border-radius:8px;padding:7px 14px">
         <input type="checkbox" id="hideZero" onchange="renderItemsTable()" style="width:14px;height:14px;accent-color:var(--cold)"/>
         Hide zero quantity
@@ -1985,7 +2027,6 @@ function renderItemsView(){
     </div>
     <div id="itemsTableWrap"></div>`;
   populateLocFilter();
-  populateDeptFilter();
   renderItemsTable();
 }
 
@@ -1996,18 +2037,11 @@ function populateLocFilter(){
   sel.innerHTML=base+opts;
 }
 
-function populateDeptFilter(){
-  var sel=document.getElementById('itemDeptFilter'); if(!sel) return;
-  var base='<option value="">All departments</option><option value="__none__">No department assigned</option>';
-  var opts=DEPARTMENTS.map(function(d){return '<option value="'+esc(d)+'">'+esc(d)+'</option>';}).join('');
-  sel.innerHTML=base+opts;
-}
-
 function itemRow(it){
   var qtyColor=Number(it.qty||0)===0?'color:#c23b33':'color:var(--ink)';
   return '<tr>'
     +'<td style="font-family:var(--mono);font-size:12px;color:var(--cold)">'+esc(it.sku||'—')+'</td>'
-    +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+(it.department?'<div style="display:inline-block;margin-top:4px;font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold);background:var(--cold-soft);border-radius:5px;padding:2px 6px">'+esc(it.department)+'</div>':'')+'</td>'
+    +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
     +'<td style="font-family:var(--mono);font-size:13px;text-align:right;'+qtyColor+'">'+Number(it.qty||0).toFixed(2)+'</td>'
     +'<td style="font-family:var(--mono);font-size:13px;text-align:right">$'+Number(it.cost||it.price||0).toFixed(2)+'</td>'
     +'<td style="text-align:right;position:relative;width:40px">'
@@ -2030,7 +2064,6 @@ function renderItemsTable(){
 
   var search=(document.getElementById('itemSearch')?.value||'').toLowerCase().trim();
   var locFilter=document.getElementById('itemLocFilter')?.value||'';
-  var deptFilter=document.getElementById('itemDeptFilter')?.value||'';
   var hideZero=document.getElementById('hideZero')?.checked||false;
   var showZeroOnly=document.getElementById('showZeroOnly')?.checked||false;
   var groupByLoc=document.getElementById('groupByLoc')?.checked||false;
@@ -2048,8 +2081,6 @@ function renderItemsTable(){
     if(showZeroOnly&&qty!==0) return false;
     if(locFilter==='__none__'&&qtyAtLoc(it,'__none__')===0) return false;
     if(locFilter&&locFilter!=='__none__'&&qtyAtLoc(it,locFilter)===0) return false;
-    if(deptFilter==='__none__'&&it.department) return false;
-    if(deptFilter&&deptFilter!=='__none__'&&it.department!==deptFilter) return false;
     if(search&&!(it.name.toLowerCase().includes(search)||(it.sku||'').toLowerCase().includes(search))) return false;
     return true;
   });
@@ -2491,7 +2522,7 @@ function renderStorageList(){
   if(!storages.length){list.innerHTML=`<li class="empty-list"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg><p>No locations yet. Click <strong>Add location</strong> to get started.</p></li>`;return;}
   list.innerHTML=storages.map(loc=>`<li class="storage-row">
     <div class="storage-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${TYPE_ICON[loc.type]||TYPE_ICON.ambient}</svg></div>
-    <div class="storage-info"><div class="storage-name">${esc(loc.name)}</div><div class="storage-meta">${loc.zone?esc(loc.zone)+' · ':''}${loc.temp?esc(loc.temp)+' · ':''}${loc.capacity?Number(loc.capacity).toLocaleString()+' lb cap':'no capacity set'}</div></div>
+    <div class="storage-info"><div class="storage-name">${esc(loc.name)}</div><div class="storage-meta">${loc.zone?esc(loc.zone)+' · ':''}${loc.temp?esc(loc.temp)+' · ':''}${loc.capacity?Number(loc.capacity).toLocaleString()+' lb cap':'no capacity set'}</div>${loc.department?`<div style="display:inline-block;margin-top:4px;font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold);background:var(--cold-soft);border-radius:5px;padding:2px 6px">${esc(loc.department)}</div>`:''}</div>
     ${typeBadge(loc.type)}
     <div class="storage-actions">
       <button class="btn btn-sm" onclick="openEditStorageModal('${loc.id}')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
@@ -2499,10 +2530,16 @@ function renderStorageList(){
     </div>
   </li>`).join('');
 }
-function openAddStorageModal(){editingStorageId=null;document.getElementById('storageModalTitle').textContent='Add storage location';['s-name','s-capacity','s-temp','s-zone','s-notes'].forEach(id=>document.getElementById(id).value='');document.getElementById('s-type').value='cold';document.getElementById('storageModal').classList.remove('hidden');document.getElementById('s-name').focus();}
-function openEditStorageModal(id){const loc=storages.find(x=>x.id===id);if(!loc)return;editingStorageId=id;document.getElementById('storageModalTitle').textContent='Edit storage location';document.getElementById('s-name').value=loc.name;document.getElementById('s-type').value=loc.type;document.getElementById('s-capacity').value=loc.capacity||'';document.getElementById('s-temp').value=loc.temp||'';document.getElementById('s-zone').value=loc.zone||'';document.getElementById('s-notes').value=loc.notes||'';document.getElementById('storageModal').classList.remove('hidden');document.getElementById('s-name').focus();}
+function populateStorageDeptSelect(selected){
+  var sel=document.getElementById('s-dept'); if(!sel) return;
+  sel.innerHTML='<option value="">— No department —</option>'
+    +DEPARTMENTS.map(function(d){return '<option value="'+esc(d)+'">'+esc(d)+'</option>';}).join('');
+  sel.value=selected||'';
+}
+function openAddStorageModal(){editingStorageId=null;document.getElementById('storageModalTitle').textContent='Add storage location';['s-name','s-capacity','s-temp','s-zone','s-notes'].forEach(id=>document.getElementById(id).value='');document.getElementById('s-type').value='cold';populateStorageDeptSelect('');document.getElementById('storageModal').classList.remove('hidden');document.getElementById('s-name').focus();}
+function openEditStorageModal(id){const loc=storages.find(x=>x.id===id);if(!loc)return;editingStorageId=id;document.getElementById('storageModalTitle').textContent='Edit storage location';document.getElementById('s-name').value=loc.name;document.getElementById('s-type').value=loc.type;document.getElementById('s-capacity').value=loc.capacity||'';document.getElementById('s-temp').value=loc.temp||'';document.getElementById('s-zone').value=loc.zone||'';document.getElementById('s-notes').value=loc.notes||'';populateStorageDeptSelect(loc.department||'');document.getElementById('storageModal').classList.remove('hidden');document.getElementById('s-name').focus();}
 function closeStorageModal(){document.getElementById('storageModal').classList.add('hidden')}
-function saveStorage(){const name=document.getElementById('s-name').value.trim();if(!name){document.getElementById('s-name').focus();return;}const data={id:editingStorageId||('loc_'+Date.now()),name,type:document.getElementById('s-type').value,capacity:document.getElementById('s-capacity').value,temp:document.getElementById('s-temp').value.trim(),zone:document.getElementById('s-zone').value.trim(),notes:document.getElementById('s-notes').value.trim()};if(editingStorageId){const i=storages.findIndex(x=>x.id===editingStorageId);storages[i]=data;}else storages.push(data);saveStorages();closeStorageModal();renderStorageList();}
+function saveStorage(){const name=document.getElementById('s-name').value.trim();if(!name){document.getElementById('s-name').focus();return;}const data={id:editingStorageId||('loc_'+Date.now()),name,type:document.getElementById('s-type').value,capacity:document.getElementById('s-capacity').value,temp:document.getElementById('s-temp').value.trim(),zone:document.getElementById('s-zone').value.trim(),notes:document.getElementById('s-notes').value.trim(),department:document.getElementById('s-dept').value||undefined};if(editingStorageId){const i=storages.findIndex(x=>x.id===editingStorageId);storages[i]=data;}else storages.push(data);saveStorages();closeStorageModal();renderStorageList();}
 
 /* ===== USERS ===== */
 function roleBadge(role){const l={admin:'Admin',operator:'Operator',viewer:'Viewer'};return `<span class="role-badge role-${role}">${l[role]||role}</span>`}
@@ -2984,36 +3021,8 @@ function toggleItemMenu(e,itemId){
   menu.innerHTML=''
     +'<button onclick="newTxnForItem(\''+itemId+'\',\'receive\')" style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 16px;border:none;background:none;cursor:pointer;font-family:var(--sans);font-size:13px;color:var(--ink);text-align:left"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;stroke:#0f6e40"><path d="M12 5v14M5 12h14"/></svg>New transaction</button>'
     +'<button onclick="newTxnForItem(\''+itemId+'\',\'opening\')" style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 16px;border:none;border-top:1px solid var(--line);background:none;cursor:pointer;font-family:var(--sans);font-size:13px;color:var(--ink);text-align:left"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;stroke:var(--brand)"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Set opening count</button>'
-    +'<button onclick="viewItemHistory(\''+itemId+'\')" style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 16px;border:none;border-top:1px solid var(--line);background:none;cursor:pointer;font-family:var(--sans);font-size:13px;color:var(--ink);text-align:left"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;stroke:var(--cold)"><path d="M12 8v4l3 3M3.05 11a9 9 0 1 1 .5 4"/><path d="M3 4v5h5"/></svg>View history</button>'
-    +'<button onclick="openDeptModal(\''+itemId+'\')" style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 16px;border:none;border-top:1px solid var(--line);background:none;cursor:pointer;font-family:var(--sans);font-size:13px;color:var(--ink);text-align:left"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;stroke:var(--brand)"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>Set department</button>';
+    +'<button onclick="viewItemHistory(\''+itemId+'\')" style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 16px;border:none;border-top:1px solid var(--line);background:none;cursor:pointer;font-family:var(--sans);font-size:13px;color:var(--ink);text-align:left"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;stroke:var(--cold)"><path d="M12 8v4l3 3M3.05 11a9 9 0 1 1 .5 4"/><path d="M3 4v5h5"/></svg>View history</button>';
   document.body.appendChild(menu);
-}
-
-var settingDeptItemId=null;
-function openDeptModal(itemId){
-  closeAllTxnMenus();
-  settingDeptItemId=itemId;
-  var it=items.find(function(x){return x.id===itemId;});
-  var sel=document.getElementById('dept-select');
-  sel.innerHTML='<option value="">— No department —</option>'
-    +DEPARTMENTS.map(function(d){return '<option value="'+esc(d)+'">'+esc(d)+'</option>';}).join('');
-  sel.value=it&&it.department?it.department:'';
-  document.getElementById('deptModalItemName').textContent=it?('Assign "'+it.name+'" to a department so it shows up on that department\'s report.'):'Assign this item to a department so it shows up on that department\'s report.';
-  document.getElementById('deptModal').classList.remove('hidden');
-}
-function closeDeptModal(){
-  document.getElementById('deptModal').classList.add('hidden');
-  settingDeptItemId=null;
-}
-function saveItemDepartment(){
-  if(!settingDeptItemId) return;
-  var it=items.find(function(x){return x.id===settingDeptItemId;});
-  if(!it){ closeDeptModal(); return; }
-  var val=document.getElementById('dept-select').value;
-  it.department=val||undefined;
-  localStorage.setItem('pc_items',JSON.stringify(items));
-  closeDeptModal();
-  renderItemsTable();
 }
 
 function newTxnForItem(itemId,type){
@@ -3649,7 +3658,7 @@ function confirmDelete(){
   else{storages=storages.filter(x=>x.id!==deletingId);saveStorages();closeDeleteModal();renderStorageList();}
 }
 
-['storageModal','txnModal','userModal','profileModal','deleteModal','openingModal','deptModal'].forEach(id=>{
+['storageModal','txnModal','userModal','profileModal','deleteModal','openingModal'].forEach(id=>{
   document.getElementById(id).addEventListener('click',e=>{
     if(e.target!==e.currentTarget)return;
     if(id==='storageModal')closeStorageModal();
@@ -3657,7 +3666,6 @@ function confirmDelete(){
     else if(id==='userModal')closeUserModal();
     else if(id==='profileModal')closeProfileModal();
     else if(id==='openingModal')closeOpeningModal();
-    else if(id==='deptModal')closeDeptModal();
     else closeDeleteModal();
   });
 });

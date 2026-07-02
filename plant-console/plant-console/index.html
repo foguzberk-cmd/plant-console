@@ -814,7 +814,7 @@ async function doSync(incremental){
   }
   renderItemsTable();
   setTimeout(hideSyncProgress,1500);
-  pushToServer(); // share the freshly-synced data right away, don't wait for the timer
+  await pushToServer(); // wait for this to actually land before the background pull timer can resume
 
   }catch(err){
     // A sync must NEVER fail silently and leave the progress bar frozen —
@@ -2032,6 +2032,7 @@ function diagnoseLocations(){
     msg+='  Skipped (item not matched): '+d.skippedNoItem+'\n';
     msg+='  Skipped (no quantity on line): '+d.skippedNoQty+'\n';
     msg+='  Skipped (dated before opening count): '+d.skippedBeforeOpening+'\n';
+    msg+='  Skipped (unexpected error while processing): '+(d.docErrors||0)+'\n';
     if(d.serverErrors&&Object.keys(d.serverErrors).length){
       msg+='  SERVER FETCH ERRORS:\n';
       Object.keys(d.serverErrors).forEach(function(k){ msg+='    '+k+': '+d.serverErrors[k]+'\n'; });

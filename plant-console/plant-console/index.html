@@ -1428,8 +1428,19 @@ function buildBalanceReport(){
   if(trIn>0){ inflowGroups['transfer_in']=trIn; inflowTotal+=trIn; inflowItems['transfer_in']=trInItems; }
   if(trOut>0){ outflowGroups['transfer_out']=trOut; outflowTotal+=trOut; outflowItems['transfer_out']=trOutItems; }
 
-  var net=inflowTotal-outflowTotal;
-  var closingValue=openingValue+net;
+  // Starting value is treated as the first addition to the pool — it's stock
+  // that was already there, contributing to the total the same way a
+  // receiving does. Fold it in FIRST so it lists at the top of Additions.
+  var inflowGroupsOrdered={};
+  if(openingValue) inflowGroupsOrdered['starting']=openingValue;
+  Object.keys(inflowGroups).forEach(function(k){ inflowGroupsOrdered[k]=inflowGroups[k]; });
+  inflowGroups=inflowGroupsOrdered;
+  inflowItems['starting']=openingBreakdown;
+  inflowTotal+=openingValue;
+
+  // The grand total — everything that was on hand, plus everything added,
+  // minus everything that left. This is the headline number for the report.
+  var total=inflowTotal-outflowTotal;
 
   function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 
@@ -1463,10 +1474,10 @@ function buildBalanceReport(){
   }
   window.toggleReportRow=toggleReportRow;
 
-  var labelMap={receive:'Receivings / Purchases',return:'Returns',production:'Production',shipment:'Shipments / Sold / Invoiced',adjustment_pos:'Physical Count — gains',adjustment_neg:'Physical Count — losses',transfer_in:'Transfers In (from other departments)',transfer_out:'Transfers Out (to other departments)'};
-
   var fromDisp=fromD?new Date(fromD+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—';
   var toDisp=toD?new Date(toD+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—';
+
+  var labelMap={starting:'Starting value ('+fromDisp+')',receive:'Receivings / Purchases',return:'Returns',production:'Production',shipment:'Shipments / Sold / Invoiced',adjustment_pos:'Physical Count — gains',adjustment_neg:'Physical Count — losses',transfer_in:'Transfers In (from other departments)',transfer_out:'Transfers Out (to other departments)'};
 
   var deptLabel=!deptSel?'All Departments':(deptSel==='__none__'?'No Department Assigned':deptSel);
 
@@ -1475,17 +1486,12 @@ function buildBalanceReport(){
     +'<div style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--cold);margin-top:6px">'+esc(deptLabel)+'</div>'
     +'<div style="font-size:12px;color:var(--muted);margin-top:3px">'+esc(fromDisp)+' &ndash; '+esc(toDisp)+'</div></div>';
 
-  // Opening — total on top, itemized breakdown revealed on click
-  html+='<div style="border-top:2px solid var(--ink);border-bottom:2px solid var(--ink);margin-bottom:14px">'
-    +'<div onclick="toggleReportRow(\'rpt-open-detail\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:10px 0">'
-      +'<span style="font-weight:700;font-size:14px;display:flex;align-items:center;gap:6px">'
-        +'<svg id="rpt-open-detail-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:var(--ink);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
-        +'Starting value ('+esc(fromDisp)+')</span>'
-      +'<span style="font-family:var(--mono);font-weight:800;font-size:14px">'+money(openingValue)+'</span></div>'
-    +'<div id="rpt-open-detail" style="display:none;padding-bottom:6px">'+detailRows(openingBreakdown)+'</div>'
-  +'</div>';
+  // Total — the headline number, up top. Breakdown of how we got here follows below.
+  html+='<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-top:2px solid var(--ink);border-bottom:2px solid var(--ink);margin-bottom:14px">'
+    +'<span style="font-weight:700;font-size:14px">Total ('+esc(toDisp)+')</span>'
+    +'<span style="font-family:var(--mono);font-weight:800;font-size:14px">'+money(total)+'</span></div>';
 
-  // Inflows
+  // Inflows — Starting value lists first, since it's just the first "addition" to the pool
   html+='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#0f6e40;margin:6px 0 4px">Additions (+)</div>';
   var inKeys=Object.keys(inflowGroups);
   if(!inKeys.length) html+='<div style="font-size:12px;color:var(--muted);padding:8px 0;border-bottom:1px solid var(--line)">No additions in this period.</div>';
@@ -1503,18 +1509,9 @@ function buildBalanceReport(){
     var items_=Object.keys(outflowItems[k]||{}).map(function(id){return outflowItems[k][id];}).sort(function(a,b){return b.value-a.value;});
     html+=rowLine('rpt-out-'+k, labelMap[k]||k, outflowGroups[k], '#c23b33', items_);
   });
-  html+='<div style="display:flex;justify-content:space-between;padding:9px 0;font-weight:700"><span>Total subtractions</span><span style="font-family:var(--mono);color:#c23b33">'+money(outflowTotal)+'</span></div>';
+  html+='<div style="display:flex;justify-content:space-between;padding:9px 0;font-weight:700;border-bottom:3px double var(--ink)"><span>Total subtractions</span><span style="font-family:var(--mono);color:#c23b33">'+money(outflowTotal)+'</span></div>';
 
-  // Net + closing
-  var netColor=net>=0?'#0f6e40':'#c23b33';
-  html+='<div style="display:flex;justify-content:space-between;padding:11px 0;border-top:2px solid var(--ink);margin-top:10px">'
-    +'<span style="font-weight:700;font-size:14px">Net change (+/−)</span>'
-    +'<span style="font-family:var(--mono);font-weight:800;font-size:14px;color:'+netColor+'">'+(net>=0?'+':'−')+money(Math.abs(net)).slice(1)+'</span></div>';
-  html+='<div style="display:flex;justify-content:space-between;padding:11px 0;border-top:2px solid var(--ink);border-bottom:3px double var(--ink)">'
-    +'<span style="font-weight:800;font-size:15px">Ending value ('+esc(toDisp)+')</span>'
-    +'<span style="font-family:var(--mono);font-weight:800;font-size:15px">'+money(closingValue)+'</span></div>';
-
-  html+='<div style="font-size:10px;color:var(--muted);margin-top:14px;line-height:1.5">Opening value, receivings, returns, production, physical counts, and transfers are valued at <b>cost price</b>. Shipments / sold / invoiced are valued at the <b>invoice sale price</b>. Net change = total additions (cost) − total subtractions (sale value), so a positive net reflects real margin earned over the period.'+(deptSel?' Transfers between departments show as an outflow for the sending department and an inflow for the receiving one; transfers within the same department are internal and not shown.':'')+'</div>';
+  html+='<div style="font-size:10px;color:var(--muted);margin-top:14px;line-height:1.5">Starting value, receivings, returns, production, physical counts, and transfers are valued at <b>cost price</b>. Shipments / sold / invoiced are valued at the <b>invoice sale price</b>. Total = total additions (starting value + everything added, at cost) − total subtractions (everything that left, at sale value).'+(deptSel?' Transfers between departments show as an outflow for the sending department and an inflow for the receiving one; transfers within the same department are internal and not shown.':'')+'</div>';
   html+='</div>';
 
   body.innerHTML=html;

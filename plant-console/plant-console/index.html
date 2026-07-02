@@ -734,6 +734,8 @@ async function doSync(incremental){
   if(btn2)btn2.disabled=true;
   __syncBusy=true; // block the background pull timer until this sync is done
 
+  try{
+
   // Determine the "since" timestamp for incremental mode
   var lastSync=localStorage.getItem('pc_lastSync')||'';
   if(incremental && !lastSync){
@@ -761,9 +763,6 @@ async function doSync(incremental){
       if(status)status.innerHTML='QuickBooks connection expired. <a href="/connect" style="color:var(--cold);font-weight:700">Click here to reconnect</a>';
       showReconnectButton();
     } else if(status){status.textContent='Sync error (items): '+itemsResult.error;}
-    if(btn)btn.disabled=false; if(btn2)btn2.disabled=false;
-    window.__incrementalSync=false;
-    __syncBusy=false;
     return;
   }
   showSyncProgress(45,'Items synced ('+itemsResult.count+') — fetching documents…');
@@ -794,9 +793,6 @@ async function doSync(incremental){
       if(status)status.innerHTML='QuickBooks connection expired. <a href="/connect" style="color:var(--cold);font-weight:700">Click here to reconnect</a>';
       showReconnectButton();
     } else if(status){status.textContent='Sync error (documents): '+docsResult.error;}
-    if(btn)btn.disabled=false; if(btn2)btn2.disabled=false;
-    window.__incrementalSync=false;
-    __syncBusy=false;
     return;
   }
   showSyncProgress(96,'Documents synced — recalculating…');
@@ -816,12 +812,22 @@ async function doSync(incremental){
     var mode=incremental?'Quick sync':'Full sync';
     status.textContent=mode+' complete — '+itemsResult.count+' items, '+docsResult.added+' movement'+(docsResult.added!==1?'s':'')+(incremental?' updated':' applied')+(docsResult.skippedBeforeOpening?(' ('+docsResult.skippedBeforeOpening+' skipped before opening count)'):'')+breakdown;
   }
-  if(btn)btn.disabled=false; if(btn2)btn2.disabled=false;
-  window.__incrementalSync=false;
-  __syncBusy=false; // safe for the background timer to pull again now
   renderItemsTable();
   setTimeout(hideSyncProgress,1500);
   pushToServer(); // share the freshly-synced data right away, don't wait for the timer
+
+  }catch(err){
+    // A sync must NEVER fail silently and leave the progress bar frozen —
+    // whatever broke, show it and let the user retry instead of staring at
+    // a stuck percentage forever.
+    console.error('Sync failed:', err);
+    hideSyncProgress();
+    if(status) status.textContent='Sync failed unexpectedly: '+(err&&err.message?err.message:err)+' — please try again.';
+  }finally{
+    if(btn)btn.disabled=false; if(btn2)btn2.disabled=false;
+    window.__incrementalSync=false;
+    __syncBusy=false; // always release the background pull timer, success or failure
+  }
 }
 
 // ===== Sync progress bar =====
@@ -1095,8 +1101,10 @@ async function finishDocSync(data, onProgress){
   var totalDocs=allDocs.length;
   var CHUNK_SIZE=250; // docs processed per tick before yielding to the browser
 
+  var docErrors=0;
   for(var di=0; di<allDocs.length; di++){
     var cfg=allDocs[di].cfg, doc=allDocs[di].doc;
+    try{
     var lines=doc.Line||[];
     for(var li=0; li<lines.length; li++){
       var line=lines[li];
@@ -1176,6 +1184,12 @@ async function finishDocSync(data, onProgress){
       });
       added++;
     }
+    }catch(docErr){
+      // One malformed document should never take down the whole sync —
+      // skip it, count it, and keep going.
+      docErrors++;
+      console.error('Skipped a document during sync (data issue):', docErr, doc);
+    }
     // Yield back to the browser every CHUNK_SIZE documents so the tab stays
     // responsive and the progress bar visibly advances, even on a dataset
     // large enough that this step would otherwise take a long time in one go.
@@ -1187,6 +1201,11 @@ async function finishDocSync(data, onProgress){
       await new Promise(function(r){ setTimeout(r,0); });
     }
   }
+  // One final yield + progress update right before the last (possibly
+  // partial) chunk's save, so the bar always shows "basically done" instead
+  // of sitting at the last checkpoint until the whole thing finishes.
+  if(onProgress) onProgress('__processing__', totalDocs, totalDocs, totalDocs);
+  await new Promise(function(r){ setTimeout(r,0); });
 
   saveTxns();
 
@@ -1205,9 +1224,10 @@ async function finishDocSync(data, onProgress){
     skippedNoItem:skippedNoItem,
     skippedNoQty:skippedNoQty,
     skippedBeforeOpening:skippedBeforeOpening,
+    docErrors:docErrors,
     unmatchedSample:Object.keys(unmatchedIds).slice(0,8)
   };
-  return {ok:true, added:added, skippedBeforeOpening:skippedBeforeOpening, skippedNoItem:skippedNoItem, docCounts:docCounts};
+  return {ok:true, added:added, skippedBeforeOpening:skippedBeforeOpening, skippedNoItem:skippedNoItem, docCounts:docCounts, docErrors:docErrors};
 }
 
 /* ===== LOGIN ===== */

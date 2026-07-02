@@ -10,6 +10,56 @@ const CLIENT_ID = process.env.QB_CLIENT_ID || 'ABWEkzwkl0wAchmXBFwVmvRGiiYCXihwd
 const CLIENT_SECRET = process.env.QB_CLIENT_SECRET || 'rstNRy7lvgmVE0FRdRYzDNXSo5IXV1B8hpubV54s';
 const REDIRECT_URI = process.env.QB_REDIRECT_URI || 'https://plant-console-app.onrender.com/callback';
 
+// ===== SHARED DATA STORE (so logins & data work the same across browsers/devices) =====
+// Everything the app used to keep ONLY in each browser's localStorage (items,
+// transactions, storages, users) is now also persisted here as a single JSON
+// file on the server, so every browser/device reads and writes the same data.
+// NOTE: this is a simple single-file store — fine for a small team on one
+// running instance, but it does NOT survive a fresh deploy unless DATA_DIR
+// points at a Render persistent disk, and it is not safe for multiple
+// server instances running at once (last write wins).
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const DATA_FILE = path.join(DATA_DIR, 'plant-data.json');
+const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: [] };
+
+function ensureDataFile() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, JSON.stringify(DATA_DEFAULT, null, 2));
+  } catch (e) {
+    console.error('Could not prepare shared data file:', e.message);
+  }
+}
+
+function readSharedData() {
+  ensureDataFile();
+  try {
+    const raw = fs.readFileSync(DATA_FILE, 'utf8');
+    return Object.assign({}, DATA_DEFAULT, JSON.parse(raw || '{}'));
+  } catch (e) {
+    console.error('Could not read shared data file:', e.message);
+    return Object.assign({}, DATA_DEFAULT);
+  }
+}
+
+function writeSharedData(data) {
+  ensureDataFile();
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+}
+
+function readRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk;
+      if (body.length > 50 * 1024 * 1024) { req.destroy(); reject(new Error('Payload too large')); }
+    });
+    req.on('end', () => resolve(body));
+    req.on('error', reject);
+  });
+}
+// ===== END SHARED DATA STORE =====
+
 // In-memory token store (persists while server is running)
 let accessToken = process.env.QB_ACCESS_TOKEN || 'eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2IiwieC5vcmciOiJIMCJ9..5HeNoqIq2dNH_ywSUn07BA.2UqmIwUlqtSLpWe25ejJCjnOdu99Sgb0P1JQ0nS76Yj_OqrhBmaBUKjbh92pTZFbtVxx5TyBnZ-07qdHAcqEmwYcQjckZ4nZieXUTiQrK6vtMVNViIVOLtNIXEO6faCFYgk61U0MkOjLCrRoAKZ-2wg4UAIwIMJ2sLEPR4pLA--JoxLq7grYVRJqnUGL2i9i392di9L4_lxF8mXleS1KC4UEwDTJL-TluC-TscxJIMhaAEh9G9n-smzRbszx2DHdJ3e_dITU9X1KIICyCsdAsBXKxlzrUR7MwPMnkCgjm9ydLse2yPvHVSKnEswuE1pD7CnxfL6Ir4MLvEqdeo2W1m66e-12RdAUIoAqB_N-l0K1-YqYJacAhmkRO0FatsTj-Wl1D8fRm43uPrPudlFZQKMY_YnF_ENJHJ-JuMCYme1MzRHpX0vupS7Z05uecpbKxAaU0D9o8Cxraa74E51llEd60dGzsBHD4VPQV8O2bFo.H4Nx-fR1jI0UGwn95uqh6g';
 let refreshToken = process.env.QB_REFRESH_TOKEN || 'RT1-76-H0-1791468215k2xxhdx8wq5jcuwo5cqq';
@@ -245,6 +295,32 @@ const server = http.createServer(async (req, res) => {
   const fullUrl = req.url;
   const url = fullUrl.split('?')[0];
   const queryParams = querystring.parse(fullUrl.split('?')[1] || '');
+
+  // ===== Shared data API — lets every browser/device read & write the same
+  // items/transactions/storages/users instead of each keeping its own local copy =====
+  if (url === '/api/data' && req.method === 'GET') {
+    const data = readSharedData();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(data));
+    return;
+  }
+  if (url === '/api/data' && req.method === 'POST') {
+    try {
+      const bodyStr = await readRequestBody(req);
+      const incoming = JSON.parse(bodyStr || '{}');
+      const current = readSharedData();
+      // Merge: only overwrite the keys actually sent, so saving e.g. just
+      // "users" never wipes out items/transactions/storages.
+      const merged = Object.assign({}, current, incoming);
+      writeSharedData(merged);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
 
   // Serve index.html
   if (url === '/' || url === '/index.html') {

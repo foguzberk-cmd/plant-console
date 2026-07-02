@@ -1612,6 +1612,20 @@ function buildBalanceReport(){
     +'<span style="font-weight:700;font-size:14px">Total ('+esc(toDisp)+')</span>'
     +'<span style="font-family:var(--mono);font-weight:800;font-size:14px">'+money(total)+'</span></div>';
 
+  // At-a-glance summary of both totals, side by side, right under the headline
+  // number — so you can see the positive and negative totals together without
+  // having to scroll down and expand the full itemized breakdown.
+  html+='<div style="display:flex;gap:12px;margin-bottom:18px">'
+    +'<div style="flex:1;background:rgba(15,110,64,.06);border:1px solid rgba(15,110,64,.25);border-radius:10px;padding:10px 14px">'
+      +'<div style="font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:#0f6e40">Total additions (+)</div>'
+      +'<div style="font-family:var(--mono);font-weight:800;font-size:17px;color:#0f6e40;margin-top:2px">'+money(inflowTotal)+'</div>'
+    +'</div>'
+    +'<div style="flex:1;background:rgba(194,59,51,.06);border:1px solid rgba(194,59,51,.25);border-radius:10px;padding:10px 14px">'
+      +'<div style="font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:#c23b33">Total subtractions (−)</div>'
+      +'<div style="font-family:var(--mono);font-weight:800;font-size:17px;color:#c23b33;margin-top:2px">'+money(outflowTotal)+'</div>'
+    +'</div>'
+  +'</div>';
+
   // Inflows — Starting value lists first, since it's just the first "addition" to the pool
   html+='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#0f6e40;margin:6px 0 4px">Additions (+)</div>';
   var inKeys=Object.keys(inflowGroups);

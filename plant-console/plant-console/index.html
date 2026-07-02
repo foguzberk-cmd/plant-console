@@ -790,11 +790,11 @@ async function doSync(incremental){
     window.__incrementalSync=false;
     return;
   }
-  showSyncProgress(85,'Documents synced — recalculating…');
+  showSyncProgress(96,'Documents synced — recalculating…');
 
   // 3. Recalculate quantities
   if(status)status.textContent='Step 3/3 — recalculating quantities…';
-  showSyncProgress(95,'Step 3 of 3 — recalculating quantities…');
+  showSyncProgress(98,'Step 3 of 3 — recalculating quantities…');
   recalcQuantities();
   showSyncProgress(100,'Sync complete');
 

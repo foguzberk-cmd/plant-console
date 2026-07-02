@@ -623,11 +623,67 @@ let deletingId=null,deletingKind=null;
   if(!found) users.unshift(admin);
   localStorage.setItem('pc_users',JSON.stringify(users));
 })();
+pushToServer(); // share this browser's data (including a freshly-seeded admin) right away
 
-function saveStorages(){localStorage.setItem('pc_storages',JSON.stringify(storages))}
-function saveTxns(){localStorage.setItem('pc_transactions',JSON.stringify(transactions))}
-function saveUsers(){localStorage.setItem('pc_users',JSON.stringify(users))}
+function saveStorages(){localStorage.setItem('pc_storages',JSON.stringify(storages));pushToServer();}
+function saveTxns(){localStorage.setItem('pc_transactions',JSON.stringify(transactions));pushToServer();}
+function saveUsers(){localStorage.setItem('pc_users',JSON.stringify(users));pushToServer();}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+
+// ===== SHARED SYNC (fixes "can't log in from another browser") =====
+// Everything above (items/transactions/storages/users) is loaded from THIS
+// browser's localStorage, which is why a user created on one computer never
+// showed up on another. This layer keeps a shared copy on the server (see
+// /api/data in server.js) and syncs it in both directions:
+//  - pullFromServer(): brings in whatever other browsers have saved (so a
+//    user created elsewhere appears here too) — called on load, on a timer,
+//    and right before every login attempt so the login list is always fresh.
+//  - pushToServer(): sends this browser's current data up to the shared
+//    store — called after every save, and on a timer as a safety net.
+var SYNC_URL='/api/data';
+var _lastPushedSnapshot='';
+async function pullFromServer(){
+  try{
+    var res=await fetch(SYNC_URL,{cache:'no-store'});
+    if(!res.ok) return false;
+    var data=await res.json();
+    if(!data||typeof data!=='object') return false;
+    if(Array.isArray(data.items)) items=data.items;
+    if(Array.isArray(data.transactions)) transactions=data.transactions;
+    if(Array.isArray(data.storages)) storages=data.storages;
+    // Never let an empty server users list wipe out a locally-seeded admin —
+    // only adopt the server's users once it actually has some.
+    if(Array.isArray(data.users)&&data.users.length) users=data.users;
+    localStorage.setItem('pc_items',JSON.stringify(items));
+    localStorage.setItem('pc_transactions',JSON.stringify(transactions));
+    localStorage.setItem('pc_storages',JSON.stringify(storages));
+    localStorage.setItem('pc_users',JSON.stringify(users));
+    return true;
+  }catch(e){
+    // Server unreachable (offline, or run outside the Node server) — keep
+    // working from whatever's already in localStorage.
+    return false;
+  }
+}
+async function pushToServer(){
+  try{
+    var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users});
+    if(snapshot===_lastPushedSnapshot) return; // nothing changed since last push
+    _lastPushedSnapshot=snapshot;
+    await fetch(SYNC_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:snapshot});
+  }catch(e){
+    // Offline: local save already happened, this will retry on the next timer tick
+  }
+}
+// Pull once immediately so a brand-new browser sees other people's users/data
+// right away, then keep pulling periodically so new users created elsewhere
+// (or on another device) show up here without needing a page refresh.
+pullFromServer();
+setInterval(pullFromServer,4000);
+// Safety-net push in case some part of the app saves data without going
+// through saveStorages/saveTxns/saveUsers.
+setInterval(pushToServer,4000);
+// ===== END SHARED SYNC =====
 function initials(name){return name.trim().split(/\s+/).map(w=>w[0]).join('').substring(0,2).toUpperCase()}
 
 
@@ -1114,10 +1170,14 @@ function finishDocSync(data){
 }
 
 /* ===== LOGIN ===== */
-function attemptLogin(){
+async function attemptLogin(){
   var email=document.getElementById('loginEmail').value.trim().toLowerCase();
   var pin=document.getElementById('loginPin').value.trim();
   var err=document.getElementById('loginError');
+  // Grab the freshest shared user list before checking credentials, so a
+  // user created moments ago on a different browser/device can log in here
+  // right away instead of waiting for the next periodic sync tick.
+  await pullFromServer();
   var found=null;
   for(var i=0;i<users.length;i++){
     var u=users[i];

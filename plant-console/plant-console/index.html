@@ -3681,6 +3681,26 @@ function saveTxnOrOpening(){
       mOrder.push(iid);
     }
   }
+  // A physical count can only correct a balance that's already being tracked.
+  // If an item has never had an opening count, there's nothing "on record"
+  // to compare against — so block the count and tell the user which items
+  // need an opening count first, instead of silently creating a bad baseline.
+  if(isAdjust){
+    var missingOpening=[];
+    mOrder.forEach(function(iid){
+      var hasOpening=transactions.some(function(t){return t.type==='opening' && t.itemId===iid;});
+      if(!hasOpening){
+        var itObj=items.find(function(x){return x.id===iid;});
+        missingOpening.push(itObj?itObj.name:iid);
+      }
+    });
+    if(missingOpening.length){
+      alert('Can\'t save this physical count — the following item(s) don\'t have an opening count yet:\n\n'
+        +missingOpening.join('\n')
+        +'\n\nEnter an opening count for '+(missingOpening.length>1?'these items':'this item')+' first, then come back and do the physical count.');
+      return;
+    }
+  }
   mOrder.forEach(function(iid,k){
     var m=mMerged[iid];
     var rowLocOut=locOut, rowLocIn=locIn, rowQty=m.qty;

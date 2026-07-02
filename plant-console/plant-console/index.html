@@ -1322,13 +1322,22 @@ function buildBalanceReport(){
   }
   var itemIdsInScope={};
   allTxns.forEach(function(t){ if(t.itemId) itemIdsInScope[t.itemId]=true; });
+  var openingBreakdown=[];
   Object.keys(itemIdsInScope).forEach(function(id){
     var bal=qtyAsOfDate(id, fromD);
     if(!bal) return;
     var fi=items.find(function(x){return x.id===id;});
     var cost=fi?Number(fi.cost||fi.price||0):0;
-    openingValue+=bal*cost;
+    var val=bal*cost;
+    openingValue+=val;
+    openingBreakdown.push({name:fi?fi.name:id,qty:bal,value:val});
   });
+  openingBreakdown.sort(function(a,b){return Math.abs(b.value)-Math.abs(a.value);});
+
+  // Per-item breakdown for each addition/subtraction row, keyed by type then itemId
+  var inflowItems={receive:{},return:{},production:{}};
+  var outflowItems={shipment:{}};
+  var pcPosItems={}, pcNegItems={};
 
   allTxns.forEach(function(t){
     var d=t.date||'';
@@ -1339,37 +1348,75 @@ function buildBalanceReport(){
     // Only movements within [from, to] count toward the period statement
     if(d<fromD || d>toD) return;
     var v=lineValue(t);
+    var fi=items.find(function(x){return x.id===t.itemId;});
+    var nm=fi?fi.name:(t.desc||t.itemId||'—');
+    var q=Math.abs(Number(t.qty||0));
     if(t.type==='adjustment'){
       // PHYSICAL COUNT: use the true difference computed during recalculation
       // (counted − actual balance at that point), valued at cost price.
       var diff=(t.countedDiff!==undefined)?Number(t.countedDiff):Number(t.qty||0);
-      var fi=items.find(function(x){return x.id===t.itemId;});
       var cost=fi?Number(fi.cost||0):0;
       var pcVal=Math.abs(diff)*cost;
+      var bucket=diff>=0?pcPosItems:pcNegItems;
+      if(!bucket[t.itemId]) bucket[t.itemId]={name:nm,qty:0,value:0};
+      bucket[t.itemId].qty+=Math.abs(diff);
+      bucket[t.itemId].value+=pcVal;
       if(diff>=0){ pcPos+=pcVal; } else { pcNeg+=pcVal; }
       return;
     }
     if(INFLOW[t.type]){
       inflowGroups[t.type]=(inflowGroups[t.type]||0)+v;
       inflowTotal+=v;
+      if(!inflowItems[t.type][t.itemId]) inflowItems[t.type][t.itemId]={name:nm,qty:0,value:0};
+      inflowItems[t.type][t.itemId].qty+=q;
+      inflowItems[t.type][t.itemId].value+=v;
     } else if(OUTFLOW[t.type]){
       outflowGroups[t.type]=(outflowGroups[t.type]||0)+v;
       outflowTotal+=v;
+      if(!outflowItems[t.type][t.itemId]) outflowItems[t.type][t.itemId]={name:nm,qty:0,value:0};
+      outflowItems[t.type][t.itemId].qty+=q;
+      outflowItems[t.type][t.itemId].value+=v;
     }
   });
   // Fold physical-count positive into inflows, negative into outflows
-  if(pcPos>0){ inflowGroups['adjustment_pos']=pcPos; inflowTotal+=pcPos; }
-  if(pcNeg>0){ outflowGroups['adjustment_neg']=pcNeg; outflowTotal+=pcNeg; }
+  if(pcPos>0){ inflowGroups['adjustment_pos']=pcPos; inflowTotal+=pcPos; inflowItems['adjustment_pos']=pcPosItems; }
+  if(pcNeg>0){ outflowGroups['adjustment_neg']=pcNeg; outflowTotal+=pcNeg; outflowItems['adjustment_neg']=pcNegItems; }
 
   var net=inflowTotal-outflowTotal;
   var closingValue=openingValue+net;
 
   function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
-  function rowLine(label,val,color){
-    return '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line)">'
-      +'<span style="font-size:13px">'+label+'</span>'
-      +'<span style="font-family:var(--mono);font-size:13px;font-weight:600;'+(color?'color:'+color:'')+'">'+money(val)+'</span></div>';
+
+  // Each summary row is expandable: the total sits on top, and clicking it
+  // reveals the itemized breakdown underneath so you can see exactly which
+  // items/lines make up that number.
+  function detailRows(arr){
+    if(!arr||!arr.length) return '<div style="padding:7px 0 7px 22px;font-size:11.5px;color:var(--muted)">No line-level detail for this period.</div>';
+    return arr.map(function(b){
+      return '<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0 6px 22px;font-size:12px;color:var(--muted);border-bottom:1px dashed var(--line)">'
+        +'<span>'+esc(b.name)+'</span>'
+        +'<span style="font-family:var(--mono);white-space:nowrap">'+Number(b.qty).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+' &nbsp;·&nbsp; '+money(b.value)+'</span></div>';
+    }).join('');
   }
+  function rowLine(id,label,val,color,breakdownArr){
+    return '<div style="border-bottom:1px solid var(--line)">'
+      +'<div onclick="toggleReportRow(\''+id+'\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:8px 0">'
+        +'<span style="font-size:13px;display:flex;align-items:center;gap:6px">'
+          +'<svg id="'+id+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
+          +label+'</span>'
+        +'<span style="font-family:var(--mono);font-size:13px;font-weight:600;'+(color?'color:'+color:'')+'">'+money(val)+'</span></div>'
+      +'<div id="'+id+'" style="display:none;padding-bottom:4px">'+detailRows(breakdownArr)+'</div>'
+    +'</div>';
+  }
+  function toggleReportRow(id){
+    var el=document.getElementById(id); if(!el) return;
+    var opening=el.style.display==='none';
+    el.style.display=opening?'block':'none';
+    var chev=document.getElementById(id+'-chev');
+    if(chev) chev.style.transform=opening?'rotate(90deg)':'';
+  }
+  window.toggleReportRow=toggleReportRow;
+
   var labelMap={receive:'Receivings / Purchases',return:'Returns',production:'Production',shipment:'Shipments / Sold / Invoiced',adjustment_pos:'Physical Count — gains',adjustment_neg:'Physical Count — losses'};
 
   var fromDisp=fromD?new Date(fromD+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—';
@@ -1382,23 +1429,34 @@ function buildBalanceReport(){
     +'<div style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--cold);margin-top:6px">'+esc(deptLabel)+'</div>'
     +'<div style="font-size:12px;color:var(--muted);margin-top:3px">'+esc(fromDisp)+' &ndash; '+esc(toDisp)+'</div></div>';
 
-  // Opening
-  html+='<div style="display:flex;justify-content:space-between;padding:10px 0;border-top:2px solid var(--ink);border-bottom:2px solid var(--ink);margin-bottom:14px">'
-    +'<span style="font-weight:700;font-size:14px">Opening count value ('+esc(fromDisp)+')</span>'
-    +'<span style="font-family:var(--mono);font-weight:800;font-size:14px">'+money(openingValue)+'</span></div>';
+  // Opening — total on top, itemized breakdown revealed on click
+  html+='<div style="border-top:2px solid var(--ink);border-bottom:2px solid var(--ink);margin-bottom:14px">'
+    +'<div onclick="toggleReportRow(\'rpt-open-detail\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:10px 0">'
+      +'<span style="font-weight:700;font-size:14px;display:flex;align-items:center;gap:6px">'
+        +'<svg id="rpt-open-detail-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:var(--ink);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
+        +'Opening count value ('+esc(fromDisp)+')</span>'
+      +'<span style="font-family:var(--mono);font-weight:800;font-size:14px">'+money(openingValue)+'</span></div>'
+    +'<div id="rpt-open-detail" style="display:none;padding-bottom:6px">'+detailRows(openingBreakdown)+'</div>'
+  +'</div>';
 
   // Inflows
   html+='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#0f6e40;margin:6px 0 4px">Additions (+)</div>';
   var inKeys=Object.keys(inflowGroups);
   if(!inKeys.length) html+='<div style="font-size:12px;color:var(--muted);padding:8px 0;border-bottom:1px solid var(--line)">No additions in this period.</div>';
-  inKeys.forEach(function(k){ html+=rowLine(labelMap[k]||k, inflowGroups[k], '#0f6e40'); });
+  inKeys.forEach(function(k){
+    var items_=Object.keys(inflowItems[k]||{}).map(function(id){return inflowItems[k][id];}).sort(function(a,b){return b.value-a.value;});
+    html+=rowLine('rpt-in-'+k, labelMap[k]||k, inflowGroups[k], '#0f6e40', items_);
+  });
   html+='<div style="display:flex;justify-content:space-between;padding:9px 0;font-weight:700"><span>Total additions</span><span style="font-family:var(--mono);color:#0f6e40">'+money(inflowTotal)+'</span></div>';
 
   // Outflows
   html+='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#c23b33;margin:14px 0 4px">Subtractions (−)</div>';
   var outKeys=Object.keys(outflowGroups);
   if(!outKeys.length) html+='<div style="font-size:12px;color:var(--muted);padding:8px 0;border-bottom:1px solid var(--line)">No subtractions in this period.</div>';
-  outKeys.forEach(function(k){ html+=rowLine(labelMap[k]||k, outflowGroups[k], '#c23b33'); });
+  outKeys.forEach(function(k){
+    var items_=Object.keys(outflowItems[k]||{}).map(function(id){return outflowItems[k][id];}).sort(function(a,b){return b.value-a.value;});
+    html+=rowLine('rpt-out-'+k, labelMap[k]||k, outflowGroups[k], '#c23b33', items_);
+  });
   html+='<div style="display:flex;justify-content:space-between;padding:9px 0;font-weight:700"><span>Total subtractions</span><span style="font-family:var(--mono);color:#c23b33">'+money(outflowTotal)+'</span></div>';
 
   // Net + closing

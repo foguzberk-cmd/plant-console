@@ -1286,14 +1286,56 @@ function buildBalanceReport(){
   // physical count split
   var pcPos=0, pcNeg=0;
 
+  // OPENING VALUE = the TRUE quantity actually on hand for each item as of the
+  // "From" date, not just whatever was entered on an opening-count line. That
+  // means replaying every transaction for the item up through that date —
+  // opening count, plus any receives/returns/production/shipments/physical
+  // counts that happened afterward but still on or before the From date —
+  // so a report starting weeks after the last opening count reflects reality
+  // on that starting date, not a stale count from further back.
+  function qtyAsOfDate(itemId, asOfDate){
+    var hist=allTxns.filter(function(t){return t.itemId===itemId && t.date && t.date<=asOfDate;});
+    hist.sort(function(a,b){
+      var da=a.date||'', db=b.date||'';
+      if(da!==db) return da<db?-1:1;
+      return txnSortTime(a)-txnSortTime(b);
+    });
+    // Same rule as the main balance engine: a later opening count resets the
+    // baseline, so movements before it don't carry forward.
+    var startTs=null;
+    hist.forEach(function(t){ if(t.type==='opening'){ var ts=txnSortTime(t); if(startTs===null||ts>startTs) startTs=ts; } });
+    var bal=0;
+    hist.forEach(function(t){
+      var q=Number(t.qty||0);
+      if(t.type==='opening'){ bal+=q; return; } // opening lines for the same item sum together
+      if(startTs!==null && txnSortTime(t)<=startTs) return; // pre-baseline, excluded
+      switch(t.type){
+        case 'receive': case 'return': case 'production': bal+=q; break;
+        case 'shipment': bal-=Math.abs(q); break;
+        case 'adjustment':
+          bal=(t.physicalCount!==undefined)?Number(t.physicalCount):(bal+q);
+          break;
+        default: break;
+      }
+    });
+    return bal;
+  }
+  var itemIdsInScope={};
+  allTxns.forEach(function(t){ if(t.itemId) itemIdsInScope[t.itemId]=true; });
+  Object.keys(itemIdsInScope).forEach(function(id){
+    var bal=qtyAsOfDate(id, fromD);
+    if(!bal) return;
+    var fi=items.find(function(x){return x.id===id;});
+    var cost=fi?Number(fi.cost||fi.price||0):0;
+    openingValue+=bal*cost;
+  });
+
   allTxns.forEach(function(t){
     var d=t.date||'';
     if(!d) return;
-    // Opening value: opening counts up to the From date establish the starting balance
-    if(t.type==='opening'){
-      if(d<=fromD) openingValue+=lineValue(t);
-      return;
-    }
+    // Opening lines never count as a period movement — they're a reset point,
+    // already folded into the as-of-date balance above.
+    if(t.type==='opening') return;
     // Only movements within [from, to] count toward the period statement
     if(d<fromD || d>toD) return;
     var v=lineValue(t);

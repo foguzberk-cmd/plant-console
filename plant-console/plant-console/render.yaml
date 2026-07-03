@@ -6,9 +6,22 @@ services:
     startCommand: node server.js
     branch: main
     rootDir: plant-console/plant-console
+    # Persistent disk: without this, DATA_DIR falls back to a folder inside
+    # the app directory, which is wiped on every deploy/restart — taking the
+    # shared items/transactions/users data AND the QuickBooks connection
+    # tokens with it. NOTE: persistent disks require a paid Render instance
+    # type (not available on the free tier). If you're on the free tier,
+    # either upgrade the service plan or accept that data/tokens reset on
+    # every deploy until you do.
+    disk:
+      name: plant-console-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
+      - key: DATA_DIR
+        value: /var/data
       - key: QB_REALM
         sync: false
       - key: QB_CLIENT_ID

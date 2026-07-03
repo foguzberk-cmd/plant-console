@@ -717,33 +717,6 @@ setTimeout(function(){ if(typeof takeAutoBackup==='function') takeAutoBackup(); 
 function initials(name){return name.trim().split(/\s+/).map(w=>w[0]).join('').substring(0,2).toUpperCase()}
 
 
-/* ===== QUICKBOOKS ===== */
-var QB_REALM='9341455286904784';
-var QB_CLIENT_ID='ABaDfcxMMeAaUHHtYONpvC2GJlVdE5SAfRhB0xHnN4EAfqZFhi';
-var QB_CLIENT_SECRET='7Ijp0nOfoxWxNf199PgpyHfBuCXfQ8nGhMTxSlze';
-var qbAccessToken=localStorage.getItem('qb_access_token')||'eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2IiwieC5vcmciOiJIMCJ9..iyIPM3TiLlaeEfyH494vgg.2_2udYb7qdoQAqWSjtKcDiwKqldH-vBgXbXoYpAxFlSln0rHnaRTVFYOfcD1-NUPzhmN6BYyVqpKS03wtlOrXDahInJOglDJ937ZiTw8y9UXfjx-bI6W4cSBpg5K5FsqTGg5PyvxM6yOsK0xV0FW3oOd1hmXjJ24oowW5gVn43rBHL2-DjvmnToyQJk_1uIfZVZDQbbm6gCsFEdRgdo2nUUIYHSIcrIETE4ZCqnEpKToB8TW_ka_ulQIzEHthFBRdSGq7ADmlXYxKw_zAJirPJJvjhBYCGyW9Zk0aEeXrkzS4IEa7WxbhClOMhByY7ObI2kOczv0QZvwyEgoC8OJDhZwhU5sQxuYh7fFtzv66QmcKAR4AcukayhNC-KImDE3DgDvabFjPSoP_eN7Fa8DSwRBWWlBhLainuQkKLbr9EfxDyufFo2K1UuhhafrPE077BfBe4BNMmfbyE6fpYfuDDiRBqv45qFLX0vCg6Mj66Y.l3tsmwIpFrZtZdOdTJrGrA';
-var qbRefreshToken=localStorage.getItem('qb_refresh_token')||'RT1-73-H0-1790971810xrxelnls1051ngjsixxu';
-
-function qbSaveTokens(access, refresh){
-  qbAccessToken=access; qbRefreshToken=refresh;
-  localStorage.setItem('qb_access_token', access);
-  localStorage.setItem('qb_refresh_token', refresh);
-}
-
-async function qbRefreshAccessToken(){
-  var creds = btoa(QB_CLIENT_ID+':'+QB_CLIENT_SECRET);
-  var resp = await fetch('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',{
-    method:'POST',
-    headers:{'Authorization':'Basic '+creds,'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},
-    body:'grant_type=refresh_token&refresh_token='+encodeURIComponent(qbRefreshToken)
-  });
-  var data = await resp.json();
-  if(data.access_token){
-    qbSaveTokens(data.access_token, data.refresh_token||qbRefreshToken);
-    return true;
-  }
-  return false;
-}
 
 // === UNIFIED SYNC: items + bills/sales + recalc, in one click ===
 // Public entry points

@@ -3,6 +3,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const querystring = require('querystring');
+const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
 const QB_REALM = process.env.QB_REALM || '';
@@ -32,10 +33,45 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'plant-data.json');
 const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: [] };
 
+// ===== PIN HASHING =====
+// PINs are hashed with scrypt before they ever touch disk. Any user record
+// still carrying a plaintext `pin` (from before this change) is transparently
+// upgraded to `pinHash` the next time that user logs in successfully.
+function hashPin(pin) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(String(pin), salt, 64).toString('hex');
+  return salt + ':' + hash;
+}
+function verifyPin(pin, pinHash) {
+  if (!pinHash || pinHash.indexOf(':') === -1) return false;
+  const [salt, storedHash] = pinHash.split(':');
+  const hash = crypto.scryptSync(String(pin), salt, 64).toString('hex');
+  try {
+    return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(storedHash, 'hex'));
+  } catch (e) {
+    return false;
+  }
+}
+
+function defaultAdmin() {
+  return {
+    id: 'user_default',
+    name: 'Administrator',
+    email: 'admin@facility.com',
+    role: 'admin',
+    pinHash: hashPin('1234'),
+    perms: {}
+  };
+}
+
 function ensureDataFile() {
   try {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, JSON.stringify(DATA_DEFAULT, null, 2));
+    if (!fs.existsSync(DATA_FILE)) {
+      const seeded = Object.assign({}, DATA_DEFAULT, { users: [defaultAdmin()] });
+      fs.writeFileSync(DATA_FILE, JSON.stringify(seeded, null, 2));
+      console.log('No data file found — created one with a default admin (admin@facility.com / PIN 1234). Change this PIN immediately.');
+    }
   } catch (e) {
     console.error('Could not prepare shared data file:', e.message);
   }
@@ -45,16 +81,96 @@ function readSharedData() {
   ensureDataFile();
   try {
     const raw = fs.readFileSync(DATA_FILE, 'utf8');
-    return Object.assign({}, DATA_DEFAULT, JSON.parse(raw || '{}'));
+    const data = Object.assign({}, DATA_DEFAULT, JSON.parse(raw || '{}'));
+    // Defensive: never let the app get into a state where no user can log in.
+    if (!Array.isArray(data.users) || data.users.length === 0) {
+      data.users = [defaultAdmin()];
+      writeSharedDataRaw(data);
+      console.log('Users list was empty — re-seeded default admin (admin@facility.com / PIN 1234).');
+    }
+    return data;
   } catch (e) {
     console.error('Could not read shared data file:', e.message);
-    return Object.assign({}, DATA_DEFAULT);
+    return Object.assign({}, DATA_DEFAULT, { users: [defaultAdmin()] });
   }
 }
 
-function writeSharedData(data) {
+function writeSharedDataRaw(data) {
   ensureDataFile();
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+}
+
+function writeSharedData(data) {
+  // Strip plaintext pins on every write and migrate them to pinHash, so a
+  // plaintext PIN never sits on disk even transiently.
+  if (Array.isArray(data.users)) {
+    data.users = data.users.map(u => {
+      if (u && typeof u.pin === 'string' && u.pin.length) {
+        const migrated = Object.assign({}, u, { pinHash: hashPin(u.pin) });
+        delete migrated.pin;
+        return migrated;
+      }
+      return u;
+    });
+  }
+  writeSharedDataRaw(data);
+}
+
+// ===== SESSIONS =====
+// Minimal in-memory session store backed by an HttpOnly cookie. Sessions are
+// lost on server restart (acceptable for this app's scale) — that's a plain
+// re-login, not data loss, since real data lives in the shared data file.
+const SESSIONS = new Map(); // token -> { userId, role, name, email, expires }
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+function createSession(user) {
+  const token = crypto.randomBytes(32).toString('hex');
+  SESSIONS.set(token, {
+    userId: user.id,
+    role: user.role,
+    name: user.name,
+    email: user.email,
+    expires: Date.now() + SESSION_TTL_MS
+  });
+  return token;
+}
+function getSession(token) {
+  if (!token) return null;
+  const s = SESSIONS.get(token);
+  if (!s) return null;
+  if (Date.now() > s.expires) { SESSIONS.delete(token); return null; }
+  return s;
+}
+function destroySession(token) {
+  if (token) SESSIONS.delete(token);
+}
+function parseCookies(req) {
+  const header = req.headers.cookie || '';
+  const out = {};
+  header.split(';').forEach(part => {
+    const idx = part.indexOf('=');
+    if (idx === -1) return;
+    out[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim());
+  });
+  return out;
+}
+function sessionCookieHeader(token, maxAgeSeconds) {
+  const isProd = process.env.NODE_ENV === 'production';
+  let cookie = `pc_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}`;
+  if (isProd) cookie += '; Secure';
+  return cookie;
+}
+// Every route that touches shared data or QuickBooks must call this first.
+// Returns the session object, or null after already sending a 401 response.
+function requireAuth(req, res) {
+  const cookies = parseCookies(req);
+  const session = getSession(cookies.pc_session);
+  if (!session) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not authenticated', needsLogin: true }));
+    return null;
+  }
+  return session;
 }
 
 function readRequestBody(req) {
@@ -308,19 +424,100 @@ const server = http.createServer(async (req, res) => {
   const url = fullUrl.split('?')[0];
   const queryParams = querystring.parse(fullUrl.split('?')[1] || '');
 
+  // ===== Auth =====
+  if (url === '/api/login' && req.method === 'POST') {
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      const email = String(body.email || '').trim().toLowerCase();
+      const pin = String(body.pin || '').trim();
+      const data = readSharedData();
+      const user = data.users.find(u => String(u.email || '').trim().toLowerCase() === email);
+      let ok = false;
+      if (user) {
+        if (user.pinHash) {
+          ok = verifyPin(pin, user.pinHash);
+        } else if (typeof user.pin === 'string') {
+          // Legacy plaintext record — verify directly, then migrate to a hash.
+          ok = user.pin === pin;
+          if (ok) writeSharedData(data); // writeSharedData migrates pin -> pinHash
+        }
+      }
+      if (!ok) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Incorrect email or PIN.' }));
+        return;
+      }
+      const token = createSession(user);
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Set-Cookie': sessionCookieHeader(token, SESSION_TTL_MS / 1000)
+      });
+      res.end(JSON.stringify({ success: true, user: { id: user.id, name: user.name, email: user.email, role: user.role, perms: user.perms || {} } }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  if (url === '/api/logout' && req.method === 'POST') {
+    const cookies = parseCookies(req);
+    destroySession(cookies.pc_session);
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': sessionCookieHeader('', 0) });
+    res.end(JSON.stringify({ success: true }));
+    return;
+  }
+  if (url === '/api/session' && req.method === 'GET') {
+    const cookies = parseCookies(req);
+    const session = getSession(cookies.pc_session);
+    if (!session) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Not authenticated' }));
+      return;
+    }
+    const data = readSharedData();
+    const user = data.users.find(u => u.id === session.userId);
+    if (!user) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'User no longer exists' }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ user: { id: user.id, name: user.name, email: user.email, role: user.role, perms: user.perms || {} } }));
+    return;
+  }
+
   // ===== Shared data API — lets every browser/device read & write the same
   // items/transactions/storages/users instead of each keeping its own local copy =====
   if (url === '/api/data' && req.method === 'GET') {
+    if (!requireAuth(req, res)) return;
     const data = readSharedData();
+    // Never send pin hashes to the browser.
+    const safe = Object.assign({}, data, {
+      users: data.users.map(u => { const c = Object.assign({}, u); delete c.pin; delete c.pinHash; return c; })
+    });
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(data));
+    res.end(JSON.stringify(safe));
     return;
   }
   if (url === '/api/data' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
     try {
       const bodyStr = await readRequestBody(req);
       const incoming = JSON.parse(bodyStr || '{}');
       const current = readSharedData();
+      // If the incoming users array is missing pin/pinHash for a user (because
+      // the browser never received it), keep that user's existing credentials
+      // instead of wiping them.
+      if (Array.isArray(incoming.users)) {
+        incoming.users = incoming.users.map(u => {
+          if (u && !u.pin && !u.pinHash) {
+            const existing = current.users.find(x => x.id === u.id);
+            if (existing) return Object.assign({}, u, { pinHash: existing.pinHash, pin: existing.pin });
+          }
+          return u;
+        });
+      }
       // Merge: only overwrite the keys actually sent, so saving e.g. just
       // "users" never wipes out items/transactions/storages.
       const merged = Object.assign({}, current, incoming);
@@ -347,6 +544,7 @@ const server = http.createServer(async (req, res) => {
 
   // Start OAuth flow — redirect user to Intuit's authorization page
   if (url === '/connect') {
+    if (!requireAuth(req, res)) return;
     const authUrl = 'https://appcenter.intuit.com/connect/oauth2?' + querystring.stringify({
       client_id: CLIENT_ID,
       response_type: 'code',
@@ -361,6 +559,7 @@ const server = http.createServer(async (req, res) => {
 
   // Check connection status
   if (url === '/api/qb/status') {
+    if (!requireAuth(req, res)) return;
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ connected: !!accessToken, realm: activeRealm }));
     return;
@@ -368,6 +567,7 @@ const server = http.createServer(async (req, res) => {
 
   // Diagnostic endpoint — visit this URL directly in the browser
   if (url === '/api/qb/test') {
+    if (!requireAuth(req, res)) return;
     try {
       const result = await diagnose(false);
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -385,6 +585,7 @@ const server = http.createServer(async (req, res) => {
   //                                     (client drives pagination = no timeouts)
   // &since=ISO                       -> only records changed since that time
   if (url === '/api/qb/documents') {
+    if (!requireAuth(req, res)) return;
     try {
       const ent = queryParams.entity;
       const since = queryParams.since || null;
@@ -421,6 +622,7 @@ const server = http.createServer(async (req, res) => {
 
   // QuickBooks items proxy endpoint
   if (url === '/api/qb/items') {
+    if (!requireAuth(req, res)) return;
     try {
       const data = await fetchQBItems(false);
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -439,6 +641,7 @@ const server = http.createServer(async (req, res) => {
 
   // QuickBooks token refresh endpoint
   if (url === '/api/qb/refresh') {
+    if (!requireAuth(req, res)) return;
     try {
       const ok = await refreshAccessToken();
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -452,6 +655,12 @@ const server = http.createServer(async (req, res) => {
 
   // OAuth callback — exchange the code for tokens
   if (url.startsWith('/callback')) {
+    const cookies = parseCookies(req);
+    if (!getSession(cookies.pc_session)) {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html><body><h2>Your session expired before QuickBooks finished connecting.</h2><p><a href="/">Log back in</a> and try connecting again.</p></body></html>');
+      return;
+    }
     const code = queryParams.code;
     const realmId = queryParams.realmId;
     if (code) {
@@ -509,6 +718,7 @@ const server = http.createServer(async (req, res) => {
 
   // Disconnect handler
   if (url === '/disconnect') {
+    if (!requireAuth(req, res)) return;
     accessToken = '';
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true }));

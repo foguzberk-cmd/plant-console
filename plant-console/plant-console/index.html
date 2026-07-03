@@ -316,7 +316,6 @@
       </div>
       <button class="login-btn" onclick="attemptLogin()">Sign in</button>
       <div class="login-footer" style="margin-top:14px">FACILITY PLT-01 · v0.1</div>
-      <div style="text-align:center;margin-top:10px"><button onclick="resetAndLogin()" style="background:none;border:none;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--muted);text-decoration:underline;letter-spacing:.06em">Reset app data &amp; login as admin</button></div>
     </div>
   </div>
 
@@ -605,26 +604,6 @@ let editingStorageId=null,editingTxnId=null,editingUserId=null,editingDocId=null
 let editingDocMeta=null; // preserves createTime/qb flags of a doc being edited
 let deletingId=null,deletingKind=null;
 
-// Always repair/seed default admin so login always works
-(function(){
-  var allPerms={};
-  for(var i=0;i<PERMISSIONS.length;i++) allPerms[PERMISSIONS[i].id]=true;
-  var admin={id:'user_default',name:'Administrator',email:'admin@facility.com',role:'admin',pin:'1234',perms:allPerms};
-  var found=false;
-  for(var i=0;i<users.length;i++){
-    if(users[i].id==='user_default'){
-      users[i].email='admin@facility.com';
-      users[i].pin='1234';
-      users[i].role='admin';
-      users[i].perms=allPerms;
-      found=true; break;
-    }
-  }
-  if(!found) users.unshift(admin);
-  localStorage.setItem('pc_users',JSON.stringify(users));
-})();
-pushToServer(); // share this browser's data (including a freshly-seeded admin) right away
-
 function saveStorages(){localStorage.setItem('pc_storages',JSON.stringify(storages));pushToServer();}
 function saveTxns(){localStorage.setItem('pc_transactions',JSON.stringify(transactions));pushToServer();}
 function saveUsers(){localStorage.setItem('pc_users',JSON.stringify(users));pushToServer();}
@@ -640,10 +619,14 @@ function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').
 //    and right before every login attempt so the login list is always fresh.
 //  - pushToServer(): sends this browser's current data up to the shared
 //    store — called after every save, and on a timer as a safety net.
+// Both are now gated on being logged in: the server requires a valid session
+// cookie for /api/data, and there's no reason to sync a signed-out browser's
+// data anyway.
 var SYNC_URL='/api/data';
 var _lastPushedSnapshot='';
 var __syncBusy=false; // true while a QuickBooks sync is actively running
 async function pullFromServer(){
+  if(!currentUser) return false;
   // Never pull while a sync is in progress — the shared server copy is stale
   // (or still empty, on a first-ever sync) compared to what's being built up
   // locally right now, so pulling here would overwrite freshly-synced data
@@ -651,6 +634,7 @@ async function pullFromServer(){
   if(__syncBusy) return false;
   try{
     var res=await fetch(SYNC_URL,{cache:'no-store'});
+    if(res.status===401){ forceLogout(); return false; }
     if(!res.ok) return false;
     var data=await res.json();
     if(!data||typeof data!=='object') return false;
@@ -691,19 +675,52 @@ async function pullFromServer(){
   }
 }
 async function pushToServer(){
+  if(!currentUser) return;
   try{
     var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users});
     if(snapshot===_lastPushedSnapshot) return; // nothing changed since last push
     _lastPushedSnapshot=snapshot;
-    await fetch(SYNC_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:snapshot});
+    var res=await fetch(SYNC_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:snapshot});
+    if(res.status===401){ forceLogout(); }
   }catch(e){
     // Offline: local save already happened, this will retry on the next timer tick
   }
 }
-// Pull once immediately so a brand-new browser sees other people's users/data
-// right away, then keep pulling periodically so new users created elsewhere
-// (or on another device) show up here without needing a page refresh.
-pullFromServer();
+// If the server says our session is no longer valid (expired/restarted),
+// drop back to the login screen instead of silently failing every sync tick.
+function forceLogout(){
+  if(!currentUser) return;
+  currentUser=null;
+  var appShell=document.getElementById('appShell');
+  var loginScreen=document.getElementById('loginScreen');
+  if(appShell) appShell.classList.remove('visible');
+  if(loginScreen) loginScreen.classList.remove('hidden');
+}
+// On page load, check whether the browser already has a valid session
+// cookie (e.g. the page was refreshed) and restore it without forcing a
+// re-login. If there's no valid session, the login screen (already visible
+// by default) stays up — pullFromServer()/pushToServer() simply no-op until
+// someone logs in.
+async function restoreSession(){
+  try{
+    var res=await fetch('/api/session',{cache:'no-store'});
+    if(!res.ok) return;
+    var data=await res.json();
+    if(!data||!data.user) return;
+    currentUser=data.user;
+    document.getElementById('loginScreen').classList.add('hidden');
+    document.getElementById('appShell').classList.add('visible');
+    document.getElementById('railAvatar').textContent=initials(currentUser.name);
+    document.getElementById('railName').textContent=currentUser.name;
+    document.getElementById('railRole').textContent=currentUser.role.charAt(0).toUpperCase()+currentUser.role.slice(1);
+    buildNav();
+    select('dashboard');
+    await pullFromServer();
+  }catch(e){
+    // Server unreachable — stay on the login screen.
+  }
+}
+restoreSession();
 setInterval(pullFromServer,4000);
 // Safety-net push in case some part of the app saves data without going
 // through saveStorages/saveTxns/saveUsers.
@@ -1233,35 +1250,43 @@ async function attemptLogin(){
   var email=document.getElementById('loginEmail').value.trim().toLowerCase();
   var pin=document.getElementById('loginPin').value.trim();
   var err=document.getElementById('loginError');
-  // Grab the freshest shared user list before checking credentials, so a
-  // user created moments ago on a different browser/device can log in here
-  // right away instead of waiting for the next periodic sync tick.
-  await pullFromServer();
-  var found=null;
-  for(var i=0;i<users.length;i++){
-    var u=users[i];
-    if(u.email.trim().toLowerCase()===email && u.pin===pin){ found=u; break; }
+  var btn=document.querySelector('.login-btn');
+  if(btn) btn.disabled=true;
+  try{
+    var res=await fetch('/api/login',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email:email,pin:pin})
+    });
+    var data=await res.json().catch(function(){return {};});
+    if(!res.ok || !data.user){
+      err.classList.add('show');
+      return;
+    }
+    err.classList.remove('show');
+    currentUser=data.user;
+    document.getElementById('loginScreen').classList.add('hidden');
+    document.getElementById('appShell').classList.add('visible');
+    document.getElementById('railAvatar').textContent=initials(currentUser.name);
+    document.getElementById('railName').textContent=currentUser.name;
+    document.getElementById('railRole').textContent=currentUser.role.charAt(0).toUpperCase()+currentUser.role.slice(1);
+    buildNav();
+    select('dashboard');
+    // Now that we're authenticated, pull the shared items/transactions/
+    // storages/users so the UI has real data to show.
+    await pullFromServer();
+  }catch(e){
+    err.classList.add('show');
+  }finally{
+    if(btn) btn.disabled=false;
   }
-  if(!found){ err.classList.add('show'); return; }
-  err.classList.remove('show');
-  currentUser=found;
-  document.getElementById('loginScreen').classList.add('hidden');
-  document.getElementById('appShell').classList.add('visible');
-  document.getElementById('railAvatar').textContent=initials(found.name);
-  document.getElementById('railName').textContent=found.name;
-  document.getElementById('railRole').textContent=found.role.charAt(0).toUpperCase()+found.role.slice(1);
-  buildNav();
-  select('dashboard');
-}
-function resetAndLogin(){
-  localStorage.clear();
-  location.reload();
 }
 
 document.getElementById('loginPin').addEventListener('keydown',e=>{if(e.key==='Enter')attemptLogin()});
 document.getElementById('loginEmail').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('loginPin').focus()});
 
 function logout(){
+  fetch('/api/logout',{method:'POST'}).catch(function(){});
   currentUser=null;
   document.getElementById('appShell').classList.remove('visible');
   document.getElementById('loginScreen').classList.remove('hidden');

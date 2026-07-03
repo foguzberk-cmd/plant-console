@@ -9,3 +9,15 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: QB_REALM
+        sync: false
+      - key: QB_CLIENT_ID
+        sync: false
+      - key: QB_CLIENT_SECRET
+        sync: false
+      - key: QB_ACCESS_TOKEN
+        sync: false
+      - key: QB_REFRESH_TOKEN
+        sync: false
+      - key: QB_REDIRECT_URI
+        value: https://plant-console-app.onrender.com/callback

@@ -4054,17 +4054,17 @@ function confirmDelete(){
   else{storages=storages.filter(x=>x.id!==deletingId);saveStorages();closeDeleteModal();renderStorageList();}
 }
 
-['storageModal','txnModal','userModal','profileModal','deleteModal','openingModal','bulkStorageModal'].forEach(id=>{
-  document.getElementById(id).addEventListener('click',e=>{
-    if(e.target!==e.currentTarget)return;
-    if(id==='storageModal')closeStorageModal();
-    else if(id==='txnModal')closeTxnModal();
-    else if(id==='userModal')closeUserModal();
-    else if(id==='profileModal')closeProfileModal();
-    else if(id==='openingModal')closeOpeningModal();
-    else if(id==='bulkStorageModal')closeBulkStorageModal();
-    else closeDeleteModal();
-  });
+document.addEventListener('click',function(e){
+  var ids=['storageModal','txnModal','userModal','profileModal','deleteModal','openingModal','bulkStorageModal'];
+  if(ids.indexOf(e.target.id)===-1) return; // click wasn't directly on a modal background
+  var id=e.target.id;
+  if(id==='storageModal')closeStorageModal();
+  else if(id==='txnModal')closeTxnModal();
+  else if(id==='userModal')closeUserModal();
+  else if(id==='profileModal')closeProfileModal();
+  else if(id==='openingModal')closeOpeningModal();
+  else if(id==='bulkStorageModal')closeBulkStorageModal();
+  else closeDeleteModal();
 });
 
 // Close item suggestions when clicking outside

@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: plant-console
+    name: plant-console-app
     runtime: node
     buildCommand: npm install
     startCommand: node server.js

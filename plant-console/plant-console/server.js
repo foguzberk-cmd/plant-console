@@ -5,10 +5,20 @@ const path = require('path');
 const querystring = require('querystring');
 
 const PORT = process.env.PORT || 3000;
-const QB_REALM = process.env.QB_REALM || '9341455286904784';
-const CLIENT_ID = process.env.QB_CLIENT_ID || 'ABWEkzwkl0wAchmXBFwVmvRGiiYCXihwdcEo8wsyhIWnZW1lKh';
-const CLIENT_SECRET = process.env.QB_CLIENT_SECRET || 'rstNRy7lvgmVE0FRdRYzDNXSo5IXV1B8hpubV54s';
+const QB_REALM = process.env.QB_REALM || '';
+const CLIENT_ID = process.env.QB_CLIENT_ID || '';
+const CLIENT_SECRET = process.env.QB_CLIENT_SECRET || '';
 const REDIRECT_URI = process.env.QB_REDIRECT_URI || 'https://plant-console-app.onrender.com/callback';
+
+// Fail loudly rather than silently running with a broken QuickBooks integration.
+// (Previously these had real credentials hardcoded as fallback defaults — that
+// meant the secrets shipped in source control. They must now be set as
+// environment variables in Render, never committed to the repo.)
+if (!QB_REALM || !CLIENT_ID || !CLIENT_SECRET) {
+  console.warn('WARNING: QB_REALM, QB_CLIENT_ID, and/or QB_CLIENT_SECRET are not set. ' +
+    'Set them as environment variables in Render (Dashboard -> plant-console -> Environment). ' +
+    'The app will still start, but QuickBooks features will not work until these are configured.');
+}
 
 // ===== SHARED DATA STORE (so logins & data work the same across browsers/devices) =====
 // Everything the app used to keep ONLY in each browser's localStorage (items,
@@ -60,9 +70,11 @@ function readRequestBody(req) {
 }
 // ===== END SHARED DATA STORE =====
 
-// In-memory token store (persists while server is running)
-let accessToken = process.env.QB_ACCESS_TOKEN || 'eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2IiwieC5vcmciOiJIMCJ9..5HeNoqIq2dNH_ywSUn07BA.2UqmIwUlqtSLpWe25ejJCjnOdu99Sgb0P1JQ0nS76Yj_OqrhBmaBUKjbh92pTZFbtVxx5TyBnZ-07qdHAcqEmwYcQjckZ4nZieXUTiQrK6vtMVNViIVOLtNIXEO6faCFYgk61U0MkOjLCrRoAKZ-2wg4UAIwIMJ2sLEPR4pLA--JoxLq7grYVRJqnUGL2i9i392di9L4_lxF8mXleS1KC4UEwDTJL-TluC-TscxJIMhaAEh9G9n-smzRbszx2DHdJ3e_dITU9X1KIICyCsdAsBXKxlzrUR7MwPMnkCgjm9ydLse2yPvHVSKnEswuE1pD7CnxfL6Ir4MLvEqdeo2W1m66e-12RdAUIoAqB_N-l0K1-YqYJacAhmkRO0FatsTj-Wl1D8fRm43uPrPudlFZQKMY_YnF_ENJHJ-JuMCYme1MzRHpX0vupS7Z05uecpbKxAaU0D9o8Cxraa74E51llEd60dGzsBHD4VPQV8O2bFo.H4Nx-fR1jI0UGwn95uqh6g';
-let refreshToken = process.env.QB_REFRESH_TOKEN || 'RT1-76-H0-1791468215k2xxhdx8wq5jcuwo5cqq';
+// In-memory token store (persists while server is running).
+// No hardcoded fallback tokens — these must come from environment variables
+// (set once after the initial OAuth connect) or from the /connect flow at runtime.
+let accessToken = process.env.QB_ACCESS_TOKEN || '';
+let refreshToken = process.env.QB_REFRESH_TOKEN || '';
 let activeRealm = QB_REALM;
 let tokenRefreshedAt = 0; // ms timestamp of last successful token refresh
 

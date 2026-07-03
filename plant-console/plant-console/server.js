@@ -186,13 +186,70 @@ function readRequestBody(req) {
 }
 // ===== END SHARED DATA STORE =====
 
-// In-memory token store (persists while server is running).
-// No hardcoded fallback tokens — these must come from environment variables
-// (set once after the initial OAuth connect) or from the /connect flow at runtime.
+// ===== QUICKBOOKS TOKEN PERSISTENCE =====
+// Previously these tokens lived ONLY in memory, which meant every server
+// restart or redeploy silently threw away a working QuickBooks connection —
+// the next sync would fail with a confusing 400/403 until someone noticed
+// and manually reconnected via /connect. They're now saved to the same disk
+// as the shared app data (see DATA_DIR above), so a restart just picks up
+// where it left off. Env vars (QB_ACCESS_TOKEN/QB_REFRESH_TOKEN) still work
+// as a one-time bootstrap, but the token file — which is always kept current
+// after a successful connect or refresh — takes priority once it exists.
+const QB_TOKEN_FILE = path.join(DATA_DIR, 'qb-tokens.json');
+
+function loadQBTokens() {
+  try {
+    if (!fs.existsSync(QB_TOKEN_FILE)) return null;
+    const raw = fs.readFileSync(QB_TOKEN_FILE, 'utf8');
+    const saved = JSON.parse(raw || '{}');
+    if (saved && saved.accessToken) return saved;
+  } catch (e) {
+    console.error('Could not read saved QuickBooks tokens:', e.message);
+  }
+  return null;
+}
+
+function saveQBTokens() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(QB_TOKEN_FILE, JSON.stringify({
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+      activeRealm: activeRealm,
+      tokenRefreshedAt: tokenRefreshedAt
+    }, null, 2));
+  } catch (e) {
+    console.error('Could not save QuickBooks tokens to disk:', e.message);
+  }
+}
+
+function clearQBTokens() {
+  try {
+    if (fs.existsSync(QB_TOKEN_FILE)) fs.unlinkSync(QB_TOKEN_FILE);
+  } catch (e) {
+    console.error('Could not clear saved QuickBooks tokens:', e.message);
+  }
+}
+
+// In-memory token store, seeded from (in priority order) the persisted token
+// file, then environment variables, then blank.
 let accessToken = process.env.QB_ACCESS_TOKEN || '';
 let refreshToken = process.env.QB_REFRESH_TOKEN || '';
 let activeRealm = QB_REALM;
 let tokenRefreshedAt = 0; // ms timestamp of last successful token refresh
+
+(function bootstrapQBTokens() {
+  const saved = loadQBTokens();
+  if (saved) {
+    accessToken = saved.accessToken || accessToken;
+    refreshToken = saved.refreshToken || refreshToken;
+    activeRealm = saved.activeRealm || activeRealm;
+    tokenRefreshedAt = saved.tokenRefreshedAt || 0;
+    console.log('QuickBooks: restored saved tokens from disk (realm ' + activeRealm + ')');
+  } else if (accessToken) {
+    console.log('QuickBooks: using QB_ACCESS_TOKEN/QB_REFRESH_TOKEN from environment variables');
+  }
+})();
 
 function httpsRequest(options, body) {
   return new Promise((resolve, reject) => {
@@ -230,6 +287,8 @@ async function exchangeCodeForTokens(code) {
   if (data.access_token) {
     accessToken = data.access_token;
     refreshToken = data.refresh_token || refreshToken;
+    tokenRefreshedAt = Date.now();
+    saveQBTokens();
     console.log('OAuth: new tokens obtained via authorization code');
     return true;
   }
@@ -256,12 +315,14 @@ async function refreshAccessToken() {
     accessToken = data.access_token;
     if (data.refresh_token) refreshToken = data.refresh_token;
     tokenRefreshedAt = Date.now();
+    saveQBTokens();
     console.log('Token refreshed successfully');
     return true;
   }
   console.error('Token refresh failed:', res.body);
   return false;
 }
+
 
 // Proactively refresh if the token is older than ~45 min (tokens live 60 min).
 // Called before each page during long syncs so the token never expires mid-loop.
@@ -666,7 +727,7 @@ const server = http.createServer(async (req, res) => {
     if (code) {
       try {
         const ok = await exchangeCodeForTokens(code);
-        if (realmId) activeRealm = realmId;
+        if (realmId) { activeRealm = realmId; saveQBTokens(); }
         const msg = ok
           ? '<h2 style="color:#0f6e40">✓ Connected to QuickBooks successfully!</h2><p>You can close this window and return to Plant Console. Click <b>Sync from QuickBooks</b> to load your items.</p>'
           : '<h2 style="color:#c23b33">Connection failed</h2><p>Please try connecting again.</p>';
@@ -720,6 +781,8 @@ const server = http.createServer(async (req, res) => {
   if (url === '/disconnect') {
     if (!requireAuth(req, res)) return;
     accessToken = '';
+    refreshToken = '';
+    clearQBTokens();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true }));
     return;

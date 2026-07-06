@@ -1766,7 +1766,7 @@ function renderDashboard(){
 
   var html='<div class="eyebrow">'+s.kicker+'</div><h2>'+s.title+'</h2><p class="lede">'+s.lede+'</p>';
 
-  if(!totalItems){
+  if(!totalItems && !allTxns.length){
     html+='<div class="empty" style="margin-top:10px"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">'+ICON.dashboard+'</svg></div><div><h3>No data yet</h3><p>Connect QuickBooks and run <strong>Sync</strong> on the Items tab. Your dashboard will fill in automatically.</p></div></div>';
     view.innerHTML=html;
     return;

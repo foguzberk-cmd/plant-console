@@ -3118,6 +3118,7 @@ function openAddUserModal(){editingUserId=null;document.getElementById('userModa
 function openEditUserModal(id){const u=users.find(x=>x.id===id);if(!u)return;editingUserId=id;document.getElementById('userModalTitle').textContent='Edit user';document.getElementById('u-name').value=u.name;document.getElementById('u-email').value=u.email;document.getElementById('u-role').value=u.role;document.getElementById('u-pin').value='';buildPermGrid(u.perms||{},u.role==='admin');document.getElementById('userModal').classList.remove('hidden');document.getElementById('u-name').focus();}
 function closeUserModal(){document.getElementById('userModal').classList.add('hidden')}
 function saveUser(){
+ try{
   const name=document.getElementById('u-name').value.trim();const email=document.getElementById('u-email').value.trim();
   if(!name){document.getElementById('u-name').focus();return;}
   const role=document.getElementById('u-role').value;
@@ -3138,6 +3139,12 @@ function saveUser(){
   const data={id:editingUserId||('user_'+Date.now()),name,email,role,pin,perms};
   if(editingUserId){const i=users.findIndex(x=>x.id===editingUserId);users[i]=data;if(currentUser?.id===editingUserId)currentUser=data;}else users.push(data);
   saveUsers();closeUserModal();renderUserList();
+ }catch(err){
+  // Surface any unexpected failure instead of silently doing nothing, so
+  // it's actually diagnosable instead of just "the button doesn't work".
+  console.error('saveUser failed:', err);
+  alert('Could not save this user: '+(err&&err.message?err.message:err)+'\n\nPlease share this message so it can be fixed.');
+ }
 }
 
 /* ===== SCALE LOG ===== */

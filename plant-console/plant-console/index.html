@@ -1541,6 +1541,10 @@ function buildBalanceReport(){
   var openingValue=openingResult.value, openingBreakdown=openingResult.breakdown;
   var closingResult=valueAsOfDate(toD);
   var closingValue=closingResult.value, closingBreakdown=closingResult.breakdown;
+  // Ending value now counts toward Total subtractions (and therefore the
+  // headline Total), so the statement reconciles: Starting value + everything
+  // added − everything that left − Ending value nets to zero.
+  outflowTotal+=closingValue;
 
   // Per-item breakdown for each addition/subtraction row, keyed by type then itemId
   var inflowItems={receive:{},return:{},production:{}};
@@ -1736,13 +1740,10 @@ function buildBalanceReport(){
 
   // Outflows
   html+='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#c23b33;margin:14px 0 4px">Subtractions (−)</div>';
-  // Ending value — informational only, calculated the same way as Starting
-  // value (a fresh as-of-date replay of every item's history) but using the
-  // To date. It is NOT included in Total subtractions or any other math —
-  // it's shown purely as a reference point so you can see what's actually
-  // on hand at the close of the period, independent of the movement totals
-  // below. Listed first, mirroring how Starting value leads the Additions list.
-  html+=rowLine('rpt-ending', 'Ending value ('+toDisp+') — reference only, not included in totals below', closingValue, '#1a5f7a', closingBreakdown);
+  // Ending value — calculated the same way as Starting value (a fresh
+  // as-of-date replay of every item's history) but using the To date. It's
+  // now included in Total subtractions, so the statement fully reconciles.
+  html+=rowLine('rpt-ending', 'Ending value ('+toDisp+')', closingValue, '#1a5f7a', closingBreakdown);
   var outKeys=Object.keys(outflowGroups);
   if(!outKeys.length) html+='<div style="font-size:12px;color:var(--muted);padding:8px 0;border-bottom:1px solid var(--line)">No subtractions in this period.</div>';
   outKeys.forEach(function(k){

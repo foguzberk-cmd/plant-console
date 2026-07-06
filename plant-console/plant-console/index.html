@@ -1427,7 +1427,7 @@ function buildBalanceReport(){
   // (a transfer moves stock between locations that may belong to different
   // departments), then apply department scoping only when deciding which
   // locations' values actually count toward this report.
-  var fullTxns=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
+  var fullTxns=transactions;
 
   // Opening value = value of all OPENING COUNT lines dated on/before the From date.
   // Closing value = on-hand value as of the To date (opening + inflows − outflows up to To).
@@ -1753,9 +1753,9 @@ function printBalanceReport(){
 
 function renderDashboard(){
   const s=SECTIONS.find(x=>x.id==='dashboard');
-  var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
-  var allTxns=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
-  var allLogs=JSON.parse(localStorage.getItem('pc_scalelogs')||'[]');
+  var allItems=items;
+  var allTxns=transactions;
+  var allLogs=scaleLogs;
 
   // Metrics
   var totalItems=allItems.length;
@@ -1909,8 +1909,15 @@ function recalcQuantities(){
   // shipment -> subtracts from source (locOut)
   // transfer -> subtracts from locOut, adds to locIn (total unchanged)
   // adjustment-> adds (can be negative) at locIn, else locOut
-  var allTxns=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
-  var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
+  // IMPORTANT: read from the live in-memory arrays, not the localStorage
+  // cache. A large QuickBooks sync (tens of thousands of movements) can
+  // exceed the browser's ~5-10MB localStorage quota, which fails silently
+  // (see safeSetLocal) and leaves the cached copy empty/stale even though
+  // the real data is correctly sitting in memory (and on the server). Using
+  // `items`/`transactions` directly means recalculation always works off
+  // the actual data regardless of whether the local cache write succeeded.
+  var allTxns=transactions;
+  var allItems=items;
 
   // ONE-TIME MIGRATION: earlier versions of this engine recomputed
   // onRecordAtCount on every single recalc, so a bill could show a different
@@ -2089,7 +2096,7 @@ function qtyAtLoc(it,locId){
 
 // Diagnostic: shows how transfers stored their locations and what the engine produced
 function diagnoseLocations(){
-  var allTxns=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
+  var allTxns=transactions;
 
   // Count what TYPES of transactions actually exist in storage
   var typeCounts={};
@@ -2145,7 +2152,7 @@ function diagnoseLocations(){
 }
 
 function diagnoseLocationsOLD(){
-  var allTxns=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
+  var allTxns=transactions;
   var moves=allTxns.filter(function(t){return t.type==='transfer'||t.type==='receive'||t.type==='shipment';});
   function locName(id){ if(!id||id==='external') return '(external/none)'; var s=storages.find(function(x){return x.id===id;}); return s?s.name:('UNKNOWN ID: '+id); }
   var msg='STORAGE LOCATIONS DEFINED:\n';
@@ -2468,7 +2475,7 @@ function filterOCItems(idx){
   var _onrecEl=document.getElementById('oc-onrec-'+idx);
   if(_onrecEl) delete _onrecEl.dataset.snapshot;
   if(q.length<1){sugg.style.display='none';return;}
-  var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
+  var allItems=items;
   var matches=allItems.filter(function(it){
     return (it.name||'').toLowerCase().includes(q)||(it.sku||'').toLowerCase().includes(q);
   }).slice(0,12);
@@ -2678,7 +2685,7 @@ function renderSettings(){
 function renderLabelingPanel(){
   var panel=document.getElementById('labelingPanel');
   if(!panel) return;
-  var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
+  var allItems=items;
   if(!allItems.length){
     panel.innerHTML='<div class="txn-empty" style="margin:0"><p>No products yet. Run <strong>Sync from QuickBooks</strong> on the Items tab first, then come back to choose which products can be labeled.</p></div>';
     return;
@@ -2697,7 +2704,7 @@ function renderLabelingPanel(){
 function renderLabelingList(){
   var listEl=document.getElementById('labelingList');
   if(!listEl) return;
-  var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
+  var allItems=items;
   var q=(document.getElementById('lbl-filter')&&document.getElementById('lbl-filter').value||'').toLowerCase().trim();
   var shown=allItems.filter(function(it){ return !q || (it.name||'').toLowerCase().includes(q) || (it.sku||'').toLowerCase().includes(q); });
   // sort alphabetically by name
@@ -2719,12 +2726,12 @@ function toggleLabelAllowed(id,on){
   else if(!on && i>=0) labelAllowed.splice(i,1);
   saveLabelAllowed();
   var countEl=document.getElementById('lbl-count');
-  var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
+  var allItems=items;
   if(countEl) countEl.textContent=labelAllowed.length+' of '+allItems.length+' products allowed';
 }
 
 function labelSelectAll(on){
-  var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
+  var allItems=items;
   var q=(document.getElementById('lbl-filter')&&document.getElementById('lbl-filter').value||'').toLowerCase().trim();
   var shown=allItems.filter(function(it){ return !q || (it.name||'').toLowerCase().includes(q) || (it.sku||'').toLowerCase().includes(q); });
   shown.forEach(function(it){
@@ -3144,7 +3151,7 @@ function filterScaleItems(){
   document.getElementById('sl-item').value='';
   if(existing) existing.remove();
   if(q.length<1) return;
-  var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
+  var allItems=items;
   var sugg=document.createElement('div');
   sugg.id='sl-sugg';
   sugg.className='item-suggestions';
@@ -3182,7 +3189,7 @@ function filterScaleItems(){
 
 function selectScaleItem(el){
   var id=el.dataset.id;
-  var allItems=JSON.parse(localStorage.getItem('pc_items')||'[]');
+  var allItems=items;
   var it=allItems.find(function(x){return x.id===id;});
   document.getElementById('sl-item').value=id;
   document.getElementById('sl-search').value=it?it.name:'';

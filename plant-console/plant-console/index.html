@@ -599,6 +599,7 @@ const LEADER_LOGO='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAG+8AAAqhCAYAAAA
 function saveScaleLogs(){safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs));}
 function saveLabelAllowed(){safeSetLocal('pc_labelallowed',JSON.stringify(labelAllowed));}
 let users=JSON.parse(localStorage.getItem('pc_users')||'[]');
+let savedReports=JSON.parse(localStorage.getItem('pc_savedreports')||'[]'); // frozen report snapshots for later viewing/printing
 let currentUser=null;
 let editingStorageId=null,editingTxnId=null,editingUserId=null,editingDocId=null;
 let editingDocMeta=null; // preserves createTime/qb flags of a doc being edited
@@ -607,6 +608,7 @@ let deletingId=null,deletingKind=null;
 function saveStorages(){safeSetLocal('pc_storages',JSON.stringify(storages));pushToServer();}
 function saveTxns(){safeSetLocal('pc_transactions',JSON.stringify(transactions));pushToServer();}
 function saveUsers(){safeSetLocal('pc_users',JSON.stringify(users));pushToServer();}
+function saveSavedReports(){safeSetLocal('pc_savedreports',JSON.stringify(savedReports));pushToServer();}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 // Browsers cap localStorage at roughly 5-10MB per site. A large QuickBooks
 // transaction history can push the local mirror of the data past that limit
@@ -677,10 +679,12 @@ async function pullFromServer(){
     if(Array.isArray(data.transactions)&&data.transactions.length) transactions=data.transactions;
     if(Array.isArray(data.storages)&&data.storages.length) storages=data.storages;
     if(Array.isArray(data.users)&&data.users.length) users=data.users;
+    if(Array.isArray(data.savedReports)&&data.savedReports.length) savedReports=data.savedReports;
     safeSetLocal('pc_items',JSON.stringify(items));
     safeSetLocal('pc_transactions',JSON.stringify(transactions));
     safeSetLocal('pc_storages',JSON.stringify(storages));
     safeSetLocal('pc_users',JSON.stringify(users));
+    safeSetLocal('pc_savedreports',JSON.stringify(savedReports));
     // The dashboard/transactions view may have already rendered from stale
     // (or empty, on first load) local data before this pull finished — make
     // sure whichever of those is currently on screen reflects what we just
@@ -694,7 +698,8 @@ async function pullFromServer(){
       (Array.isArray(data.items)&&!data.items.length&&items.length) ||
       (Array.isArray(data.transactions)&&!data.transactions.length&&transactions.length) ||
       (Array.isArray(data.storages)&&!data.storages.length&&storages.length) ||
-      (Array.isArray(data.users)&&!data.users.length&&users.length);
+      (Array.isArray(data.users)&&!data.users.length&&users.length) ||
+      (Array.isArray(data.savedReports)&&!data.savedReports.length&&savedReports.length);
     if(serverIsMissingData){
       _lastPushedSnapshot=''; // force the next push through even if nothing local changed
       pushToServer();
@@ -709,7 +714,7 @@ async function pullFromServer(){
 async function pushToServer(){
   if(!currentUser) return;
   try{
-    var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users});
+    var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports});
     if(snapshot===_lastPushedSnapshot) return; // nothing changed since last push
     _lastPushedSnapshot=snapshot;
     var res=await fetch(SYNC_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:snapshot});
@@ -1391,9 +1396,85 @@ function renderReports(){
       +'<input type="date" id="rpt-to" value="'+today+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
       +'<button class="btn btn-primary" onclick="try{recalcQuantities();}catch(e){} buildBalanceReport()">Run report</button>'
       +'<button class="btn" onclick="printBalanceReport()">Print</button>'
+      +'<button class="btn" onclick="saveCurrentReport()" title="Keep a frozen snapshot of this report to view, print, or share later">Save</button>'
     +'</div>'
-    +'<div id="rpt-body"></div>';
+    +'<div id="rpt-body"></div>'
+    +'<div style="margin-top:28px">'
+      +'<div style="font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Saved reports</div>'
+      +'<div id="savedReportsList" style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden"></div>'
+    +'</div>';
   buildBalanceReport();
+  renderSavedReportsList();
+}
+
+// Freezes the currently rendered report (exact numbers, breakdowns, and
+// formatting as displayed) into a saved snapshot, so it can be viewed or
+// printed later without being affected by data that changes afterward.
+function saveCurrentReport(){
+  var el=document.getElementById('rpt-print');
+  if(!el){ alert('Run a report first, then click Save.'); return; }
+  var deptSelEl=document.getElementById('rpt-dept');
+  var fromEl=document.getElementById('rpt-from');
+  var toEl=document.getElementById('rpt-to');
+  var deptVal=deptSelEl?deptSelEl.value:'';
+  var fromD=fromEl?fromEl.value:'';
+  var toD=toEl?toEl.value:'';
+  var deptLabel=!deptVal?'All Departments':(deptVal==='__none__'?'No Department Assigned':deptVal);
+  var defaultName=deptLabel+' — '+(fromD||'?')+' to '+(toD||'?');
+  var name=prompt('Save this report as:', defaultName);
+  if(name===null) return; // cancelled
+  name=name.trim()||defaultName;
+  savedReports.unshift({
+    id:'rpt_'+Date.now()+'_'+Math.random().toString(36).slice(2),
+    name:name,
+    dept:deptLabel,
+    from:fromD,
+    to:toD,
+    savedAt:new Date().toISOString(),
+    savedBy:(currentUser&&currentUser.name)||'',
+    html:el.outerHTML
+  });
+  saveSavedReports();
+  renderSavedReportsList();
+}
+
+function renderSavedReportsList(){
+  var wrap=document.getElementById('savedReportsList');
+  if(!wrap) return;
+  if(!savedReports.length){
+    wrap.innerHTML='<div style="padding:14px 16px;font-size:12.5px;color:var(--muted)">No saved reports yet. Run a report above, then click <strong>Save</strong> to keep a snapshot here that you can reopen or print anytime — even after the underlying data changes.</div>';
+    return;
+  }
+  wrap.innerHTML=savedReports.map(function(r,i){
+    var savedDate=r.savedAt?new Date(r.savedAt).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}):'';
+    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px'+(i<savedReports.length-1?';border-bottom:1px solid var(--line)':'')+'">'
+      +'<div style="min-width:0"><div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.name)+'</div>'
+      +'<div style="font-size:11px;color:var(--muted);margin-top:2px">'+esc(r.dept||'')+' · '+esc(r.from||'?')+' – '+esc(r.to||'?')+' · saved '+esc(savedDate)+(r.savedBy?' by '+esc(r.savedBy):'')+'</div></div>'
+      +'<div style="display:flex;gap:6px;flex-shrink:0">'
+        +'<button class="btn btn-sm" onclick="viewSavedReport(\''+r.id+'\')">View / Print</button>'
+        +'<button class="btn btn-sm" onclick="deleteSavedReport(\''+r.id+'\')" style="color:#c23b33">Delete</button>'
+      +'</div></div>';
+  }).join('');
+}
+
+function viewSavedReport(id){
+  var r=savedReports.find(function(x){return x.id===id;});
+  if(!r) return;
+  var w=window.open('','_blank');
+  w.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+esc(r.name)+'</title>'
+    +'<style>body{font-family:Arial,sans-serif;padding:40px;color:#222}div{box-sizing:border-box}.pc-print-btn{margin-top:24px;text-align:center}.pc-print-btn button{padding:10px 22px;font-size:13px;cursor:pointer;border-radius:8px;border:1px solid #ccc;background:#1a5f7a;color:#fff}</style></head><body>'
+    +r.html
+    +'<div class="pc-print-btn"><button onclick="window.print()">Print</button></div>'
+    +'</body></html>');
+  w.document.close();
+  w.focus();
+}
+
+function deleteSavedReport(id){
+  if(!confirm('Delete this saved report? This cannot be undone.')) return;
+  savedReports=savedReports.filter(function(x){return x.id!==id;});
+  saveSavedReports();
+  renderSavedReportsList();
 }
 
 // Positive (inflow) types add stock; negative (outflow) types remove it.

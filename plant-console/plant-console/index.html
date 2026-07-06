@@ -1504,13 +1504,27 @@ function buildBalanceReport(){
     });
     return bal;
   }
-  var itemIdsInScope={};
-  fullTxns.forEach(function(t){ if(t.itemId) itemIdsInScope[t.itemId]=true; });
+  var itemIdsWithHistory={};
+  fullTxns.forEach(function(t){ if(t.itemId) itemIdsWithHistory[t.itemId]=true; });
   var openingBreakdown=[];
-  Object.keys(itemIdsInScope).forEach(function(id){
-    var locBal=locBalancesAsOfDate(id, fromD);
-    var fi=items.find(function(x){return x.id===id;});
-    var cost=fi?Number(fi.cost||fi.price||0):0;
+  // Starting value = whatever is currently held in stock, at cost — for every
+  // item, not just ones that happen to have a logged transaction. Most items
+  // come in straight from a QuickBooks sync and never get a manual opening
+  // count or any other transaction; those still count fully toward starting
+  // value, using their live on-hand quantity/location (there's nothing to
+  // "replay" for them since no movement has ever been logged in the app).
+  // Items that DO have transaction history get the more precise as-of-date
+  // replay so their starting value is accurate for the selected period.
+  items.forEach(function(fi){
+    var id=fi.id;
+    var locBal;
+    if(itemIdsWithHistory[id]){
+      locBal=locBalancesAsOfDate(id, fromD);
+    } else {
+      locBal={};
+      Object.keys(fi.locQtys||{}).forEach(function(k){ locBal[k]=Number(fi.locQtys[k]||0); });
+    }
+    var cost=Number(fi.cost||fi.price||0);
     Object.keys(locBal).forEach(function(locId){
       var qty=locBal[locId];
       if(!qty) return;
@@ -1518,7 +1532,7 @@ function buildBalanceReport(){
       var val=qty*cost;
       openingValue+=val;
       var locName=locId?((storages.find(function(s){return s.id===locId;})||{}).name||locId):'(no location)';
-      openingBreakdown.push({name:(fi?fi.name:id)+' — '+locName,qty:qty,value:val});
+      openingBreakdown.push({name:(fi.name||id)+' — '+locName,qty:qty,value:val});
     });
   });
   openingBreakdown.sort(function(a,b){return Math.abs(b.value)-Math.abs(a.value);});

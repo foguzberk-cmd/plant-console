@@ -1599,18 +1599,34 @@ function buildBalanceReport(){
       outflowItems[t.type][t.itemId].value+=v;
     }
   });
-  // Fold physical-count positive into inflows, negative into outflows
-  if(pcPos>0){ inflowGroups['adjustment_pos']=pcPos; inflowTotal+=pcPos; inflowItems['adjustment_pos']=pcPosItems; }
-  if(pcNeg>0){ outflowGroups['adjustment_neg']=pcNeg; outflowTotal+=pcNeg; outflowItems['adjustment_neg']=pcNegItems; }
-  // Fold transfers in/out — only present at all when a specific department is selected
-  if(trIn>0){ inflowGroups['transfer_in']=trIn; inflowTotal+=trIn; inflowItems['transfer_in']=trInItems; }
-  if(trOut>0){ outflowGroups['transfer_out']=trOut; outflowTotal+=trOut; outflowItems['transfer_out']=trOutItems; }
+  // Fold physical-count positive into inflows, negative into outflows.
+  // Always surface these categories — even at $0 — so the statement shows
+  // every possible bucket rather than silently omitting the ones with no
+  // activity this period (pcPos/pcNeg are never negative, so adding 0 here
+  // never changes the totals).
+  inflowGroups['adjustment_pos']=pcPos; inflowTotal+=pcPos; inflowItems['adjustment_pos']=pcPosItems;
+  outflowGroups['adjustment_neg']=pcNeg; outflowTotal+=pcNeg; outflowItems['adjustment_neg']=pcNegItems;
+  // Transfers only exist as a concept when a specific department is selected
+  // — in the plant-wide "All departments" view they always net to zero and
+  // are excluded entirely, same as before. Within a department view, show
+  // them even at $0 rather than only when nonzero.
+  if(deptSel){
+    inflowGroups['transfer_in']=trIn; inflowTotal+=trIn; inflowItems['transfer_in']=trInItems;
+    outflowGroups['transfer_out']=trOut; outflowTotal+=trOut; outflowItems['transfer_out']=trOutItems;
+  }
+  // Same idea for the "plain" categories — receive/return/production/shipment
+  // only get a key in inflowGroups/outflowGroups above if at least one
+  // matching transaction existed in the period. Backfill the rest at $0 so
+  // every category always appears in the breakdown.
+  ['receive','return','production'].forEach(function(k){ if(!(k in inflowGroups)) inflowGroups[k]=0; });
+  if(!('shipment' in outflowGroups)) outflowGroups['shipment']=0;
 
   // Starting value is treated as the first addition to the pool — it's stock
   // that was already there, contributing to the total the same way a
   // receiving does. Fold it in FIRST so it lists at the top of Additions.
+  // Always shown, even at $0, for the same reason as the categories above.
   var inflowGroupsOrdered={};
-  if(openingValue) inflowGroupsOrdered['starting']=openingValue;
+  inflowGroupsOrdered['starting']=openingValue;
   Object.keys(inflowGroups).forEach(function(k){ inflowGroupsOrdered[k]=inflowGroups[k]; });
   inflowGroups=inflowGroupsOrdered;
   inflowItems['starting']=openingBreakdown;

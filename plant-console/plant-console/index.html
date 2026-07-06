@@ -1458,7 +1458,6 @@ function buildBalanceReport(){
   var OUTFLOW={shipment:'Shipments / Sold / Invoiced'};
 
   // Accumulators
-  var openingValue=0;
   var inflowGroups={}, outflowGroups={};
   var inflowTotal=0, outflowTotal=0;
   // physical count split
@@ -1506,36 +1505,42 @@ function buildBalanceReport(){
   }
   var itemIdsWithHistory={};
   fullTxns.forEach(function(t){ if(t.itemId) itemIdsWithHistory[t.itemId]=true; });
-  var openingBreakdown=[];
-  // Starting value = whatever is currently held in stock, at cost — for every
-  // item, not just ones that happen to have a logged transaction. Most items
-  // come in straight from a QuickBooks sync and never get a manual opening
-  // count or any other transaction; those still count fully toward starting
-  // value, using their live on-hand quantity/location (there's nothing to
-  // "replay" for them since no movement has ever been logged in the app).
-  // Items that DO have transaction history get the more precise as-of-date
-  // replay so their starting value is accurate for the selected period.
-  items.forEach(function(fi){
-    var id=fi.id;
-    var locBal;
-    if(itemIdsWithHistory[id]){
-      locBal=locBalancesAsOfDate(id, fromD);
-    } else {
-      locBal={};
-      Object.keys(fi.locQtys||{}).forEach(function(k){ locBal[k]=Number(fi.locQtys[k]||0); });
-    }
-    var cost=Number(fi.cost||fi.price||0);
-    Object.keys(locBal).forEach(function(locId){
-      var qty=locBal[locId];
-      if(!qty) return;
-      if(!matchesDept(locDept(locId||undefined))) return;
-      var val=qty*cost;
-      openingValue+=val;
-      var locName=locId?((storages.find(function(s){return s.id===locId;})||{}).name||locId):'(no location)';
-      openingBreakdown.push({name:(fi.name||id)+' — '+locName,qty:qty,value:val});
+  // Computes total on-hand value (at cost) across every item as of a given
+  // date, plus a per-item/location breakdown. Shared by both "Starting
+  // value" (as of the From date) and "Ending value" (as of the To date) —
+  // same method, just a different cutoff date.
+  function valueAsOfDate(asOfDate){
+    var total=0, breakdown=[];
+    items.forEach(function(fi){
+      var id=fi.id;
+      var locBal;
+      if(itemIdsWithHistory[id]){
+        locBal=locBalancesAsOfDate(id, asOfDate);
+      } else {
+        // No transaction history for this item at all — there's nothing to
+        // replay, so just use its current live on-hand quantity/location
+        // (this is date-independent, since it's the only data point we have).
+        locBal={};
+        Object.keys(fi.locQtys||{}).forEach(function(k){ locBal[k]=Number(fi.locQtys[k]||0); });
+      }
+      var cost=Number(fi.cost||fi.price||0);
+      Object.keys(locBal).forEach(function(locId){
+        var qty=locBal[locId];
+        if(!qty) return;
+        if(!matchesDept(locDept(locId||undefined))) return;
+        var val=qty*cost;
+        total+=val;
+        var locName=locId?((storages.find(function(s){return s.id===locId;})||{}).name||locId):'(no location)';
+        breakdown.push({name:(fi.name||id)+' — '+locName,qty:qty,value:val});
+      });
     });
-  });
-  openingBreakdown.sort(function(a,b){return Math.abs(b.value)-Math.abs(a.value);});
+    breakdown.sort(function(a,b){return Math.abs(b.value)-Math.abs(a.value);});
+    return {value:total, breakdown:breakdown};
+  }
+  var openingResult=valueAsOfDate(fromD);
+  var openingValue=openingResult.value, openingBreakdown=openingResult.breakdown;
+  var closingResult=valueAsOfDate(toD);
+  var closingValue=closingResult.value, closingBreakdown=closingResult.breakdown;
 
   // Per-item breakdown for each addition/subtraction row, keyed by type then itemId
   var inflowItems={receive:{},return:{},production:{}};
@@ -1732,6 +1737,13 @@ function buildBalanceReport(){
     html+=rowLine('rpt-out-'+k, labelMap[k]||k, outflowGroups[k], '#c23b33', items_);
   });
   html+='<div style="display:flex;justify-content:space-between;padding:9px 0;font-weight:700;border-bottom:3px double var(--ink)"><span>Total subtractions</span><span style="font-family:var(--mono);color:#c23b33">'+money(outflowTotal)+'</span></div>';
+
+  // Ending value — informational only, calculated the same way as Starting
+  // value (a fresh as-of-date replay of every item's history) but using the
+  // To date. It is NOT included in Total subtractions or any other math —
+  // it's shown purely as a reference point so you can see what's actually
+  // on hand at the close of the period, independent of the movement totals above.
+  html+=rowLine('rpt-ending', 'Ending value ('+toDisp+') — reference only, not included in totals above', closingValue, '#1a5f7a', closingBreakdown);
 
   html+='<div style="font-size:10px;color:var(--muted);margin-top:14px;line-height:1.5">Starting value, receivings, returns, production, physical counts, and transfers are valued at <b>cost price</b>. Shipments / sold / invoiced are valued at the <b>invoice sale price</b>. Total = total additions (starting value + everything added, at cost) − total subtractions (everything that left, at sale value).'+(deptSel?' Transfers between departments show as an outflow for the sending department and an inflow for the receiving one; transfers within the same department are internal and not shown.':'')+'</div>';
   html+='</div>';

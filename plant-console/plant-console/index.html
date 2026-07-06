@@ -1632,7 +1632,7 @@ function buildBalanceReport(){
   // only get a key in inflowGroups/outflowGroups above if at least one
   // matching transaction existed in the period. Backfill the rest at $0 so
   // every category always appears in the breakdown.
-  ['receive','return','production'].forEach(function(k){ if(!(k in inflowGroups)) inflowGroups[k]=0; });
+  ['receive','return'].forEach(function(k){ if(!(k in inflowGroups)) inflowGroups[k]=0; });
   if(!('shipment' in outflowGroups)) outflowGroups['shipment']=0;
 
   // Starting value is treated as the first addition to the pool — it's stock

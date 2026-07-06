@@ -3123,7 +3123,18 @@ function saveUser(){
   const role=document.getElementById('u-role').value;
   const perms=PERMISSIONS.reduce((a,p)=>{a[p.id]=role==='admin'?true:(document.getElementById('perm-'+p.id)?.checked||false);return a},{});
   const existing=editingUserId?users.find(x=>x.id===editingUserId):null;
-  const pin=document.getElementById('u-pin').value||(existing?.pin||'');
+  const pinInput=document.getElementById('u-pin').value;
+  // A brand-new user MUST get a PIN set right now — leaving it blank here
+  // silently created an account with no working password, permanently
+  // locking that person out until someone noticed and fixed it later.
+  // Editing an EXISTING user can still leave it blank (that means "keep
+  // their current PIN unchanged"), so this only applies to creation.
+  if(!editingUserId && !pinInput.trim()){
+    alert('Please set a login PIN for this new user \u2014 without one, they will not be able to log in.');
+    document.getElementById('u-pin').focus();
+    return;
+  }
+  const pin=pinInput||(existing?.pin||'');
   const data={id:editingUserId||('user_'+Date.now()),name,email,role,pin,perms};
   if(editingUserId){const i=users.findIndex(x=>x.id===editingUserId);users[i]=data;if(currentUser?.id===editingUserId)currentUser=data;}else users.push(data);
   saveUsers();closeUserModal();renderUserList();

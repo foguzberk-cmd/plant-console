@@ -639,6 +639,19 @@ function safeSetLocal(key,value){
 var SYNC_URL='/api/data';
 var _lastPushedSnapshot='';
 var __syncBusy=false; // true while a QuickBooks sync is actively running
+// Re-draw whatever section is currently on screen, but only if it's one that
+// actually reads items/transactions/storages/users — no point re-rendering a
+// static section, and we don't want to yank focus away mid-edit on forms
+// that aren't data-driven.
+function rerenderCurrentSection(){
+  if(currentSectionId==='dashboard'){ try{ renderDashboard(); }catch(e){} }
+  else if(currentSectionId==='transactions'){
+    // Refresh just the table body, not the whole toolbar — a full re-render
+    // would wipe out whatever the user has typed into the search/filter
+    // fields (or reset an open date-range) every time a background sync ticks.
+    try{ renderTxnTable(); }catch(e){}
+  }
+}
 async function pullFromServer(){
   if(!currentUser) return false;
   // Never pull while a sync is in progress — the shared server copy is stale
@@ -668,6 +681,11 @@ async function pullFromServer(){
     safeSetLocal('pc_transactions',JSON.stringify(transactions));
     safeSetLocal('pc_storages',JSON.stringify(storages));
     safeSetLocal('pc_users',JSON.stringify(users));
+    // The dashboard/transactions view may have already rendered from stale
+    // (or empty, on first load) local data before this pull finished — make
+    // sure whichever of those is currently on screen reflects what we just
+    // brought in, instead of only updating in-memory/localStorage silently.
+    rerenderCurrentSection();
     // Self-heal: if the server came back empty for something we actually have
     // locally, its copy is stale/reset — push ours back up right away so it
     // (and every other browser) recovers, instead of waiting for an unrelated
@@ -1327,7 +1345,9 @@ function buildNav(){
   });
 }
 
+var currentSectionId=null;
 function select(id){
+  currentSectionId=id;
   const s=SECTIONS.find(x=>x.id===id);
   document.querySelectorAll('.nav-item').forEach(n=>{
     const on=n.dataset.id===id;
@@ -3258,6 +3278,10 @@ function txnValue(t){
 
 function renderTxnTable(){
   const wrap=document.getElementById('txnTableWrap');if(!wrap)return;
+  // Keep the "N records" badge honest even when only the table (not the
+  // whole toolbar) is being refreshed, e.g. from a background server pull.
+  var countEl=document.getElementById('txnCount');
+  if(countEl) countEl.innerHTML=transactions.length+' record'+(transactions.length!==1?'s':'')+' <span style="background:#0f6e40;color:#fff;padding:2px 8px;border-radius:6px;margin-left:8px;font-weight:700">v2 · search enabled</span>';
   if(!transactions.length){wrap.innerHTML=`<div class="txn-empty"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3l4 4-4 4"/><path d="M21 7H7"/><path d="M7 21l-4-4 4-4"/><path d="M3 17h14"/></svg><p>No transactions yet. Click <strong>Create transaction</strong> to log the first movement.</p></div>`;return;}
 
   // Read filters

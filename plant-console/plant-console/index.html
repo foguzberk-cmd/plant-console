@@ -653,6 +653,12 @@ function rerenderCurrentSection(){
     // fields (or reset an open date-range) every time a background sync ticks.
     try{ renderTxnTable(); }catch(e){}
   }
+  else if(currentSectionId==='scalelog'){
+    // Same idea: refresh just the printed-labels list, not the print form,
+    // so someone mid-entry on one device isn't interrupted while another
+    // device's label shows up.
+    try{ renderScaleLogTable(); }catch(e){}
+  }
 }
 async function pullFromServer(){
   if(!currentUser) return false;

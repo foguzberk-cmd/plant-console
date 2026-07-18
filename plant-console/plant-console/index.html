@@ -726,6 +726,29 @@ async function pullFromServer(){
 async function pushToServer(){
   if(!currentUser) return;
   try{
+    // Before sending OUR copy of users, quietly check whether the server
+    // already knows about someone we don't (e.g. added on another device
+    // moments ago, before this device pulled). Without this, an unrelated
+    // save here — editing an item, logging a scale weight, anything — would
+    // push our whole bundled snapshot including our stale `users` array and
+    // silently erase that other person, locking them out. This check is
+    // deliberately a small users-only request, not the full multi-MB sync,
+    // so it doesn't add meaningful load.
+    try{
+      var uRes=await fetch('/api/data/users',{cache:'no-store'});
+      if(uRes.ok){
+        var uData=await uRes.json();
+        if(Array.isArray(uData.users)&&uData.users.length){
+          var localIds=users.map(function(u){return u.id;});
+          var missing=uData.users.filter(function(su){return localIds.indexOf(su.id)<0;});
+          if(missing.length){
+            users=users.concat(missing);
+            safeSetLocal('pc_users',JSON.stringify(users));
+          }
+        }
+      }
+    }catch(e){ /* if this check fails, fall through and push local state as-is */ }
+
     var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,labelAllowed:labelAllowed});
     if(snapshot===_lastPushedSnapshot) return; // nothing changed since last push
     _lastPushedSnapshot=snapshot;

@@ -31,7 +31,7 @@ if (!QB_REALM || !CLIENT_ID || !CLIENT_SECRET) {
 // server instances running at once (last write wins).
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'plant-data.json');
-const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: [], savedReports: [], customers: [] };
+const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: [], savedReports: [], customers: [], customerAllowed: [] };
 
 // ===== PIN HASHING =====
 // PINs are hashed with scrypt before they ever touch disk. Any user record
@@ -412,6 +412,43 @@ async function fetchQBItems(retry) {
   return { QueryResponse: { Item: allItems, maxResults: allItems.length } };
 }
 
+async function fetchQBCustomersPage(startPosition, retry) {
+  const query = `SELECT * FROM Customer STARTPOSITION ${startPosition} MAXRESULTS 100`;
+  const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
+  const res = await httpsRequest({
+    hostname: 'quickbooks.api.intuit.com',
+    path: reqPath,
+    method: 'GET',
+    headers: {
+      'Authorization': 'Bearer ' + accessToken,
+      'Accept': 'application/json'
+    }
+  });
+  if (res.status === 401 && !retry) {
+    const ok = await refreshAccessToken();
+    if (ok) return fetchQBCustomersPage(startPosition, true);
+    throw new Error('NEEDS_RECONNECT');
+  }
+  if (res.status !== 200) throw new Error('QB API error ' + res.status + ': ' + res.body);
+  return JSON.parse(res.body);
+}
+
+async function fetchQBCustomers(retry) {
+  // Paginate through all customers using STARTPOSITION (QB is 1-indexed)
+  let allCustomers = [];
+  let start = 1;
+  const pageSize = 100;
+  while (true) {
+    const data = await fetchQBCustomersPage(start, retry);
+    const custs = (data.QueryResponse && data.QueryResponse.Customer) || [];
+    allCustomers = allCustomers.concat(custs);
+    if (custs.length < pageSize) break; // last page
+    start += pageSize;
+    if (start > 10000) break; // safety cap
+  }
+  return { QueryResponse: { Customer: allCustomers, maxResults: allCustomers.length } };
+}
+
 // Generic paginated query for any QB entity (Bill, Invoice, SalesReceipt, CreditMemo)
 // `since`: only records changed at/after this timestamp (incremental).
 // `from`:  only records with TxnDate on/after this date (inventory start floor).
@@ -606,13 +643,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   // Lightweight read of the SMALL shared collections only (users, scale logs,
-  // label-allowed list, saved reports, customers) — used by the browser to
-  // check for anything added/edited on OTHER devices right before it pushes
-  // its own data, so an unrelated save (e.g. editing an item) never
-  // overwrites one of these lists with a stale local copy that's missing an
-  // entry another device just added. Deliberately excludes
-  // items/transactions/storages, which can run into the multiple-MB range
-  // and shouldn't be re-fetched on every single push.
+  // label-allowed list, saved reports, customer-allowed list) — used by the
+  // browser to check for anything added/edited on OTHER devices right before
+  // it pushes its own data, so an unrelated save (e.g. editing an item)
+  // never overwrites one of these lists with a stale local copy that's
+  // missing an entry another device just added. Deliberately excludes
+  // items/transactions/storages/customers, which can run into the
+  // multiple-MB range and shouldn't be re-fetched on every single push.
   if (url === '/api/data/small' && req.method === 'GET') {
     if (!requireAuth(req, res)) return;
     const data = await readSharedData();
@@ -623,7 +660,7 @@ const server = http.createServer(async (req, res) => {
       scaleLogs: data.scaleLogs,
       labelAllowed: data.labelAllowed,
       savedReports: data.savedReports,
-      customers: data.customers
+      customerAllowed: data.customerAllowed
     }));
     return;
   }
@@ -753,6 +790,25 @@ const server = http.createServer(async (req, res) => {
     if (!requireAuth(req, res)) return;
     try {
       const data = await fetchQBItems(false);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      console.error('QB fetch error:', err.message);
+      const needsReconnect = err.message === 'NEEDS_RECONNECT';
+      res.writeHead(needsReconnect ? 401 : 500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error: needsReconnect ? 'QuickBooks connection expired. Please reconnect.' : err.message,
+        needsReconnect: needsReconnect
+      }));
+    }
+    return;
+  }
+
+  // QuickBooks customers proxy endpoint (feeds the Scale Log Customer allow-list)
+  if (url === '/api/qb/customers') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const data = await fetchQBCustomers(false);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(data));
     } catch (err) {

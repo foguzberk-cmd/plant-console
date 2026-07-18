@@ -723,29 +723,47 @@ async function pullFromServer(){
     return false;
   }
 }
+// Adds any entries present in `remote` but missing from `local` (matched by
+// `id`), without ever removing anything already in `local`. Returns the same
+// `local` reference untouched if nothing was missing, so callers can check
+// `newArr !== local` to know whether anything actually changed.
+function unionById(local, remote){
+  if(!Array.isArray(remote)||!remote.length) return local;
+  var localIds=local.map(function(x){return x&&x.id;});
+  var missing=remote.filter(function(r){return r&&localIds.indexOf(r.id)<0;});
+  return missing.length ? local.concat(missing) : local;
+}
+// Same idea, for plain-value arrays (labelAllowed is a list of item id
+// strings, not objects with an .id field).
+function unionSimple(local, remote){
+  if(!Array.isArray(remote)||!remote.length) return local;
+  var missing=remote.filter(function(x){return local.indexOf(x)<0;});
+  return missing.length ? local.concat(missing) : local;
+}
 async function pushToServer(){
   if(!currentUser) return;
   try{
-    // Before sending OUR copy of users, quietly check whether the server
-    // already knows about someone we don't (e.g. added on another device
-    // moments ago, before this device pulled). Without this, an unrelated
-    // save here — editing an item, logging a scale weight, anything — would
-    // push our whole bundled snapshot including our stale `users` array and
-    // silently erase that other person, locking them out. This check is
-    // deliberately a small users-only request, not the full multi-MB sync,
-    // so it doesn't add meaningful load.
+    // Before sending OUR copy of the small shared collections (users, scale
+    // logs, label-allowed list, saved reports), quietly check whether the
+    // server already knows about something we don't — e.g. a scale log
+    // printed on another device moments ago, before this device pulled.
+    // Without this, an unrelated save here — editing an item, adding a
+    // user, anything — would push our whole bundled snapshot including our
+    // stale copies of these lists and silently erase that other entry. This
+    // check deliberately only fetches these small collections, not the full
+    // (potentially multi-MB) items/transactions/storages data.
     try{
-      var uRes=await fetch('/api/data/users',{cache:'no-store'});
-      if(uRes.ok){
-        var uData=await uRes.json();
-        if(Array.isArray(uData.users)&&uData.users.length){
-          var localIds=users.map(function(u){return u.id;});
-          var missing=uData.users.filter(function(su){return localIds.indexOf(su.id)<0;});
-          if(missing.length){
-            users=users.concat(missing);
-            safeSetLocal('pc_users',JSON.stringify(users));
-          }
-        }
+      var smallRes=await fetch('/api/data/small',{cache:'no-store'});
+      if(smallRes.ok){
+        var smallData=await smallRes.json();
+        var newUsers=unionById(users, smallData.users);
+        if(newUsers!==users){ users=newUsers; safeSetLocal('pc_users',JSON.stringify(users)); }
+        var newScaleLogs=unionById(scaleLogs, smallData.scaleLogs);
+        if(newScaleLogs!==scaleLogs){ scaleLogs=newScaleLogs; safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs)); }
+        var newLabelAllowed=unionSimple(labelAllowed, smallData.labelAllowed);
+        if(newLabelAllowed!==labelAllowed){ labelAllowed=newLabelAllowed; safeSetLocal('pc_labelallowed',JSON.stringify(labelAllowed)); }
+        var newSavedReports=unionById(savedReports, smallData.savedReports);
+        if(newSavedReports!==savedReports){ savedReports=newSavedReports; safeSetLocal('pc_savedreports',JSON.stringify(savedReports)); }
       }
     }catch(e){ /* if this check fails, fall through and push local state as-is */ }
 

@@ -3287,8 +3287,6 @@ function renderScaleLog(){
   var filterDeptOpts='<option value="">All Departments</option>'
     +DEPARTMENTS.map(function(d){return '<option value="'+esc(d)+'"'+(_slDeptFilter===d?' selected':'')+'>'+esc(d)+'</option>';}).join('')
     +'<option value="__none__"'+(_slDeptFilter==='__none__'?' selected':'')+'>No department</option>';
-  var customerOpts='<option value="">— None —</option>'
-    +customers.slice().sort(function(a,b){return a.localeCompare(b);}).map(function(c){return '<option value="'+esc(c)+'">'+esc(c)+'</option>';}).join('');
   view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p>
     <!-- TOP: form + live label preview side by side -->
     <div style="display:grid;grid-template-columns:1fr 2.4in;gap:28px;align-items:start;margin-top:8px;padding-bottom:22px;border-bottom:1px solid var(--line)">
@@ -3309,7 +3307,10 @@ function renderScaleLog(){
         </div>
         <div class="form-group"><label>Lot / Batch (optional)</label><input type="text" id="sl-lot" placeholder="e.g. LOT-0627" oninput="updateLabelPreview()"/></div>
         <div class="form-group"><label>Customer (optional)</label>
-          <select id="sl-customer" onchange="updateLabelPreview()" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none">${customerOpts}</select>
+          <div class="item-search-wrap">
+            <input type="text" id="sl-customer-search" class="item-search-input" placeholder="Search customer..." autocomplete="off" oninput="filterScaleCustomers();updateLabelPreview()" onblur="hideCustomerSugg()"/>
+            <input type="hidden" id="sl-customer" value=""/>
+          </div>
           ${!customers.length?'<div style="font-size:11px;color:var(--muted);margin-top:5px">No customers yet — add some in <strong>Settings → Customers</strong>.</div>':''}
         </div>
         <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:6px" onclick="printScaleLabel()">
@@ -3517,6 +3518,47 @@ function selectScaleItem(el){
 
 function hideScaleSugg(){ setTimeout(function(){var s=document.getElementById('sl-sugg'); if(s) s.remove();},200); }
 
+function filterScaleCustomers(){
+  var inp=document.getElementById('sl-customer-search');
+  var existing=document.getElementById('sl-customer-sugg');
+  var q=inp.value.toLowerCase().trim();
+  document.getElementById('sl-customer').value='';
+  if(existing) existing.remove();
+  if(q.length<1) return;
+  var sugg=document.createElement('div');
+  sugg.id='sl-customer-sugg';
+  sugg.className='item-suggestions';
+  sugg.style.display='block';
+  var rect=inp.getBoundingClientRect();
+  sugg.style.position='fixed';
+  sugg.style.left=rect.left+'px';
+  sugg.style.top=(rect.bottom+4)+'px';
+  sugg.style.width=rect.width+'px';
+  if(!customers.length){
+    sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No customers yet. Add some in Settings → Customers.</div>';
+    document.body.appendChild(sugg);
+    return;
+  }
+  var matches=customers.filter(function(c){return c.toLowerCase().includes(q);}).sort(function(a,b){return a.localeCompare(b);}).slice(0,12);
+  if(!matches.length){
+    sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No match for "'+esc(q)+'"</div>';
+    document.body.appendChild(sugg);
+    return;
+  }
+  sugg.innerHTML=matches.map(function(c){
+    return '<div class="item-suggestion" data-name="'+esc(c)+'" onmousedown="selectScaleCustomer(this)">'+esc(c)+'</div>';
+  }).join('');
+  document.body.appendChild(sugg);
+}
+function selectScaleCustomer(el){
+  var name=el.dataset.name;
+  document.getElementById('sl-customer').value=name;
+  document.getElementById('sl-customer-search').value=name;
+  var s=document.getElementById('sl-customer-sugg'); if(s) s.remove();
+  updateLabelPreview();
+}
+function hideCustomerSugg(){ setTimeout(function(){var s=document.getElementById('sl-customer-sugg'); if(s) s.remove();},200); }
+
 function printScaleLabel(){
   var product=document.getElementById('sl-search').value.trim();
   var weight=document.getElementById('sl-weight').value;
@@ -3553,6 +3595,7 @@ function printScaleLabel(){
   document.getElementById('sl-weight').value='';
   document.getElementById('sl-lot').value='';
   document.getElementById('sl-customer').value='';
+  document.getElementById('sl-customer-search').value='';
   if(status)status.textContent='Printed & logged: '+product+' · '+Number(weight).toFixed(2)+' lbs';
   renderScaleLog();
 }

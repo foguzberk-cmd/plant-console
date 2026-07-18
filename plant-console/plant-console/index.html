@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plant Console</title><!-- BUILD-1604 -->
+<!-- Used for the Scale Log "Export to Excel" button. Loaded from a CDN since
+     this app has no build step — if the device is offline when the page
+     loads, the export button just won't work until it's back online. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --bg:#EFEDEA;--panel:#FFFFFF;--ink:#1C1517;--muted:#877E79;
@@ -3201,14 +3205,30 @@ function saveUser(){
 }
 
 /* ===== SCALE LOG ===== */
+// Department lives on the storage location an item is assigned to (same rule
+// used by Reports/Transactions) — so an item's department is whatever
+// department its assigned location belongs to.
+function itemDept(itemId){
+  var it=items.find(function(x){return x.id===itemId;});
+  if(!it||!it.locationId) return '';
+  var loc=storages.find(function(s){return s.id===it.locationId;});
+  return (loc&&loc.department)||'';
+}
+var _slDeptFilter=''; // '' = All Departments, '__none__' = no department assigned
 function renderScaleLog(){
   const s=SECTIONS.find(x=>x.id==='scalelog');
   var totalWeight=scaleLogs.reduce(function(sum,l){return sum+Number(l.weight||0);},0);
+  var deptOpts='<option value="">All Departments</option>'
+    +DEPARTMENTS.map(function(d){return '<option value="'+esc(d)+'"'+(_slDeptFilter===d?' selected':'')+'>'+esc(d)+'</option>';}).join('')
+    +'<option value="__none__"'+(_slDeptFilter==='__none__'?' selected':'')+'>No department</option>';
   view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p>
     <!-- TOP: form + live label preview side by side -->
     <div style="display:grid;grid-template-columns:1fr 2.4in;gap:28px;align-items:start;margin-top:8px;padding-bottom:22px;border-bottom:1px solid var(--line)">
       <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px">
         <div style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--cold);margin-bottom:14px">Print a label</div>
+        <div class="form-group"><label>Department</label>
+          <select id="sl-dept" onchange="onScaleDeptChange()" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none">${deptOpts}</select>
+        </div>
         <div class="form-group"><label>Product</label>
           <div class="item-search-wrap">
             <input type="text" id="sl-search" class="item-search-input" placeholder="Search product..." autocomplete="off" oninput="filterScaleItems();updateLabelPreview()" onblur="hideScaleSugg()"/>
@@ -3233,13 +3253,28 @@ function renderScaleLog(){
     </div>
     <!-- BOTTOM: the log -->
     <div style="margin-top:22px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap">
         <span style="font-family:var(--mono);font-size:11px;color:var(--muted)" id="sl-summary">${scaleLogs.length} label${scaleLogs.length!==1?'s':''} printed · ${totalWeight.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})} lbs total</span>
-        <input type="text" id="sl-filter" placeholder="Search log..." oninput="renderScaleLogTable()" style="padding:7px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;width:220px"/>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="text" id="sl-filter" placeholder="Search log..." oninput="renderScaleLogTable()" style="padding:7px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;width:220px"/>
+          <button class="btn btn-sm" onclick="exportScaleLogToExcel()" title="Export what's currently shown below to an Excel file">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+            Export to Excel
+          </button>
+        </div>
       </div>
       <div id="scaleLogTableWrap"></div>
     </div>`;
   document.getElementById('sl-date').value=new Date().toISOString().slice(0,10);
+  updateLabelPreview();
+  renderScaleLogTable();
+}
+function onScaleDeptChange(){
+  _slDeptFilter=document.getElementById('sl-dept').value;
+  // Changing department invalidates whatever product was selected from the
+  // old list, and refreshes the log table below to match.
+  document.getElementById('sl-search').value='';
+  document.getElementById('sl-item').value='';
   updateLabelPreview();
   renderScaleLogTable();
 }
@@ -3295,6 +3330,12 @@ function renderScaleLogTable(){
   var q=(document.getElementById('sl-filter')&&document.getElementById('sl-filter').value||'').toLowerCase().trim();
   var list=scaleLogs.slice().reverse();
   if(q) list=list.filter(function(l){return (l.product||'').toLowerCase().includes(q)||(l.lot||'').toLowerCase().includes(q);});
+  if(_slDeptFilter){
+    list=list.filter(function(l){
+      if(_slDeptFilter==='__none__') return !l.department;
+      return l.department===_slDeptFilter;
+    });
+  }
   if(!list.length){
     wrap.innerHTML='<div class="txn-empty"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18l-2 13a2 2 0 0 1-2 1.7H7a2 2 0 0 1-2-1.7L3 6z"/></svg><p>No labels printed yet. Fill the form and click <strong>Print label &amp; log</strong>.</p></div>';
     return;
@@ -3305,13 +3346,14 @@ function renderScaleLogTable(){
       +'<td class="txn-date" style="white-space:nowrap">'+ds+'</td>'
       +'<td style="font-family:var(--mono);font-size:12px">'+esc(l.time||'')+'</td>'
       +'<td><div style="font-weight:600;font-size:13px">'+esc(l.product||'')+'</div>'+(l.lot?'<div class="txn-desc">'+esc(l.lot)+'</div>':'')+'</td>'
+      +'<td style="font-size:12px;color:var(--muted)">'+esc(l.department||'—')+'</td>'
       +'<td style="font-family:var(--mono);font-size:13px;text-align:right;font-weight:700">'+Number(l.weight||0).toFixed(2)+' lbs</td>'
       +'<td style="text-align:right"><div class="txn-actions">'
       +'<button class="btn btn-sm" title="Reprint" onclick="reprintLabel(this.dataset.id)" data-id="'+l.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button>'
       +'<button class="btn btn-sm btn-danger" onclick="deleteScaleLog(this.dataset.id)" data-id="'+l.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>'
       +'</div></td></tr>';
   }).join('');
-  wrap.innerHTML='<table class="txn-table"><thead><tr><th>Date</th><th>Time</th><th>Product</th><th style="text-align:right">Weight</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
+  wrap.innerHTML='<table class="txn-table"><thead><tr><th>Date</th><th>Time</th><th>Product</th><th>Department</th><th style="text-align:right">Weight</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
 function filterScaleItems(){
@@ -3344,6 +3386,20 @@ function filterScaleItems(){
     sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No products are enabled for labeling. Set them in Settings → Labeling.</div>';
     document.body.appendChild(sugg);
     return;
+  }
+  // Further narrow to the selected department, if one is chosen — this is
+  // what actually separates printing per department, since it keeps a
+  // different department's products from ever showing up in the picker.
+  if(_slDeptFilter){
+    allowed=allowed.filter(function(it){
+      var d=itemDept(it.id);
+      return _slDeptFilter==='__none__' ? !d : d===_slDeptFilter;
+    });
+    if(!allowed.length){
+      sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No labelable products found for this department.</div>';
+      document.body.appendChild(sugg);
+      return;
+    }
   }
   var matches=allowed.filter(function(it){return (it.name||'').toLowerCase().includes(q)||(it.sku||'').toLowerCase().includes(q);}).slice(0,12);
   if(!matches.length){
@@ -3382,10 +3438,12 @@ function printScaleLabel(){
 
   var now=new Date();
   var time=now.toTimeString().slice(0,5);
+  var itemId=document.getElementById('sl-item').value;
   var entry={
     id:'sl_'+Date.now(),
     product:product,
-    itemId:document.getElementById('sl-item').value,
+    itemId:itemId,
+    department:itemDept(itemId),
     weight:Number(weight),
     date:date,
     time:time,
@@ -3412,6 +3470,45 @@ function deleteScaleLog(id){
   scaleLogs=scaleLogs.filter(function(l){return l.id!==id;});
   saveScaleLogs();
   renderScaleLog();
+}
+
+// Exports exactly what's currently shown in the log table below — i.e. the
+// same search text + department filter the person is already looking at —
+// rather than the entire history, so "export this department's labels" or
+// "export what I just searched for" both just work with one button.
+function exportScaleLogToExcel(){
+  if(typeof XLSX==='undefined'){
+    alert('Excel export library failed to load (this device may be offline). Please check your connection and try again.');
+    return;
+  }
+  var q=(document.getElementById('sl-filter')&&document.getElementById('sl-filter').value||'').toLowerCase().trim();
+  var list=scaleLogs.slice().reverse();
+  if(q) list=list.filter(function(l){return (l.product||'').toLowerCase().includes(q)||(l.lot||'').toLowerCase().includes(q);});
+  if(_slDeptFilter){
+    list=list.filter(function(l){
+      if(_slDeptFilter==='__none__') return !l.department;
+      return l.department===_slDeptFilter;
+    });
+  }
+  if(!list.length){ alert('Nothing to export — no rows match the current filters.'); return; }
+  var rows=list.map(function(l){
+    return {
+      'Date': l.date||'',
+      'Time': l.time||'',
+      'Product': l.product||'',
+      'Department': l.department||'',
+      'Lot/Batch': l.lot||'',
+      'Weight (lbs)': Number(l.weight||0)
+    };
+  });
+  var ws=XLSX.utils.json_to_sheet(rows);
+  ws['!cols']=[{wch:12},{wch:8},{wch:32},{wch:20},{wch:16},{wch:12}];
+  var wb=XLSX.utils.book_new();
+  var sheetName=_slDeptFilter && _slDeptFilter!=='__none__' ? _slDeptFilter.slice(0,31) : 'Scale Log';
+  XLSX.utils.book_append_sheet(wb,ws,sheetName);
+  var stamp=new Date().toISOString().slice(0,10);
+  var deptPart=_slDeptFilter ? '_'+(_slDeptFilter==='__none__'?'No-Department':_slDeptFilter.replace(/[^a-z0-9]+/gi,'-')) : '';
+  XLSX.writeFile(wb,'Scale-Log'+deptPart+'_'+stamp+'.xlsx');
 }
 
 function doPrintLabel(entry){

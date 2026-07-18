@@ -3502,26 +3502,37 @@ function exportScaleLogToExcel(){
   }
   var list=getFilteredScaleLogs();
   if(!list.length){ alert('Nothing to export — no rows match the current filters.'); return; }
-  var rows=list.map(function(l){
-    return {
-      'Date': l.date||'',
-      'Time': l.time||'',
-      'Product': l.product||'',
-      'Department': l.department||'',
-      'Logged By': l.loggedBy||'',
-      'Lot/Batch': l.lot||'',
-      'Weight (lbs)': Number(l.weight||0)
-    };
-  });
-  var ws=XLSX.utils.json_to_sheet(rows);
-  ws['!cols']=[{wch:12},{wch:8},{wch:32},{wch:20},{wch:18},{wch:16},{wch:12}];
-  var wb=XLSX.utils.book_new();
-  var sheetName=_slDeptFilter && _slDeptFilter!=='__none__' ? _slDeptFilter.slice(0,31) : 'Scale Log';
-  XLSX.utils.book_append_sheet(wb,ws,sheetName);
-  var stamp=new Date().toISOString().slice(0,10);
-  var deptPart=_slDeptFilter ? '_'+(_slDeptFilter==='__none__'?'No-Department':_slDeptFilter.replace(/[^a-z0-9]+/gi,'-')) : '';
-  var rangePart=(_slDateFrom||_slDateTo) ? '_'+(_slDateFrom||'start')+'_to_'+(_slDateTo||'now') : '';
-  XLSX.writeFile(wb,'Scale-Log'+deptPart+rangePart+'_'+stamp+'.xlsx');
+  try{
+    var rows=list.map(function(l){
+      return {
+        'Date': l.date||'',
+        'Time': l.time||'',
+        'Product': l.product||'',
+        'Department': l.department||'',
+        'Logged By': l.loggedBy||'',
+        'Lot/Batch': l.lot||'',
+        'Weight (lbs)': Number(l.weight||0)
+      };
+    });
+    var ws=XLSX.utils.json_to_sheet(rows);
+    ws['!cols']=[{wch:12},{wch:8},{wch:32},{wch:20},{wch:18},{wch:16},{wch:12}];
+    var wb=XLSX.utils.book_new();
+    // Excel sheet names can't contain : \ / ? * [ ] or exceed 31 characters —
+    // "Carcass Process/Retail" hit exactly this (the "/"), which silently
+    // broke the whole export. Strip anything Excel would reject.
+    var sheetName=(_slDeptFilter && _slDeptFilter!=='__none__' ? _slDeptFilter : 'Scale Log').replace(/[:\\/?*\[\]]/g,'-').slice(0,31);
+    if(!sheetName) sheetName='Scale Log';
+    XLSX.utils.book_append_sheet(wb,ws,sheetName);
+    var stamp=new Date().toISOString().slice(0,10);
+    var deptPart=_slDeptFilter ? '_'+(_slDeptFilter==='__none__'?'No-Department':_slDeptFilter.replace(/[^a-z0-9]+/gi,'-')) : '';
+    var rangePart=(_slDateFrom||_slDateTo) ? '_'+(_slDateFrom||'start')+'_to_'+(_slDateTo||'now') : '';
+    XLSX.writeFile(wb,'Scale-Log'+deptPart+rangePart+'_'+stamp+'.xlsx');
+  }catch(e){
+    // An uncaught error here would otherwise fail completely silently (no
+    // alert, nothing) since it's inside a click handler — surface it instead.
+    console.error('Excel export failed:', e);
+    alert('Export failed: '+(e&&e.message?e.message:e));
+  }
 }
 
 function doPrintLabel(entry){

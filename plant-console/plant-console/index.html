@@ -3205,15 +3205,6 @@ function saveUser(){
 }
 
 /* ===== SCALE LOG ===== */
-// Department lives on the storage location an item is assigned to (same rule
-// used by Reports/Transactions) — so an item's department is whatever
-// department its assigned location belongs to.
-function itemDept(itemId){
-  var it=items.find(function(x){return x.id===itemId;});
-  if(!it||!it.locationId) return '';
-  var loc=storages.find(function(s){return s.id===it.locationId;});
-  return (loc&&loc.department)||'';
-}
 // _slPrintDept: which department is selected on the PRINT form — mandatory,
 // no blank/"all" option, since every new label must belong to exactly one
 // department. Separate from _slDeptFilter below, which is for browsing/
@@ -3416,23 +3407,15 @@ function filterScaleItems(){
   }
   // Only products permitted to print labels (set in Settings → Labeling).
   // If no allow-list has been configured yet, fall back to all items.
+  // NOTE: this is intentionally NOT further restricted by which department is
+  // selected — every department can reach any labelable product. The chosen
+  // department is only recorded on the log entry (and used for
+  // filtering/exporting the log afterward), not used to gate what can be printed.
   var allowed=labelAllowed.length ? allItems.filter(function(it){return labelAllowed.indexOf(it.id)>=0;}) : allItems;
   if(labelAllowed.length && !allowed.length){
     sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No products are enabled for labeling. Set them in Settings → Labeling.</div>';
     document.body.appendChild(sugg);
     return;
-  }
-  // Further narrow to the selected print department — this is what
-  // actually separates printing per department, since it keeps a different
-  // department's products from ever showing up in the picker. The print
-  // department is mandatory, so this always applies once one is chosen.
-  if(_slPrintDept){
-    allowed=allowed.filter(function(it){return itemDept(it.id)===_slPrintDept;});
-    if(!allowed.length){
-      sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No labelable products found for this department.</div>';
-      document.body.appendChild(sugg);
-      return;
-    }
   }
   var matches=allowed.filter(function(it){return (it.name||'').toLowerCase().includes(q)||(it.sku||'').toLowerCase().includes(q);}).slice(0,12);
   if(!matches.length){

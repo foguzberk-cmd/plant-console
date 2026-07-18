@@ -64,12 +64,12 @@ function defaultAdmin() {
   };
 }
 
-function ensureDataFile() {
+async function ensureDataFile() {
   try {
-    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (!fs.existsSync(DATA_DIR)) await fs.promises.mkdir(DATA_DIR, { recursive: true });
     if (!fs.existsSync(DATA_FILE)) {
       const seeded = Object.assign({}, DATA_DEFAULT, { users: [defaultAdmin()] });
-      fs.writeFileSync(DATA_FILE, JSON.stringify(seeded, null, 2));
+      await fs.promises.writeFile(DATA_FILE, JSON.stringify(seeded, null, 2));
       console.log('No data file found — created one with a default admin (admin@facility.com / PIN 1234). Change this PIN immediately.');
     }
   } catch (e) {
@@ -77,15 +77,15 @@ function ensureDataFile() {
   }
 }
 
-function readSharedData() {
-  ensureDataFile();
+async function readSharedData() {
+  await ensureDataFile();
   try {
-    const raw = fs.readFileSync(DATA_FILE, 'utf8');
+    const raw = await fs.promises.readFile(DATA_FILE, 'utf8');
     const data = Object.assign({}, DATA_DEFAULT, JSON.parse(raw || '{}'));
     // Defensive: never let the app get into a state where no user can log in.
     if (!Array.isArray(data.users) || data.users.length === 0) {
       data.users = [defaultAdmin()];
-      writeSharedDataRaw(data);
+      await writeSharedDataRaw(data);
       console.log('Users list was empty — re-seeded default admin (admin@facility.com / PIN 1234).');
     }
     return data;
@@ -95,12 +95,12 @@ function readSharedData() {
   }
 }
 
-function writeSharedDataRaw(data) {
-  ensureDataFile();
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+async function writeSharedDataRaw(data) {
+  await ensureDataFile();
+  await fs.promises.writeFile(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
-function writeSharedData(data) {
+async function writeSharedData(data) {
   // Strip plaintext pins on every write and migrate them to pinHash, so a
   // plaintext PIN never sits on disk even transiently.
   if (Array.isArray(data.users)) {
@@ -113,7 +113,7 @@ function writeSharedData(data) {
       return u;
     });
   }
-  writeSharedDataRaw(data);
+  await writeSharedDataRaw(data);
 }
 
 // ===== SESSIONS =====
@@ -492,7 +492,7 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse(bodyStr || '{}');
       const email = String(body.email || '').trim().toLowerCase();
       const pin = String(body.pin || '').trim();
-      const data = readSharedData();
+      const data = await readSharedData();
       const user = data.users.find(u => String(u.email || '').trim().toLowerCase() === email);
       let ok = false;
       if (user) {
@@ -501,7 +501,7 @@ const server = http.createServer(async (req, res) => {
         } else if (typeof user.pin === 'string') {
           // Legacy plaintext record — verify directly, then migrate to a hash.
           ok = user.pin === pin;
-          if (ok) writeSharedData(data); // writeSharedData migrates pin -> pinHash
+          if (ok) await writeSharedData(data); // writeSharedData migrates pin -> pinHash
         }
       }
       if (!ok) {
@@ -536,7 +536,7 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ error: 'Not authenticated' }));
       return;
     }
-    const data = readSharedData();
+    const data = await readSharedData();
     const user = data.users.find(u => u.id === session.userId);
     if (!user) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -552,8 +552,7 @@ const server = http.createServer(async (req, res) => {
   // items/transactions/storages/users instead of each keeping its own local copy =====
   if (url === '/api/data' && req.method === 'GET') {
     if (!requireAuth(req, res)) return;
-    const data = readSharedData();
-    // Never send pin hashes to the browser.
+    const data = await readSharedData();
     const safe = Object.assign({}, data, {
       users: data.users.map(u => { const c = Object.assign({}, u); delete c.pin; delete c.pinHash; return c; })
     });
@@ -566,7 +565,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const bodyStr = await readRequestBody(req);
       const incoming = JSON.parse(bodyStr || '{}');
-      const current = readSharedData();
+      const current = await readSharedData();
       // If the incoming users array is missing pin/pinHash for a user (because
       // the browser never received it), keep that user's existing credentials
       // instead of wiping them.
@@ -582,7 +581,7 @@ const server = http.createServer(async (req, res) => {
       // Merge: only overwrite the keys actually sent, so saving e.g. just
       // "users" never wipes out items/transactions/storages.
       const merged = Object.assign({}, current, incoming);
-      writeSharedData(merged);
+      await writeSharedData(merged);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true }));
     } catch (e) {

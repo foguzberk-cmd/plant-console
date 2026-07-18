@@ -77,7 +77,25 @@ async function ensureDataFile() {
   }
 }
 
-async function readSharedData() {
+// ===== SERIALIZED ACCESS =====
+// Async (non-blocking) file I/O fixed the earlier problem of one huge
+// read/write freezing the whole server, but it opened a new one: multiple
+// requests can now overlap on the SAME file. E.g. request A reads the file,
+// request B reads + writes (adding a new user), then A finishes and writes
+// back its now-stale copy — silently erasing B's new user. This queue makes
+// every data-file operation wait its turn, so reads/writes are still
+// non-blocking for the rest of the server, but never interleave with each
+// other. All access to DATA_FILE must go through withDataLock().
+let _dataLock = Promise.resolve();
+function withDataLock(fn) {
+  const run = _dataLock.then(fn, fn);
+  _dataLock = run.then(() => {}, () => {}); // keep the chain alive even if fn throws
+  return run;
+}
+
+// Internal, lock-free implementations. Only call these from inside
+// withDataLock() — calling them directly risks the exact race described above.
+async function _readSharedDataUnlocked() {
   await ensureDataFile();
   try {
     const raw = await fs.promises.readFile(DATA_FILE, 'utf8');
@@ -85,7 +103,7 @@ async function readSharedData() {
     // Defensive: never let the app get into a state where no user can log in.
     if (!Array.isArray(data.users) || data.users.length === 0) {
       data.users = [defaultAdmin()];
-      await writeSharedDataRaw(data);
+      await _writeSharedDataRawUnlocked(data);
       console.log('Users list was empty — re-seeded default admin (admin@facility.com / PIN 1234).');
     }
     return data;
@@ -95,12 +113,12 @@ async function readSharedData() {
   }
 }
 
-async function writeSharedDataRaw(data) {
+async function _writeSharedDataRawUnlocked(data) {
   await ensureDataFile();
   await fs.promises.writeFile(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
-async function writeSharedData(data) {
+async function _writeSharedDataUnlocked(data) {
   // Strip plaintext pins on every write and migrate them to pinHash, so a
   // plaintext PIN never sits on disk even transiently.
   if (Array.isArray(data.users)) {
@@ -113,7 +131,31 @@ async function writeSharedData(data) {
       return u;
     });
   }
-  await writeSharedDataRaw(data);
+  await _writeSharedDataRawUnlocked(data);
+}
+
+// Public API — every caller elsewhere in this file goes through these.
+function readSharedData() {
+  return withDataLock(_readSharedDataUnlocked);
+}
+function writeSharedData(data) {
+  return withDataLock(() => _writeSharedDataUnlocked(data));
+}
+// Atomic "read, modify, write" as ONE queued step — use this whenever the
+// write depends on first reading the current data (e.g. merging incoming
+// sync data), so no other request's read/write can slip in between.
+// The mutator returns { data, skipWrite, ...anything else the caller needs }.
+// Set skipWrite:true when nothing actually changed (e.g. an ordinary login
+// with no legacy PIN to migrate) to avoid a pointless disk write on every call.
+function updateSharedData(mutator) {
+  return withDataLock(async () => {
+    const current = await _readSharedDataUnlocked();
+    const result = await mutator(current);
+    if (!result.skipWrite) {
+      await _writeSharedDataUnlocked(result.data !== undefined ? result.data : current);
+    }
+    return result;
+  });
 }
 
 // ===== SESSIONS =====
@@ -492,18 +534,21 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse(bodyStr || '{}');
       const email = String(body.email || '').trim().toLowerCase();
       const pin = String(body.pin || '').trim();
-      const data = await readSharedData();
-      const user = data.users.find(u => String(u.email || '').trim().toLowerCase() === email);
-      let ok = false;
-      if (user) {
-        if (user.pinHash) {
-          ok = verifyPin(pin, user.pinHash);
-        } else if (typeof user.pin === 'string') {
-          // Legacy plaintext record — verify directly, then migrate to a hash.
-          ok = user.pin === pin;
-          if (ok) await writeSharedData(data); // writeSharedData migrates pin -> pinHash
+      const { user, ok } = await updateSharedData(async (data) => {
+        const u = data.users.find(x => String(x.email || '').trim().toLowerCase() === email);
+        let matched = false;
+        let needsMigration = false;
+        if (u) {
+          if (u.pinHash) {
+            matched = verifyPin(pin, u.pinHash);
+          } else if (typeof u.pin === 'string') {
+            // Legacy plaintext record — verify directly, then migrate to a hash.
+            matched = u.pin === pin;
+            needsMigration = matched;
+          }
         }
-      }
+        return { data, user: u, ok: matched, skipWrite: !needsMigration };
+      });
       if (!ok) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Incorrect email or PIN.' }));
@@ -560,28 +605,43 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify(safe));
     return;
   }
+  // Lightweight, users-only read — used by the browser to check for users
+  // added/edited on OTHER devices right before it pushes its own data, so an
+  // unrelated save (e.g. editing an item) never overwrites the shared users
+  // list with a stale local copy that's missing someone another device just
+  // added. Deliberately small: never fetches the (potentially multi-MB)
+  // items/transactions data just for this check.
+  if (url === '/api/data/users' && req.method === 'GET') {
+    if (!requireAuth(req, res)) return;
+    const data = await readSharedData();
+    const users = data.users.map(u => { const c = Object.assign({}, u); delete c.pin; delete c.pinHash; return c; });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ users: users }));
+    return;
+  }
   if (url === '/api/data' && req.method === 'POST') {
     if (!requireAuth(req, res)) return;
     try {
       const bodyStr = await readRequestBody(req);
       const incoming = JSON.parse(bodyStr || '{}');
-      const current = await readSharedData();
-      // If the incoming users array is missing pin/pinHash for a user (because
-      // the browser never received it), keep that user's existing credentials
-      // instead of wiping them.
-      if (Array.isArray(incoming.users)) {
-        incoming.users = incoming.users.map(u => {
-          if (u && !u.pin && !u.pinHash) {
-            const existing = current.users.find(x => x.id === u.id);
-            if (existing) return Object.assign({}, u, { pinHash: existing.pinHash, pin: existing.pin });
-          }
-          return u;
-        });
-      }
-      // Merge: only overwrite the keys actually sent, so saving e.g. just
-      // "users" never wipes out items/transactions/storages.
-      const merged = Object.assign({}, current, incoming);
-      await writeSharedData(merged);
+      await updateSharedData(async (current) => {
+        // If the incoming users array is missing pin/pinHash for a user (because
+        // the browser never received it), keep that user's existing credentials
+        // instead of wiping them.
+        if (Array.isArray(incoming.users)) {
+          incoming.users = incoming.users.map(u => {
+            if (u && !u.pin && !u.pinHash) {
+              const existing = current.users.find(x => x.id === u.id);
+              if (existing) return Object.assign({}, u, { pinHash: existing.pinHash, pin: existing.pin });
+            }
+            return u;
+          });
+        }
+        // Merge: only overwrite the keys actually sent, so saving e.g. just
+        // "users" never wipes out items/transactions/storages.
+        const merged = Object.assign({}, current, incoming);
+        return { data: merged };
+      });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true }));
     } catch (e) {

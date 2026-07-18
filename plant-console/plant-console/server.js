@@ -31,7 +31,7 @@ if (!QB_REALM || !CLIENT_ID || !CLIENT_SECRET) {
 // server instances running at once (last write wins).
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'plant-data.json');
-const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: [], savedReports: [] };
+const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: [], savedReports: [], customers: [] };
 
 // ===== PIN HASHING =====
 // PINs are hashed with scrypt before they ever touch disk. Any user record
@@ -606,13 +606,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   // Lightweight read of the SMALL shared collections only (users, scale logs,
-  // label-allowed list, saved reports) — used by the browser to check for
-  // anything added/edited on OTHER devices right before it pushes its own
-  // data, so an unrelated save (e.g. editing an item) never overwrites one of
-  // these lists with a stale local copy that's missing an entry another
-  // device just added. Deliberately excludes items/transactions/storages,
-  // which can run into the multiple-MB range and shouldn't be re-fetched on
-  // every single push.
+  // label-allowed list, saved reports, customers) — used by the browser to
+  // check for anything added/edited on OTHER devices right before it pushes
+  // its own data, so an unrelated save (e.g. editing an item) never
+  // overwrites one of these lists with a stale local copy that's missing an
+  // entry another device just added. Deliberately excludes
+  // items/transactions/storages, which can run into the multiple-MB range
+  // and shouldn't be re-fetched on every single push.
   if (url === '/api/data/small' && req.method === 'GET') {
     if (!requireAuth(req, res)) return;
     const data = await readSharedData();
@@ -622,7 +622,8 @@ const server = http.createServer(async (req, res) => {
       users: users,
       scaleLogs: data.scaleLogs,
       labelAllowed: data.labelAllowed,
-      savedReports: data.savedReports
+      savedReports: data.savedReports,
+      customers: data.customers
     }));
     return;
   }

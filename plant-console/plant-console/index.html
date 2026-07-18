@@ -3239,6 +3239,7 @@ function renderScaleLog(){
           <div class="form-group"><label>Packaging date</label><input type="date" id="sl-date" oninput="updateLabelPreview()"/></div>
         </div>
         <div class="form-group"><label>Lot / Batch (optional)</label><input type="text" id="sl-lot" placeholder="e.g. LOT-0627" oninput="updateLabelPreview()"/></div>
+        <div class="form-group"><label>Customer (optional)</label><input type="text" id="sl-customer" placeholder="e.g. ABC Foods" oninput="updateLabelPreview()"/></div>
         <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:6px" onclick="printScaleLabel()">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
           Print label &amp; log
@@ -3300,7 +3301,7 @@ function clearScaleLogFilters(){
 function getFilteredScaleLogs(){
   var q=(document.getElementById('sl-filter')&&document.getElementById('sl-filter').value||'').toLowerCase().trim();
   var list=scaleLogs.slice().reverse();
-  if(q) list=list.filter(function(l){return (l.product||'').toLowerCase().includes(q)||(l.lot||'').toLowerCase().includes(q);});
+  if(q) list=list.filter(function(l){return (l.product||'').toLowerCase().includes(q)||(l.lot||'').toLowerCase().includes(q)||(l.customer||'').toLowerCase().includes(q);});
   if(_slDeptFilter){
     list=list.filter(function(l){
       if(_slDeptFilter==='__none__') return !l.department;
@@ -3372,6 +3373,7 @@ function renderScaleLogTable(){
       +'<td style="font-family:var(--mono);font-size:12px">'+esc(l.time||'')+'</td>'
       +'<td><div style="font-weight:600;font-size:13px">'+esc(l.product||'')+'</div>'+(l.lot?'<div class="txn-desc">'+esc(l.lot)+'</div>':'')+'</td>'
       +'<td style="font-size:12px;color:var(--muted)">'+esc(l.department||'—')+'</td>'
+      +'<td style="font-size:12px;color:var(--muted)">'+esc(l.customer||'—')+'</td>'
       +'<td style="font-size:12px;color:var(--muted)">'+esc(l.loggedBy||'—')+'</td>'
       +'<td style="font-family:var(--mono);font-size:13px;text-align:right;font-weight:700">'+Number(l.weight||0).toFixed(2)+' lbs</td>'
       +'<td style="text-align:right"><div class="txn-actions">'
@@ -3379,7 +3381,7 @@ function renderScaleLogTable(){
       +'<button class="btn btn-sm btn-danger" onclick="deleteScaleLog(this.dataset.id)" data-id="'+l.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>'
       +'</div></td></tr>';
   }).join('');
-  wrap.innerHTML='<table class="txn-table"><thead><tr><th>Date</th><th>Time</th><th>Product</th><th>Department</th><th>Logged By</th><th style="text-align:right">Weight</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
+  wrap.innerHTML='<table class="txn-table"><thead><tr><th>Date</th><th>Time</th><th>Product</th><th>Department</th><th>Customer</th><th>Logged By</th><th style="text-align:right">Weight</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
 function filterScaleItems(){
@@ -3448,6 +3450,7 @@ function printScaleLabel(){
   var weight=document.getElementById('sl-weight').value;
   var date=document.getElementById('sl-date').value;
   var lot=document.getElementById('sl-lot').value.trim();
+  var customer=document.getElementById('sl-customer').value.trim();
   var status=document.getElementById('sl-status');
   if(!_slPrintDept){ if(status)status.textContent='Select a department first.'; document.getElementById('sl-dept').focus(); return; }
   if(!product){ if(status)status.textContent='Pick a product first.'; document.getElementById('sl-search').focus(); return; }
@@ -3465,6 +3468,7 @@ function printScaleLabel(){
     date:date,
     time:time,
     lot:lot,
+    customer:customer,
     loggedBy:currentUser?(currentUser.name||currentUser.email||''):''
   };
   scaleLogs.push(entry);
@@ -3476,6 +3480,7 @@ function printScaleLabel(){
   // printing for the same department without having to re-pick it every time)
   document.getElementById('sl-weight').value='';
   document.getElementById('sl-lot').value='';
+  document.getElementById('sl-customer').value='';
   if(status)status.textContent='Printed & logged: '+product+' · '+Number(weight).toFixed(2)+' lbs';
   renderScaleLog();
 }
@@ -3509,13 +3514,14 @@ function exportScaleLogToExcel(){
         'Time': l.time||'',
         'Product': l.product||'',
         'Department': l.department||'',
+        'Customer': l.customer||'',
         'Logged By': l.loggedBy||'',
         'Lot/Batch': l.lot||'',
         'Weight (lbs)': Number(l.weight||0)
       };
     });
     var ws=XLSX.utils.json_to_sheet(rows);
-    ws['!cols']=[{wch:12},{wch:8},{wch:32},{wch:20},{wch:18},{wch:16},{wch:12}];
+    ws['!cols']=[{wch:12},{wch:8},{wch:32},{wch:20},{wch:20},{wch:18},{wch:16},{wch:12}];
     var wb=XLSX.utils.book_new();
     // Excel sheet names can't contain : \ / ? * [ ] or exceed 31 characters —
     // "Carcass Process/Retail" hit exactly this (the "/"), which silently

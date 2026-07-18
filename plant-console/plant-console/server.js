@@ -605,18 +605,25 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify(safe));
     return;
   }
-  // Lightweight, users-only read — used by the browser to check for users
-  // added/edited on OTHER devices right before it pushes its own data, so an
-  // unrelated save (e.g. editing an item) never overwrites the shared users
-  // list with a stale local copy that's missing someone another device just
-  // added. Deliberately small: never fetches the (potentially multi-MB)
-  // items/transactions data just for this check.
-  if (url === '/api/data/users' && req.method === 'GET') {
+  // Lightweight read of the SMALL shared collections only (users, scale logs,
+  // label-allowed list, saved reports) — used by the browser to check for
+  // anything added/edited on OTHER devices right before it pushes its own
+  // data, so an unrelated save (e.g. editing an item) never overwrites one of
+  // these lists with a stale local copy that's missing an entry another
+  // device just added. Deliberately excludes items/transactions/storages,
+  // which can run into the multiple-MB range and shouldn't be re-fetched on
+  // every single push.
+  if (url === '/api/data/small' && req.method === 'GET') {
     if (!requireAuth(req, res)) return;
     const data = await readSharedData();
     const users = data.users.map(u => { const c = Object.assign({}, u); delete c.pin; delete c.pinHash; return c; });
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ users: users }));
+    res.end(JSON.stringify({
+      users: users,
+      scaleLogs: data.scaleLogs,
+      labelAllowed: data.labelAllowed,
+      savedReports: data.savedReports
+    }));
     return;
   }
   if (url === '/api/data' && req.method === 'POST') {

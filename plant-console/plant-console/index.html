@@ -303,6 +303,12 @@
        to a column direction here -- without this, .view collapses to zero
        height and the whole page content below the nav goes blank, even
        though the data has actually rendered into it. */
+    /* #appShell (the actual flex row containing the sidebar + main content)
+       was still laid out left-to-right here -- .rail's width:100% just
+       squeezed .main to zero width off to the side instead of stacking
+       below it. This is the real fix; the body-level change alone wasn't
+       enough because appShell is the container that actually holds them. */
+    #appShell{flex-direction:column;height:100vh}
     body{flex-direction:column;height:100vh}
     .rail{width:100%;height:auto;position:static;flex:none}
     .main{min-height:0}

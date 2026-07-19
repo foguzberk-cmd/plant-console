@@ -3654,7 +3654,7 @@ function renderScaleLogTable(){
 
 function filterScaleItems(){
   var inp=document.getElementById('sl-search');
-  var wrap=inp.parentElement;
+  var wrap=inp.parentElement; // .item-search-wrap, already position:relative
   var existing=document.getElementById('sl-sugg');
   var q=inp.value.toLowerCase().trim();
   document.getElementById('sl-item').value='';
@@ -3664,15 +3664,21 @@ function filterScaleItems(){
   var sugg=document.createElement('div');
   sugg.id='sl-sugg';
   sugg.className='item-suggestions';
-  sugg.style.display='block';
-  var rect=inp.getBoundingClientRect();
-  sugg.style.position='fixed';
-  sugg.style.left=rect.left+'px';
-  sugg.style.top=(rect.bottom+4)+'px';
-  sugg.style.width=rect.width+'px';
+  // Anchored to the wrap (position:absolute) rather than computed via
+  // getBoundingClientRect() + position:fixed on <body>. The fixed/JS-coordinate
+  // version broke on iOS Safari: opening the on-screen keyboard resizes the
+  // visual viewport in a way that leaves fixed-positioned, JS-placed elements
+  // rendered outside the visible area, so the dropdown silently never showed.
+  // Anchoring in-flow to the wrap sidesteps that entirely.
+  sugg.style.position='absolute';
+  sugg.style.left='0';
+  sugg.style.right='0';
+  sugg.style.top='calc(100% + 4px)';
+  sugg.style.width='auto';
+  sugg.style.minWidth='0';
   if(!allItems.length){
     sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No items yet — run Sync from QuickBooks on the Items tab first.</div>';
-    document.body.appendChild(sugg);
+    wrap.appendChild(sugg);
     return;
   }
   // Only products permitted to print labels (set in Settings → Labeling).
@@ -3684,20 +3690,20 @@ function filterScaleItems(){
   var allowed=labelAllowed.length ? allItems.filter(function(it){return labelAllowed.indexOf(it.id)>=0;}) : allItems;
   if(labelAllowed.length && !allowed.length){
     sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No products are enabled for labeling. Set them in Settings → Labeling.</div>';
-    document.body.appendChild(sugg);
+    wrap.appendChild(sugg);
     return;
   }
   var matches=allowed.filter(function(it){return (it.name||'').toLowerCase().includes(q)||(it.sku||'').toLowerCase().includes(q);}).slice(0,12);
   if(!matches.length){
     sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No match for "'+esc(q)+'"</div>';
-    document.body.appendChild(sugg);
+    wrap.appendChild(sugg);
     return;
   }
   sugg.innerHTML=matches.map(function(it){
     return '<div class="item-suggestion" data-id="'+it.id+'" onmousedown="selectScaleItem(this)">'
       +(it.sku?'<span class="sku">'+esc(it.sku)+'</span>':'')+esc(it.name)+'</div>';
   }).join('');
-  document.body.appendChild(sugg);
+  wrap.appendChild(sugg);
 }
 
 function selectScaleItem(el){
@@ -3715,6 +3721,7 @@ function hideScaleSugg(){ setTimeout(function(){var s=document.getElementById('s
 
 function filterScaleCustomers(){
   var inp=document.getElementById('sl-customer-search');
+  var wrap=inp.parentElement; // .item-search-wrap, already position:relative
   var existing=document.getElementById('sl-customer-sugg');
   var q=inp.value.toLowerCase().trim();
   document.getElementById('sl-customer').value='';
@@ -3723,15 +3730,18 @@ function filterScaleCustomers(){
   var sugg=document.createElement('div');
   sugg.id='sl-customer-sugg';
   sugg.className='item-suggestions';
-  sugg.style.display='block';
-  var rect=inp.getBoundingClientRect();
-  sugg.style.position='fixed';
-  sugg.style.left=rect.left+'px';
-  sugg.style.top=(rect.bottom+4)+'px';
-  sugg.style.width=rect.width+'px';
+  // Same fix as filterScaleItems(): anchor to the wrap instead of computing
+  // fixed screen coordinates, which iOS Safari would misplace once the
+  // on-screen keyboard resizes the visible viewport.
+  sugg.style.position='absolute';
+  sugg.style.left='0';
+  sugg.style.right='0';
+  sugg.style.top='calc(100% + 4px)';
+  sugg.style.width='auto';
+  sugg.style.minWidth='0';
   if(!customers.length){
     sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No customers synced yet — run Sync from QuickBooks in Settings → Customers.</div>';
-    document.body.appendChild(sugg);
+    wrap.appendChild(sugg);
     return;
   }
   // Only customers permitted to appear (set in Settings → Customers). If no
@@ -3740,19 +3750,19 @@ function filterScaleCustomers(){
   var allowed=customerAllowed.length ? customers.filter(function(c){return customerAllowed.indexOf(c.id)>=0;}) : customers;
   if(customerAllowed.length && !allowed.length){
     sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No customers are enabled. Set them in Settings → Customers.</div>';
-    document.body.appendChild(sugg);
+    wrap.appendChild(sugg);
     return;
   }
   var matches=allowed.filter(function(c){return (c.name||'').toLowerCase().includes(q);}).sort(function(a,b){return (a.name||'').localeCompare(b.name||'');}).slice(0,12);
   if(!matches.length){
     sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No match for "'+esc(q)+'"</div>';
-    document.body.appendChild(sugg);
+    wrap.appendChild(sugg);
     return;
   }
   sugg.innerHTML=matches.map(function(c){
     return '<div class="item-suggestion" data-name="'+esc(c.name)+'" onmousedown="selectScaleCustomer(this)">'+esc(c.name)+'</div>';
   }).join('');
-  document.body.appendChild(sugg);
+  wrap.appendChild(sugg);
 }
 function selectScaleCustomer(el){
   var name=el.dataset.name;

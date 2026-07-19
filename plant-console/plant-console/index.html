@@ -297,13 +297,20 @@
 
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
   @media (max-width:780px){
-    body{flex-direction:column}
+    /* iOS Safari quirk: nested flex-grow children (.main -> .view) need a
+       DEFINITE parent height to correctly compute how much space to fill.
+       min-height:100vh (the base rule) isn't enough once the layout switches
+       to a column direction here -- without this, .view collapses to zero
+       height and the whole page content below the nav goes blank, even
+       though the data has actually rendered into it. */
+    body{flex-direction:column;height:100vh}
     .rail{width:100%;height:auto;position:static;flex:none}
+    .main{min-height:0}
     nav{flex:none;flex-direction:row;overflow-x:auto;padding:10px;gap:6px}
     .nav-kicker{display:none}
     .nav-item{flex:0 0 auto;width:auto;padding:9px 14px}
     .nav-item.active::before{top:auto;bottom:0;left:8px;right:8px;width:auto;height:3px;border-radius:3px 3px 0 0}
-    .view{padding:26px 20px}
+    .view{padding:26px 20px;min-height:0}
     .topbar{padding:0 20px}
     .view h2{font-size:24px}
     .form-row{grid-template-columns:1fr}

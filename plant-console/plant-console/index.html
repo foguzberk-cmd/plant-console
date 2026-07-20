@@ -622,6 +622,35 @@ let transactions=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
 // via the "Set department" action in its item menu; the Reports page then
 // scopes the same Inventory Movement Statement to just that department.
 var DEPARTMENTS=['Resale Box','Carcass Process/Retail','Gyro','Sujuk'];
+function storageDept(locId){
+  if(!locId) return '';
+  var loc=storages.find(function(s){return s.id===locId;});
+  return (loc&&loc.department)||'';
+}
+// Returns the distinct departments an item currently has ANY stock in (based
+// on its per-location quantities). Locations with zero quantity right now,
+// or with no department set, don't count. Used to flag items whose
+// department attribution during a QuickBooks sync is genuinely ambiguous —
+// see itemHasDeptConflict() below for why this matters.
+function itemSpanningDepts(it){
+  var lq=(it&&it.locQtys)||{};
+  var seen={};
+  Object.keys(lq).forEach(function(locId){
+    if(Number(lq[locId]||0)===0) return;
+    var d=storageDept(locId);
+    if(d) seen[d]=true;
+  });
+  return Object.keys(seen);
+}
+// True when an item's stock currently spans 2+ departments' locations at
+// once. QuickBooks sales/purchases don't tell this app which physical
+// location fulfilled them (no Location Tracking data to go on), so the sync
+// has to guess — deducting from whichever location happens to hold the most
+// stock. For an item like this, that guess can easily land in the wrong
+// department. See renderDeptConflictWarning() for where this gets surfaced.
+function itemHasDeptConflict(it){
+  return itemSpanningDepts(it).length>1;
+}
 let scaleLogs=JSON.parse(localStorage.getItem('pc_scalelogs')||'[]');
 let labelAllowed=JSON.parse(localStorage.getItem('pc_labelallowed')||'[]'); // array of item ids permitted to print labels
 let customers=JSON.parse(localStorage.getItem('pc_customers')||'[]'); // full customer list synced from QuickBooks (like items), each {id, qbId, name}
@@ -2047,6 +2076,7 @@ function renderDashboard(){
 
   // Low / negative stock alerts
   var alerts=allItems.filter(function(it){return Number(it.qty||0)<0;}).sort(function(a,b){return Number(a.qty)-Number(b.qty);}).slice(0,6);
+  var deptConflicts=allItems.filter(itemHasDeptConflict);
 
   function card(label,value,sub,color){
     return '<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px">'
@@ -2155,6 +2185,22 @@ function renderDashboard(){
         +'<span style="font-family:var(--mono);font-size:13px;color:#c23b33;font-weight:700">'+Number(it.qty).toFixed(2)+'</span></div>';
     });
     html+='</div><div style="font-size:11px;color:var(--muted);margin-top:8px">Negative quantities usually mean sales were synced before an opening count was set. Set opening counts or recalculate.</div></div>';
+  }
+
+  // Cross-department items — flagged because QuickBooks sales/purchases don't
+  // say which physical location they came from, so a sync has to guess by
+  // picking whichever location currently holds the most stock. For an item
+  // split across two departments, that guess can land in the wrong one.
+  if(deptConflicts.length){
+    html+='<div style="margin-top:22px"><div style="font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#9E7B00;margin-bottom:10px">⚠ '+deptConflicts.length+' item'+(deptConflicts.length!==1?'s':'')+' split across departments</div>';
+    html+='<div style="background:rgba(158,123,0,.06);border:1px solid rgba(158,123,0,.25);border-radius:14px;padding:6px 4px">';
+    deptConflicts.slice(0,6).forEach(function(it,i){
+      var depts=itemSpanningDepts(it);
+      html+='<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 16px'+(i<Math.min(deptConflicts.length,6)-1?';border-bottom:1px solid rgba(158,123,0,.12)':'')+'">'
+        +'<span style="font-size:13px;font-weight:600">'+esc(it.name)+'</span>'
+        +'<span style="font-family:var(--mono);font-size:11px;color:#9E7B00">'+esc(depts.join(' · '))+'</span></div>';
+    });
+    html+='</div><div style="font-size:11px;color:var(--muted);margin-top:8px">These items currently have stock in locations belonging to more than one department. QuickBooks doesn\'t report which location a sale came from, so syncs guess based on whichever location holds the most stock — worth double-checking these after each sync. See the Items page for the full list (marked "Split dept").</div></div>';
   }
 
   view.innerHTML=html;
@@ -2528,9 +2574,13 @@ function populateLocFilter(){
 
 function itemRow(it){
   var qtyColor=Number(it.qty||0)===0?'color:#c23b33':'color:var(--ink)';
+  var conflictDepts=itemSpanningDepts(it);
+  var conflictBadge=conflictDepts.length>1
+    ? '<span title="This item currently has stock in more than one department (\''+conflictDepts.join('\', \'')+'\'). QuickBooks sales don\'t say which location they came from, so syncs guess based on whichever location has the most stock — that guess can land in the wrong department. Double-check this item\'s transactions after each sync." style="display:inline-flex;align-items:center;gap:3px;margin-left:7px;padding:2px 7px;border-radius:5px;background:rgba(194,59,51,.12);color:#c23b33;font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;cursor:help;vertical-align:middle"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;stroke:#c23b33"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Split dept</span>'
+    : '';
   return '<tr>'
     +'<td style="font-family:var(--mono);font-size:12px;color:var(--cold)">'+esc(it.sku||'—')+'</td>'
-    +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
+    +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+conflictBadge+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
     +'<td style="font-family:var(--mono);font-size:13px;text-align:right;'+qtyColor+'">'+Number(it.qty||0).toFixed(2)+'</td>'
     +'<td style="font-family:var(--mono);font-size:13px;text-align:right">$'+Number(it.cost||it.price||0).toFixed(2)+'</td>'
     +'<td style="text-align:right;position:relative;width:40px">'
@@ -2629,9 +2679,13 @@ function itemsTableLoc(rows){
   var body=rows.map(function(r){
     var it=r.it;
     var qtyColor=Number(r.locQty||0)<0?'color:#c23b33':'color:var(--ink)';
+    var conflictDepts=itemSpanningDepts(it);
+    var conflictBadge=conflictDepts.length>1
+      ? '<span title="This item currently has stock in more than one department (\''+conflictDepts.join('\', \'')+'\'). QuickBooks sales don\'t say which location they came from, so syncs guess based on whichever location has the most stock — that guess can land in the wrong department. Double-check this item\'s transactions after each sync." style="display:inline-flex;align-items:center;gap:3px;margin-left:7px;padding:2px 7px;border-radius:5px;background:rgba(194,59,51,.12);color:#c23b33;font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;cursor:help;vertical-align:middle"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;stroke:#c23b33"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Split dept</span>'
+      : '';
     return '<tr>'
       +'<td style="font-family:var(--mono);font-size:12px;color:var(--cold)">'+esc(it.sku||'—')+'</td>'
-      +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
+      +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+conflictBadge+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
       +'<td style="font-family:var(--mono);font-size:13px;text-align:right;'+qtyColor+'">'+Number(r.locQty||0).toFixed(2)+'</td>'
       +'<td style="font-family:var(--mono);font-size:13px;text-align:right">$'+Number(it.cost||it.price||0).toFixed(2)+'</td>'
       +'<td style="text-align:right;position:relative;width:40px">'

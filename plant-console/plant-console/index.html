@@ -622,6 +622,19 @@ let transactions=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
 // via the "Set department" action in its item menu; the Reports page then
 // scopes the same Inventory Movement Statement to just that department.
 var DEPARTMENTS=['Resale Box','Carcass Process/Retail','Gyro','Sujuk'];
+// Per-department label paper sizes (width × height, in inches).
+// Carcass Process/Retail uses a 4×6 continuous roll loaded in the Brother
+// QL-1110NWB printer. All other departments print on the standard 2.4×3.9
+// die-cut label. Changing a department's entry here automatically updates
+// the on-screen preview dimensions AND the @page size sent to the printer —
+// no other code needs to change.
+var DEPT_LABEL_SIZES={
+  'Carcass Process/Retail':{w:4, h:6}
+};
+var DEFAULT_LABEL_SIZE={w:2.4, h:3.9};
+function getLabelSize(dept){
+  return (dept && DEPT_LABEL_SIZES[dept]) || DEFAULT_LABEL_SIZE;
+}
 function storageDept(locId){
   if(!locId) return '';
   var loc=storages.find(function(s){return s.id===locId;});
@@ -3178,7 +3191,7 @@ function renderLabelTemplatesPanel(){
         <div id="ltSaveStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>
       </div>
       <div>
-        <div style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Preview · 2.4″ × 3.9″</div>
+        <div id="ltPreviewTitle" style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Preview · 2.4″ × 3.9″</div>
         <div id="labelTemplatePreview" style="width:2.4in;min-height:3.9in;background:#fff;border:1px solid var(--line);box-shadow:0 4px 22px rgba(0,0,0,.12);border-radius:4px"></div>
       </div>
     </div>`;
@@ -3203,7 +3216,12 @@ function loadLabelTemplateForm(){
 // as the admin edits, without persisting anything until they click Save.
 function updateLabelTemplatePreview(){
   var prev=document.getElementById('labelTemplatePreview');
+  var titleEl=document.getElementById('ltPreviewTitle');
   if(!prev) return;
+  var size=getLabelSize(_ltPanelDept);
+  prev.style.width=size.w+'in';
+  prev.style.minHeight=size.h+'in';
+  if(titleEl) titleEl.textContent='Preview \u00b7 '+size.w+'\u2033 \u00d7 '+size.h+'\u2033';
   var fakeEntry={product:'Sample Product',weight:'10.00',date:new Date().toISOString().slice(0,10),lot:'LOT-0001',department:_ltPanelDept};
   var draft={
     companyName:document.getElementById('lt-company').value,
@@ -3589,7 +3607,7 @@ function renderScaleLog(){
         <div id="sl-status" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:10px;min-height:14px"></div>
       </div>
       <div>
-        <div style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Label preview · 2.4″ × 3.9″</div>
+        <div id="labelPreviewTitle" style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Label preview · 2.4″ × 3.9″</div>
         <div id="labelPreview" style="width:2.4in;min-height:3.9in;background:#fff;border:1px solid var(--line);box-shadow:0 4px 22px rgba(0,0,0,.12);border-radius:4px"></div>
       </div>
     </div>
@@ -3655,15 +3673,48 @@ function getFilteredScaleLogs(){
   return list;
 }
 
-// Build the label markup (shared by preview and print)
+// Build the label markup (shared by preview and print).
+// Automatically switches between the 4×6 layout (Brother QL-1110NWB, Carcass
+// Process/Retail) and the standard 2.4×3.9 layout based on the department.
 function buildLabelHTML(entry, forPrint){
   var dateStr=entry.date?new Date(entry.date+'T12:00:00').toLocaleDateString('en-US',{month:'numeric',day:'numeric',year:'2-digit'}):'—';
   var product=entry.product||'—';
   var weight=(entry.weight!==''&&entry.weight!=null)?Number(entry.weight).toFixed(2):'0.00';
-  var scale=forPrint?1:1; // preview uses same in-based sizing
   var tpl=getLabelTemplate(entry.department);
+  var size=getLabelSize(entry.department);
   var addressHTML=(tpl.addressText||'').split('\n').map(function(l){return esc(l);}).join('<br>');
   var safeHandlingHTML=(tpl.safeHandlingText||'').split('\n').filter(function(l){return l.trim();}).map(function(l){return '&bull; '+esc(l);}).join('<br>');
+
+  // ── 4 × 6 label (Brother QL-1110NWB) ──────────────────────────────────────
+  if(size.w>=4){
+    return ''
+      +'<div style="font-family:Arial,Helvetica,sans-serif;color:#000;padding:0.12in 0.15in;width:4in">'
+      +'<div style="display:flex;align-items:center;gap:10px;border-bottom:2px solid #000;padding-bottom:7px">'
+        +'<img src="'+LEADER_LOGO+'" style="width:0.9in;height:0.9in;object-fit:contain;flex-shrink:0"/>'
+        +'<div style="flex:1;text-align:center">'
+          +'<div style="font-weight:bold;font-size:15pt;line-height:1.05">'+esc(tpl.companyName)+'</div>'
+          +'<div style="font-size:10pt;line-height:1.2;margin-top:2px">'+addressHTML+'</div>'
+        +'</div>'
+      +'</div>'
+      +'<div style="text-align:center;margin:8px 0 4px">'
+        +'<div style="font-weight:bold;font-size:14pt">Packaging Date</div>'
+        +'<div style="font-weight:bold;font-size:20pt;margin-top:2px">'+esc(dateStr)+'</div>'
+      +'</div>'
+      +'<div style="text-align:center;font-weight:bold;font-size:20pt;margin:8px 0;line-height:1.2;word-wrap:break-word">'+esc(product)+'</div>'
+      +'<div style="display:flex;align-items:center;gap:12px;margin:8px 0">'
+        +'<div style="width:1.2in;height:1.2in;border:3px solid #000;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-size:7.5pt;font-weight:bold;line-height:1.2;flex-shrink:0;padding:5px">U.S.<br>INSPECTED<br>AND PASSED BY<br>DEPARTMENT OF<br>AGRICULTURE<br>'+esc(tpl.estNumber)+'</div>'
+        +'<div style="flex:1;text-align:center"><span style="font-weight:bold;font-size:36pt;line-height:1">'+weight+'</span> <span style="font-weight:bold;font-size:20pt">lbs.</span></div>'
+      +'</div>'
+      +'<div style="text-align:center;font-weight:bold;font-size:14pt;border-top:2px solid #000;border-bottom:2px solid #000;padding:5px 0;margin:6px 0">'+esc(tpl.keepText)+'</div>'
+      +(entry.lot?('<div style="text-align:center;font-size:10pt;margin-top:4px;font-family:monospace">LOT: '+esc(entry.lot)+'</div>'):'')
+      +(entry.customer?('<div style="text-align:center;font-size:10pt;margin-top:3px;font-family:monospace">CUSTOMER: '+esc(entry.customer)+'</div>'):'')
+      +'<div style="text-align:center;font-weight:bold;font-size:11pt;margin:5px 0 3px">SAFE HANDLING INSTRUCTIONS</div>'
+      +'<div style="font-size:8pt;line-height:1.4;text-align:left">This product was prepared from inspected and passed meat and/or poultry. Some food products may contain bacteria that could cause illness if mishandled or cooked improperly. For your protection, follow these safe handling instructions.<br>'
+        +safeHandlingHTML+'</div>'
+      +'</div>';
+  }
+
+  // ── Standard 2.4 × 3.9 label ──────────────────────────────────────────────
   return ''
     +'<div style="font-family:Arial,Helvetica,sans-serif;color:#000;padding:0.08in 0.1in;width:2.4in">'
     +'<div style="display:flex;align-items:center;gap:6px;border-bottom:1.5px solid #000;padding-bottom:4px">'
@@ -3690,7 +3741,13 @@ function buildLabelHTML(entry, forPrint){
 
 function updateLabelPreview(){
   var prev=document.getElementById('labelPreview');
+  var titleEl=document.getElementById('labelPreviewTitle');
   if(!prev) return;
+  // Resize preview box and update header text to match this department's label
+  var size=getLabelSize(_slPrintDept);
+  prev.style.width=size.w+'in';
+  prev.style.minHeight=size.h+'in';
+  if(titleEl) titleEl.textContent='Label preview \u00b7 '+size.w+'\u2033 \u00d7 '+size.h+'\u2033';
   var entry={
     product:document.getElementById('sl-search')?document.getElementById('sl-search').value.trim():'',
     weight:document.getElementById('sl-weight')?document.getElementById('sl-weight').value:'',
@@ -3996,10 +4053,12 @@ function doPrintLabel(entry){
   // as a backup in case afterprint doesn't fire in some browser (so the
   // window doesn't sit open forever), but it's long enough not to interrupt
   // an in-progress print.
+  var labelSize=getLabelSize(entry.department);
+  var labelW=labelSize.w+'in', labelH=labelSize.h+'in';
   var labelHTML='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Label — '+esc(entry.product)+'</title>'
-    +'<style>@page { size: 2.4in 3.9in; margin: 0; } '
+    +'<style>@page { size: '+labelW+' '+labelH+'; margin: 0; } '
     +'* { margin:0; padding:0; box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; } '
-    +'html,body { width:2.4in; }</style></head>'
+    +'html,body { width:'+labelW+'; }</style></head>'
     +'<body onload="'
       +'window.addEventListener(\'afterprint\',function(){window.close();});'
       +'window.print();'

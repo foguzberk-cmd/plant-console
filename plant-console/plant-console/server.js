@@ -31,6 +31,7 @@ if (!QB_REALM || !CLIENT_ID || !CLIENT_SECRET) {
 // server instances running at once (last write wins).
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'plant-data.json');
+const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: [], savedReports: [], customers: [], customerAllowed: [], labelTemplates: {} };
 
 // ===== PIN HASHING =====
@@ -139,7 +140,12 @@ function readSharedData() {
   return withDataLock(_readSharedDataUnlocked);
 }
 function writeSharedData(data) {
-  return withDataLock(() => _writeSharedDataUnlocked(data));
+  const p = withDataLock(() => _writeSharedDataUnlocked(data));
+  // Fire-and-forget, and only AFTER the lock above has fully released --
+  // maybeAutoBackup() needs the lock again itself (via readSharedData), so
+  // calling it before this promise resolves would deadlock against itself.
+  p.then(() => maybeAutoBackup()).catch(() => {});
+  return p;
 }
 // Atomic "read, modify, write" as ONE queued step — use this whenever the
 // write depends on first reading the current data (e.g. merging incoming
@@ -148,7 +154,7 @@ function writeSharedData(data) {
 // Set skipWrite:true when nothing actually changed (e.g. an ordinary login
 // with no legacy PIN to migrate) to avoid a pointless disk write on every call.
 function updateSharedData(mutator) {
-  return withDataLock(async () => {
+  const p = withDataLock(async () => {
     const current = await _readSharedDataUnlocked();
     const result = await mutator(current);
     if (!result.skipWrite) {
@@ -156,6 +162,83 @@ function updateSharedData(mutator) {
     }
     return result;
   });
+  p.then(result => { if (!result.skipWrite) maybeAutoBackup(); }).catch(() => {});
+  return p;
+}
+
+// ===== SERVER-SIDE BACKUPS =====
+// Separate from both the live data file AND from any browser's local backups
+// (which only ever lived in that one browser's storage). These sit on the
+// server's own persistent disk, so they exist independent of which device is
+// open, and survive even if a browser's storage is cleared or the live data
+// file itself gets overwritten/corrupted.
+const BACKUP_FILENAME_RE = /^backup-[0-9\-T]+Z-(auto|manual|pre-restore)\.json$/;
+const AUTO_BACKUP_INTERVAL_MS = 60 * 60 * 1000; // at most one automatic backup per hour
+const BACKUP_KEEP_MAX = 200; // rotating cap so the disk doesn't grow unbounded
+let _lastAutoBackupAt = 0;
+
+async function ensureBackupDir() {
+  if (!fs.existsSync(BACKUP_DIR)) await fs.promises.mkdir(BACKUP_DIR, { recursive: true });
+}
+
+function backupTimestamp() {
+  // e.g. 2026-07-19T16-12-45-123Z -- sortable by filename, filesystem-safe
+  return new Date().toISOString().replace(/[:.]/g, '-');
+}
+
+// Writes a full, UNSANITIZED snapshot (includes pinHash, unlike /api/data,
+// which strips it before sending to browsers) so a restore can put every
+// user's PIN back exactly as it was, not force everyone to reset it.
+async function takeServerBackup(kind) {
+  await ensureBackupDir();
+  const data = await readSharedData(); // goes through the same lock/read path as everything else
+  const filename = `backup-${backupTimestamp()}-${kind}.json`;
+  const payload = {
+    _backupType: 'plant-console-server-backup',
+    _version: 1,
+    takenAt: new Date().toISOString(),
+    kind: kind,
+    data: data
+  };
+  await fs.promises.writeFile(path.join(BACKUP_DIR, filename), JSON.stringify(payload, null, 2));
+  pruneOldBackups().catch(e => console.error('Could not prune old backups:', e.message));
+  return filename;
+}
+
+async function pruneOldBackups() {
+  await ensureBackupDir();
+  const files = (await fs.promises.readdir(BACKUP_DIR)).filter(f => BACKUP_FILENAME_RE.test(f));
+  if (files.length <= BACKUP_KEEP_MAX) return;
+  files.sort(); // filenames are chronologically sortable as-is
+  const toDelete = files.slice(0, files.length - BACKUP_KEEP_MAX);
+  for (const f of toDelete) {
+    try { await fs.promises.unlink(path.join(BACKUP_DIR, f)); } catch (e) { /* best-effort cleanup */ }
+  }
+}
+
+async function listBackups() {
+  await ensureBackupDir();
+  const files = (await fs.promises.readdir(BACKUP_DIR)).filter(f => BACKUP_FILENAME_RE.test(f));
+  const entries = [];
+  for (const f of files) {
+    try {
+      const stat = await fs.promises.stat(path.join(BACKUP_DIR, f));
+      const m = f.match(BACKUP_FILENAME_RE);
+      entries.push({ filename: f, kind: m[1], size: stat.size, takenAt: stat.mtime.toISOString() });
+    } catch (e) { /* skip anything unreadable rather than fail the whole list */ }
+  }
+  entries.sort((a, b) => b.filename.localeCompare(a.filename)); // newest first
+  return entries;
+}
+
+// Called after every successful write to the live data file. Throttled to
+// at most once an hour so routine syncing (every few seconds, from every
+// open device) doesn't flood the disk with near-identical snapshots.
+function maybeAutoBackup() {
+  const now = Date.now();
+  if (now - _lastAutoBackupAt < AUTO_BACKUP_INTERVAL_MS) return;
+  _lastAutoBackupAt = now;
+  takeServerBackup('auto').catch(e => console.error('Auto-backup failed:', e.message));
 }
 
 // ===== SESSIONS =====
@@ -210,6 +293,20 @@ function requireAuth(req, res) {
   if (!session) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not authenticated', needsLogin: true }));
+    return null;
+  }
+  return session;
+}
+// Same as requireAuth, but also requires the session's role to be 'admin'.
+// Used for backup/restore routes, since a backup file contains everything —
+// including every user's pinHash — and a restore can overwrite all shared
+// data in one shot.
+function requireAdmin(req, res) {
+  const session = requireAuth(req, res);
+  if (!session) return null; // requireAuth already sent the 401
+  if (session.role !== 'admin') {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Admin access required.' }));
     return null;
   }
   return session;
@@ -692,6 +789,102 @@ const server = http.createServer(async (req, res) => {
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // ===== Server-side backups (admin only — these expose everything,
+  // including hashed PINs, and a restore can overwrite all shared data) =====
+  if (url === '/api/backups' && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const list = await listBackups();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ backups: list }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  if (url === '/api/backups' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const filename = await takeServerBackup('manual');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, filename: filename }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  if (url === '/api/backups/restore-upload' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      const payload = JSON.parse(bodyStr || '{}');
+      if (!payload || payload._backupType !== 'plant-console-server-backup' || !payload.data) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'That file is not a valid Plant Console server backup.' }));
+        return;
+      }
+      await takeServerBackup('pre-restore');
+      await writeSharedData(payload.data);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  if (url.startsWith('/api/backups/') && url.endsWith('/restore') && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
+    const filename = decodeURIComponent(url.slice('/api/backups/'.length, -'/restore'.length));
+    if (!BACKUP_FILENAME_RE.test(filename)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid backup filename.' }));
+      return;
+    }
+    try {
+      const raw = await fs.promises.readFile(path.join(BACKUP_DIR, filename), 'utf8');
+      const payload = JSON.parse(raw);
+      if (!payload || payload._backupType !== 'plant-console-server-backup' || !payload.data) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'That file is not a valid server backup.' }));
+        return;
+      }
+      // Snapshot whatever's live RIGHT NOW before overwriting it, so a bad
+      // restore itself has an undo path.
+      await takeServerBackup('pre-restore');
+      await writeSharedData(payload.data);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  if (url.startsWith('/api/backups/') && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return;
+    const filename = decodeURIComponent(url.slice('/api/backups/'.length));
+    if (!BACKUP_FILENAME_RE.test(filename)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid backup filename.' }));
+      return;
+    }
+    try {
+      const raw = await fs.promises.readFile(path.join(BACKUP_DIR, filename), 'utf8');
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Content-Disposition': 'attachment; filename="' + filename + '"'
+      });
+      res.end(raw);
+    } catch (e) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Backup not found.' }));
     }
     return;
   }

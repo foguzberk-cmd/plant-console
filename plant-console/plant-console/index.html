@@ -3949,11 +3949,27 @@ function exportScaleLogToExcel(){
 function doPrintLabel(entry){
   var w=window.open('','_blank','width=400,height=640');
   if(!w){ alert('Please allow pop-ups for this site to print labels.'); return; }
+  // window.print() BLOCKS further script execution on desktop browsers until
+  // the print dialog is dismissed, so a short setTimeout-based auto-close
+  // used to work fine there. On Android Chrome (and mobile browsers
+  // generally), it's often non-blocking instead -- the timer fired
+  // immediately, closing the window mid-handoff before the print job ever
+  // actually went anywhere. Closing on the 'afterprint' event instead is the
+  // correct, reliable signal that the print interaction has actually
+  // finished, on both desktop and mobile. A generous fallback timer is kept
+  // as a backup in case afterprint doesn't fire in some browser (so the
+  // window doesn't sit open forever), but it's long enough not to interrupt
+  // an in-progress print — 10s from open (7 minutes if a fallback like a
+  // system Save-as-PDF picker were still open) rather than 300ms.
   var labelHTML='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Label — '+esc(entry.product)+'</title>'
     +'<style>@page { size: 2.4in 3.9in; margin: 0; } '
     +'* { margin:0; padding:0; box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; } '
     +'html,body { width:2.4in; }</style></head>'
-    +'<body onload="window.print(); setTimeout(function(){window.close();},300);">'
+    +'<body onload="'
+      +'window.addEventListener(\'afterprint\',function(){window.close();});'
+      +'window.print();'
+      +'setTimeout(function(){window.close();},420000);'
+    +'">'
     +buildLabelHTML(entry,true)
     +'</body></html>';
   w.document.write(labelHTML);

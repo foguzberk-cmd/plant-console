@@ -621,7 +621,7 @@ let transactions=JSON.parse(localStorage.getItem('pc_transactions')||'[]');
 // The five departments the plant reports on. Each item can be assigned to one
 // via the "Set department" action in its item menu; the Reports page then
 // scopes the same Inventory Movement Statement to just that department.
-var DEPARTMENTS=['Resale Box','Carcass Process/Retail','Gyro','Sujuk','Slaughter'];
+var DEPARTMENTS=['Resale Box','Carcass Process/Retail','Gyro','Sujuk'];
 let scaleLogs=JSON.parse(localStorage.getItem('pc_scalelogs')||'[]');
 let labelAllowed=JSON.parse(localStorage.getItem('pc_labelallowed')||'[]'); // array of item ids permitted to print labels
 let customers=JSON.parse(localStorage.getItem('pc_customers')||'[]'); // full customer list synced from QuickBooks (like items), each {id, qbId, name}
@@ -849,6 +849,32 @@ function forceLogout(){
 // re-login. If there's no valid session, the login screen (already visible
 // by default) stays up — pullFromServer()/pushToServer() simply no-op until
 // someone logs in.
+// ONE-TIME MIGRATION: Slaughter was merged into Carcass Process/Retail as a
+// department (removed from the DEPARTMENTS list entirely). This moves any
+// storages, scale log entries, and label template still tagged "Slaughter"
+// over to "Carcass Process/Retail" so old data doesn't just orphan itself
+// with a department name that no longer exists anywhere in the UI. Safe to
+// run repeatedly — it only touches anything if leftover "Slaughter"-tagged
+// data is still found, and quickly becomes a no-op everywhere once synced.
+function migrateSlaughterDeptMerge(){
+  var OLD_DEPT='Slaughter', NEW_DEPT='Carcass Process/Retail';
+  var changedStorages=false, changedLogs=false, changedTemplates=false;
+  storages.forEach(function(s){
+    if(s.department===OLD_DEPT){ s.department=NEW_DEPT; changedStorages=true; }
+  });
+  scaleLogs.forEach(function(l){
+    if(l.department===OLD_DEPT){ l.department=NEW_DEPT; changedLogs=true; }
+  });
+  if(labelTemplates[OLD_DEPT]){
+    if(!labelTemplates[NEW_DEPT]) labelTemplates[NEW_DEPT]=labelTemplates[OLD_DEPT]; // adopt it rather than lose a customization
+    delete labelTemplates[OLD_DEPT];
+    changedTemplates=true;
+  }
+  if(changedStorages) saveStorages();
+  if(changedLogs) saveScaleLogs();
+  if(changedTemplates) saveLabelTemplates();
+}
+
 async function restoreSession(){
   try{
     var res=await fetch('/api/session',{cache:'no-store'});
@@ -864,6 +890,7 @@ async function restoreSession(){
     buildNav();
     select('dashboard');
     await pullFromServer();
+    migrateSlaughterDeptMerge();
   }catch(e){
     // Server unreachable — stay on the login screen.
   }
@@ -1446,6 +1473,7 @@ async function attemptLogin(){
     // Now that we're authenticated, pull the shared items/transactions/
     // storages/users so the UI has real data to show.
     await pullFromServer();
+    migrateSlaughterDeptMerge();
   }catch(e){
     err.classList.add('show');
   }finally{

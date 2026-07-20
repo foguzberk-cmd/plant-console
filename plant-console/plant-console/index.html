@@ -3878,21 +3878,51 @@ function printScaleLabel(){
   scaleLogs.push(entry);
   saveScaleLogs();
 
-  doPrintLabel(entry);
+  // The entry above is already saved regardless of what happens next — a
+  // failed print (blocked popup, or anything else going wrong in the popup
+  // window) must never also hide the fact that it was logged. Previously,
+  // an uncaught error here would silently stop this whole function, so
+  // nothing after it — resetting the form, the status message, even
+  // re-rendering the table to show the new row — ever ran, making it look
+  // like NOTHING happened at all.
+  var printOk=true, printError='';
+  try{
+    doPrintLabel(entry);
+  }catch(e){
+    printOk=false;
+    printError=e&&e.message?e.message:String(e);
+    console.error('Print failed:', e);
+  }
 
   // reset for next package (department stays selected — same station keeps
   // printing for the same department without having to re-pick it every time)
+  // renderScaleLog() below rebuilds the whole form fresh, which already
+  // clears these fields — the explicit resets here are just belt-and-braces
+  // in case that call is ever removed or changed.
   document.getElementById('sl-weight').value='';
   document.getElementById('sl-lot').value='';
   document.getElementById('sl-customer').value='';
   document.getElementById('sl-customer-search').value='';
-  if(status)status.textContent='Printed & logged: '+product+' · '+Number(weight).toFixed(2)+' lbs';
   renderScaleLog();
+  // IMPORTANT: renderScaleLog() just rebuilt the entire form, including a
+  // brand-new #sl-status element — setting the message on the OLD `status`
+  // reference from the top of this function would get silently discarded
+  // the instant that render ran. Grab the fresh one instead.
+  var freshStatus=document.getElementById('sl-status');
+  if(freshStatus)freshStatus.textContent=printOk
+    ? ('Printed & logged: '+product+' · '+Number(weight).toFixed(2)+' lbs')
+    : ('Logged, but printing failed ('+printError+'). Check this browser\'s pop-up permissions for this site.');
 }
 
 function reprintLabel(id){
   var entry=scaleLogs.find(function(l){return l.id===id;});
-  if(entry) doPrintLabel(entry);
+  if(!entry) return;
+  try{
+    doPrintLabel(entry);
+  }catch(e){
+    console.error('Reprint failed:', e);
+    alert('Printing failed: '+(e&&e.message?e.message:e)+'\n\nCheck this browser\'s pop-up permissions for this site.');
+  }
 }
 
 function deleteScaleLog(id){
@@ -3948,7 +3978,13 @@ function exportScaleLogToExcel(){
 
 function doPrintLabel(entry){
   var w=window.open('','_blank','width=400,height=640');
-  if(!w){ alert('Please allow pop-ups for this site to print labels.'); return; }
+  if(!w){
+    // Popup blocked. Throwing (rather than alerting directly here) lets
+    // printScaleLabel()/reprintLabel() react correctly — e.g. printScaleLabel()
+    // still needs to show "logged, but printing failed" rather than wrongly
+    // reporting success just because nothing threw.
+    throw new Error('Pop-up blocked — allow pop-ups for this site to print labels.');
+  }
   // window.print() BLOCKS further script execution on desktop browsers until
   // the print dialog is dismissed, so a short setTimeout-based auto-close
   // used to work fine there. On Android Chrome (and mobile browsers
@@ -3959,8 +3995,7 @@ function doPrintLabel(entry){
   // finished, on both desktop and mobile. A generous fallback timer is kept
   // as a backup in case afterprint doesn't fire in some browser (so the
   // window doesn't sit open forever), but it's long enough not to interrupt
-  // an in-progress print — 10s from open (7 minutes if a fallback like a
-  // system Save-as-PDF picker were still open) rather than 300ms.
+  // an in-progress print.
   var labelHTML='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Label — '+esc(entry.product)+'</title>'
     +'<style>@page { size: 2.4in 3.9in; margin: 0; } '
     +'* { margin:0; padding:0; box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; } '
@@ -3972,8 +4007,13 @@ function doPrintLabel(entry){
     +'">'
     +buildLabelHTML(entry,true)
     +'</body></html>';
-  w.document.write(labelHTML);
-  w.document.close();
+  try{
+    w.document.write(labelHTML);
+    w.document.close();
+  }catch(e){
+    try{ w.close(); }catch(e2){}
+    throw new Error('Could not write the label into the print window: '+(e&&e.message?e.message:e));
+  }
 }
 
 /* ===== TRANSACTIONS ===== */

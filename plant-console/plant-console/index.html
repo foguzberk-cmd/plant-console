@@ -3576,8 +3576,8 @@ function renderScaleLog(){
     +'<option value="__none__"'+(_slDeptFilter==='__none__'?' selected':'')+'>No department</option>';
   view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p>
     <!-- TOP: form + live label preview side by side -->
-    <div style="display:grid;grid-template-columns:1fr 2.4in;gap:28px;align-items:start;margin-top:8px;padding-bottom:22px;border-bottom:1px solid var(--line)">
-      <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px">
+    <div style="display:grid;grid-template-columns:1fr auto;gap:28px;align-items:start;margin-top:8px;padding-bottom:22px;border-bottom:1px solid var(--line)">
+      <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;min-width:0">
         <div style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--cold);margin-bottom:14px">Print a label</div>
         <div class="form-group"><label>Department <span style="color:var(--brand-bright)">*</span></label>
           <select id="sl-dept" onchange="onScalePrintDeptChange()" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none">${printDeptOpts}</select>
@@ -3608,7 +3608,12 @@ function renderScaleLog(){
       </div>
       <div>
         <div id="labelPreviewTitle" style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Label preview · 2.4″ × 3.9″</div>
-        <div id="labelPreview" style="width:2.4in;min-height:3.9in;background:#fff;border:1px solid var(--line);box-shadow:0 4px 22px rgba(0,0,0,.12);border-radius:4px"></div>
+        <!-- Wrapper is sized by updateLabelPreview() to match the scaled preview.
+             The inner #labelPreview is the actual label size but CSS-scaled to
+             fit within 2.2in max, so the layout never overflows on any screen. -->
+        <div id="labelPreviewWrap" style="overflow:hidden;border-radius:4px;background:#fff;border:1px solid var(--line);box-shadow:0 4px 22px rgba(0,0,0,.12)">
+          <div id="labelPreview" style="transform-origin:top left"></div>
+        </div>
       </div>
     </div>
     <!-- BOTTOM: the log -->
@@ -3741,13 +3746,40 @@ function buildLabelHTML(entry, forPrint){
 
 function updateLabelPreview(){
   var prev=document.getElementById('labelPreview');
+  var wrap=document.getElementById('labelPreviewWrap');
   var titleEl=document.getElementById('labelPreviewTitle');
   if(!prev) return;
-  // Resize preview box and update header text to match this department's label
+
   var size=getLabelSize(_slPrintDept);
+
+  // Always display the preview at a max of 2.2in wide so it fits on any
+  // screen regardless of label size.  For a 4×6 label this means scaling
+  // down to 55 % — the layout never overflows, and the printed label still
+  // uses the correct 4×6 page size.  For the standard 2.4×3.9 label the
+  // scale is effectively 1:1.
+  var PREVIEW_MAX_PX=211; // ≈2.2in at 96 dpi — safe on all screen sizes
+  var actualW=size.w*96;  // label width in CSS px (96 dpi)
+  var actualH=size.h*96;  // label height in CSS px
+  var scale=Math.min(1, PREVIEW_MAX_PX/actualW);
+  var wrapW=Math.round(actualW*scale);
+  var wrapH=Math.round(actualH*scale);
+
+  // Size the clipping wrapper to the scaled dimensions so the grid column
+  // is the right width and height.
+  if(wrap){
+    wrap.style.width=wrapW+'px';
+    wrap.style.height=wrapH+'px';
+  }
+
+  // Scale the inner label to fit inside the wrapper.
   prev.style.width=size.w+'in';
   prev.style.minHeight=size.h+'in';
+  prev.style.transform='scale('+scale.toFixed(4)+')';
+  prev.style.transformOrigin='top left';
+  prev.style.background='#fff';
+
   if(titleEl) titleEl.textContent='Label preview \u00b7 '+size.w+'\u2033 \u00d7 '+size.h+'\u2033';
+
   var entry={
     product:document.getElementById('sl-search')?document.getElementById('sl-search').value.trim():'',
     weight:document.getElementById('sl-weight')?document.getElementById('sl-weight').value:'',
@@ -4034,31 +4066,14 @@ function exportScaleLogToExcel(){
 }
 
 function doPrintLabel(entry){
-  var w=window.open('','_blank','width=400,height=640');
-  if(!w){
-    // Popup blocked. Throwing (rather than alerting directly here) lets
-    // printScaleLabel()/reprintLabel() react correctly — e.g. printScaleLabel()
-    // still needs to show "logged, but printing failed" rather than wrongly
-    // reporting success just because nothing threw.
-    throw new Error('Pop-up blocked — allow pop-ups for this site to print labels.');
-  }
-  // window.print() BLOCKS further script execution on desktop browsers until
-  // the print dialog is dismissed, so a short setTimeout-based auto-close
-  // used to work fine there. On Android Chrome (and mobile browsers
-  // generally), it's often non-blocking instead -- the timer fired
-  // immediately, closing the window mid-handoff before the print job ever
-  // actually went anywhere. Closing on the 'afterprint' event instead is the
-  // correct, reliable signal that the print interaction has actually
-  // finished, on both desktop and mobile. A generous fallback timer is kept
-  // as a backup in case afterprint doesn't fire in some browser (so the
-  // window doesn't sit open forever), but it's long enough not to interrupt
-  // an in-progress print.
   var labelSize=getLabelSize(entry.department);
   var labelW=labelSize.w+'in', labelH=labelSize.h+'in';
+  var winW=Math.round(labelSize.w*96+80), winH=Math.round(labelSize.h*96+100);
+
   var labelHTML='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Label — '+esc(entry.product)+'</title>'
     +'<style>@page { size: '+labelW+' '+labelH+'; margin: 0; } '
     +'* { margin:0; padding:0; box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; } '
-    +'html,body { width:'+labelW+'; }</style></head>'
+    +'html,body { width:'+labelW+'; height:'+labelH+'; overflow:hidden; }</style></head>'
     +'<body onload="'
       +'window.addEventListener(\'afterprint\',function(){window.close();});'
       +'window.print();'
@@ -4066,12 +4081,37 @@ function doPrintLabel(entry){
     +'">'
     +buildLabelHTML(entry,true)
     +'</body></html>';
+
+  // Use a Blob URL instead of document.write() to load the label into the
+  // popup window.  The label HTML can be ~300 KB (base64 logo) — passing that
+  // through document.write() hangs Android Chrome every time.  A Blob URL
+  // hands the browser a reference it loads normally, with no freezing.
+  var blobUrl=null;
   try{
-    w.document.write(labelHTML);
-    w.document.close();
-  }catch(e){
-    try{ w.close(); }catch(e2){}
-    throw new Error('Could not write the label into the print window: '+(e&&e.message?e.message:e));
+    var blob=new Blob([labelHTML],{type:'text/html'});
+    blobUrl=URL.createObjectURL(blob);
+  }catch(e){ /* Blob API unavailable — fall back to document.write() */ }
+
+  var pw;
+  if(blobUrl){
+    pw=window.open(blobUrl,'_blank','width='+winW+',height='+winH);
+    if(!pw){
+      URL.revokeObjectURL(blobUrl);
+      throw new Error('Pop-up blocked — allow pop-ups for this site to print labels.');
+    }
+    // Clean up the blob URL after the print window has had time to finish.
+    setTimeout(function(){URL.revokeObjectURL(blobUrl);},420000);
+  }else{
+    // Fallback: document.write() for browsers without Blob API
+    pw=window.open('','_blank','width='+winW+',height='+winH);
+    if(!pw) throw new Error('Pop-up blocked — allow pop-ups for this site to print labels.');
+    try{
+      pw.document.write(labelHTML);
+      pw.document.close();
+    }catch(e){
+      try{pw.close();}catch(e2){}
+      throw new Error('Could not write the label into the print window: '+(e&&e.message?e.message:e));
+    }
   }
 }
 

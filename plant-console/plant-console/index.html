@@ -1733,7 +1733,10 @@ function buildBalanceReport(){
   }
 
   // Inflow types (positive) and outflow types (negative)
-  var INFLOW={receive:'Receivings / Purchases',return:'Returns',production:'Production'};
+  // Returns (credit memos) are netted directly against shipments rather than
+  // shown as a separate inflow row, so "Shipments / Sold / Invoiced" shows
+  // the NET sales figure (invoices − credit memos) matching QuickBooks exactly.
+  var INFLOW={receive:'Receivings / Purchases',production:'Production'};
   var OUTFLOW={shipment:'Shipments / Sold / Invoiced'};
 
   // Accumulators
@@ -1826,7 +1829,7 @@ function buildBalanceReport(){
   outflowTotal+=closingValue;
 
   // Per-item breakdown for each addition/subtraction row, keyed by type then itemId
-  var inflowItems={receive:{},return:{},production:{}};
+  var inflowItems={receive:{},production:{}};
   var outflowItems={shipment:{}};
   var pcPosItems={}, pcNegItems={};
   var trInItems={}, trOutItems={};
@@ -1892,6 +1895,17 @@ function buildBalanceReport(){
       if(!inflowItems[t.type][t.itemId]) inflowItems[t.type][t.itemId]={name:nm,qty:0,value:0};
       inflowItems[t.type][t.itemId].qty+=q;
       inflowItems[t.type][t.itemId].value+=v;
+    } else if(t.type==='return'){
+      // Credit memos net against shipments so the Shipments row shows the
+      // same NET sales figure QuickBooks reports (invoices − credit memos).
+      // Department matching uses locIn (where the goods are returning to),
+      // same as how returns were matched before this change.
+      if(!matchesDept(locDept(t.locIn))) return;
+      outflowGroups['shipment']=(outflowGroups['shipment']||0)-v;
+      outflowTotal-=v;
+      if(!outflowItems['shipment'][t.itemId]) outflowItems['shipment'][t.itemId]={name:nm,qty:0,value:0};
+      outflowItems['shipment'][t.itemId].qty-=q;
+      outflowItems['shipment'][t.itemId].value-=v;
     } else if(OUTFLOW[t.type]){
       if(!matchesDept(locDept(t.locOut))) return;
       outflowGroups[t.type]=(outflowGroups[t.type]||0)+v;
@@ -1920,7 +1934,7 @@ function buildBalanceReport(){
   // only get a key in inflowGroups/outflowGroups above if at least one
   // matching transaction existed in the period. Backfill the rest at $0 so
   // every category always appears in the breakdown.
-  ['receive','return'].forEach(function(k){ if(!(k in inflowGroups)) inflowGroups[k]=0; });
+  ['receive'].forEach(function(k){ if(!(k in inflowGroups)) inflowGroups[k]=0; });
   if(!('shipment' in outflowGroups)) outflowGroups['shipment']=0;
 
   // Starting value is treated as the first addition to the pool — it's stock
@@ -1973,7 +1987,7 @@ function buildBalanceReport(){
   var fromDisp=fromD?new Date(fromD+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—';
   var toDisp=toD?new Date(toD+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—';
 
-  var labelMap={starting:'Starting value ('+fromDisp+')',receive:'Receivings / Purchases',return:'Returns',production:'Production',shipment:'Shipments / Sold / Invoiced',adjustment_pos:'Physical Count — gains',adjustment_neg:'Physical Count — losses',transfer_in:'Transfers In (from other departments)',transfer_out:'Transfers Out (to other departments)'};
+  var labelMap={starting:'Starting value ('+fromDisp+')',receive:'Receivings / Purchases',production:'Production',shipment:'Shipments / Sold / Invoiced (net of returns)',adjustment_pos:'Physical Count — gains',adjustment_neg:'Physical Count — losses',transfer_in:'Transfers In (from other departments)',transfer_out:'Transfers Out (to other departments)'};
 
   var deptLabel=!deptSel?'All Departments':(deptSel==='__none__'?'No Department Assigned':deptSel);
 
@@ -2031,7 +2045,7 @@ function buildBalanceReport(){
   });
   html+='<div style="display:flex;justify-content:space-between;padding:9px 0;font-weight:700;border-bottom:3px double var(--ink)"><span>Total subtractions</span><span style="font-family:var(--mono);color:#c23b33">'+money(outflowTotal)+'</span></div>';
 
-  html+='<div style="font-size:10px;color:var(--muted);margin-top:14px;line-height:1.5">Starting value, receivings, returns, production, physical counts, and transfers are valued at <b>cost price</b>. Shipments / sold / invoiced are valued at the <b>invoice sale price</b>. Total = total additions (starting value + everything added, at cost) − total subtractions (everything that left, at sale value).'+(deptSel?' Transfers between departments show as an outflow for the sending department and an inflow for the receiving one; transfers within the same department are internal and not shown.':'')+'</div>';
+  html+='<div style="font-size:10px;color:var(--muted);margin-top:14px;line-height:1.5">Starting value, receivings, production, physical counts, and transfers are valued at <b>cost price</b>. Shipments are valued at the <b>invoice sale price, net of any credit memos / returns</b> — matching QuickBooks\'s net sales figure directly.'+(deptSel?' Transfers between departments show as an outflow for the sending department and an inflow for the receiving one; transfers within the same department are internal and not shown.':'')+'</div>';
   html+='</div>';
 
   body.innerHTML=html;

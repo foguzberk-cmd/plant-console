@@ -1417,6 +1417,11 @@ async function finishDocSync(data, onProgress){
         qty:qty,
         unit:'',
         unitPrice:unitPrice,
+        // QB's own computed line amount — may differ from qty×unitPrice when QB
+        // applies per-line discounts or rounding. Used by the Reports tab for the
+        // "Shipments / Sold / Invoiced" total so it matches QB exactly rather than
+        // re-deriving it.
+        lineAmount:Number(line.Amount||0),
         account:account,
         locOut: cfg.sign<0 ? (local.locationId||'') : '',
         locIn: cfg.sign>0 ? (local.locationId||'') : '',
@@ -1708,14 +1713,20 @@ function buildBalanceReport(){
     var q=Math.abs(Number(t.qty||0));
     var fi=items.find(function(x){return x.id===t.itemId;});
     if(t.type==='shipment'){
-      // sale price: prefer the price stored on the line (from the QuickBooks invoice)
+      // For QB-sourced shipments (invoices/sales receipts), use QB's own line
+      // Amount directly — this is what QB actually charged/recorded, and may
+      // differ from qty × unitPrice when QB applies per-line discounts or
+      // rounding. For manually-entered shipments, fall back to qty × price.
+      if(t.qbDoc && t.lineAmount){
+        return Number(t.lineAmount);
+      }
       var sale=(t.unitPrice!==undefined&&t.unitPrice!=='')?Number(t.unitPrice):0;
-      if(!sale && fi) sale=Number(fi.price||fi.cost||0); // fallback to item sale price, then cost
+      if(!sale && fi) sale=Number(fi.price||fi.cost||0);
       return q*sale;
     }
     // cost basis for opening, receive, return, production, physical count, transfer
     var cost=fi?Number(fi.cost||0):0;
-    if(!cost){ // fallback to line price if item has no cost on file
+    if(!cost){
       cost=(t.unitPrice!==undefined&&t.unitPrice!=='')?Number(t.unitPrice):0;
     }
     return q*cost;

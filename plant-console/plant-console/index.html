@@ -974,11 +974,11 @@ async function doSync(incremental){
   }
   window.__incrementalSync = incremental;
   var since = incremental ? lastSync : '';
-  // Date floor: never fetch documents dated before the EARLIEST opening count.
-  // Pre-opening documents are skipped anyway, so this avoids pulling years of
-  // irrelevant history into the browser (which is what caused the freeze).
-  var dateFloor = earliestOpeningDate();
-  // Capture the time we START, so the next incremental picks up anything since now
+  // No date floor — we fetch ALL QB documents regardless of opening count dates.
+  // Previously a floor was passed here to avoid pulling "irrelevant" pre-opening
+  // history, but that caused real sales to go missing from Plant Console totals
+  // (they were simply never fetched from the QB API). The balance engine already
+  // handles pre-opening transactions correctly without any floor.
   var syncStartedAt = new Date().toISOString();
 
   showSyncProgress(5, incremental?'Starting quick sync…':'Starting full sync…');
@@ -1016,7 +1016,7 @@ async function doSync(incremental){
     if(runningCount) label+=' ('+runningCount.toLocaleString()+')';
     label+='…';
     showSyncProgress(pct,label);
-  }, since, dateFloor);
+  }, since);
   if(!docsResult.ok){
     hideSyncProgress();
     if(docsResult.needsReconnect){
@@ -1241,10 +1241,9 @@ function earliestOpeningDate(){
   return earliest; // '' if no opening counts -> no floor (full history)
 }
 
-async function qbSyncDocumentsCore(onProgress, since, dateFloor){
+async function qbSyncDocumentsCore(onProgress, since){
   var base=window.location.origin;
   var sinceParam = since ? ('&since='+encodeURIComponent(since)) : '';
-  var floorParam = dateFloor ? ('&from='+encodeURIComponent(dateFloor)) : '';
   var types=['Bill','Invoice','SalesReceipt','CreditMemo'];
   var data={Bill:[],Invoice:[],SalesReceipt:[],CreditMemo:[],errors:{}};
 
@@ -1264,7 +1263,7 @@ async function qbSyncDocumentsCore(onProgress, since, dateFloor){
       var timer=setTimeout(function(){ctrl.abort();},60000); // 1 min per PAGE
       var pageRows=null;
       try{
-        var r=await fetch(base+'/api/qb/documents?entity='+t+'&startposition='+startPos+sinceParam+floorParam,{signal:ctrl.signal});
+        var r=await fetch(base+'/api/qb/documents?entity='+t+'&startposition='+startPos+sinceParam,{signal:ctrl.signal});
         clearTimeout(timer);
         if(r.status===401){ return {ok:false, error:'connection expired', needsReconnect:true}; }
         var jd=await r.json();

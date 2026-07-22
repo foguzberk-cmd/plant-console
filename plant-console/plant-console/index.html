@@ -1040,7 +1040,7 @@ async function doSync(incremental){
     var dc=docsResult.docCounts||{};
     var breakdown=' — QB docs: '+(dc.Bill||0)+' bills, '+(dc.Invoice||0)+' invoices, '+(dc.SalesReceipt||0)+' sales receipts, '+(dc.CreditMemo||0)+' credit memos';
     var mode=incremental?'Quick sync':'Full sync';
-    status.textContent=mode+' complete — '+itemsResult.count+' items, '+docsResult.added+' movement'+(docsResult.added!==1?'s':'')+(incremental?' updated':' applied')+(docsResult.skippedBeforeOpening?(' ('+docsResult.skippedBeforeOpening+' skipped before opening count)'):'')+breakdown;
+    status.textContent=mode+' complete — '+itemsResult.count+' items, '+docsResult.added+' movement'+(docsResult.added!==1?'s':'')+(incremental?' updated':' applied')+breakdown;
   }
   renderItemsTable();
   setTimeout(hideSyncProgress,1500);
@@ -1227,7 +1227,7 @@ function connectQuickBooks(){
   window.location.href='/connect';
 }
 
-// Core document sync — returns {ok, added, skippedBeforeOpening, error, needsReconnect}
+// Core document sync — returns {ok, added, skippedNoItem, docCounts, docErrors, error, needsReconnect}
 // If `since` (ISO timestamp) is passed, only changed docs are fetched (incremental).
 // Earliest opening-count date across all items. Used as a floor so the sync
 // never pulls documents older than your inventory start point.
@@ -1301,21 +1301,6 @@ async function finishDocSync(data, onProgress){
   var byQbId={};
   items.forEach(function(it){ if(it.qbId) byQbId[it.qbId]=it; });
 
-  // Per-item start point. A product's tracking begins at its opening count, so
-  // any document dated before that product's opening count must NOT appear in
-  // its history. We use the LATEST opening count per item (a re-count resets the
-  // baseline) and compare by whichever is earlier — business date or creation time.
-  var openInfoByItem={}; // itemId -> { date, sortTime }
-  transactions.forEach(function(t){
-    if(t.type==='opening'&&t.itemId&&t.date){
-      var st=txnSortTime(t);
-      var existing=openInfoByItem[t.itemId];
-      if(!existing||t.date>existing.date){
-        openInfoByItem[t.itemId]={date:t.date, sortTime:st};
-      }
-    }
-  });
-
   // Map each QB doc type to a transaction type and direction
   // Bill = purchase IN (receive). Invoice & SalesReceipt = sold OUT (shipment). CreditMemo = returned IN (return).
   var docConfig=[
@@ -1345,7 +1330,6 @@ async function finishDocSync(data, onProgress){
 
   var added=0;
   var skippedNoItem=0;
-  var skippedBeforeOpening=0;
   var skippedNoQty=0;
   var lineItemsSeen=0;
   var unmatchedIds={}; // qbItemId -> count, for diagnosis
@@ -1413,16 +1397,14 @@ async function finishDocSync(data, onProgress){
       var unitPrice=Number(detail.UnitPrice|| (line.Amount&&qty?line.Amount/qty:0) ||0);
       var docNum=doc.DocNumber||doc.Id;
       var account=(doc.VendorRef&&doc.VendorRef.name)||(doc.CustomerRef&&doc.CustomerRef.name)||'';
-      // PER-ITEM CUTOFF: a product is only tracked from its opening count
-      // forward. Drop this line only if its BUSINESS DATE (TxnDate) is before
-      // this item's opening-count date. (Creation time is used only for
-      // ordering within a day, never for the cutoff — otherwise a bill dated
-      // after the opening count but entered earlier could be wrongly skipped.)
-      var openInfo=openInfoByItem[local.id];
-      if(openInfo && docDate && openInfo.date && docDate < openInfo.date){
-        skippedBeforeOpening++;
-        continue;
-      }
+      // NOTE: we deliberately do NOT skip transactions dated before this
+      // item's opening count here. The opening count cutoff only affects the
+      // running INVENTORY BALANCE (handled by the balance engine in
+      // locBalancesAsOfDate / recalcQuantities, which already replays all
+      // transactions and skips pre-baseline ones when computing quantities).
+      // Dropping pre-opening QB transactions from the sync would hide real
+      // sales/purchases from totals and reports — exactly the discrepancy
+      // that was showing up between QB and Plant Console sales figures.
       transactions.push({
         id:'qb_'+cfg.key+'_'+doc.Id+'_'+li,
         qbDoc:true,
@@ -1482,11 +1464,9 @@ async function finishDocSync(data, onProgress){
     added:added,
     skippedNoItem:skippedNoItem,
     skippedNoQty:skippedNoQty,
-    skippedBeforeOpening:skippedBeforeOpening,
     docErrors:docErrors,
     unmatchedSample:Object.keys(unmatchedIds).slice(0,8)
   };
-  return {ok:true, added:added, skippedBeforeOpening:skippedBeforeOpening, skippedNoItem:skippedNoItem, docCounts:docCounts, docErrors:docErrors};
 }
 
 /* ===== LOGIN ===== */
@@ -2464,7 +2444,6 @@ function diagnoseLocations(){
     msg+='  Movements added: '+d.added+'\n';
     msg+='  Skipped (item not matched): '+d.skippedNoItem+'\n';
     msg+='  Skipped (no quantity on line): '+d.skippedNoQty+'\n';
-    msg+='  Skipped (dated before opening count): '+d.skippedBeforeOpening+'\n';
     msg+='  Skipped (unexpected error while processing): '+(d.docErrors||0)+'\n';
     if(d.serverErrors&&Object.keys(d.serverErrors).length){
       msg+='  SERVER FETCH ERRORS:\n';
@@ -2514,7 +2493,6 @@ function diagnoseLocationsOLD(){
     msg+='  Movements added: '+d.added+'\n';
     msg+='  Skipped (item not matched): '+d.skippedNoItem+'\n';
     msg+='  Skipped (no quantity on line): '+d.skippedNoQty+'\n';
-    msg+='  Skipped (dated before opening count): '+d.skippedBeforeOpening+'\n';
     if(d.serverErrors&&Object.keys(d.serverErrors).length){
       msg+='  SERVER FETCH ERRORS:\n';
       Object.keys(d.serverErrors).forEach(function(k){ msg+='    '+k+': '+d.serverErrors[k]+'\n'; });

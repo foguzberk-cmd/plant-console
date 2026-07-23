@@ -3283,7 +3283,7 @@ function renderLabelTemplatesPanel(){
   panel.innerHTML=`
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">${tabs}</div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:16px">A dot (•) marks a department with a customized template. Others still print using the default text below until you save changes for them.</div>
-    <div style="display:grid;grid-template-columns:1fr 2.4in;gap:24px;align-items:start">
+    <div style="display:grid;grid-template-columns:1fr auto;gap:24px;align-items:start">
       <div>
         <div class="form-group"><label>Company Name</label><input type="text" id="lt-company" oninput="updateLabelTemplatePreview()" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/></div>
         <div class="form-group"><label>Address</label><textarea id="lt-address" rows="2" oninput="updateLabelTemplatePreview()" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;font-family:inherit;resize:vertical"></textarea></div>
@@ -3300,7 +3300,11 @@ function renderLabelTemplatesPanel(){
       </div>
       <div>
         <div id="ltPreviewTitle" style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Preview · 2.4″ × 3.9″</div>
-        <div id="labelTemplatePreview" style="width:2.4in;min-height:3.9in;background:#fff;border:1px solid var(--line);box-shadow:0 4px 22px rgba(0,0,0,.12);border-radius:4px"></div>
+        <!-- Wrapper sized by updateLabelTemplatePreview() — inner preview is
+             scaled to fit within 2.2in so it never overflows the grid -->
+        <div id="labelTemplatePreviewWrap" style="overflow:hidden;border-radius:4px;background:#fff;border:1px solid var(--line);box-shadow:0 4px 22px rgba(0,0,0,.12)">
+          <div id="labelTemplatePreview" style="transform-origin:top left"></div>
+        </div>
       </div>
     </div>`;
   loadLabelTemplateForm();
@@ -3324,11 +3328,25 @@ function loadLabelTemplateForm(){
 // as the admin edits, without persisting anything until they click Save.
 function updateLabelTemplatePreview(){
   var prev=document.getElementById('labelTemplatePreview');
+  var wrap=document.getElementById('labelTemplatePreviewWrap');
   var titleEl=document.getElementById('ltPreviewTitle');
   if(!prev) return;
   var size=getLabelSize(_ltPanelDept);
+  var PREVIEW_MAX_PX=211; // ≈2.2in — same cap used by the Scale Log preview
+  var actualW=size.w*96;
+  var actualH=size.h*96;
+  var scale=Math.min(1, PREVIEW_MAX_PX/actualW);
+  var wrapW=Math.round(actualW*scale);
+  var wrapH=Math.round(actualH*scale);
+  if(wrap){
+    wrap.style.width=wrapW+'px';
+    wrap.style.height=wrapH+'px';
+  }
   prev.style.width=size.w+'in';
   prev.style.minHeight=size.h+'in';
+  prev.style.transform='scale('+scale.toFixed(4)+')';
+  prev.style.transformOrigin='top left';
+  prev.style.background='#fff';
   if(titleEl) titleEl.textContent='Preview \u00b7 '+size.w+'\u2033 \u00d7 '+size.h+'\u2033';
   var fakeEntry={product:'Sample Product',weight:'10.00',date:new Date().toISOString().slice(0,10),lot:'LOT-0001',department:_ltPanelDept};
   var draft={

@@ -733,7 +733,14 @@ function safeSetLocal(key,value){
 // cookie for /api/data, and there's no reason to sync a signed-out browser's
 // data anyway.
 var SYNC_URL='/api/data';
-var _lastPushedSnapshot='';
+// IDs of scale log entries deleted locally but not yet confirmed on the server.
+// Without this, the background pull (every 4s) would fetch the server's stale
+// copy and restore a record you just deleted, making it "snap back". Any pull
+// that arrives before the delete-push completes is now filtered to exclude
+// these IDs, so deletions are immediate and irreversible from the user's POV
+// even if the network is slow. IDs are cleared after 15 s — long enough for
+// any push to complete even on a slow connection.
+var _deletedScaleLogIds={};
 var __syncBusy=false; // true while a QuickBooks sync is actively running
 // Re-draw whatever section is currently on screen, but only if it's one that
 // actually reads items/transactions/storages/users — no point re-rendering a
@@ -780,7 +787,10 @@ async function pullFromServer(){
     if(Array.isArray(data.storages)&&data.storages.length) storages=data.storages;
     if(Array.isArray(data.users)&&data.users.length) users=data.users;
     if(Array.isArray(data.savedReports)&&data.savedReports.length) savedReports=data.savedReports;
-    if(Array.isArray(data.scaleLogs)&&data.scaleLogs.length) scaleLogs=data.scaleLogs;
+    if(Array.isArray(data.scaleLogs)&&data.scaleLogs.length){
+      // Strip any IDs the user deleted locally but whose push hasn't landed yet
+      scaleLogs=data.scaleLogs.filter(function(l){ return !_deletedScaleLogIds[l.id]; });
+    }
     if(Array.isArray(data.labelAllowed)&&data.labelAllowed.length) labelAllowed=data.labelAllowed;
     if(Array.isArray(data.customers)&&data.customers.length) customers=data.customers;
     if(Array.isArray(data.customerAllowed)&&data.customerAllowed.length) customerAllowed=data.customerAllowed;
@@ -4112,6 +4122,12 @@ function reprintLabel(id){
 }
 
 function deleteScaleLog(id){
+  if(!confirm('Delete this label log entry? This cannot be undone.')) return;
+  // Register the ID immediately so any pull that arrives before the push
+  // completes will filter it out and won't restore the deleted record.
+  _deletedScaleLogIds[id]=true;
+  // Auto-clear after 15 s — ample time for even a slow push to land.
+  setTimeout(function(){ delete _deletedScaleLogIds[id]; },15000);
   scaleLogs=scaleLogs.filter(function(l){return l.id!==id;});
   saveScaleLogs();
   renderScaleLog();

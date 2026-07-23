@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Label preview — editable</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; }
+  body {
+    background:#666;
+    font-family:Arial,sans-serif;
+    display:flex;
+    min-height:100vh;
+  }
+
+  /* ---------- Sidebar ---------- */
+  #sidebar {
+    width:300px;
+    flex-shrink:0;
+    background:#fafafa;
+    border-right:1px solid #ccc;
+    padding:16px;
+    overflow-y:auto;
+    height:100vh;
+  }
+  #sidebar h1 { font-size:15px; margin-bottom:4px; }
+  #sidebar p.hint { font-size:11px; color:#666; margin-bottom:14px; line-height:1.4; }
+  .ctrl-group {
+    border:1px solid #e0e0e0;
+    border-radius:6px;
+    padding:8px 10px;
+    margin-bottom:8px;
+    background:#fff;
+  }
+  .ctrl-group label {
+    display:block;
+    font-size:11px;
+    font-weight:bold;
+    color:#333;
+    margin-bottom:4px;
+  }
+  .ctrl-row {
+    display:flex;
+    align-items:center;
+    gap:6px;
+  }
+  .ctrl-row input[type=range] {
+    flex:1;
+  }
+  .ctrl-row .val {
+    font-size:11px;
+    width:34px;
+    text-align:right;
+    color:#555;
+  }
+  .actions {
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    margin-top:16px;
+  }
+  .actions button {
+    padding:9px;
+    font-size:12px;
+    font-weight:bold;
+    border:none;
+    border-radius:6px;
+    cursor:pointer;
+  }
+  #resetPosBtn, #resetFontBtn { background:#e8e8e8; color:#222; }
+  #resetPosBtn:hover, #resetFontBtn:hover { background:#ddd; }
+  #printBtn { background:#222; color:#fff; }
+  #printBtn:hover { background:#000; }
+
+  /* ---------- Canvas / label page ---------- */
+  #canvasWrap {
+    flex:1;
+    display:flex;
+    align-items:flex-start;
+    justify-content:center;
+    padding:40px;
+    overflow:auto;
+  }
+  .page {
+    position:relative;
+    width:2.4in;
+    height:3.9in;
+    background:#fff;
+    box-shadow:0 4px 20px rgba(0,0,0,.35);
+    flex-shrink:0;
+  }
+
+  /* every movable piece */
+  .elem {
+    position:absolute;
+    cursor:default;
+  }
+  .elem.dragging { outline:1.5px dashed #2a7fff; z-index:50; }
+  .elem:hover .handle { opacity:1; }
+
+  .handle {
+    position:absolute;
+    top:-9px;
+    left:-9px;
+    width:16px;
+    height:16px;
+    background:#2a7fff;
+    color:#fff;
+    border-radius:50%;
+    font-size:9px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    cursor:move;
+    opacity:0;
+    transition:opacity .15s;
+    user-select:none;
+    touch-action:none;
+    z-index:60;
+  }
+
+  .txt {
+    outline:none;
+    min-width:8px;
+  }
+  .txt:focus {
+    outline:1px solid #2a7fff;
+    background:rgba(42,127,255,0.05);
+  }
+
+  .name  { font-weight:bold; text-align:center; }
+  .addr  { text-align:center; }
+  .t-lbl { font-weight:bold; text-align:center; }
+  .prod  { font-weight:bold; text-align:center; }
+  .keep  { font-weight:bold; text-align:center; border-top:1.5px solid #000; border-bottom:1.5px solid #000; padding:3px 0; }
+  .sh-t  { font-weight:bold; text-align:center; }
+  .sh    { line-height:1.25; }
+  .wt-v  { font-weight:bold; }
+  .wt-u  { font-weight:bold; }
+
+  .logo-box {
+    border:1px dashed #999;
+    color:#999;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    text-align:center;
+  }
+  .seal {
+    border:2.5px solid #000;
+    border-radius:50%;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    text-align:center;
+    font-weight:bold;
+    line-height:1.15;
+    padding:3px;
+  }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h1>Label editor</h1>
+  <p class="hint">Drag the blue dot on any element to move it. Click directly on text to edit it. Use the sliders below to resize each element's font.</p>
+
+  <div id="controls"></div>
+
+  <div class="actions">
+    <button id="resetPosBtn">Reset positions</button>
+    <button id="resetFontBtn">Reset font sizes</button>
+    <button id="printBtn">Print / Save as PDF</button>
+  </div>
+</div>
+
+<div id="canvasWrap">
+  <div class="page" id="page">
+
+    <div class="elem logo-box" id="logo" style="left:0.1in; top:0.08in; width:0.62in; height:0.62in; font-size:6pt;">
+      <span class="handle">⠿</span>
+      <div class="txt" contenteditable="true">LOGO</div>
+    </div>
+
+    <div class="elem name" id="coName" style="left:0.85in; top:0.06in; width:1.45in; font-size:9.5pt; line-height:1.05;">
+      <span class="handle">⠿</span>
+      <div class="txt" contenteditable="true">LEADER MEAT PACKING</div>
+    </div>
+
+    <div class="elem addr" id="coAddr" style="left:0.85in; top:0.34in; width:1.45in; font-size:7pt; line-height:1.1;">
+      <span class="handle">⠿</span>
+      <div class="txt" contenteditable="true">254 Sykesville Road<br>Chesterfield, NJ 08515</div>
+    </div>
+
+    <div class="elem t-lbl" id="pkgLabel" style="left:0.1in; top:0.84in; width:2.2in; font-size:10pt;">
+      <span class="handle">⠿</span>
+      <div class="txt" contenteditable="true">Packaging Date</div>
+    </div>
+
+    <div class="elem t-lbl" id="pkgDate" style="left:0.1in; top:1.04in; width:2.2in; font-size:13pt;">
+      <span class="handle">⠿</span>
+      <div class="txt" contenteditable="true">6/27/26</div>
+    </div>
+
+    <div class="elem prod" id="prodName" style="left:0.1in; top:1.36in; width:2.2in; font-size:14pt; line-height:1.1;">
+      <span class="handle">⠿</span>
+      <div class="txt" contenteditable="true">BEEF TENDERLOIN</div>
+    </div>
+
+    <div class="elem seal" id="seal" style="left:0.1in; top:1.68in; width:0.85in; height:0.85in; font-size:5.4pt;">
+      <span class="handle">⠿</span>
+      <div class="txt" contenteditable="true">U.S.<br>INSPECTED<br>AND PASSED BY<br>DEPARTMENT OF<br>AGRICULTURE<br>EST. M-46585</div>
+    </div>
+
+    <div class="elem wt-v" id="wtValue" style="left:1.15in; top:1.92in; font-size:21pt;">
+      <span class="handle">⠿</span>
+      <div class="txt" contenteditable="true">47.00</div>
+    </div>
+
+    <div class="elem wt-u" id="wtUnit" style="left:1.65in; top:2.14in; font-size:12pt;">
+      <span class="handle">⠿</span>
+      <div class="txt" contenteditable="true">lbs.</div>
+    </div>
+
+    <div class="elem keep" id="keepText" style="left:0.1in; top:2.62in; width:2.2in; font-size:9.5pt;">
+      <span class="handle">⠿</span>
+      <div class="txt" contenteditable="true">Keep Refrigerated</div>
+    </div>
+
+    <div class="elem sh-t" id="shTitle" style="left:0.1in; top:2.98in; width:2.2in; font-size:8pt;">
+      <span class="handle">⠿</span>
+      <div class="txt" contenteditable="true">SAFE HANDLING INSTRUCTIONS</div>
+    </div>
+
+    <div class="elem sh" id="shText" style="left:0.1in; top:3.16in; width:2.2in; font-size:5.4pt;">
+      <span class="handle">⠿</span>
+      <div class="txt" contenteditable="true">This product was prepared from inspected and passed meat and/or poultry. Some food products may contain bacteria that could cause illness if mishandled or cooked improperly. For your protection, follow these safe handling instructions.<br>&bull; Keep refrigerated or frozen. Thaw in the refrigerator or microwave.<br>&bull; Cook thoroughly to a safe internal temperature.<br>&bull; Keep raw meat and poultry separate from other foods.<br>&bull; Wash hands, utensils, and surfaces after handling raw meat or poultry.<br>&bull; Keep hot foods hot and refrigerate leftovers promptly or discard.</div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function(){
+  var page = document.getElementById('page');
+  var elems = Array.prototype.slice.call(document.querySelectorAll('.elem'));
+
+  var friendlyNames = {
+    logo: 'Logo box',
+    coName: 'Company name',
+    coAddr: 'Company address',
+    pkgLabel: '"Packaging Date" label',
+    pkgDate: 'Date value',
+    prodName: 'Product name',
+    seal: 'USDA seal text',
+    wtValue: 'Weight value',
+    wtUnit: 'Weight unit',
+    keepText: '"Keep Refrigerated" bar',
+    shTitle: '"Safe Handling" title',
+    shText: 'Safe handling body text'
+  };
+
+  // remember original inline style (for reset)
+  var initialStyle = {};
+  elems.forEach(function(el){
+    initialStyle[el.id] = el.getAttribute('style');
+  });
+
+  // ---------- Build sidebar font-size controls ----------
+  var controlsWrap = document.getElementById('controls');
+  elems.forEach(function(el){
+    var fontSize = parseFloat(el.style.fontSize) || 10;
+
+    var group = document.createElement('div');
+    group.className = 'ctrl-group';
+
+    var label = document.createElement('label');
+    label.textContent = friendlyNames[el.id] || el.id;
+    group.appendChild(label);
+
+    var row = document.createElement('div');
+    row.className = 'ctrl-row';
+
+    var slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = 4;
+    slider.max = 32;
+    slider.step = 0.5;
+    slider.value = fontSize;
+
+    var valSpan = document.createElement('span');
+    valSpan.className = 'val';
+    valSpan.textContent = fontSize + 'pt';
+
+    slider.addEventListener('input', function(){
+      el.style.fontSize = slider.value + 'pt';
+      valSpan.textContent = slider.value + 'pt';
+    });
+
+    row.appendChild(slider);
+    row.appendChild(valSpan);
+    group.appendChild(row);
+    controlsWrap.appendChild(group);
+  });
+
+  // ---------- Dragging ----------
+  elems.forEach(function(el){
+    var handle = el.querySelector('.handle');
+    var dragging = false;
+    var startX, startY, startLeft, startTop;
+
+    handle.addEventListener('pointerdown', function(e){
+      e.preventDefault();
+      dragging = true;
+      handle.setPointerCapture(e.pointerId);
+      startX = e.clientX;
+      startY = e.clientY;
+      var rect = el.getBoundingClientRect();
+      var pageRect = page.getBoundingClientRect();
+      startLeft = rect.left - pageRect.left;
+      startTop = rect.top - pageRect.top;
+      el.classList.add('dragging');
+    });
+
+    handle.addEventListener('pointermove', function(e){
+      if (!dragging) return;
+      var dx = e.clientX - startX;
+      var dy = e.clientY - startY;
+      el.style.left = (startLeft + dx) + 'px';
+      el.style.top = (startTop + dy) + 'px';
+    });
+
+    function endDrag(){
+      dragging = false;
+      el.classList.remove('dragging');
+    }
+    handle.addEventListener('pointerup', endDrag);
+    handle.addEventListener('pointercancel', endDrag);
+  });
+
+  // ---------- Reset buttons ----------
+  document.getElementById('resetPosBtn').addEventListener('click', function(){
+    elems.forEach(function(el){
+      var orig = initialStyle[el.id];
+      // keep current font-size, only reset left/top
+      var m = orig.match(/left:[^;]+;/);
+      var t = orig.match(/top:[^;]+;/);
+      if (m) el.style.left = m[0].split(':')[1].replace(';','').trim();
+      if (t) el.style.top = t[0].split(':')[1].replace(';','').trim();
+    });
+  });
+
+  document.getElementById('resetFontBtn').addEventListener('click', function(){
+    elems.forEach(function(el){
+      var orig = initialStyle[el.id];
+      var fs = orig.match(/font-size:[^;]+;/);
+      if (fs) {
+        var val = fs[0].split(':')[1].replace(';','').trim();
+        el.style.fontSize = val;
+      }
+    });
+    // refresh sliders to match
+    var sliders = controlsWrap.querySelectorAll('input[type=range]');
+    sliders.forEach(function(s, i){
+      var el = elems[i];
+      var fs = parseFloat(el.style.fontSize) || 10;
+      s.value = fs;
+      s.nextSibling.textContent = fs + 'pt';
+    });
+  });
+
+  document.getElementById('printBtn').addEventListener('click', function(){
+    window.print();
+  });
+
+  // hide handles/sidebar when printing
+  var style = document.createElement('style');
+  style.textContent = '@media print { #sidebar{display:none;} .handle{display:none;} body{background:#fff;} #canvasWrap{padding:0;justify-content:flex-start;} .page{box-shadow:none;} }';
+  document.head.appendChild(style);
+})();
+</script>
+
+</body>
+</html>

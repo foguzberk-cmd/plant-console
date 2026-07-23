@@ -900,6 +900,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Serve the label preview/editor pages directly (static reference tools,
+  // not part of the main app — no auth required, plain HTML files only).
+  if (url === '/label-preview.html' || url === '/label-preview-editable.html') {
+    const filePath = path.join(__dirname, url.slice(1));
+    fs.readFile(filePath, (err, data) => {
+      if (err) { res.writeHead(404); res.end('Not found'); return; }
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(data);
+    });
+    return;
+  }
+
   // Start OAuth flow — redirect user to Intuit's authorization page
   if (url === '/connect') {
     if (!requireAuth(req, res)) return;

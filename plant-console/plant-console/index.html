@@ -1435,6 +1435,50 @@ async function finishDocSync(data, onProgress){
       });
       added++;
     }
+
+    // ── Second pass: DiscountLineDetail lines ──────────────────────────────
+    // QB invoices/sales receipts sometimes include a DiscountLineDetail (a
+    // discount applied as a named account, e.g. "Services: -$734"). These have
+    // NO ItemRef, so the main loop above silently skips them — they never get
+    // stored in Plant Console and never affect the Reports total. We catch them
+    // here by matching the DiscountAccountRef name to a Plant Console item
+    // (e.g. the "Services" item synced from QB). Only applies to outflow docs
+    // (Invoice, SalesReceipt); Bills don't use this line type.
+    if(cfg.sign<0){
+      (doc.Line||[]).forEach(function(dl,dli){
+        if(dl.DetailType!=='DiscountLineDetail') return;
+        var discAmt=Number(dl.Amount||0);
+        if(!discAmt) return;
+        var discDetail=dl.DiscountLineDetail||{};
+        var acctName=(discDetail.DiscountAccountRef&&discDetail.DiscountAccountRef.name)||'';
+        if(!acctName) return;
+        var discLocal=items.find(function(x){
+          return x.name&&x.name.toLowerCase()===acctName.toLowerCase();
+        });
+        if(!discLocal) return;
+        var dCreateSort=(doc.MetaData&&doc.MetaData.CreateTime)||'';
+        var dDocNum=doc.DocNumber||doc.Id;
+        var dAccount=(doc.CustomerRef&&doc.CustomerRef.name)||'';
+        transactions.push({
+          id:'qb_'+cfg.key+'_'+doc.Id+'_disc'+dli,
+          qbDoc:true, qbDocType:cfg.key,
+          num:cfg.numPrefix+'-'+dDocNum,
+          date:docDate, time:timeStr,
+          createTime:dCreateSort,
+          type:cfg.txnType,
+          itemId:discLocal.id,
+          qty:1, unit:'',
+          unitPrice:0,
+          lineAmount:discAmt,
+          account:dAccount,
+          locOut:discLocal.locationId||'',
+          locIn:'',
+          desc:cfg.key+' '+dDocNum+' (services adj)'+(dAccount?' · '+dAccount:'')
+        });
+        added++;
+      });
+    }
+
     }catch(docErr){
       // One malformed document should never take down the whole sync —
       // skip it, count it, and keep going.
@@ -1849,6 +1893,15 @@ function buildBalanceReport(){
   // Per-item breakdown for each addition/subtraction row, keyed by type then itemId
   var inflowItems={receive:{},production:{}};
   var outflowItems={shipment:{}};
+
+  // "Other Services" — a dedicated row for items whose name is exactly
+  // "Services" (case-insensitive). QB often applies service discounts/credits
+  // as a DiscountLineDetail or SalesItemLineDetail for a "Services" account,
+  // which doesn't belong in the inventory Shipments row.
+  var svcItemIds={};
+  items.forEach(function(it){ if(it.name&&it.name.trim().toLowerCase()==='services') svcItemIds[it.id]=true; });
+  var otherSvcTotal=0;
+  var otherSvcItems={}; // itemId -> {name, qty, value}
   var pcPosItems={}, pcNegItems={};
   var trInItems={}, trOutItems={};
 
@@ -1906,6 +1959,21 @@ function buildBalanceReport(){
     }
 
     var v=lineValue(t);
+
+    // "Services" item transactions go to a dedicated "Other Services" row
+    // (not Shipments) so the Shipments total matches QB's product sales figure
+    // and the Services credit/charge is visible on its own line.
+    if(svcItemIds[t.itemId] && (OUTFLOW[t.type]||t.type==='return')){
+      var svcSign=(t.type==='return')?-1:1;
+      var svcDept=(t.type==='return')?locDept(t.locIn):locDept(t.locOut);
+      if(!matchesDept(svcDept)) return;
+      otherSvcTotal+=svcSign*v;
+      if(!otherSvcItems[t.itemId]) otherSvcItems[t.itemId]={name:nm,qty:0,value:0};
+      otherSvcItems[t.itemId].qty+=svcSign*q;
+      otherSvcItems[t.itemId].value+=svcSign*v;
+      return;
+    }
+
     if(INFLOW[t.type]){
       if(!matchesDept(locDept(t.locIn))) return;
       inflowGroups[t.type]=(inflowGroups[t.type]||0)+v;
@@ -2060,6 +2128,11 @@ function buildBalanceReport(){
   outKeys.forEach(function(k){
     var items_=Object.keys(outflowItems[k]||{}).map(function(id){return outflowItems[k][id];}).sort(function(a,b){return b.value-a.value;});
     html+=rowLine('rpt-out-'+k, labelMap[k]||k, outflowGroups[k], '#c23b33', items_);
+    // Show "Other Services" immediately after the Shipments row
+    if(k==='shipment' && otherSvcTotal!==0){
+      var svcItems_=Object.keys(otherSvcItems).map(function(id){return otherSvcItems[id];});
+      html+=rowLine('rpt-out-svc','Other Services',otherSvcTotal,'#c23b33',svcItems_);
+    }
   });
   html+='<div style="display:flex;justify-content:space-between;padding:9px 0;font-weight:700;border-bottom:3px double var(--ink)"><span>Total subtractions</span><span style="font-family:var(--mono);color:#c23b33">'+money(outflowTotal)+'</span></div>';
 

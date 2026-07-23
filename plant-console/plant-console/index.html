@@ -1370,6 +1370,12 @@ async function finishDocSync(data, onProgress){
         var amt=Number(line.Amount||0);
         var up=Number(detail.UnitPrice||0);
         if(amt && up){ qty=amt/up; }
+        // If we still have no qty but there IS a non-zero Amount (e.g. a
+        // discount or service line like "Services: -$734" with no explicit
+        // Qty or UnitPrice), store it as qty=1 so the monetary value isn't
+        // silently dropped. lineValue() uses lineAmount directly for qbDoc
+        // transactions, so qty=1 is just a placeholder here.
+        if(!qty && amt){ qty=1; }
       }
       if(!qty){
         skippedNoQty++;
@@ -1724,7 +1730,19 @@ function buildBalanceReport(){
       if(!sale && fi) sale=Number(fi.price||fi.cost||0);
       return q*sale;
     }
-    // cost basis for opening, receive, return, production, physical count, transfer
+    if(t.type==='return'){
+      // For QB credit memos: use QB's actual line Amount, NOT the item's stored
+      // cost price. Service/fee items often have $0 cost in Plant Console, so
+      // using cost price would make the credit memo reduce the total by $0
+      // instead of its real value, causing Plant Console to run higher than QB.
+      if(t.qbDoc && t.lineAmount){
+        return Number(t.lineAmount);
+      }
+      var retPrice=(t.unitPrice!==undefined&&t.unitPrice!=='')?Number(t.unitPrice):0;
+      if(!retPrice && fi) retPrice=Number(fi.price||fi.cost||0);
+      return q*retPrice;
+    }
+    // cost basis for opening, receive, production, physical count, transfer
     var cost=fi?Number(fi.cost||0):0;
     if(!cost){
       cost=(t.unitPrice!==undefined&&t.unitPrice!=='')?Number(t.unitPrice):0;

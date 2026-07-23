@@ -2138,8 +2138,9 @@ function buildBalanceReport(){
   outKeys.forEach(function(k){
     var items_=Object.keys(outflowItems[k]||{}).map(function(id){return outflowItems[k][id];}).sort(function(a,b){return b.value-a.value;});
     html+=rowLine('rpt-out-'+k, labelMap[k]||k, outflowGroups[k], '#c23b33', items_);
-    // Show "Other Services" immediately after the Shipments row
-    if(k==='shipment' && otherSvcTotal!==0){
+    // Show "Other Services" immediately after the Shipments row — always
+    // visible so you can compare it against QB even when the amount is $0.00
+    if(k==='shipment'){
       var svcItems_=Object.keys(otherSvcItems).map(function(id){return otherSvcItems[id];});
       html+=rowLine('rpt-out-svc','Other Services',otherSvcTotal,'#c23b33',svcItems_);
     }

@@ -1039,11 +1039,12 @@ var _pushChain=Promise.resolve();
 function pushToServer(){
   _pushChain=_pushChain.then(_pushToServerImpl).catch(function(e){
     console.error('Push to server failed:', e);
+    return false;
   });
   return _pushChain;
 }
 async function _pushToServerImpl(){
-  if(!currentUser) return;
+  if(!currentUser) return false;
   try{
     // Before sending OUR copy of the small shared collections (users, scale
     // logs, label-allowed list, saved reports), quietly check whether the
@@ -1075,12 +1076,20 @@ async function _pushToServerImpl(){
     // push (even one that was queued up behind another) always sends
     // whatever is currently true at the moment it actually runs.
     var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates});
-    if(snapshot===_lastPushedSnapshot) return; // nothing changed since last push
-    _lastPushedSnapshot=snapshot;
+    if(snapshot===_lastPushedSnapshot) return true; // this exact state was already confirmed sent
     var res=await fetch(SYNC_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:snapshot});
-    if(res.status===401){ forceLogout(); }
+    if(res.status===401){ forceLogout(); return false; }
+    if(!res.ok) return false; // e.g. a 500 — do NOT mark as sent, so the next attempt retries this same data
+    // Only NOW, with a confirmed successful response, is it safe to mark
+    // this exact snapshot as delivered. Marking it any earlier (as before)
+    // meant a failed request could permanently block every future retry of
+    // that same change, since the dedup check above would wrongly think it
+    // had already gone through.
+    _lastPushedSnapshot=snapshot;
+    return true;
   }catch(e){
     // Offline: local save already happened, this will retry on the next timer tick
+    return false;
   }
 }
 // If the server says our session is no longer valid (expired/restarted),
@@ -4651,8 +4660,9 @@ async function printScaleLabel(){
   var savedOk=false, saveError='';
   _writeInFlight=true;
   try{
-    await pushToServer();
-    savedOk=true;
+    var pushResult=await pushToServer();
+    savedOk=(pushResult===true);
+    if(!savedOk) saveError='the server did not confirm the save — check your connection';
   }catch(e){
     saveError=e&&e.message?e.message:String(e);
     console.error('Save to server failed:', e);

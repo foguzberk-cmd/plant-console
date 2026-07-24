@@ -1024,8 +1024,8 @@ async function _pushToServerImpl(){
         var smallData=await smallRes.json();
         var newUsers=unionById(users, smallData.users);
         if(newUsers!==users){ users=newUsers; safeSetLocal('pc_users',JSON.stringify(users)); }
-        var newScaleLogs=unionById(scaleLogs, smallData.scaleLogs);
-        if(newScaleLogs!==scaleLogs){ scaleLogs=newScaleLogs; safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs)); }
+        var mergedScaleLogs=unionById(scaleLogs, smallData.scaleLogs).filter(function(l){ return !_deletedScaleLogIds[l.id]; });
+        scaleLogs=mergedScaleLogs; safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs));
         var newLabelAllowed=unionSimple(labelAllowed, smallData.labelAllowed);
         if(newLabelAllowed!==labelAllowed){ labelAllowed=newLabelAllowed; safeSetLocal('pc_labelallowed',JSON.stringify(labelAllowed)); }
         var newSavedReports=unionById(savedReports, smallData.savedReports);

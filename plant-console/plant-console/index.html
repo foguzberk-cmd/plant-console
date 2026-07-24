@@ -1134,10 +1134,22 @@ restoreSession();
 // deletion, anything) shows up on other open devices in roughly 1-2
 // seconds instead of up to 4 — makes cross-device sync feel near-instant
 // without the added complexity of a real push/WebSocket connection.
+// Wraps pushToServer() for the "ambient" triggers below (the periodic timer
+// and the visibility-return handler) so they skip entirely while a write
+// (a print/save or a delete) is actively being confirmed. This is distinct
+// from those flows' own direct calls to pushToServer(), which must still go
+// through normally — only these background/incidental triggers get held
+// back, closing the remaining gap where a background push's own internal
+// "check what's new" step could still land in the exact instant a delete
+// is being confirmed and interfere with it.
+function ambientPushIfIdle(){
+  if(_writeInFlight) return;
+  pushToServer().catch(function(){});
+}
 setInterval(pullFromServer,1500);
 // Safety-net push in case some part of the app saves data without going
 // through saveStorages/saveTxns/saveUsers.
-setInterval(pushToServer,1500);
+setInterval(ambientPushIfIdle,1500);
 // Mobile browsers throttle (or fully pause) background-tab timers, so a
 // phone that's been sitting in the background for a while can easily be
 // showing data that's several minutes (or longer) stale even though the
@@ -1153,7 +1165,7 @@ document.addEventListener('visibilitychange',function(){
     // retry loop — so a pending local change could otherwise sit unsent
     // until something else happens to trigger a push. Coming back into
     // view is exactly the moment to make sure anything pending goes out.
-    pushToServer().catch(function(){});
+    ambientPushIfIdle();
     pullFromServer();
   }
 });

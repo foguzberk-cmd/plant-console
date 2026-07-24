@@ -184,8 +184,8 @@
   .lll-ctrl-row{display:flex;align-items:center;gap:6px}
   .lll-ctrl-row input[type=range]{flex:1}
   .lll-ctrl-row .lll-val{font-size:11px;width:38px;text-align:right;color:var(--muted);font-family:var(--mono)}
-  .lll-sidebar{width:260px;flex-shrink:0;max-height:560px;overflow-y:auto;padding-right:4px}
-  .lll-canvas-wrap{flex:1;display:flex;align-items:flex-start;justify-content:center;padding:24px;background:var(--bg);border-radius:10px;overflow:auto;max-height:560px}
+  .lll-sidebar{width:260px;flex-shrink:0;max-height:640px;overflow-y:auto;padding-right:4px}
+  .lll-canvas-wrap{flex:1;display:flex;align-items:flex-start;justify-content:center;padding:24px;background:var(--bg);border-radius:10px;overflow:auto;max-height:640px}
 
   /* MY PROFILE */
   .my-profile-card{padding:22px 24px;display:flex;align-items:center;gap:18px}
@@ -716,10 +716,9 @@ var DEFAULT_LABEL_TEMPLATE={
 // one entry per draggable/resizable piece. left/top are in inches from the
 // label's top-left corner; fontSize is in pt. A department's saved
 // labelTemplates[dept].layout (if any) overrides individual keys on top of
-// this baseline, same pattern as DEFAULT_LABEL_TEMPLATE above. Only the
-// standard label supports layout customization today — the 4x6 Brother
-// QL-1110NWB layout stays fixed.
-var DEFAULT_LABEL_LAYOUT={
+// whichever of these two baselines applies to that department's label size,
+// same pattern as DEFAULT_LABEL_TEMPLATE above.
+var DEFAULT_LABEL_LAYOUT_STD={
   logo:      {left:0.10, top:0.08, fontSize:6},
   coName:    {left:0.85, top:0.06, fontSize:9.5},
   coAddr:    {left:0.85, top:0.34, fontSize:7},
@@ -733,11 +732,34 @@ var DEFAULT_LABEL_LAYOUT={
   shTitle:   {left:0.10, top:2.98, fontSize:8},
   shText:    {left:0.10, top:3.16, fontSize:5.4}
 };
+// Default layout for the 4in x 6in Brother QL-1110NWB label (Carcass
+// Process/Retail). Same key set as the standard layout above so the editor
+// UI, save/reset logic, and friendly-name labels all work unchanged.
+var DEFAULT_LABEL_LAYOUT_4X6={
+  logo:      {left:0.15, top:0.12, fontSize:7.5},
+  coName:    {left:1.15, top:0.10, fontSize:15},
+  coAddr:    {left:1.15, top:0.55, fontSize:10},
+  pkgLabel:  {left:0.15, top:1.25, fontSize:14},
+  pkgDate:   {left:0.15, top:1.55, fontSize:20},
+  prodName:  {left:0.15, top:1.95, fontSize:20},
+  seal:      {left:0.15, top:2.45, fontSize:7.5},
+  wtValue:   {left:1.55, top:2.75, fontSize:36},
+  wtUnit:    {left:2.85, top:3.15, fontSize:20},
+  keepText:  {left:0.15, top:3.85, fontSize:14},
+  shTitle:   {left:0.15, top:4.35, fontSize:11},
+  shText:    {left:0.15, top:4.65, fontSize:8}
+};
+// Picks the right baseline layout for a department based on its label
+// paper size (see DEPT_LABEL_SIZES above).
+function getDefaultLabelLayout(dept){
+  return (getLabelSize(dept).w>=4) ? DEFAULT_LABEL_LAYOUT_4X6 : DEFAULT_LABEL_LAYOUT_STD;
+}
 function getLabelLayout(dept, overrideLayout){
+  var defaults=getDefaultLabelLayout(dept);
   var custom=overrideLayout || (dept && labelTemplates[dept] && labelTemplates[dept].layout) || {};
   var merged={};
-  Object.keys(DEFAULT_LABEL_LAYOUT).forEach(function(k){
-    merged[k]=Object.assign({}, DEFAULT_LABEL_LAYOUT[k], custom[k]||{});
+  Object.keys(defaults).forEach(function(k){
+    merged[k]=Object.assign({}, defaults[k], custom[k]||{});
   });
   return merged;
 }
@@ -3355,7 +3377,7 @@ function renderLabelTemplatesPanel(){
         <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
           <button class="btn btn-primary btn-sm" onclick="saveLabelTemplateForm()">Save</button>
           <button class="btn btn-sm" onclick="resetLabelTemplateForm()">Reset to default</button>
-          ${getLabelSize(_ltPanelDept).w<4?'<button class="btn btn-sm" onclick="openLabelLayoutEditor()"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l3 3 3-3M19 9l3 3-3 3M2 12h20M12 2v20"/></svg>Edit layout</button>':''}
+          <button class="btn btn-sm" onclick="openLabelLayoutEditor()"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l3 3 3-3M19 9l3 3-3 3M2 12h20M12 2v20"/></svg>Edit layout</button>
         </div>
         <div id="ltSaveStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>
       </div>
@@ -3481,7 +3503,8 @@ function renderLabelLayoutEditor(){
 function attachLabelLayoutDragHandlers(){
   var page=document.querySelector('#lllCanvas .lbl-page');
   if(!page) return;
-  var pageInW=2.4, pageInH=3.9;
+  var pageSize=getLabelSize(_lllDept);
+  var pageInW=pageSize.w, pageInH=pageSize.h;
   Array.prototype.forEach.call(page.querySelectorAll('.lbl-elem'),function(el){
     var key=el.getAttribute('data-key');
     var handleEl=el.querySelector('.lbl-handle');
@@ -3519,7 +3542,7 @@ function renderLabelLayoutSidebar(){
   var wrap=document.getElementById('lllSidebar');
   if(!wrap) return;
   wrap.innerHTML='';
-  Object.keys(DEFAULT_LABEL_LAYOUT).forEach(function(key){
+  Object.keys(getDefaultLabelLayout(_lllDept)).forEach(function(key){
     var val=_lllDraftLayout[key].fontSize;
     var group=document.createElement('div');
     group.className='lll-ctrl-group';
@@ -3544,15 +3567,17 @@ function renderLabelLayoutSidebar(){
   });
 }
 function resetLabelLayoutPositions(){
-  Object.keys(DEFAULT_LABEL_LAYOUT).forEach(function(key){
-    _lllDraftLayout[key].left=DEFAULT_LABEL_LAYOUT[key].left;
-    _lllDraftLayout[key].top=DEFAULT_LABEL_LAYOUT[key].top;
+  var defaults=getDefaultLabelLayout(_lllDept);
+  Object.keys(defaults).forEach(function(key){
+    _lllDraftLayout[key].left=defaults[key].left;
+    _lllDraftLayout[key].top=defaults[key].top;
   });
   renderLabelLayoutEditor();
 }
 function resetLabelLayoutFonts(){
-  Object.keys(DEFAULT_LABEL_LAYOUT).forEach(function(key){
-    _lllDraftLayout[key].fontSize=DEFAULT_LABEL_LAYOUT[key].fontSize;
+  var defaults=getDefaultLabelLayout(_lllDept);
+  Object.keys(defaults).forEach(function(key){
+    _lllDraftLayout[key].fontSize=defaults[key].fontSize;
   });
   renderLabelLayoutEditor();
 }
@@ -4003,41 +4028,6 @@ function buildLabelHTML(entry, forPrint, editable, layoutOverride){
   var addressHTML=(tpl.addressText||'').split('\n').map(function(l){return esc(l);}).join('<br>');
   var safeHandlingHTML=(tpl.safeHandlingText||'').split('\n').filter(function(l){return l.trim();}).map(function(l){return '&bull; '+esc(l);}).join('<br>');
 
-  // ── 4 × 6 label (Brother QL-1110NWB) ──────────────────────────────────────
-  if(size.w>=4){
-    return ''
-      +'<div style="font-family:Arial,Helvetica,sans-serif;color:#000;padding:0.12in 0.15in;width:4in">'
-      +'<div style="display:flex;align-items:center;gap:10px;border-bottom:2px solid #000;padding-bottom:7px">'
-        +'<img src="'+LEADER_LOGO+'" style="width:0.9in;height:0.9in;object-fit:contain;flex-shrink:0"/>'
-        +'<div style="flex:1;text-align:center">'
-          +'<div style="font-weight:bold;font-size:15pt;line-height:1.05">'+esc(tpl.companyName)+'</div>'
-          +'<div style="font-size:10pt;line-height:1.2;margin-top:2px">'+addressHTML+'</div>'
-        +'</div>'
-      +'</div>'
-      +'<div style="text-align:center;margin:8px 0 4px">'
-        +'<div style="font-weight:bold;font-size:14pt">Packaging Date</div>'
-        +'<div style="font-weight:bold;font-size:20pt;margin-top:2px">'+esc(dateStr)+'</div>'
-      +'</div>'
-      +'<div style="text-align:center;font-weight:bold;font-size:20pt;margin:8px 0;line-height:1.2;word-wrap:break-word">'+esc(product)+'</div>'
-      +'<div style="display:flex;align-items:center;gap:12px;margin:8px 0">'
-        +'<div style="width:1.2in;height:1.2in;border:3px solid #000;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-size:7.5pt;font-weight:bold;line-height:1.2;flex-shrink:0;padding:5px">U.S.<br>INSPECTED<br>AND PASSED BY<br>DEPARTMENT OF<br>AGRICULTURE<br>'+esc(tpl.estNumber)+'</div>'
-        +'<div style="flex:1;text-align:center"><span style="font-weight:bold;font-size:36pt;line-height:1">'+weight+'</span> <span style="font-weight:bold;font-size:20pt">lbs.</span></div>'
-      +'</div>'
-      +'<div style="text-align:center;font-weight:bold;font-size:14pt;border-top:2px solid #000;border-bottom:2px solid #000;padding:5px 0;margin:6px 0">'+esc(tpl.keepText)+'</div>'
-      +(entry.lot?('<div style="text-align:center;font-size:10pt;margin-top:4px;font-family:monospace">LOT: '+esc(entry.lot)+'</div>'):'')
-      +(entry.customer?('<div style="text-align:center;font-size:10pt;margin-top:3px;font-family:monospace">CUSTOMER: '+esc(entry.customer)+'</div>'):'')
-      +'<div style="text-align:center;font-weight:bold;font-size:11pt;margin:5px 0 3px">SAFE HANDLING INSTRUCTIONS</div>'
-      +'<div style="font-size:8pt;line-height:1.4;text-align:left">This product was prepared from inspected and passed meat and/or poultry. Some food products may contain bacteria that could cause illness if mishandled or cooked improperly. For your protection, follow these safe handling instructions.<br>'
-        +safeHandlingHTML+'</div>'
-      +'</div>';
-  }
-
-  // ── Standard 2.4 × 3.9 label ──────────────────────────────────────────────
-  // Position/font-size for every piece comes from the department's layout
-  // (defaults + any saved overrides) so admins can drag/resize elements in
-  // Settings → Label Templates → Edit Layout and have it reflected here,
-  // in the preview, and on the printed label — all three call this same
-  // function.
   var L=getLabelLayout(entry.department, layoutOverride);
   function posStyle(key,extra){
     var p=L[key];
@@ -4049,6 +4039,33 @@ function buildLabelHTML(entry, forPrint, editable, layoutOverride){
   function wrap(key,extra,innerHTML){
     return '<div class="lbl-elem" data-key="'+key+'" style="'+posStyle(key,extra)+'">'+handle(key)+innerHTML+'</div>';
   }
+
+  if(size.w>=4){
+    return ''
+      +'<div class="lbl-page" style="position:relative;font-family:Arial,Helvetica,sans-serif;color:#000;width:4in;height:6in;overflow:'+(editable?'visible':'hidden')+'">'
+      +wrap('logo','width:0.9in;height:0.9in;','<img src="'+LEADER_LOGO+'" style="width:100%;height:100%;object-fit:contain"/>')
+      +wrap('coName','width:2.7in;text-align:center;font-weight:bold;line-height:1.05;',esc(tpl.companyName))
+      +wrap('coAddr','width:2.7in;text-align:center;line-height:1.2;',addressHTML)
+      +wrap('pkgLabel','width:3.7in;text-align:center;font-weight:bold;','Packaging Date')
+      +wrap('pkgDate','width:3.7in;text-align:center;font-weight:bold;',esc(dateStr))
+      +wrap('prodName','width:3.7in;text-align:center;font-weight:bold;line-height:1.2;word-wrap:break-word;',esc(product))
+      +wrap('seal','width:1.2in;height:1.2in;border:3px solid #000;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-weight:bold;line-height:1.2;padding:5px;box-sizing:border-box;','U.S.<br>INSPECTED<br>AND PASSED BY<br>DEPARTMENT OF<br>AGRICULTURE<br>'+esc(tpl.estNumber))
+      +wrap('wtValue','font-weight:bold;line-height:1;',weight)
+      +wrap('wtUnit','font-weight:bold;','lbs.')
+      +wrap('keepText','width:3.7in;text-align:center;font-weight:bold;border-top:2px solid #000;border-bottom:2px solid #000;padding:5px 0;box-sizing:border-box;',esc(tpl.keepText))
+      +(entry.lot?('<div style="position:absolute;left:0.15in;top:3.6in;font-size:10pt;font-family:monospace">LOT: '+esc(entry.lot)+'</div>'):'')
+      +(entry.customer?('<div style="position:absolute;left:0.15in;top:3.6in;font-size:10pt;font-family:monospace">CUSTOMER: '+esc(entry.customer)+'</div>'):'')
+      +wrap('shTitle','width:3.7in;text-align:center;font-weight:bold;','SAFE HANDLING INSTRUCTIONS')
+      +wrap('shText','width:3.7in;line-height:1.4;text-align:left;','This product was prepared from inspected and passed meat and/or poultry. Some food products may contain bacteria that could cause illness if mishandled or cooked improperly. For your protection, follow these safe handling instructions.<br>'+safeHandlingHTML)
+      +'</div>';
+  }
+
+  // ── Standard 2.4 × 3.9 label ──────────────────────────────────────────────
+  // Position/font-size for every piece comes from the department's layout
+  // (defaults + any saved overrides) so admins can drag/resize elements in
+  // Settings → Label Templates → Edit Layout and have it reflected here,
+  // in the preview, and on the printed label — all three call this same
+  // function.
   return ''
     +'<div class="lbl-page" style="position:relative;font-family:Arial,Helvetica,sans-serif;color:#000;width:2.4in;height:3.9in;overflow:'+(editable?'visible':'hidden')+'">'
     +wrap('logo','width:0.62in;height:0.62in;','<img src="'+LEADER_LOGO+'" style="width:100%;height:100%;object-fit:contain"/>')

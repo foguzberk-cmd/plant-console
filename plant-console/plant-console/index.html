@@ -4780,6 +4780,20 @@ function reprintLabel(id){
   }
 }
 
+// Keeps the "protect from being restored by a pull" guard active for a
+// few extra seconds after a deletion is CONFIRMED successful, instead of
+// lifting it the instant success is known. This matters because a pull can
+// already be in flight (sent moments before the delete began, e.g. from the
+// periodic timer) — none of the other guards can stop a request that's
+// already on the wire, only prevent NEW ones from starting. If that old
+// request's stale response (still containing the "deleted" record, since
+// it was sent before the deletion happened) arrives right after the guard
+// was lifted, it would silently overwrite the correct state. The shorter
+// the sync interval, the more likely one of these is in flight at any given
+// moment — which is exactly why this got worse after speeding up sync.
+function liftDeleteGuardSoon(id){
+  setTimeout(function(){ delete _deletedScaleLogIds[id]; },3000);
+}
 async function deleteScaleLog(id){
   if(!confirm('Delete this label log entry? This cannot be undone.')) return;
   // Register the ID immediately so any pull that arrives before the delete
@@ -4814,7 +4828,7 @@ async function deleteScaleLog(id){
   }
   var freshStatusEl=document.getElementById('sl-status'); // re-grab in case anything re-rendered the form meanwhile
   if(ok){
-    delete _deletedScaleLogIds[id];
+    liftDeleteGuardSoon(id);
     if(freshStatusEl){ freshStatusEl.textContent='Deleted and confirmed on the server — all devices will reflect this.'; freshStatusEl.style.color='#0f6e40'; }
     return;
   }
@@ -4853,7 +4867,7 @@ async function confirmScaleLogDeletion(id){
     var ok=false;
     try{ ok=await deleteScaleLogOnServer(id); }catch(e){ ok=false; }
     if(ok){
-      delete _deletedScaleLogIds[id];
+      liftDeleteGuardSoon(id);
       var el=document.getElementById('sl-status');
       if(el){ el.textContent='Deleted and confirmed on the server — all devices will reflect this.'; el.style.color='#0f6e40'; }
       return;

@@ -856,6 +856,17 @@ var SYNC_URL='/api/data';
 // even if the network is slow. IDs are cleared after 15 s — long enough for
 // any push to complete even on a slow connection.
 var _deletedScaleLogIds={};
+// Mirror image of the above, for ADDITIONS: maps id -> the actual entry
+// object, for scale logs added in roughly the last few seconds. A pull can
+// already be in flight (sent moments before a new label was created) with
+// no way to know about that brand-new entry — none of the write-blocking
+// guards can stop a request that's already on the wire. If that old
+// request's response (missing the new entry, since it predates it) lands
+// right after the entry was confirmed saved, a plain replace would
+// silently erase it again, even on the very device that just created it.
+// pullFromServer() below re-adds anything still in this map that the
+// server's response is missing.
+var _recentlyAddedScaleLogs={};
 // ----- Temporary sync diagnostics (see the "Sync debug log" panel on the
 // Scale Log page) — logs exactly what pull/push events happen and when,
 // including scale log counts and whether a specific ID was involved, so the
@@ -942,7 +953,19 @@ async function pullFromServer(){
       // IDs still get filtered out below in case that specific delete-push
       // is still in flight.
       var serverCount=data.scaleLogs.length;
-      scaleLogs=data.scaleLogs.filter(function(l){ return !_deletedScaleLogIds[l.id]; });
+      var mergedPulledLogs=data.scaleLogs.filter(function(l){ return !_deletedScaleLogIds[l.id]; });
+      // Guard against the mirror-image race to deletion: a pull that was
+      // already in flight before a brand-new entry was created has no way
+      // to know about it, and its (now-stale) response would otherwise
+      // silently erase that entry again — even on the very device that
+      // just created it. Re-add anything still within its protection
+      // window that the server's response doesn't (yet) include.
+      Object.keys(_recentlyAddedScaleLogs).forEach(function(rid){
+        if(!mergedPulledLogs.some(function(l){ return l.id===rid; })){
+          mergedPulledLogs.push(_recentlyAddedScaleLogs[rid]);
+        }
+      });
+      scaleLogs=mergedPulledLogs;
       logSync('PULL got scaleLogs: server had '+serverCount+', kept '+scaleLogs.length+' after filtering guarded ids');
     }
     if(Array.isArray(data.labelAllowed)&&data.labelAllowed.length) labelAllowed=data.labelAllowed;
@@ -4727,6 +4750,13 @@ async function printScaleLabel(){
     };
     scaleLogs.push(entry);
     safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs)); // instant local save, regardless of network
+    // Protect this entry from being stripped back out by a pull that was
+    // already in flight before it existed (see _recentlyAddedScaleLogs
+    // above) — kept for a generous grace period, then auto-expires since by
+    // then any such stale, already-in-flight request would have long since
+    // resolved one way or the other.
+    _recentlyAddedScaleLogs[entry.id]=entry;
+    setTimeout(function(){ delete _recentlyAddedScaleLogs[entry.id]; },8000);
 
     // Give immediate feedback that a save is in flight — the button click
     // shouldn't feel like it did nothing while the server round-trip runs.
@@ -4743,7 +4773,18 @@ async function printScaleLabel(){
     var savedOk=false, saveError='';
     _writeInFlight++;
     try{
-      var pushResult=await pushToServer();
+      // On a flaky connection (intermittent failures rather than a fully
+      // dead one), an immediate retry very often just succeeds — same
+      // reasoning as the delete flow's quick-retry burst. All within the
+      // pull-blocked window above.
+      var pushResult=false;
+      for(var quickAttempt=0;quickAttempt<3 && pushResult!==true;quickAttempt++){
+        if(quickAttempt>0){
+          logSync('SAVE quick-retry attempt '+(quickAttempt+1)+'…');
+          await new Promise(function(r){ setTimeout(r,800); });
+        }
+        pushResult=await pushToServer();
+      }
       savedOk=(pushResult===true);
       if(!savedOk) saveError=_lastPushFailureDetail||'the server did not confirm the save';
     }catch(e){

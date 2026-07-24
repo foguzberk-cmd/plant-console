@@ -4614,101 +4614,133 @@ async function retryPushUntilConfirmed(product, weight){
   }
 }
 async function printScaleLabel(){
-  var product=document.getElementById('sl-search').value.trim();
-  var weight=document.getElementById('sl-weight').value;
-  var date=document.getElementById('sl-date').value;
-  var lot=document.getElementById('sl-lot').value.trim();
-  var tagNumber=document.getElementById('sl-tag').value.trim();
-  var customer=document.getElementById('sl-customer').value.trim();
+  // Grab the status element FIRST, before anything else has a chance to
+  // throw — this guarantees there's always somewhere to report a problem,
+  // even one nobody anticipated. Everything below is wrapped in a try/catch
+  // for the same reason: a silent, unreported failure (nothing happens,
+  // no message, nothing saved) is far worse than any error message, because
+  // it looks like the button did nothing at all.
   var status=document.getElementById('sl-status');
-  if(!_slPrintDept){ if(status)status.textContent='Select a department first.'; document.getElementById('sl-dept').focus(); return; }
-  if(!product){ if(status)status.textContent='Pick a product first.'; document.getElementById('sl-search').focus(); return; }
-  if(weight===''||Number(weight)<=0){ if(status)status.textContent='Enter a weight.'; document.getElementById('sl-weight').focus(); return; }
-
-  var now=new Date();
-  var time=now.toTimeString().slice(0,5);
-  var itemId=document.getElementById('sl-item').value;
-  var entry={
-    id:'sl_'+Date.now(),
-    product:product,
-    itemId:itemId,
-    department:_slPrintDept,
-    weight:Number(weight),
-    date:date,
-    time:time,
-    lot:lot,
-    tagNumber:tagNumber,
-    customer:customer,
-    loggedBy:currentUser?(currentUser.name||currentUser.email||''):''
-  };
-  scaleLogs.push(entry);
-  safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs)); // instant local save, regardless of network
-
-  // Give immediate feedback that a save is in flight — the button click
-  // shouldn't feel like it did nothing while the server round-trip runs.
-  var btn=document.querySelector('button[onclick="printScaleLabel()"]');
-  if(btn) btn.disabled=true;
-  if(status) status.textContent='Saving to server…';
-
-  // THIS is "server holds the data": actually wait for the server to
-  // confirm it has this entry before doing anything else — printing,
-  // clearing the form, telling the user it's done. Previously this just
-  // fired the push in the background and moved on immediately, so a device
-  // could believe something was saved when the server round-trip hadn't
-  // actually finished (or failed) yet.
-  var savedOk=false, saveError='';
-  _writeInFlight=true;
   try{
-    var pushResult=await pushToServer();
-    savedOk=(pushResult===true);
-    if(!savedOk) saveError=_lastPushFailureDetail||'the server did not confirm the save';
-  }catch(e){
-    saveError=e&&e.message?e.message:String(e);
-    console.error('Save to server failed:', e);
-  }finally{
-    _writeInFlight=false;
-  }
-
-  // The entry is at minimum saved to THIS device's local storage above
-  // regardless of what happens next — a failed print (or anything else
-  // going wrong while opening the print dialog) must never also hide the
-  // fact that it was logged locally.
-  var printOk=true, printError='';
-  try{
-    doPrintLabel(entry);
-  }catch(e){
-    printOk=false;
-    printError=e&&e.message?e.message:String(e);
-    console.error('Print failed:', e);
-  }
-
-  // reset for next package (department stays selected — same station keeps
-  // printing for the same department without having to re-pick it every time)
-  // renderScaleLog() below rebuilds the whole form fresh, which already
-  // clears these fields — the explicit resets here are just belt-and-braces
-  // in case that call is ever removed or changed.
-  document.getElementById('sl-weight').value='';
-  document.getElementById('sl-lot').value='';
-  document.getElementById('sl-tag').value='';
-  document.getElementById('sl-customer').value='';
-  document.getElementById('sl-customer-search').value='';
-  renderScaleLog();
-  // IMPORTANT: renderScaleLog() just rebuilt the entire form, including a
-  // brand-new #sl-status element — setting the message on the OLD `status`
-  // reference from the top of this function would get silently discarded
-  // the instant that render ran. Grab the fresh one instead.
-  var freshStatus=document.getElementById('sl-status');
-  if(freshStatus){
-    if(!savedOk){
-      freshStatus.textContent='Saved on THIS device only — could not reach the server ('+saveError+'). It will keep retrying automatically; other devices won\'t see it until that succeeds.';
-      freshStatus.style.color='#c0392b';
-      retryPushUntilConfirmed(product, weight);
-    }else{
-      freshStatus.textContent=printOk
-        ? ('Saved to server & printed: '+product+' · '+Number(weight).toFixed(2)+' lbs — all '+scaleLogs.length+' records on this device are now on the server')
-        : ('Saved to server, but printing failed ('+printError+').');
-      freshStatus.style.color='';
+    var searchEl=document.getElementById('sl-search');
+    var weightEl=document.getElementById('sl-weight');
+    var dateEl=document.getElementById('sl-date');
+    var lotEl=document.getElementById('sl-lot');
+    var tagEl=document.getElementById('sl-tag');
+    var customerEl=document.getElementById('sl-customer');
+    var deptEl=document.getElementById('sl-dept');
+    if(!searchEl||!weightEl||!dateEl||!lotEl||!tagEl||!customerEl){
+      // This should never happen with a normally-loaded page — if it does,
+      // the page itself is broken/stale (e.g. an old cached copy missing a
+      // field that was added later). Say so plainly instead of just dying.
+      var missing=[!searchEl&&'product search',!weightEl&&'weight',!dateEl&&'date',!lotEl&&'lot',!tagEl&&'tag number',!customerEl&&'customer'].filter(Boolean).join(', ');
+      if(status) status.textContent='This page seems to be missing form fields ('+missing+') — please fully reload/refresh the app (clear its cache if it keeps happening) and try again.';
+      console.error('printScaleLabel: missing form element(s):', missing);
+      return;
     }
+    var product=searchEl.value.trim();
+    var weight=weightEl.value;
+    var date=dateEl.value;
+    var lot=lotEl.value.trim();
+    var tagNumber=tagEl.value.trim();
+    var customer=customerEl.value.trim();
+    if(!_slPrintDept){ if(status)status.textContent='Select a department first.'; if(deptEl)deptEl.focus(); return; }
+    if(!product){ if(status)status.textContent='Pick a product first.'; searchEl.focus(); return; }
+    if(weight===''||Number(weight)<=0){ if(status)status.textContent='Enter a weight.'; weightEl.focus(); return; }
+
+    var now=new Date();
+    var time=now.toTimeString().slice(0,5);
+    var itemEl=document.getElementById('sl-item');
+    var itemId=itemEl?itemEl.value:'';
+    var entry={
+      id:'sl_'+Date.now(),
+      product:product,
+      itemId:itemId,
+      department:_slPrintDept,
+      weight:Number(weight),
+      date:date,
+      time:time,
+      lot:lot,
+      tagNumber:tagNumber,
+      customer:customer,
+      loggedBy:currentUser?(currentUser.name||currentUser.email||''):''
+    };
+    scaleLogs.push(entry);
+    safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs)); // instant local save, regardless of network
+
+    // Give immediate feedback that a save is in flight — the button click
+    // shouldn't feel like it did nothing while the server round-trip runs.
+    var btn=document.querySelector('button[onclick="printScaleLabel()"]');
+    if(btn) btn.disabled=true;
+    if(status) status.textContent='Saving to server…';
+
+    // THIS is "server holds the data": actually wait for the server to
+    // confirm it has this entry before doing anything else — printing,
+    // clearing the form, telling the user it's done. Previously this just
+    // fired the push in the background and moved on immediately, so a device
+    // could believe something was saved when the server round-trip hadn't
+    // actually finished (or failed) yet.
+    var savedOk=false, saveError='';
+    _writeInFlight=true;
+    try{
+      var pushResult=await pushToServer();
+      savedOk=(pushResult===true);
+      if(!savedOk) saveError=_lastPushFailureDetail||'the server did not confirm the save';
+    }catch(e){
+      saveError=e&&e.message?e.message:String(e);
+      console.error('Save to server failed:', e);
+    }finally{
+      _writeInFlight=false;
+    }
+
+    // The entry is at minimum saved to THIS device's local storage above
+    // regardless of what happens next — a failed print (or anything else
+    // going wrong while opening the print dialog) must never also hide the
+    // fact that it was logged locally.
+    var printOk=true, printError='';
+    try{
+      doPrintLabel(entry);
+    }catch(e){
+      printOk=false;
+      printError=e&&e.message?e.message:String(e);
+      console.error('Print failed:', e);
+    }
+
+    // reset for next package (department stays selected — same station keeps
+    // printing for the same department without having to re-pick it every
+    // time). renderScaleLog() below rebuilds the whole form fresh, which
+    // already clears these fields — these explicit resets are just
+    // belt-and-braces, now null-guarded so they can never themselves throw.
+    if(weightEl) weightEl.value='';
+    if(lotEl) lotEl.value='';
+    if(tagEl) tagEl.value='';
+    if(customerEl) customerEl.value='';
+    var custSearchEl=document.getElementById('sl-customer-search');
+    if(custSearchEl) custSearchEl.value='';
+    renderScaleLog();
+    // IMPORTANT: renderScaleLog() just rebuilt the entire form, including a
+    // brand-new #sl-status element — setting the message on the OLD `status`
+    // reference from the top of this function would get silently discarded
+    // the instant that render ran. Grab the fresh one instead.
+    var freshStatus=document.getElementById('sl-status');
+    if(freshStatus){
+      if(!savedOk){
+        freshStatus.textContent='Saved on THIS device only — could not reach the server ('+saveError+'). It will keep retrying automatically; other devices won\'t see it until that succeeds.';
+        freshStatus.style.color='#c0392b';
+        retryPushUntilConfirmed(product, weight);
+      }else{
+        freshStatus.textContent=printOk
+          ? ('Saved to server & printed: '+product+' · '+Number(weight).toFixed(2)+' lbs — all '+scaleLogs.length+' records on this device are now on the server')
+          : ('Saved to server, but printing failed ('+printError+').');
+        freshStatus.style.color='';
+      }
+    }
+  }catch(e){
+    // Absolute last resort: something totally unanticipated broke, but the
+    // user still gets told SOMETHING went wrong instead of silence.
+    console.error('printScaleLabel crashed unexpectedly:', e);
+    var msg='Something went wrong before saving ('+(e&&e.message?e.message:String(e))+'). Please try again; if it keeps happening, try a full refresh of the app.';
+    if(status) status.textContent=msg; else alert(msg);
   }
 }
 

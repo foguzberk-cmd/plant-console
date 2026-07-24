@@ -4276,7 +4276,20 @@ function clearScaleLogFilters(){
 // the on-screen table and the Excel export so they always match exactly.
 function getFilteredScaleLogs(){
   var q=(document.getElementById('sl-filter')&&document.getElementById('sl-filter').value||'').toLowerCase().trim();
-  var list=scaleLogs.slice().reverse();
+  // Sort explicitly by date+time, newest first — don't rely on array order.
+  // Insertion order used to happen to match "oldest first" when every entry
+  // was simply pushed onto the end locally, but that guarantee is gone now
+  // that a pull can replace the whole array with the server's copy, whose
+  // order isn't necessarily chronological (e.g. after merges across devices,
+  // or entries synced from a different device's push). Sorting explicitly
+  // here means the newest entry always shows up first regardless of how
+  // it arrived.
+  var list=scaleLogs.slice().sort(function(a,b){
+    var ak=(a.date||'')+' '+(a.time||'');
+    var bk=(b.date||'')+' '+(b.time||'');
+    if(ak!==bk) return ak<bk?1:-1;
+    return (a.id||'')<(b.id||'')?1:-1; // tie-break: newer id (created later) first
+  });
   if(q) list=list.filter(function(l){return (l.product||'').toLowerCase().includes(q)||(l.lot||'').toLowerCase().includes(q)||(l.tagNumber||'').toLowerCase().includes(q)||(l.customer||'').toLowerCase().includes(q);});
   if(_slDeptFilter){
     list=list.filter(function(l){

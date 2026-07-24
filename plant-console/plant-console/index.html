@@ -637,7 +637,8 @@
   </div>
 
 <script>
-console.log("Plant Console BUILD-1604 — scale log v2: weight auto-select + product dropdown hints");
+var APP_BUILD='BUILD-1605';
+console.log("Plant Console "+APP_BUILD+" — cache-busted sync fetches + visible sync diagnostics");
 
 const ICON={
   dashboard:'<rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>',
@@ -916,7 +917,7 @@ async function pullFromServer(){
   // with the older/emptier server copy right as the sync finishes.
   if(__syncBusy) return false;
   try{
-    var res=await fetch(SYNC_URL,{cache:'no-store'});
+    var res=await fetch(SYNC_URL+'?_ts='+Date.now(),{cache:'no-store',headers:{'Cache-Control':'no-cache, no-store, must-revalidate','Pragma':'no-cache'}});
     if(res.status===401){ forceLogout(); return false; }
     if(!res.ok) return false;
     var data=await res.json();
@@ -972,7 +973,7 @@ async function pullFromServer(){
     // is tuned — that's a "wrong URL" problem, not a sync-timing problem.
     var syncMetaEl=document.getElementById('syncMeta');
     if(syncMetaEl){
-      syncMetaEl.textContent=location.hostname+' · '+(scaleLogs.length)+' logs · '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      syncMetaEl.textContent=APP_BUILD+' · '+location.hostname+' · '+(scaleLogs.length)+' logs · '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
     }
     // Self-heal: if the server came back empty for something we actually have
     // locally, its copy is stale/reset — push ours back up right away so it
@@ -1029,7 +1030,7 @@ async function pushToServer(){
     // check deliberately only fetches these small collections, not the full
     // (potentially multi-MB) items/transactions/storages data.
     try{
-      var smallRes=await fetch('/api/data/small',{cache:'no-store'});
+      var smallRes=await fetch('/api/data/small?_ts='+Date.now(),{cache:'no-store',headers:{'Cache-Control':'no-cache, no-store, must-revalidate','Pragma':'no-cache'}});
       if(smallRes.ok){
         var smallData=await smallRes.json();
         var newUsers=unionById(users, smallData.users);

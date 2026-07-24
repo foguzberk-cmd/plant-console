@@ -949,16 +949,22 @@ async function pullFromServer(){
     if(Array.isArray(data.customers)&&data.customers.length) customers=data.customers;
     if(Array.isArray(data.customerAllowed)&&data.customerAllowed.length) customerAllowed=data.customerAllowed;
     if(data.labelTemplates && typeof data.labelTemplates==='object' && Object.keys(data.labelTemplates).length) labelTemplates=data.labelTemplates;
-    safeSetLocal('pc_items',JSON.stringify(items));
-    safeSetLocal('pc_transactions',JSON.stringify(transactions));
-    safeSetLocal('pc_storages',JSON.stringify(storages));
-    safeSetLocal('pc_users',JSON.stringify(users));
-    safeSetLocal('pc_savedreports',JSON.stringify(savedReports));
+    // Smallest/most operationally-critical data first, largest/most
+    // quota-prone last — if this browser's localStorage is ever tight on
+    // space (as on some mobile browsers with smaller per-origin quotas),
+    // the things that matter most for day-to-day use (today's scale logs,
+    // users, label settings) get saved before the big historical
+    // collections that are most likely to hit the limit.
     safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs));
     safeSetLocal('pc_labelallowed',JSON.stringify(labelAllowed));
-    safeSetLocal('pc_customers',JSON.stringify(customers));
+    safeSetLocal('pc_users',JSON.stringify(users));
+    safeSetLocal('pc_savedreports',JSON.stringify(savedReports));
     safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed));
     safeSetLocal('pc_labeltemplates',JSON.stringify(labelTemplates));
+    safeSetLocal('pc_customers',JSON.stringify(customers));
+    safeSetLocal('pc_storages',JSON.stringify(storages));
+    safeSetLocal('pc_items',JSON.stringify(items));
+    safeSetLocal('pc_transactions',JSON.stringify(transactions));
     // The dashboard/transactions view may have already rendered from stale
     // (or empty, on first load) local data before this pull finished — make
     // sure whichever of those is currently on screen reflects what we just

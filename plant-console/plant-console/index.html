@@ -733,7 +733,9 @@ var DEFAULT_LABEL_LAYOUT_STD={
   wtUnit:    {left:1.65, top:2.14, fontSize:12},
   keepText:  {left:0.10, top:2.62, fontSize:9.5},
   shTitle:   {left:0.10, top:2.98, fontSize:8},
-  shText:    {left:0.10, top:3.16, fontSize:5.4}
+  shText:    {left:0.10, top:3.16, fontSize:5.4},
+  lot:       {left:0.10, top:2.50, fontSize:7},
+  customer:  {left:0.10, top:2.56, fontSize:7}
 };
 // Default layout for the 4in x 6in Brother QL-1110NWB label (Carcass
 // Process/Retail). Same key set as the standard layout above so the editor
@@ -750,7 +752,9 @@ var DEFAULT_LABEL_LAYOUT_4X6={
   wtUnit:    {left:2.85, top:3.15, fontSize:20},
   keepText:  {left:0.15, top:3.85, fontSize:14},
   shTitle:   {left:0.15, top:4.35, fontSize:11},
-  shText:    {left:0.15, top:4.65, fontSize:8}
+  shText:    {left:0.15, top:4.65, fontSize:8},
+  lot:       {left:0.15, top:3.60, fontSize:10},
+  customer:  {left:0.15, top:3.72, fontSize:10}
 };
 // Picks the right baseline layout for a department based on its label
 // paper size (see DEPT_LABEL_SIZES above).
@@ -3439,7 +3443,7 @@ function updateLabelTemplatePreview(){
   prev.style.transformOrigin='top left';
   prev.style.background='#fff';
   if(titleEl) titleEl.textContent='Preview \u00b7 '+size.w+'\u2033 \u00d7 '+size.h+'\u2033';
-  var fakeEntry={product:'Sample Product',weight:'10.00',date:new Date().toISOString().slice(0,10),lot:'LOT-0001',department:_ltPanelDept};
+  var fakeEntry={product:'Sample Product',weight:'10.00',date:new Date().toISOString().slice(0,10),lot:'LOT-0001',customer:'Sample Customer',department:_ltPanelDept};
   var saved=labelTemplates[_ltPanelDept];
   var draft={
     companyName:document.getElementById('lt-company').value,
@@ -3492,7 +3496,8 @@ var LLL_FRIENDLY_NAMES={
   logo:'Logo box', coName:'Company name', coAddr:'Company address',
   pkgLabel:'"Packaging Date" label', pkgDate:'Date value', prodName:'Product name',
   seal:'USDA seal text', wtValue:'Weight value', wtUnit:'Weight unit',
-  keepText:'"Keep Refrigerated" bar', shTitle:'"Safe Handling" title', shText:'Safe handling body text'
+  keepText:'"Keep Refrigerated" bar', shTitle:'"Safe Handling" title', shText:'Safe handling body text',
+  lot:'Lot number', customer:'Customer name'
 };
 // Which of the built-in draggable pieces have editable TEXT (as opposed to
 // purely dynamic data like the product name/date/weight, which come from the
@@ -3535,7 +3540,7 @@ function renderLabelLayoutEditor(){
 function refreshLabelLayoutCanvas(){
   var canvas=document.getElementById('lllCanvas');
   if(!canvas) return;
-  var fakeEntry={product:'Sample Product',weight:'10.00',date:new Date().toISOString().slice(0,10),lot:'LOT-0001',department:_lllDept};
+  var fakeEntry={product:'Sample Product',weight:'10.00',date:new Date().toISOString().slice(0,10),lot:'LOT-0001',customer:'Sample Customer',department:_lllDept};
   canvas.innerHTML=buildLabelHTML(fakeEntry,false,true,_lllDraftLayout,_lllDraftTemplate,_lllDraftCustom);
   var page=canvas.querySelector('.lbl-page');
   if(page){ page.style.boxShadow='0 4px 20px rgba(0,0,0,.25)'; page.style.background='#fff'; page.style.flexShrink='0'; }
@@ -4238,8 +4243,8 @@ function buildLabelHTML(entry, forPrint, editable, layoutOverride, templateOverr
       +wrap('wtValue','font-weight:bold;line-height:1;',weight)
       +wrap('wtUnit','font-weight:bold;',esc(tpl.weightUnitText))
       +wrap('keepText','width:3.7in;text-align:center;font-weight:bold;border-top:2px solid #000;border-bottom:2px solid #000;padding:5px 0;box-sizing:border-box;',esc(tpl.keepText))
-      +(entry.lot?('<div style="position:absolute;left:0.15in;top:3.6in;font-size:10pt;font-family:monospace">LOT: '+esc(entry.lot)+'</div>'):'')
-      +(entry.customer?('<div style="position:absolute;left:0.15in;top:3.6in;font-size:10pt;font-family:monospace">CUSTOMER: '+esc(entry.customer)+'</div>'):'')
+      +(entry.lot?wrap('lot','font-family:monospace;','LOT: '+esc(entry.lot)):'')
+      +(entry.customer?wrap('customer','font-family:monospace;','CUSTOMER: '+esc(entry.customer)):'')
       +wrap('shTitle','width:3.7in;text-align:center;font-weight:bold;',esc(tpl.shTitleText))
       +wrap('shText','width:3.7in;line-height:1.4;text-align:left;','This product was prepared from inspected and passed meat and/or poultry. Some food products may contain bacteria that could cause illness if mishandled or cooked improperly. For your protection, follow these safe handling instructions.<br>'+safeHandlingHTML)
       +customFieldsHTML
@@ -4264,8 +4269,8 @@ function buildLabelHTML(entry, forPrint, editable, layoutOverride, templateOverr
     +wrap('wtValue','font-weight:bold;line-height:1;',weight)
     +wrap('wtUnit','font-weight:bold;',esc(tpl.weightUnitText))
     +wrap('keepText','width:2.2in;text-align:center;font-weight:bold;border-top:1.5px solid #000;border-bottom:1.5px solid #000;padding:3px 0;box-sizing:border-box;',esc(tpl.keepText))
-    +(entry.lot?('<div style="position:absolute;left:0.1in;top:2.5in;font-size:7pt;font-family:monospace">LOT: '+esc(entry.lot)+'</div>'):'')
-    +(entry.customer?('<div style="position:absolute;left:0.1in;top:2.5in;font-size:7pt;font-family:monospace">CUSTOMER: '+esc(entry.customer)+'</div>'):'')
+    +(entry.lot?wrap('lot','font-family:monospace;','LOT: '+esc(entry.lot)):'')
+    +(entry.customer?wrap('customer','font-family:monospace;','CUSTOMER: '+esc(entry.customer)):'')
     +wrap('shTitle','width:2.2in;text-align:center;font-weight:bold;',esc(tpl.shTitleText))
     +wrap('shText','width:2.2in;line-height:1.25;text-align:left;','This product was prepared from inspected and passed meat and/or poultry. Some food products may contain bacteria that could cause illness if mishandled or cooked improperly. For your protection, follow these safe handling instructions.<br>'+safeHandlingHTML)
     +customFieldsHTML

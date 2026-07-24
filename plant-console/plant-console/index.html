@@ -849,7 +849,7 @@ function safeSetLocal(key,value){
 // data anyway.
 var SYNC_URL='/api/data';
 // IDs of scale log entries deleted locally but not yet confirmed on the server.
-// Without this, the background pull (every 4s) would fetch the server's stale
+// Without this, the background pull (every 1.5s) would fetch the server's stale
 // copy and restore a record you just deleted, making it "snap back". Any pull
 // that arrives before the delete-push completes is now filtered to exclude
 // these IDs, so deletions are immediate and irreversible from the user's POV
@@ -1130,14 +1130,18 @@ async function restoreSession(){
   }
 }
 restoreSession();
-setInterval(pullFromServer,4000);
+// Shortened from 4s to 1.5s so a change on one device (a new label, a
+// deletion, anything) shows up on other open devices in roughly 1-2
+// seconds instead of up to 4 — makes cross-device sync feel near-instant
+// without the added complexity of a real push/WebSocket connection.
+setInterval(pullFromServer,1500);
 // Safety-net push in case some part of the app saves data without going
 // through saveStorages/saveTxns/saveUsers.
-setInterval(pushToServer,4000);
+setInterval(pushToServer,1500);
 // Mobile browsers throttle (or fully pause) background-tab timers, so a
 // phone that's been sitting in the background for a while can easily be
 // showing data that's several minutes (or longer) stale even though the
-// 4s interval above is technically still "running". Pulling immediately
+// 1.5s interval above is technically still "running". Pulling immediately
 // the moment the tab/app becomes visible again closes that gap — this is
 // what actually keeps a desktop and an Android device in sync in practice,
 // not just the timer alone.
@@ -4774,6 +4778,12 @@ async function deleteScaleLog(id){
   scaleLogs=scaleLogs.filter(function(l){return l.id!==id;});
   safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs));
   renderScaleLog();
+  // ALWAYS show a clear, unambiguous message once this settles — previously
+  // a successful delete showed nothing at all, so there was no way to
+  // actually confirm it went through versus just assuming so. Reuses the
+  // same #sl-status area the print form uses (always present on this page).
+  var statusEl=document.getElementById('sl-status');
+  if(statusEl){ statusEl.textContent='Deleting from server…'; statusEl.style.color=''; }
 
   // Fully block any concurrent pull for this first, most time-critical
   // attempt — not just relying on the _deletedScaleLogIds filter. That
@@ -4790,14 +4800,17 @@ async function deleteScaleLog(id){
   finally{
     _writeInFlight--;
   }
+  var freshStatusEl=document.getElementById('sl-status'); // re-grab in case anything re-rendered the form meanwhile
   if(ok){
     delete _deletedScaleLogIds[id];
+    if(freshStatusEl){ freshStatusEl.textContent='Deleted and confirmed on the server — all devices will reflect this.'; freshStatusEl.style.color='#0f6e40'; }
     return;
   }
   // First attempt failed (network hiccup, etc.) — hand off to the slower
   // background retry loop. Pulls aren't fully blocked for these later
   // retries (that would hold up normal syncing for up to ~2 minutes), but
   // _deletedScaleLogIds still protects against them reintroducing the record.
+  if(freshStatusEl){ freshStatusEl.textContent='Removed on this device, but the server has not confirmed the delete yet — retrying automatically…'; freshStatusEl.style.color='#c0392b'; }
   confirmScaleLogDeletion(id);
 }
 // Calls a DEDICATED delete endpoint (not the general full-snapshot push).
@@ -4827,7 +4840,12 @@ async function confirmScaleLogDeletion(id){
     await new Promise(function(r){ setTimeout(r,4000); });
     var ok=false;
     try{ ok=await deleteScaleLogOnServer(id); }catch(e){ ok=false; }
-    if(ok){ delete _deletedScaleLogIds[id]; return; }
+    if(ok){
+      delete _deletedScaleLogIds[id];
+      var el=document.getElementById('sl-status');
+      if(el){ el.textContent='Deleted and confirmed on the server — all devices will reflect this.'; el.style.color='#0f6e40'; }
+      return;
+    }
   }
   // After ~2 minutes of failures there's a real, persistent connectivity
   // problem. Previously this just gave up completely silently — the entry

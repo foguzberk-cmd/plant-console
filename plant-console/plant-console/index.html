@@ -4752,7 +4752,7 @@ async function printScaleLabel(){
       retryPushUntilConfirmed(product, weight);
     }else{
       freshStatus.textContent=printOk
-        ? ('Saved to server & printed: '+product+' · '+Number(weight).toFixed(2)+' lbs')
+        ? ('Saved to server & printed: '+product+' · '+Number(weight).toFixed(2)+' lbs — all '+scaleLogs.length+' records on this device are now on the server')
         : ('Saved to server, but printing failed ('+printError+').');
       freshStatus.style.color='';
     }

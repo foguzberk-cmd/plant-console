@@ -4759,26 +4759,38 @@ async function deleteScaleLog(id){
   if(!confirm('Delete this label log entry? This cannot be undone.')) return;
   // Register the ID immediately so any pull that arrives before the delete
   // is confirmed on the server will filter it out and won't restore the
-  // deleted record. This guard now stays in place until confirmDeletion()
-  // below actually succeeds — NOT for a flat timeout. A flat timeout was
-  // the bug: if the push happened to fail (or was just slow, e.g. on a
-  // flaky mobile connection), the guard would expire and the very next
-  // pull would silently resurrect the record from the server's still-intact
-  // copy — exactly "I deleted it and it came back."
+  // deleted record locally. This guard stays in place until
+  // confirmScaleLogDeletion() below actually succeeds — not a flat timeout.
   _deletedScaleLogIds[id]=true;
   scaleLogs=scaleLogs.filter(function(l){return l.id!==id;});
   safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs));
   renderScaleLog();
   confirmScaleLogDeletion(id); // runs in the background; UI already reflects the delete
 }
+// Calls a DEDICATED delete endpoint (not the general full-snapshot push).
+// This matters: with the general push, another device that simply hadn't
+// pulled this deletion yet (e.g. left open from before it happened) would
+// eventually push ITS OWN full snapshot — which still contains the "deleted"
+// record — and silently resurrect it server-side, no matter how well this
+// device's own retry/guard logic worked. The dedicated endpoint deletes the
+// record AND permanently tombstones its ID on the server in one atomic step,
+// so no other device's stale push can ever bring it back.
+async function deleteScaleLogOnServer(id){
+  if(!currentUser) return false;
+  try{
+    var res=await fetch('/api/data/delete-scalelog',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})});
+    if(res.status===401){ forceLogout(); return false; }
+    return res.ok;
+  }catch(e){
+    return false;
+  }
+}
 // Keeps retrying (roughly every 4s, up to ~2 minutes) until the server
-// actually confirms this deletion, then lifts the restore-guard. Uses the
-// same serialized push queue as every other save, so it can't clash with
-// other pending writes.
+// actually confirms this deletion, then lifts the restore-guard.
 async function confirmScaleLogDeletion(id){
   for(var attempt=0;attempt<30;attempt++){
     var ok=false;
-    try{ ok=await pushToServer(); }catch(e){ ok=false; }
+    try{ ok=await deleteScaleLogOnServer(id); }catch(e){ ok=false; }
     if(ok){ delete _deletedScaleLogIds[id]; return; }
     await new Promise(function(r){ setTimeout(r,4000); });
   }

@@ -869,6 +869,11 @@ var __syncBusy=false; // true while a QuickBooks sync is actively running
 // that exact window would see the server's still-old copy and briefly
 // overwrite the just-added record locally — this guard closes that gap.
 var _writeInFlight=false;
+// Tracks the exact JSON snapshot most recently CONFIRMED saved to the
+// server (only set after a successful response — see _pushToServerImpl),
+// so an unchanged push can skip re-sending identical data. Starts as an
+// empty string so the very first push always goes through.
+var _lastPushedSnapshot='';
 // Re-draw whatever section is currently on screen, but only if it's one that
 // actually reads items/transactions/storages/users — no point re-rendering a
 // static section, and we don't want to yank focus away mid-edit on forms

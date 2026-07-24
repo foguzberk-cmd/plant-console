@@ -864,6 +864,11 @@ var SYNC_URL='/api/data';
 // any push to complete even on a slow connection.
 var _deletedScaleLogIds={};
 var __syncBusy=false; // true while a QuickBooks sync is actively running
+// True for the brief moment a write (e.g. printing a label) is actively
+// waiting on the server to confirm it. A pull that happened to land in
+// that exact window would see the server's still-old copy and briefly
+// overwrite the just-added record locally — this guard closes that gap.
+var _writeInFlight=false;
 // Re-draw whatever section is currently on screen, but only if it's one that
 // actually reads items/transactions/storages/users — no point re-rendering a
 // static section, and we don't want to yank focus away mid-edit on forms
@@ -916,6 +921,7 @@ async function pullFromServer(){
   // locally right now, so pulling here would overwrite freshly-synced data
   // with the older/emptier server copy right as the sync finishes.
   if(__syncBusy) return false;
+  if(_writeInFlight) return false;
   try{
     var res=await fetch(SYNC_URL+'?_ts='+Date.now(),{cache:'no-store',headers:{'Cache-Control':'no-cache, no-store, must-revalidate','Pragma':'no-cache'}});
     if(res.status===401){ forceLogout(); return false; }
@@ -935,16 +941,17 @@ async function pullFromServer(){
     if(Array.isArray(data.storages)&&data.storages.length) storages=data.storages;
     if(Array.isArray(data.users)&&data.users.length) users=data.users;
     if(Array.isArray(data.savedReports)&&data.savedReports.length) savedReports=data.savedReports;
-    if(Array.isArray(data.scaleLogs)){
-      // MERGE, don't replace: union of what's already local + whatever the
-      // server has, by id. A plain replace here is what caused newly-printed
-      // labels to "disappear" if the background pull (every 4s) happened to
-      // land while the print dialog was open and the push to the server
-      // hadn't completed yet — the server's still-stale copy would silently
-      // overwrite the local entry that hadn't landed there yet. Union keeps
-      // every local entry (so nothing already logged can vanish) while still
-      // picking up anything printed from another device.
-      scaleLogs=unionById(scaleLogs, data.scaleLogs).filter(function(l){ return !_deletedScaleLogIds[l.id]; });
+    if(Array.isArray(data.scaleLogs)&&data.scaleLogs.length){
+      // The server is the single source of truth here: every write now goes
+      // through printScaleLabel()/deleteScaleLog(), both of which actually
+      // WAIT for the server to confirm before doing anything else — so by
+      // the time a pull can run, anything logged on THIS device has already
+      // landed on the server too. That means a plain replace (rather than
+      // merging local + remote) is exactly right: whatever the server says
+      // exists is what every device should show, full stop. Locally-deleted
+      // IDs still get filtered out below in case that specific delete-push
+      // is still in flight.
+      scaleLogs=data.scaleLogs.filter(function(l){ return !_deletedScaleLogIds[l.id]; });
     }
     if(Array.isArray(data.labelAllowed)&&data.labelAllowed.length) labelAllowed=data.labelAllowed;
     if(Array.isArray(data.customers)&&data.customers.length) customers=data.customers;
@@ -1795,6 +1802,12 @@ function select(id){
   else if(id==='reports') renderReports();
   else view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p><div class="empty"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICON[id]}</svg></div><div><h3>${s.empty[0]}</h3><p>${s.empty[1]}</p></div></div>`;
   view.focus({preventScroll:true});
+  // The section above just rendered from whatever's already local/cached, so
+  // the view isn't blank/delayed — but immediately kick off a real pull too,
+  // so a moment later it's showing exactly what's actually on the server
+  // right now, not a stale local copy. pullFromServer() already re-renders
+  // the current section itself once it resolves (see rerenderCurrentSection).
+  if(id==='scalelog'||id==='transactions'||id==='items'||id==='dashboard') pullFromServer();
 }
 
 
@@ -4197,11 +4210,11 @@ function renderScaleLog(){
           </div>
           ${!customers.length?'<div style="font-size:11px;color:var(--muted);margin-top:5px">No customers synced yet — go to <strong>Settings → Customers</strong> and click Sync from QuickBooks.</div>':''}
         </div>
-        <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:6px" onclick="printScaleLabel()" title="Saved to the log immediately — even if you cancel the print dialog">
+        <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:6px" onclick="printScaleLabel()" title="Waits for the server to confirm the save before printing — every device sees the same record">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
           Print / Save
         </button>
-        <div style="font-size:11px;color:var(--muted);margin-top:6px">Logged to the record as soon as you click — canceling the print dialog won't undo it.</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px">Saved to the server before printing — canceling the print dialog won't undo it, and every device will see it.</div>
         <div id="sl-status" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:10px;min-height:14px"></div>
       </div>
       <div class="sl-preview-col">
@@ -4558,7 +4571,7 @@ function selectScaleCustomer(el){
 }
 function hideCustomerSugg(){ setTimeout(function(){var s=document.getElementById('sl-customer-sugg'); if(s) s.remove();},200); }
 
-function printScaleLabel(){
+async function printScaleLabel(){
   var product=document.getElementById('sl-search').value.trim();
   var weight=document.getElementById('sl-weight').value;
   var date=document.getElementById('sl-date').value;
@@ -4587,15 +4600,36 @@ function printScaleLabel(){
     loggedBy:currentUser?(currentUser.name||currentUser.email||''):''
   };
   scaleLogs.push(entry);
-  saveScaleLogs();
+  safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs)); // instant local save, regardless of network
 
-  // The entry above is already saved regardless of what happens next — a
-  // failed print (or anything else going wrong while opening the print
-  // dialog) must never also hide the fact that it was logged. Previously,
-  // an uncaught error here would silently stop this whole function, so
-  // nothing after it — resetting the form, the status message, even
-  // re-rendering the table to show the new row — ever ran, making it look
-  // like NOTHING happened at all.
+  // Give immediate feedback that a save is in flight — the button click
+  // shouldn't feel like it did nothing while the server round-trip runs.
+  var btn=document.querySelector('button[onclick="printScaleLabel()"]');
+  if(btn) btn.disabled=true;
+  if(status) status.textContent='Saving to server…';
+
+  // THIS is "server holds the data": actually wait for the server to
+  // confirm it has this entry before doing anything else — printing,
+  // clearing the form, telling the user it's done. Previously this just
+  // fired the push in the background and moved on immediately, so a device
+  // could believe something was saved when the server round-trip hadn't
+  // actually finished (or failed) yet.
+  var savedOk=false, saveError='';
+  _writeInFlight=true;
+  try{
+    await pushToServer();
+    savedOk=true;
+  }catch(e){
+    saveError=e&&e.message?e.message:String(e);
+    console.error('Save to server failed:', e);
+  }finally{
+    _writeInFlight=false;
+  }
+
+  // The entry is at minimum saved to THIS device's local storage above
+  // regardless of what happens next — a failed print (or anything else
+  // going wrong while opening the print dialog) must never also hide the
+  // fact that it was logged locally.
   var printOk=true, printError='';
   try{
     doPrintLabel(entry);
@@ -4621,9 +4655,17 @@ function printScaleLabel(){
   // reference from the top of this function would get silently discarded
   // the instant that render ran. Grab the fresh one instead.
   var freshStatus=document.getElementById('sl-status');
-  if(freshStatus)freshStatus.textContent=printOk
-    ? ('Printed & logged: '+product+' · '+Number(weight).toFixed(2)+' lbs')
-    : ('Logged, but printing failed ('+printError+').');
+  if(freshStatus){
+    if(!savedOk){
+      freshStatus.textContent='Saved on THIS device only — could not reach the server ('+saveError+'). It will keep retrying automatically; other devices won\'t see it until that succeeds.';
+      freshStatus.style.color='#c0392b';
+    }else{
+      freshStatus.textContent=printOk
+        ? ('Saved to server & printed: '+product+' · '+Number(weight).toFixed(2)+' lbs')
+        : ('Saved to server, but printing failed ('+printError+').');
+      freshStatus.style.color='';
+    }
+  }
 }
 
 function reprintLabel(id){

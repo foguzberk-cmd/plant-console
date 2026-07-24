@@ -1142,7 +1142,16 @@ setInterval(pushToServer,4000);
 // what actually keeps a desktop and an Android device in sync in practice,
 // not just the timer alone.
 document.addEventListener('visibilitychange',function(){
-  if(!document.hidden) pullFromServer();
+  if(!document.hidden){
+    // Push first: if the app was backgrounded (screen off, app-switched
+    // away, etc.), mobile browsers commonly pause ALL JS in that tab,
+    // including the periodic sync timer and any in-flight save/delete
+    // retry loop — so a pending local change could otherwise sit unsent
+    // until something else happens to trigger a push. Coming back into
+    // view is exactly the moment to make sure anything pending goes out.
+    pushToServer().catch(function(){});
+    pullFromServer();
+  }
 });
 // ===== END SHARED SYNC =====
 function initials(name){return name.trim().split(/\s+/).map(w=>w[0]).join('').substring(0,2).toUpperCase()}
@@ -4795,9 +4804,16 @@ async function confirmScaleLogDeletion(id){
     await new Promise(function(r){ setTimeout(r,4000); });
   }
   // After ~2 minutes of failures there's a real, persistent connectivity
-  // problem — better to let the (still server-side) record reappear
-  // visibly than protect it forever with no way to tell the user why.
+  // problem. Previously this just gave up completely silently — the entry
+  // would still look "deleted" on this device (it's already gone from the
+  // local table) even though the server never actually confirmed it,
+  // meaning it would still show up everywhere else. Now it's surfaced
+  // clearly instead of quietly failing.
   delete _deletedScaleLogIds[id];
+  alert('Could not confirm this deletion with the server after several attempts (check your connection). '+
+        'The entry has been removed on this device, but it may still exist on the server and reappear here or on other devices. '+
+        'Once you have a stable connection, try deleting it again from the log below (it may need to reload first).');
+  pullFromServer(); // refresh this device's own view to reflect reality
 }
 
 // Exports exactly what's currently shown in the log table below — i.e. the

@@ -4602,7 +4602,7 @@ function filterScaleItems(){
     wrap.appendChild(sugg);
     return;
   }
-  var matches=allowed.filter(function(it){return (it.name||'').toLowerCase().includes(q)||(it.sku||'').toLowerCase().includes(q);}).slice(0,12);
+  var matches=allowed.filter(function(it){return it.active!==false && ((it.name||'').toLowerCase().includes(q)||(it.sku||'').toLowerCase().includes(q));}).slice(0,12);
   if(!matches.length){
     sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No match for "'+esc(q)+'"</div>';
     wrap.appendChild(sugg);

@@ -5114,12 +5114,20 @@ function doPrintLabel(entry){
 
   function cleanup(){
     area.innerHTML='';
-    window.removeEventListener('afterprint',cleanup);
   }
-  window.addEventListener('afterprint',cleanup);
-  // Fallback in case 'afterprint' never fires (a handful of older/odd
-  // browsers don't support it) — restore the normal view after a delay.
-  setTimeout(cleanup,15000);
+  // Deliberately NOT listening for 'afterprint' to trigger cleanup. On
+  // desktop, window.print() blocks until the dialog closes, so 'afterprint'
+  // fires at exactly the right time. On Android, window.print() appears to
+  // hand off to the system print service and return immediately WITHOUT
+  // blocking — the actual print preview/rendering happens asynchronously in
+  // a separate system UI afterward. If 'afterprint' fires early in that
+  // flow (before Android's own preview has actually captured the page),
+  // clearing the label content immediately would wipe it out from under
+  // the still-rendering system print UI — which would explain a
+  // consistently blank result no matter what the label's own CSS says.
+  // A long flat delay avoids that regardless of exactly when Android's
+  // print flow actually reads the page.
+  setTimeout(cleanup,60000);
 
   window.print();
 }

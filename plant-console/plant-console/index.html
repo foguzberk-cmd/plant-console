@@ -1024,7 +1024,25 @@ function unionSimple(local, remote){
   var missing=remote.filter(function(x){return local.indexOf(x)<0;});
   return missing.length ? local.concat(missing) : local;
 }
-async function pushToServer(){
+// All calls to pushToServer() are serialized through this chain. Without
+// this, two overlapping pushes (e.g. the background 4s timer plus an
+// explicit awaited push from printing a label) could complete OUT OF
+// ORDER — an earlier-started-but-slower push finishing its POST after a
+// later-started-but-faster one would silently overwrite the server's data
+// with a stale snapshot that predates whatever the faster push just added.
+// That's exactly the kind of race that could make a freshly-printed label
+// appear, then vanish moments later once the slow/stale push lands. Chaining
+// every call guarantees only one POST is ever in flight at a time, and that
+// awaiting pushToServer() truly means "my turn has actually run with
+// current data" — not just "some push finished, who knows which."
+var _pushChain=Promise.resolve();
+function pushToServer(){
+  _pushChain=_pushChain.then(_pushToServerImpl).catch(function(e){
+    console.error('Push to server failed:', e);
+  });
+  return _pushChain;
+}
+async function _pushToServerImpl(){
   if(!currentUser) return;
   try{
     // Before sending OUR copy of the small shared collections (users, scale
@@ -1053,6 +1071,9 @@ async function pushToServer(){
       }
     }catch(e){ /* if this check fails, fall through and push local state as-is */ }
 
+    // Snapshot is built HERE, right before sending — not earlier — so every
+    // push (even one that was queued up behind another) always sends
+    // whatever is currently true at the moment it actually runs.
     var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates});
     if(snapshot===_lastPushedSnapshot) return; // nothing changed since last push
     _lastPushedSnapshot=snapshot;

@@ -511,7 +511,7 @@
   <div class="modal-bg hidden" id="labelLayoutModal" role="dialog" aria-modal="true">
     <div class="modal" style="max-width:min(880px,97vw);width:97%">
       <h3>Edit label layout — <span id="lllDeptName"></span></h3>
-      <p class="sub">Drag the blue dot on any element to move it. Edit the text box to change its wording, and use the slider to resize its font. Product name, date, and weight come from the actual scale entry and aren't editable here.</p>
+      <p class="sub">Drag the blue dot on any element to move it. Edit its text box to change wording, and use the slider to resize its font. Click "+ Add field" for a brand-new text field, or "Delete" on any field to remove it from the label. Product name, date, and weight come from the actual scale entry and aren't editable here.</p>
       <div style="display:flex;gap:20px;margin-top:16px;flex-wrap:wrap">
         <div class="lll-sidebar" id="lllSidebar"></div>
         <div class="lll-canvas-wrap"><div id="lllCanvas"></div></div>
@@ -765,6 +765,11 @@ function getLabelLayout(dept, overrideLayout){
     merged[k]=Object.assign({}, defaults[k], custom[k]||{});
   });
   return merged;
+}
+// Admin-added custom text fields for a department's label (each:
+// {id, text, left, top, fontSize, width, align, bold, hidden}).
+function getCustomFields(dept, overrideFields){
+  return overrideFields || (dept && labelTemplates[dept] && labelTemplates[dept].customFields) || [];
 }
 // Merges a department's saved overrides on top of the baseline, so any field
 // the admin hasn't customized yet still prints something sensible.
@@ -3478,19 +3483,23 @@ function resetLabelTemplateForm(){
   renderLabelTemplatesPanel();
 }
 
-/* ===== LABEL LAYOUT EDITOR (drag position + font size + text, standard label only) ===== */
+/* ===== LABEL LAYOUT EDITOR (drag position + font size + text + add/delete fields) ===== */
 var _lllDept=null;
 var _lllDraftLayout=null;
 var _lllDraftTemplate=null;
+var _lllDraftCustom=null; // array of {id,text,left,top,fontSize,width,align,bold,hidden}
 var LLL_FRIENDLY_NAMES={
   logo:'Logo box', coName:'Company name', coAddr:'Company address',
   pkgLabel:'"Packaging Date" label', pkgDate:'Date value', prodName:'Product name',
   seal:'USDA seal text', wtValue:'Weight value', wtUnit:'Weight unit',
   keepText:'"Keep Refrigerated" bar', shTitle:'"Safe Handling" title', shText:'Safe handling body text'
 };
-// Which draggable pieces have editable TEXT (as opposed to purely dynamic data
-// like the product name/date/weight, which come from the actual scale entry
-// and aren't a fixed "field name"). Maps element key -> template field name.
+// Which of the built-in draggable pieces have editable TEXT (as opposed to
+// purely dynamic data like the product name/date/weight, which come from the
+// actual scale entry and aren't a fixed "field name"). Maps element key ->
+// template field name. Fields NOT in this map (logo, pkgDate, prodName, seal,
+// wtValue) can still be moved/resized/hidden, just not text-edited, since
+// their content is either an image or live transaction data.
 var LLL_TEXT_FIELD_MAP={
   coName:{tplKey:'companyName', multiline:false},
   coAddr:{tplKey:'addressText', multiline:true},
@@ -3504,6 +3513,7 @@ function openLabelLayoutEditor(){
   _lllDept=_ltPanelDept;
   _lllDraftLayout=JSON.parse(JSON.stringify(getLabelLayout(_lllDept)));
   _lllDraftTemplate=Object.assign({}, getLabelTemplate(_lllDept));
+  _lllDraftCustom=JSON.parse(JSON.stringify(getCustomFields(_lllDept)));
   var nameEl=document.getElementById('lllDeptName');
   if(nameEl) nameEl.textContent=_lllDept;
   document.getElementById('labelLayoutModal').classList.remove('hidden');
@@ -3513,6 +3523,7 @@ function closeLabelLayoutModal(){
   document.getElementById('labelLayoutModal').classList.add('hidden');
   _lllDraftLayout=null;
   _lllDraftTemplate=null;
+  _lllDraftCustom=null;
   _lllDept=null;
 }
 function renderLabelLayoutEditor(){
@@ -3525,10 +3536,20 @@ function refreshLabelLayoutCanvas(){
   var canvas=document.getElementById('lllCanvas');
   if(!canvas) return;
   var fakeEntry={product:'Sample Product',weight:'10.00',date:new Date().toISOString().slice(0,10),lot:'LOT-0001',department:_lllDept};
-  canvas.innerHTML=buildLabelHTML(fakeEntry,false,true,_lllDraftLayout,_lllDraftTemplate);
+  canvas.innerHTML=buildLabelHTML(fakeEntry,false,true,_lllDraftLayout,_lllDraftTemplate,_lllDraftCustom);
   var page=canvas.querySelector('.lbl-page');
   if(page){ page.style.boxShadow='0 4px 20px rgba(0,0,0,.25)'; page.style.background='#fff'; page.style.flexShrink='0'; }
   attachLabelLayoutDragHandlers();
+}
+// Looks up the draft object backing a given data-key, whether it's one of
+// the fixed built-in fields or an admin-added custom field ("c_<id>").
+function lllFindDraftTarget(key){
+  if(key.indexOf('c_')===0){
+    var id=key.slice(2);
+    for(var i=0;i<_lllDraftCustom.length;i++){ if(String(_lllDraftCustom[i].id)===id) return _lllDraftCustom[i]; }
+    return null;
+  }
+  return _lllDraftLayout[key]||null;
 }
 function attachLabelLayoutDragHandlers(){
   var page=document.querySelector('#lllCanvas .lbl-page');
@@ -3538,7 +3559,8 @@ function attachLabelLayoutDragHandlers(){
   Array.prototype.forEach.call(page.querySelectorAll('.lbl-elem'),function(el){
     var key=el.getAttribute('data-key');
     var handleEl=el.querySelector('.lbl-handle');
-    if(!handleEl || !_lllDraftLayout[key]) return;
+    var target=lllFindDraftTarget(key);
+    if(!handleEl || !target) return;
     var dragging=false,startX,startY,startLeftPx,startTopPx,pxPerInX,pxPerInY;
     handleEl.addEventListener('pointerdown',function(e){
       e.preventDefault();
@@ -3560,8 +3582,8 @@ function attachLabelLayoutDragHandlers(){
       var newTopIn=(startTopPx+dy)/pxPerInY;
       el.style.left=newLeftIn+'in';
       el.style.top=newTopIn+'in';
-      _lllDraftLayout[key].left=Math.round(newLeftIn*100)/100;
-      _lllDraftLayout[key].top=Math.round(newTopIn*100)/100;
+      target.left=Math.round(newLeftIn*100)/100;
+      target.top=Math.round(newTopIn*100)/100;
     });
     function endDrag(){ dragging=false; el.classList.remove('lbl-dragging'); }
     handleEl.addEventListener('pointerup',endDrag);
@@ -3572,16 +3594,48 @@ function renderLabelLayoutSidebar(){
   var wrap=document.getElementById('lllSidebar');
   if(!wrap) return;
   wrap.innerHTML='';
+
+  // Add-field button, always at the top.
+  var addBtn=document.createElement('button');
+  addBtn.className='btn btn-primary btn-sm';
+  addBtn.style.cssText='width:100%;margin-bottom:10px;';
+  addBtn.textContent='+ Add field';
+  addBtn.onclick=addLabelLayoutCustomField;
+  wrap.appendChild(addBtn);
+
+  // Built-in fields: font-size slider + optional text box + hide/restore.
   Object.keys(getDefaultLabelLayout(_lllDept)).forEach(function(key){
-    var val=_lllDraftLayout[key].fontSize;
+    var entryObj=_lllDraftLayout[key];
     var group=document.createElement('div');
     group.className='lll-ctrl-group';
-    var label=document.createElement('label');
-    label.textContent=LLL_FRIENDLY_NAMES[key]||key;
-    group.appendChild(label);
 
-    // Text content input, for the pieces that have editable fixed text
-    // (not the ones driven by live scale-entry data like product/date/weight).
+    var head=document.createElement('div');
+    head.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:4px';
+    var label=document.createElement('label');
+    label.style.margin='0';
+    label.textContent=LLL_FRIENDLY_NAMES[key]||key;
+    head.appendChild(label);
+    var toggleBtn=document.createElement('button');
+    toggleBtn.type='button';
+    toggleBtn.className='btn btn-sm';
+    toggleBtn.style.cssText='padding:2px 8px;font-size:10px';
+    toggleBtn.textContent=entryObj.hidden?'Restore':'Delete';
+    toggleBtn.onclick=function(){
+      entryObj.hidden=!entryObj.hidden;
+      renderLabelLayoutEditor();
+    };
+    head.appendChild(toggleBtn);
+    group.appendChild(head);
+
+    if(entryObj.hidden){
+      var hiddenNote=document.createElement('div');
+      hiddenNote.style.cssText='font-size:11px;color:var(--muted);font-style:italic';
+      hiddenNote.textContent='Removed from label';
+      group.appendChild(hiddenNote);
+      wrap.appendChild(group);
+      return;
+    }
+
     var fieldMap=LLL_TEXT_FIELD_MAP[key];
     if(fieldMap){
       var textEl=document.createElement(fieldMap.multiline?'textarea':'input');
@@ -3596,6 +3650,7 @@ function renderLabelLayoutSidebar(){
       group.appendChild(textEl);
     }
 
+    var val=entryObj.fontSize;
     var row=document.createElement('div');
     row.className='lll-ctrl-row';
     var slider=document.createElement('input');
@@ -3603,7 +3658,7 @@ function renderLabelLayoutSidebar(){
     var valSpan=document.createElement('span');
     valSpan.className='lll-val'; valSpan.textContent=val+'pt';
     slider.addEventListener('input',function(){
-      _lllDraftLayout[key].fontSize=parseFloat(slider.value);
+      entryObj.fontSize=parseFloat(slider.value);
       valSpan.textContent=slider.value+'pt';
       var el=document.querySelector('#lllCanvas .lbl-elem[data-key="'+key+'"]');
       if(el) el.style.fontSize=slider.value+'pt';
@@ -3612,6 +3667,74 @@ function renderLabelLayoutSidebar(){
     group.appendChild(row);
     wrap.appendChild(group);
   });
+
+  // Admin-added custom fields.
+  _lllDraftCustom.forEach(function(cf){
+    var group=document.createElement('div');
+    group.className='lll-ctrl-group';
+    group.style.borderColor='var(--brand)';
+
+    var head=document.createElement('div');
+    head.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:4px';
+    var label=document.createElement('label');
+    label.style.margin='0';
+    label.textContent='Custom field';
+    head.appendChild(label);
+    var delBtn=document.createElement('button');
+    delBtn.type='button';
+    delBtn.className='btn btn-sm btn-danger';
+    delBtn.style.cssText='padding:2px 8px;font-size:10px';
+    delBtn.textContent='Delete';
+    delBtn.onclick=function(){
+      if(!confirm('Delete this custom field?')) return;
+      _lllDraftCustom=_lllDraftCustom.filter(function(x){return x.id!==cf.id;});
+      renderLabelLayoutEditor();
+    };
+    head.appendChild(delBtn);
+    group.appendChild(head);
+
+    var textEl=document.createElement('input');
+    textEl.type='text';
+    textEl.value=cf.text||'';
+    textEl.placeholder='Field text';
+    textEl.style.cssText='width:100%;padding:6px 8px;border:1.5px solid var(--line);border-radius:6px;font-size:12px;background:var(--panel);color:var(--ink);outline:none;font-family:inherit;margin-bottom:6px';
+    textEl.addEventListener('input',function(){
+      cf.text=textEl.value;
+      refreshLabelLayoutCanvas();
+    });
+    group.appendChild(textEl);
+
+    var row=document.createElement('div');
+    row.className='lll-ctrl-row';
+    var slider=document.createElement('input');
+    slider.type='range'; slider.min='4'; slider.max='32'; slider.step='0.5'; slider.value=cf.fontSize||10;
+    var valSpan=document.createElement('span');
+    valSpan.className='lll-val'; valSpan.textContent=(cf.fontSize||10)+'pt';
+    slider.addEventListener('input',function(){
+      cf.fontSize=parseFloat(slider.value);
+      valSpan.textContent=slider.value+'pt';
+      var el=document.querySelector('#lllCanvas .lbl-elem[data-key="c_'+cf.id+'"]');
+      if(el) el.style.fontSize=slider.value+'pt';
+    });
+    row.appendChild(slider); row.appendChild(valSpan);
+    group.appendChild(row);
+    wrap.appendChild(group);
+  });
+}
+function addLabelLayoutCustomField(){
+  var size=getLabelSize(_lllDept);
+  var id='cf'+Date.now()+Math.floor(Math.random()*10000);
+  _lllDraftCustom.push({
+    id:id,
+    text:'New field',
+    left:0.1,
+    top:size.w>=4 ? 5.5 : 3.5,
+    fontSize:9,
+    width:(size.w>=4 ? 3.7 : 2.2),
+    align:'center',
+    bold:false
+  });
+  renderLabelLayoutEditor();
 }
 function resetLabelLayoutPositions(){
   var defaults=getDefaultLabelLayout(_lllDept);
@@ -3631,6 +3754,7 @@ function resetLabelLayoutFonts(){
 function saveLabelLayout(){
   var merged=Object.assign({}, getLabelTemplate(_lllDept), _lllDraftTemplate);
   merged.layout=JSON.parse(JSON.stringify(_lllDraftLayout));
+  merged.customFields=JSON.parse(JSON.stringify(_lllDraftCustom));
   labelTemplates[_lllDept]=merged;
   saveLabelTemplates();
   var dept=_lllDept;
@@ -4067,7 +4191,7 @@ function getFilteredScaleLogs(){
 // Build the label markup (shared by preview and print).
 // Automatically switches between the 4×6 layout (Brother QL-1110NWB, Carcass
 // Process/Retail) and the standard 2.4×3.9 layout based on the department.
-function buildLabelHTML(entry, forPrint, editable, layoutOverride, templateOverride){
+function buildLabelHTML(entry, forPrint, editable, layoutOverride, templateOverride, customFieldsOverride){
   var dateStr=entry.date?new Date(entry.date+'T12:00:00').toLocaleDateString('en-US',{month:'numeric',day:'numeric',year:'2-digit'}):'—';
   var product=entry.product||'—';
   var weight=(entry.weight!==''&&entry.weight!=null)?Number(entry.weight).toFixed(2):'0.00';
@@ -4084,9 +4208,22 @@ function buildLabelHTML(entry, forPrint, editable, layoutOverride, templateOverr
   function handle(key){
     return editable?('<span class="lbl-handle" data-key="'+key+'" title="Drag to move">\u2820\u283f</span>'):'';
   }
+  // A field the admin has removed from the label ("Delete field" in the
+  // layout editor) renders as nothing at all — both in the editor and on
+  // the actual printed label — rather than just being hidden visually.
   function wrap(key,extra,innerHTML){
+    if(L[key] && L[key].hidden) return '';
     return '<div class="lbl-elem" data-key="'+key+'" style="'+posStyle(key,extra)+'">'+handle(key)+innerHTML+'</div>';
   }
+  // Admin-added custom text fields (name/wording/position/font are all
+  // freeform) — same drag/edit affordances as the built-in fields above.
+  var customFields=getCustomFields(entry.department, customFieldsOverride);
+  var customFieldsHTML=customFields.filter(function(cf){return !cf.hidden;}).map(function(cf){
+    var dataKey='c_'+cf.id;
+    var style='position:absolute;left:'+cf.left+'in;top:'+cf.top+'in;'+(cf.fontSize?('font-size:'+cf.fontSize+'pt;'):'')+'width:'+(cf.width||2.2)+'in;text-align:'+(cf.align||'center')+';'+(cf.bold?'font-weight:bold;':'');
+    var h=editable?('<span class="lbl-handle" data-key="'+dataKey+'" title="Drag to move">\u2820\u283f</span>'):'';
+    return '<div class="lbl-elem" data-key="'+dataKey+'" style="'+style+'">'+h+esc(cf.text||'')+'</div>';
+  }).join('');
 
   if(size.w>=4){
     return ''
@@ -4105,6 +4242,7 @@ function buildLabelHTML(entry, forPrint, editable, layoutOverride, templateOverr
       +(entry.customer?('<div style="position:absolute;left:0.15in;top:3.6in;font-size:10pt;font-family:monospace">CUSTOMER: '+esc(entry.customer)+'</div>'):'')
       +wrap('shTitle','width:3.7in;text-align:center;font-weight:bold;',esc(tpl.shTitleText))
       +wrap('shText','width:3.7in;line-height:1.4;text-align:left;','This product was prepared from inspected and passed meat and/or poultry. Some food products may contain bacteria that could cause illness if mishandled or cooked improperly. For your protection, follow these safe handling instructions.<br>'+safeHandlingHTML)
+      +customFieldsHTML
       +'</div>';
   }
 
@@ -4130,6 +4268,7 @@ function buildLabelHTML(entry, forPrint, editable, layoutOverride, templateOverr
     +(entry.customer?('<div style="position:absolute;left:0.1in;top:2.5in;font-size:7pt;font-family:monospace">CUSTOMER: '+esc(entry.customer)+'</div>'):'')
     +wrap('shTitle','width:2.2in;text-align:center;font-weight:bold;',esc(tpl.shTitleText))
     +wrap('shText','width:2.2in;line-height:1.25;text-align:left;','This product was prepared from inspected and passed meat and/or poultry. Some food products may contain bacteria that could cause illness if mishandled or cooked improperly. For your protection, follow these safe handling instructions.<br>'+safeHandlingHTML)
+    +customFieldsHTML
     +'</div>';
 }
 

@@ -4849,18 +4849,28 @@ async function deleteScaleLog(id){
   if(statusEl){ statusEl.textContent='Deleting from server…'; statusEl.style.color=''; }
 
   // Fully block any concurrent pull for this first, most time-critical
-  // attempt — not just relying on the _deletedScaleLogIds filter. That
+  // window — not just relying on the _deletedScaleLogIds filter. That
   // filter should be enough on its own, but a pull landing in the exact
-  // instant right after a delete (e.g. one triggered by the same tap that
-  // dismissed the confirm() dialog) was still managing to slip through in
-  // practice. Fully blocking pulls for this one attempt closes that off
-  // completely rather than relying on timing-sensitive filtering alone.
+  // instant right after a delete was still managing to slip through in
+  // practice. Fully blocking pulls here closes that off completely rather
+  // than relying on timing-sensitive filtering alone.
   _writeInFlight++;
   var ok=false;
   try{
-    ok=await deleteScaleLogOnServer(id);
-  }catch(e){ ok=false; }
-  finally{
+    // On a flaky connection (intermittent failures, not a fully dead one —
+    // e.g. a WiFi network that only occasionally drops a request), an
+    // immediate retry very often just succeeds on the 2nd or 3rd try. Doing
+    // a few quick attempts here, all still within the pull-blocked window
+    // above, gives this a real chance to succeed right away instead of
+    // immediately falling back to the much slower ~4s-apart retry loop.
+    for(var quickAttempt=0;quickAttempt<3 && !ok;quickAttempt++){
+      if(quickAttempt>0){
+        logSync('DELETE quick-retry attempt '+(quickAttempt+1)+'…');
+        await new Promise(function(r){ setTimeout(r,800); });
+      }
+      try{ ok=await deleteScaleLogOnServer(id); }catch(e){ ok=false; }
+    }
+  }finally{
     _writeInFlight--;
   }
   logSync('DELETE server call finished: ok='+ok+' (local scaleLogs now='+scaleLogs.length+')');

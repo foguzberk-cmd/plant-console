@@ -861,7 +861,7 @@ var __syncBusy=false; // true while a QuickBooks sync is actively running
 // waiting on the server to confirm it. A pull that happened to land in
 // that exact window would see the server's still-old copy and briefly
 // overwrite the just-added record locally — this guard closes that gap.
-var _writeInFlight=false;
+var _writeInFlight=0; // counter, not boolean — so overlapping writes (e.g. a delete and a print happening close together) can't clobber each other's guard by one finishing and clearing it while the other is still in progress
 // Tracks the exact JSON snapshot most recently CONFIRMED saved to the
 // server (only set after a successful response — see _pushToServerImpl),
 // so an unchanged push can skip re-sending identical data. Starts as an
@@ -4690,7 +4690,7 @@ async function printScaleLabel(){
     // could believe something was saved when the server round-trip hadn't
     // actually finished (or failed) yet.
     var savedOk=false, saveError='';
-    _writeInFlight=true;
+    _writeInFlight++;
     try{
       var pushResult=await pushToServer();
       savedOk=(pushResult===true);
@@ -4699,7 +4699,7 @@ async function printScaleLabel(){
       saveError=e&&e.message?e.message:String(e);
       console.error('Save to server failed:', e);
     }finally{
-      _writeInFlight=false;
+      _writeInFlight--;
     }
 
     // The entry is at minimum saved to THIS device's local storage above
@@ -4768,13 +4768,37 @@ async function deleteScaleLog(id){
   if(!confirm('Delete this label log entry? This cannot be undone.')) return;
   // Register the ID immediately so any pull that arrives before the delete
   // is confirmed on the server will filter it out and won't restore the
-  // deleted record locally. This guard stays in place until
-  // confirmScaleLogDeletion() below actually succeeds — not a flat timeout.
+  // deleted record locally. This guard stays in place until the deletion is
+  // actually confirmed — not a flat timeout.
   _deletedScaleLogIds[id]=true;
   scaleLogs=scaleLogs.filter(function(l){return l.id!==id;});
   safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs));
   renderScaleLog();
-  confirmScaleLogDeletion(id); // runs in the background; UI already reflects the delete
+
+  // Fully block any concurrent pull for this first, most time-critical
+  // attempt — not just relying on the _deletedScaleLogIds filter. That
+  // filter should be enough on its own, but a pull landing in the exact
+  // instant right after a delete (e.g. one triggered by the same tap that
+  // dismissed the confirm() dialog) was still managing to slip through in
+  // practice. Fully blocking pulls for this one attempt closes that off
+  // completely rather than relying on timing-sensitive filtering alone.
+  _writeInFlight++;
+  var ok=false;
+  try{
+    ok=await deleteScaleLogOnServer(id);
+  }catch(e){ ok=false; }
+  finally{
+    _writeInFlight--;
+  }
+  if(ok){
+    delete _deletedScaleLogIds[id];
+    return;
+  }
+  // First attempt failed (network hiccup, etc.) — hand off to the slower
+  // background retry loop. Pulls aren't fully blocked for these later
+  // retries (that would hold up normal syncing for up to ~2 minutes), but
+  // _deletedScaleLogIds still protects against them reintroducing the record.
+  confirmScaleLogDeletion(id);
 }
 // Calls a DEDICATED delete endpoint (not the general full-snapshot push).
 // This matters: with the general push, another device that simply hadn't
@@ -4795,13 +4819,15 @@ async function deleteScaleLogOnServer(id){
   }
 }
 // Keeps retrying (roughly every 4s, up to ~2 minutes) until the server
-// actually confirms this deletion, then lifts the restore-guard.
+// actually confirms this deletion, then lifts the restore-guard. This only
+// runs for RETRIES after the first attempt (handled directly, and with pulls
+// fully blocked, in deleteScaleLog above) already failed.
 async function confirmScaleLogDeletion(id){
   for(var attempt=0;attempt<30;attempt++){
+    await new Promise(function(r){ setTimeout(r,4000); });
     var ok=false;
     try{ ok=await deleteScaleLogOnServer(id); }catch(e){ ok=false; }
     if(ok){ delete _deletedScaleLogIds[id]; return; }
-    await new Promise(function(r){ setTimeout(r,4000); });
   }
   // After ~2 minutes of failures there's a real, persistent connectivity
   // problem. Previously this just gave up completely silently — the entry

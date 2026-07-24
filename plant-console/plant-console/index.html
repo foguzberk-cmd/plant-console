@@ -342,8 +342,6 @@
     .sl-preview-col{display:flex;flex-direction:column;align-items:center;margin-top:4px}
   }
 
-  @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-
   /* Label printing: #printLabelArea is always empty/hidden on screen. Right
      before window.print() is called, doPrintLabel() fills it with the label
      markup and adds the .printing-label class to <html>, which — via the
@@ -409,11 +407,6 @@
       <header class="topbar">
         <div class="where">Section / <b id="crumb">Items</b></div>
         <div class="status-cluster">
-          <button id="syncNowBtn" class="btn btn-sm" onclick="manualSyncNow()" title="Pull the latest data from the server" style="gap:6px">
-            <svg id="syncNowIcon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-            <span id="syncNowLabel">Sync</span>
-          </button>
-          <span id="syncMeta" style="font-family:var(--mono);font-size:10px;color:var(--muted);white-space:nowrap" title="Confirm this matches on every device — different hosts means they're talking to different servers/databases entirely"></span>
           <span class="pill"><span class="dot"></span>Cold chain OK</span>
           <div class="clock"><span id="time">--:--:--</span><small id="date">—</small></div>
         </div>
@@ -893,36 +886,6 @@ function rerenderCurrentSection(){
     try{ renderScaleLogTable(); }catch(e){}
   }
 }
-// Manual "Sync now" button in the topbar — lets someone force an immediate
-// pull instead of trusting the 4s background timer, and gives visible
-// feedback either way. Especially useful on mobile: browsers throttle
-// background-tab timers, so a phone that's been sitting unused for a while
-// may not have pulled recently even though the timer is technically running.
-var _manualSyncBusy=false;
-async function manualSyncNow(){
-  if(_manualSyncBusy) return;
-  _manualSyncBusy=true;
-  var btn=document.getElementById('syncNowBtn');
-  var label=document.getElementById('syncNowLabel');
-  var icon=document.getElementById('syncNowIcon');
-  if(btn) btn.disabled=true;
-  if(label) label.textContent='Syncing…';
-  if(icon) icon.style.animation='spin 0.8s linear infinite';
-  var ok=false, pushOk=false;
-  try{
-    pushOk=await pushToServer();      // send anything local that hasn't gone up yet
-    ok=await pullFromServer();        // then bring in the latest shared copy
-  }catch(e){ ok=false; }
-  if(icon) icon.style.animation='';
-  if(label) label.textContent=ok?'Synced':(currentUser?'Sync failed':'Sync');
-  if(btn) btn.disabled=false;
-  // If the PUSH half failed, show why right on the button so it's not just
-  // a mystery "Sync failed" — this is the actual reason the server gave
-  // (or the actual network/browser error), not a guess.
-  if(btn) btn.title=pushOk?'Pull the latest data from the server':('Last push failed: '+(_lastPushFailureDetail||'unknown error'));
-  setTimeout(function(){ if(label) label.textContent='Sync'; },2500);
-  _manualSyncBusy=false;
-}
 async function pullFromServer(){
   if(!currentUser) return false;
   // Never pull while a sync is in progress — the shared server copy is stale
@@ -981,16 +944,6 @@ async function pullFromServer(){
     // sure whichever of those is currently on screen reflects what we just
     // brought in, instead of only updating in-memory/localStorage silently.
     rerenderCurrentSection();
-    // Visible, comparable-across-devices diagnostic: exactly which server
-    // this browser is actually talking to, when it last successfully synced,
-    // and how many scale log entries it just received. If two devices show
-    // different HOSTS here, they are talking to two entirely different
-    // servers/databases and will never converge no matter how sync logic
-    // is tuned — that's a "wrong URL" problem, not a sync-timing problem.
-    var syncMetaEl=document.getElementById('syncMeta');
-    if(syncMetaEl){
-      syncMetaEl.textContent=APP_BUILD+' · '+location.hostname+' · '+(scaleLogs.length)+' logs · '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-    }
     // Self-heal: if the server came back empty for something we actually have
     // locally, its copy is stale/reset — push ours back up right away so it
     // (and every other browser) recovers, instead of waiting for an unrelated

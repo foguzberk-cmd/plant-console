@@ -5056,13 +5056,17 @@ function exportScaleLogToExcel(){
 function doPrintLabel(entry){
   var labelSize=getLabelSize(entry.department);
   var labelW=labelSize.w+'in', labelH=labelSize.h+'in';
+  var PX_PER_IN=96; // the CSS spec's fixed, universal conversion — 1in is ALWAYS 96 CSS px, regardless of actual screen/printer DPI
+  var labelWpx=Math.round(labelSize.w*PX_PER_IN)+'px', labelHpx=Math.round(labelSize.h*PX_PER_IN)+'px';
 
   var area=document.getElementById('printLabelArea');
   if(!area) throw new Error('Print area missing from the page — please reload and try again.');
 
   // Inject/replace an @page rule matching this label's exact paper size —
   // has to be dynamic since departments can use either the standard
-  // 2.4x3.9 label or the 4x6 Brother roll (see getLabelSize()).
+  // 2.4x3.9 label or the 4x6 Brother roll (see getLabelSize()). @page still
+  // uses physical units ("in") here — that part is confirmed working (the
+  // printer's own paper-size selector picks it up correctly).
   var pageStyle=document.getElementById('dynLabelPageStyle');
   if(!pageStyle){
     pageStyle=document.createElement('style');
@@ -5073,11 +5077,32 @@ function doPrintLabel(entry){
   // earlier version of this did) is silently ignored by the browser, which
   // is exactly why the print preview showed a full letter-size page with
   // the label crammed in a corner instead of the actual label dimensions.
+  // #printLabelArea itself is sized in PX (not "in") for the same reason
+  // as the per-field conversion below — consistency, since the content
+  // inside is now entirely px-based too.
   pageStyle.textContent='@page{ size:'+labelW+' '+labelH+'; margin:0; }'
     +'@media print{ #printLabelArea, #printLabelArea *{ -webkit-print-color-adjust:exact!important; print-color-adjust:exact!important; color-adjust:exact!important; } '
-    +'#printLabelArea{ width:'+labelW+'; height:'+labelH+'; overflow:hidden; font-family:Arial,Helvetica,sans-serif; color:#000; background:#fff; } }';
+    +'#printLabelArea{ width:'+labelWpx+'; height:'+labelHpx+'; overflow:hidden; font-family:Arial,Helvetica,sans-serif; color:#000; background:#fff; } }';
 
   area.innerHTML=buildLabelHTML(entry,true);
+
+  // Convert every field's position/size from inches to pixels, directly on
+  // each element's inline style, right after the content is built. Every
+  // field (see posStyle() and the custom-field styling) is positioned with
+  // e.g. "left:0.1in;top:2.5in" — this device's print/PDF rendering doesn't
+  // reliably resolve "in" units specifically during printing (confirmed:
+  // works fine on-screen, works fine on Desktop print, blank + overflowing
+  // to an extra page specifically when printing from this Android browser).
+  // 96px = 1in is a fixed CSS-spec conversion, not an approximation, so
+  // this is a like-for-like substitution, not a scaling hack.
+  Array.prototype.forEach.call(area.querySelectorAll('[style]'), function(el){
+    var s=el.getAttribute('style');
+    if(!s || s.indexOf('in')<0) return;
+    var converted=s.replace(/(-?\d*\.?\d+)in\b/g, function(_, num){
+      return (parseFloat(num)*PX_PER_IN)+'px';
+    });
+    el.setAttribute('style', converted);
+  });
 
   // This is the whole trick: printing the CURRENT window/document directly
   // — no popup, no new tab, no <iframe> — completely sidesteps the browser

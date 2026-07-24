@@ -5074,7 +5074,8 @@ function doPrintLabel(entry){
   // is exactly why the print preview showed a full letter-size page with
   // the label crammed in a corner instead of the actual label dimensions.
   pageStyle.textContent='@page{ size:'+labelW+' '+labelH+'; margin:0; }'
-    +'@media print{ #printLabelArea{ width:'+labelW+'; height:'+labelH+'; overflow:hidden; font-family:Arial,Helvetica,sans-serif; color:#000; } }';
+    +'@media print{ #printLabelArea, #printLabelArea *{ -webkit-print-color-adjust:exact!important; print-color-adjust:exact!important; color-adjust:exact!important; } '
+    +'#printLabelArea{ width:'+labelW+'; height:'+labelH+'; overflow:hidden; font-family:Arial,Helvetica,sans-serif; color:#000; background:#fff; } }';
 
   area.innerHTML=buildLabelHTML(entry,true);
 

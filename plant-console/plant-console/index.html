@@ -903,14 +903,18 @@ async function manualSyncNow(){
   if(btn) btn.disabled=true;
   if(label) label.textContent='Syncing…';
   if(icon) icon.style.animation='spin 0.8s linear infinite';
-  var ok=false;
+  var ok=false, pushOk=false;
   try{
-    await pushToServer();      // send anything local that hasn't gone up yet
-    ok=await pullFromServer(); // then bring in the latest shared copy
+    pushOk=await pushToServer();      // send anything local that hasn't gone up yet
+    ok=await pullFromServer();        // then bring in the latest shared copy
   }catch(e){ ok=false; }
   if(icon) icon.style.animation='';
   if(label) label.textContent=ok?'Synced':(currentUser?'Sync failed':'Sync');
   if(btn) btn.disabled=false;
+  // If the PUSH half failed, show why right on the button so it's not just
+  // a mystery "Sync failed" — this is the actual reason the server gave
+  // (or the actual network/browser error), not a guess.
+  if(btn) btn.title=pushOk?'Pull the latest data from the server':('Last push failed: '+(_lastPushFailureDetail||'unknown error'));
   setTimeout(function(){ if(label) label.textContent='Sync'; },2500);
   _manualSyncBusy=false;
 }
@@ -1043,6 +1047,7 @@ function pushToServer(){
   });
   return _pushChain;
 }
+var _lastPushFailureDetail=''; // real diagnostic detail from the most recent failed push
 async function _pushToServerImpl(){
   if(!currentUser) return false;
   try{
@@ -1076,19 +1081,32 @@ async function _pushToServerImpl(){
     // push (even one that was queued up behind another) always sends
     // whatever is currently true at the moment it actually runs.
     var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates});
-    if(snapshot===_lastPushedSnapshot) return true; // this exact state was already confirmed sent
+    if(snapshot===_lastPushedSnapshot){ _lastPushFailureDetail=''; return true; } // this exact state was already confirmed sent
     var res=await fetch(SYNC_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:snapshot});
-    if(res.status===401){ forceLogout(); return false; }
-    if(!res.ok) return false; // e.g. a 500 — do NOT mark as sent, so the next attempt retries this same data
+    if(res.status===401){ _lastPushFailureDetail='session expired (401) — signed out'; forceLogout(); return false; }
+    if(!res.ok){
+      // Capture whatever the server actually said, instead of a vague
+      // "couldn't reach it" — a 413/500/etc. here means the server WAS
+      // reached and responded, just not successfully, which is a very
+      // different (and more fixable) situation than a dropped connection.
+      var bodyText='';
+      try{ bodyText=(await res.text()).slice(0,300); }catch(e2){}
+      _lastPushFailureDetail='HTTP '+res.status+(res.statusText?' '+res.statusText:'')+(bodyText?' — '+bodyText:'')+' (payload was '+(snapshot.length/1024/1024).toFixed(1)+' MB)';
+      return false;
+    }
     // Only NOW, with a confirmed successful response, is it safe to mark
     // this exact snapshot as delivered. Marking it any earlier (as before)
     // meant a failed request could permanently block every future retry of
     // that same change, since the dedup check above would wrongly think it
     // had already gone through.
     _lastPushedSnapshot=snapshot;
+    _lastPushFailureDetail='';
     return true;
   }catch(e){
-    // Offline: local save already happened, this will retry on the next timer tick
+    // Offline, DNS failure, CORS block, etc. — local save already happened,
+    // this will retry on the next timer tick. Record what actually went
+    // wrong instead of a vague catch-all.
+    _lastPushFailureDetail=(e&&e.message)?e.message:String(e);
     return false;
   }
 }
@@ -4685,7 +4703,7 @@ async function printScaleLabel(){
   try{
     var pushResult=await pushToServer();
     savedOk=(pushResult===true);
-    if(!savedOk) saveError='the server did not confirm the save — check your connection';
+    if(!savedOk) saveError=_lastPushFailureDetail||'the server did not confirm the save';
   }catch(e){
     saveError=e&&e.message?e.message:String(e);
     console.error('Save to server failed:', e);

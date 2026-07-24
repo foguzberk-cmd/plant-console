@@ -4602,7 +4602,19 @@ function filterScaleItems(){
     wrap.appendChild(sugg);
     return;
   }
-  var matches=allowed.filter(function(it){return it.active!==false && ((it.name||'').toLowerCase().includes(q)||(it.sku||'').toLowerCase().includes(q));}).slice(0,12);
+  var rawMatches=allowed.filter(function(it){return it.active!==false && ((it.name||'').toLowerCase().includes(q)||(it.sku||'').toLowerCase().includes(q));});
+  // Dedupe by name: for picking WHAT to print, seeing "Whole Lamb Baby"
+  // twice serves no purpose even if QuickBooks has two separate active
+  // item records with that exact name (which does happen — renamed/
+  // recreated items, etc.). When there's a choice between duplicates,
+  // prefer whichever one has a SKU set (more informative / more likely to
+  // be the "real" current record) over one that doesn't.
+  var byName={};
+  rawMatches.forEach(function(it){
+    var key=(it.name||'').toLowerCase().trim();
+    if(!byName[key] || (!byName[key].sku && it.sku)) byName[key]=it;
+  });
+  var matches=Object.keys(byName).map(function(k){return byName[k];}).slice(0,12);
   if(!matches.length){
     sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No match for "'+esc(q)+'"</div>';
     wrap.appendChild(sugg);

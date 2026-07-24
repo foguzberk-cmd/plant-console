@@ -4657,8 +4657,12 @@ function doPrintLabel(entry){
     pageStyle.id='dynLabelPageStyle';
     document.head.appendChild(pageStyle);
   }
-  pageStyle.textContent='@media print{ @page{ size:'+labelW+' '+labelH+'; margin:0; } '
-    +'#printLabelArea{ width:'+labelW+'; height:'+labelH+'; overflow:hidden; font-family:Arial,Helvetica,sans-serif; color:#000; } }';
+  // @page must be a TOP-LEVEL rule — nesting it inside @media print (as an
+  // earlier version of this did) is silently ignored by the browser, which
+  // is exactly why the print preview showed a full letter-size page with
+  // the label crammed in a corner instead of the actual label dimensions.
+  pageStyle.textContent='@page{ size:'+labelW+' '+labelH+'; margin:0; }'
+    +'@media print{ #printLabelArea{ width:'+labelW+'; height:'+labelH+'; overflow:hidden; font-family:Arial,Helvetica,sans-serif; color:#000; } }';
 
   area.innerHTML=buildLabelHTML(entry,true);
 

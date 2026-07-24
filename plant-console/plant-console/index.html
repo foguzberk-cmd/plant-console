@@ -353,10 +353,10 @@
      label. Since nothing else in this app ever calls window.print(), and
      #printLabelArea is only ever non-empty during an active label print,
      it's safe to make this unconditional rather than depending on timing. */
-  #printLabelArea{display:none}
+  #printLabelArea{position:fixed;top:-99999px;left:-99999px;width:1px;height:1px;overflow:hidden;margin:0;padding:0}
   @media print{
     body > *:not(#printLabelArea){display:none!important}
-    #printLabelArea{display:block!important;position:relative}
+    #printLabelArea{position:relative!important;top:auto!important;left:auto!important;overflow:hidden!important}
   }
 </style>
 </head>

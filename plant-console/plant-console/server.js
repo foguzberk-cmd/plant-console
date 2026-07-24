@@ -779,17 +779,27 @@ const server = http.createServer(async (req, res) => {
             return u;
           });
         }
-        // A device that deleted a scale log entry (see /api/data/delete-scalelog
-        // below) records that ID here permanently. Without this check, ANY
-        // other device that simply hasn't pulled that deletion yet — e.g. it
-        // was left open since before the delete happened — would eventually
-        // push its own full snapshot of scaleLogs, which still contains the
-        // "deleted" entry, silently undoing the deletion server-side. Every
-        // incoming push gets scrubbed of tombstoned IDs no matter which
-        // device it came from or how stale its view is.
-        if (Array.isArray(incoming.scaleLogs) && Array.isArray(current.deletedScaleLogIds) && current.deletedScaleLogIds.length) {
-          const tombstoned = new Set(current.deletedScaleLogIds);
-          incoming.scaleLogs = incoming.scaleLogs.filter(l => !(l && tombstoned.has(l.id)));
+        // scaleLogs uses UNION semantics server-side, not a blind replace.
+        // Deletions are already handled correctly via tombstones (see
+        // /api/data/delete-scalelog below) — but a PLAIN REPLACE here had a
+        // mirror-image bug for ADDITIONS: if device A adds a new scale log
+        // entry and device B (which simply hasn't pulled that addition yet)
+        // pushes its own routine full snapshot shortly after, a blind
+        // replace would silently overwrite the server's copy with B's
+        // stale list — erasing A's brand-new entry even though nothing
+        // was ever deleted. Unioning (current server records + incoming
+        // records, by id, minus anything tombstoned) means a device that's
+        // simply behind can never erase what it doesn't yet know about;
+        // the ONLY way a record disappears is through an explicit,
+        // deliberate delete.
+        if (Array.isArray(incoming.scaleLogs)) {
+          const tombstoned = new Set(Array.isArray(current.deletedScaleLogIds) ? current.deletedScaleLogIds : []);
+          const merged = new Map((current.scaleLogs || []).map(l => [l && l.id, l]));
+          for (const l of incoming.scaleLogs) {
+            if (l && !tombstoned.has(l.id)) merged.set(l.id, l);
+          }
+          for (const id of tombstoned) merged.delete(id);
+          incoming.scaleLogs = Array.from(merged.values());
         }
         // Merge: only overwrite the keys actually sent, so saving e.g. just
         // "users" never wipes out items/transactions/storages.

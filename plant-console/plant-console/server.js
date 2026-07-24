@@ -735,7 +735,7 @@ const server = http.createServer(async (req, res) => {
     const safe = Object.assign({}, data, {
       users: data.users.map(u => { const c = Object.assign({}, u); delete c.pin; delete c.pinHash; return c; })
     });
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
     res.end(JSON.stringify(safe));
     return;
   }
@@ -751,7 +751,7 @@ const server = http.createServer(async (req, res) => {
     if (!requireAuth(req, res)) return;
     const data = await readSharedData();
     const users = data.users.map(u => { const c = Object.assign({}, u); delete c.pin; delete c.pinHash; return c; });
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
     res.end(JSON.stringify({
       users: users,
       scaleLogs: data.scaleLogs,
@@ -894,7 +894,11 @@ const server = http.createServer(async (req, res) => {
     const filePath = path.join(__dirname, 'index.html');
     fs.readFile(filePath, (err, data) => {
       if (err) { res.writeHead(404); res.end('Not found'); return; }
-      res.writeHead(200, { 'Content-Type': 'text/html' });
+      // No-cache: without this, some browsers/Android "Add to Home Screen"
+      // installs can keep serving a stale cached copy of the whole app
+      // (old JS and all) indefinitely, so a device can look "stuck" even
+      // after new code has been deployed and other devices already show it.
+      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(data);
     });
     return;

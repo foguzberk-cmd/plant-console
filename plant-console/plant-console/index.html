@@ -413,6 +413,7 @@
             <svg id="syncNowIcon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
             <span id="syncNowLabel">Sync</span>
           </button>
+          <span id="syncMeta" style="font-family:var(--mono);font-size:10px;color:var(--muted);white-space:nowrap" title="Confirm this matches on every device — different hosts means they're talking to different servers/databases entirely"></span>
           <span class="pill"><span class="dot"></span>Cold chain OK</span>
           <div class="clock"><span id="time">--:--:--</span><small id="date">—</small></div>
         </div>
@@ -963,6 +964,16 @@ async function pullFromServer(){
     // sure whichever of those is currently on screen reflects what we just
     // brought in, instead of only updating in-memory/localStorage silently.
     rerenderCurrentSection();
+    // Visible, comparable-across-devices diagnostic: exactly which server
+    // this browser is actually talking to, when it last successfully synced,
+    // and how many scale log entries it just received. If two devices show
+    // different HOSTS here, they are talking to two entirely different
+    // servers/databases and will never converge no matter how sync logic
+    // is tuned — that's a "wrong URL" problem, not a sync-timing problem.
+    var syncMetaEl=document.getElementById('syncMeta');
+    if(syncMetaEl){
+      syncMetaEl.textContent=location.hostname+' · '+(scaleLogs.length)+' logs · '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    }
     // Self-heal: if the server came back empty for something we actually have
     // locally, its copy is stale/reset — push ours back up right away so it
     // (and every other browser) recovers, instead of waiting for an unrelated

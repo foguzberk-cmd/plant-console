@@ -342,6 +342,8 @@
     .sl-preview-col{display:flex;flex-direction:column;align-items:center;margin-top:4px}
   }
 
+  @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+
   /* Label printing: #printLabelArea is always empty/hidden on screen. Right
      before window.print() is called, doPrintLabel() fills it with the label
      markup and adds the .printing-label class to <html>, which — via the
@@ -407,6 +409,10 @@
       <header class="topbar">
         <div class="where">Section / <b id="crumb">Items</b></div>
         <div class="status-cluster">
+          <button id="syncNowBtn" class="btn btn-sm" onclick="manualSyncNow()" title="Pull the latest data from the server" style="gap:6px">
+            <svg id="syncNowIcon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            <span id="syncNowLabel">Sync</span>
+          </button>
           <span class="pill"><span class="dot"></span>Cold chain OK</span>
           <div class="clock"><span id="time">--:--:--</span><small id="date">—</small></div>
         </div>
@@ -875,6 +881,32 @@ function rerenderCurrentSection(){
     try{ renderScaleLogTable(); }catch(e){}
   }
 }
+// Manual "Sync now" button in the topbar — lets someone force an immediate
+// pull instead of trusting the 4s background timer, and gives visible
+// feedback either way. Especially useful on mobile: browsers throttle
+// background-tab timers, so a phone that's been sitting unused for a while
+// may not have pulled recently even though the timer is technically running.
+var _manualSyncBusy=false;
+async function manualSyncNow(){
+  if(_manualSyncBusy) return;
+  _manualSyncBusy=true;
+  var btn=document.getElementById('syncNowBtn');
+  var label=document.getElementById('syncNowLabel');
+  var icon=document.getElementById('syncNowIcon');
+  if(btn) btn.disabled=true;
+  if(label) label.textContent='Syncing…';
+  if(icon) icon.style.animation='spin 0.8s linear infinite';
+  var ok=false;
+  try{
+    await pushToServer();      // send anything local that hasn't gone up yet
+    ok=await pullFromServer(); // then bring in the latest shared copy
+  }catch(e){ ok=false; }
+  if(icon) icon.style.animation='';
+  if(label) label.textContent=ok?'Synced':(currentUser?'Sync failed':'Sync');
+  if(btn) btn.disabled=false;
+  setTimeout(function(){ if(label) label.textContent='Sync'; },2500);
+  _manualSyncBusy=false;
+}
 async function pullFromServer(){
   if(!currentUser) return false;
   // Never pull while a sync is in progress — the shared server copy is stale
@@ -1077,6 +1109,16 @@ setInterval(pullFromServer,4000);
 // Safety-net push in case some part of the app saves data without going
 // through saveStorages/saveTxns/saveUsers.
 setInterval(pushToServer,4000);
+// Mobile browsers throttle (or fully pause) background-tab timers, so a
+// phone that's been sitting in the background for a while can easily be
+// showing data that's several minutes (or longer) stale even though the
+// 4s interval above is technically still "running". Pulling immediately
+// the moment the tab/app becomes visible again closes that gap — this is
+// what actually keeps a desktop and an Android device in sync in practice,
+// not just the timer alone.
+document.addEventListener('visibilitychange',function(){
+  if(!document.hidden) pullFromServer();
+});
 // ===== END SHARED SYNC =====
 function initials(name){return name.trim().split(/\s+/).map(w=>w[0]).join('').substring(0,2).toUpperCase()}
 

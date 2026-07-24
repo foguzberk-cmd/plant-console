@@ -344,14 +344,19 @@
 
   /* Label printing: #printLabelArea is always empty/hidden on screen. Right
      before window.print() is called, doPrintLabel() fills it with the label
-     markup and adds the .printing-label class to <html>, which — via the
-     @media print rule below — hides literally everything else on the page
-     so ONLY the label prints, regardless of which section of the app is
-     currently on screen. Both classes/content are cleared again afterward. */
+     markup. This rule unconditionally hides everything else on the page
+     during ANY print (not gated behind a JS-toggled class) so ONLY the
+     label prints — some print engines/renderers (notably Android's native
+     print framework/plugins, as opposed to a browser's own print dialog)
+     don't reliably respect a class added via JavaScript right before
+     print() runs, causing the whole app page to print instead of just the
+     label. Since nothing else in this app ever calls window.print(), and
+     #printLabelArea is only ever non-empty during an active label print,
+     it's safe to make this unconditional rather than depending on timing. */
   #printLabelArea{display:none}
   @media print{
-    html.printing-label body > *:not(#printLabelArea){display:none!important}
-    html.printing-label #printLabelArea{display:block!important;position:static}
+    body > *:not(#printLabelArea){display:none!important}
+    #printLabelArea{display:block!important;position:static}
   }
 </style>
 </head>
@@ -5076,14 +5081,12 @@ function doPrintLabel(entry){
   // This is the whole trick: printing the CURRENT window/document directly
   // — no popup, no new tab, no <iframe> — completely sidesteps the browser
   // inconsistencies that kept causing the wrong thing to print (or the app
-  // itself to reload). The @media print rule (in the main stylesheet) hides
-  // every other element on the page the instant this class is added, so
-  // window.print() only ever sees the label, regardless of which section
-  // of the app happens to be on screen.
-  document.documentElement.classList.add('printing-label');
+  // itself to reload). The @media print rule (in the main stylesheet) is
+  // unconditional — always active during any print — so window.print()
+  // only ever sees the label, regardless of which section of the app
+  // happens to be on screen, or which print engine/renderer is involved.
 
   function cleanup(){
-    document.documentElement.classList.remove('printing-label');
     area.innerHTML='';
     window.removeEventListener('afterprint',cleanup);
   }

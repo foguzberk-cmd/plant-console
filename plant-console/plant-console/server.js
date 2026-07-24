@@ -32,7 +32,7 @@ if (!QB_REALM || !CLIENT_ID || !CLIENT_SECRET) {
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'plant-data.json');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
-const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: [], savedReports: [], customers: [], customerAllowed: [], labelTemplates: {} };
+const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: [], savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [] };
 
 // ===== PIN HASHING =====
 // PINs are hashed with scrypt before they ever touch disk. Any user record
@@ -779,10 +779,56 @@ const server = http.createServer(async (req, res) => {
             return u;
           });
         }
+        // A device that deleted a scale log entry (see /api/data/delete-scalelog
+        // below) records that ID here permanently. Without this check, ANY
+        // other device that simply hasn't pulled that deletion yet — e.g. it
+        // was left open since before the delete happened — would eventually
+        // push its own full snapshot of scaleLogs, which still contains the
+        // "deleted" entry, silently undoing the deletion server-side. Every
+        // incoming push gets scrubbed of tombstoned IDs no matter which
+        // device it came from or how stale its view is.
+        if (Array.isArray(incoming.scaleLogs) && Array.isArray(current.deletedScaleLogIds) && current.deletedScaleLogIds.length) {
+          const tombstoned = new Set(current.deletedScaleLogIds);
+          incoming.scaleLogs = incoming.scaleLogs.filter(l => !(l && tombstoned.has(l.id)));
+        }
         // Merge: only overwrite the keys actually sent, so saving e.g. just
         // "users" never wipes out items/transactions/storages.
         const merged = Object.assign({}, current, incoming);
         return { data: merged };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // Dedicated, atomic scale-log deletion — separate from the general full-
+  // snapshot POST above specifically so a deletion can never lose a race
+  // against another device's stale push. This both removes the entry AND
+  // permanently tombstones its ID in one locked read-modify-write, so no
+  // subsequent push (from any device, however stale) can ever bring it back.
+  if (url === '/api/data/delete-scalelog' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      if (!body || !body.id) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing id' }));
+        return;
+      }
+      await updateSharedData(async (current) => {
+        const scaleLogs = (current.scaleLogs || []).filter(l => !(l && l.id === body.id));
+        const tombstones = Array.isArray(current.deletedScaleLogIds) ? current.deletedScaleLogIds.slice() : [];
+        if (!tombstones.includes(body.id)) tombstones.push(body.id);
+        // Cap the tombstone list so it can't grow unbounded forever — old
+        // deletions this far back are extremely unlikely to still be racing
+        // against some ancient stale push.
+        const cappedTombstones = tombstones.length > 5000 ? tombstones.slice(tombstones.length - 5000) : tombstones;
+        return { data: Object.assign({}, current, { scaleLogs, deletedScaleLogIds: cappedTombstones }) };
       });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true }));

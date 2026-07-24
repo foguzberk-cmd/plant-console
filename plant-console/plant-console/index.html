@@ -848,6 +848,22 @@ function safeSetLocal(key,value){
 // cookie for /api/data, and there's no reason to sync a signed-out browser's
 // data anyway.
 var SYNC_URL='/api/data';
+// A plain fetch() has NO built-in timeout — on a flaky connection (like the
+// QUIC/WiFi issues already found) it can hang indefinitely, neither
+// resolving nor rejecting. That's especially dangerous now that every push
+// goes through a single serialized queue (_pushChain): one hung request
+// would permanently jam up every future save until the page is reloaded,
+// which is exactly what "stuck on Saving to server…" looks like. This
+// wraps fetch() with a hard timeout via AbortController so every sync
+// request is GUARANTEED to settle (success, HTTP error, or timeout) within
+// a bounded time, keeping the queue moving no matter what the network does.
+function fetchWithTimeout(url, options, timeoutMs){
+  timeoutMs = timeoutMs || 10000;
+  var ctrl = new AbortController();
+  var timer = setTimeout(function(){ ctrl.abort(); }, timeoutMs);
+  var opts = Object.assign({}, options || {}, { signal: ctrl.signal });
+  return fetch(url, opts).finally(function(){ clearTimeout(timer); });
+}
 // IDs of scale log entries deleted locally but not yet confirmed on the server.
 // Without this, the background pull (every 1.5s) would fetch the server's stale
 // copy and restore a record you just deleted, making it "snap back". Any pull
@@ -924,7 +940,7 @@ async function pullFromServer(){
   if(_writeInFlight){ logSync('PULL skipped (write in flight, count='+_writeInFlight+')'); return false; }
   logSync('PULL start (local scaleLogs='+scaleLogs.length+', guarded ids=['+Object.keys(_deletedScaleLogIds).join(',')+'])');
   try{
-    var res=await fetch(SYNC_URL+'?_ts='+Date.now(),{cache:'no-store',headers:{'Cache-Control':'no-cache, no-store, must-revalidate','Pragma':'no-cache'}});
+    var res=await fetchWithTimeout(SYNC_URL+'?_ts='+Date.now(),{cache:'no-store',headers:{'Cache-Control':'no-cache, no-store, must-revalidate','Pragma':'no-cache'}});
     if(res.status===401){ forceLogout(); return false; }
     if(!res.ok) return false;
     var data=await res.json();
@@ -1068,7 +1084,7 @@ async function _pushToServerImpl(){
     // check deliberately only fetches these small collections, not the full
     // (potentially multi-MB) items/transactions/storages data.
     try{
-      var smallRes=await fetch('/api/data/small?_ts='+Date.now(),{cache:'no-store',headers:{'Cache-Control':'no-cache, no-store, must-revalidate','Pragma':'no-cache'}});
+      var smallRes=await fetchWithTimeout('/api/data/small?_ts='+Date.now(),{cache:'no-store',headers:{'Cache-Control':'no-cache, no-store, must-revalidate','Pragma':'no-cache'}});
       if(smallRes.ok){
         var smallData=await smallRes.json();
         var newUsers=unionById(users, smallData.users);
@@ -1089,7 +1105,7 @@ async function _pushToServerImpl(){
     // whatever is currently true at the moment it actually runs.
     var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates});
     if(snapshot===_lastPushedSnapshot){ _lastPushFailureDetail=''; return true; } // this exact state was already confirmed sent
-    var res=await fetch(SYNC_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:snapshot});
+    var res=await fetchWithTimeout(SYNC_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:snapshot});
     if(res.status===401){ _lastPushFailureDetail='session expired (401) — signed out'; forceLogout(); return false; }
     if(!res.ok){
       // Capture whatever the server actually said, instead of a vague
@@ -4939,7 +4955,7 @@ async function deleteScaleLog(id){
 async function deleteScaleLogOnServer(id){
   if(!currentUser) return false;
   try{
-    var res=await fetch('/api/data/delete-scalelog',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})});
+    var res=await fetchWithTimeout('/api/data/delete-scalelog',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})});
     if(res.status===401){ forceLogout(); return false; }
     return res.ok;
   }catch(e){

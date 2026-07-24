@@ -883,9 +883,16 @@ async function pullFromServer(){
     if(Array.isArray(data.storages)&&data.storages.length) storages=data.storages;
     if(Array.isArray(data.users)&&data.users.length) users=data.users;
     if(Array.isArray(data.savedReports)&&data.savedReports.length) savedReports=data.savedReports;
-    if(Array.isArray(data.scaleLogs)&&data.scaleLogs.length){
-      // Strip any IDs the user deleted locally but whose push hasn't landed yet
-      scaleLogs=data.scaleLogs.filter(function(l){ return !_deletedScaleLogIds[l.id]; });
+    if(Array.isArray(data.scaleLogs)){
+      // MERGE, don't replace: union of what's already local + whatever the
+      // server has, by id. A plain replace here is what caused newly-printed
+      // labels to "disappear" if the background pull (every 4s) happened to
+      // land while the print dialog was open and the push to the server
+      // hadn't completed yet — the server's still-stale copy would silently
+      // overwrite the local entry that hadn't landed there yet. Union keeps
+      // every local entry (so nothing already logged can vanish) while still
+      // picking up anything printed from another device.
+      scaleLogs=unionById(scaleLogs, data.scaleLogs).filter(function(l){ return !_deletedScaleLogIds[l.id]; });
     }
     if(Array.isArray(data.labelAllowed)&&data.labelAllowed.length) labelAllowed=data.labelAllowed;
     if(Array.isArray(data.customers)&&data.customers.length) customers=data.customers;
@@ -4511,8 +4518,8 @@ function printScaleLabel(){
   saveScaleLogs();
 
   // The entry above is already saved regardless of what happens next — a
-  // failed print (blocked popup, or anything else going wrong in the popup
-  // window) must never also hide the fact that it was logged. Previously,
+  // failed print (or anything else going wrong while opening the print
+  // dialog) must never also hide the fact that it was logged. Previously,
   // an uncaught error here would silently stop this whole function, so
   // nothing after it — resetting the form, the status message, even
   // re-rendering the table to show the new row — ever ran, making it look
@@ -4544,7 +4551,7 @@ function printScaleLabel(){
   var freshStatus=document.getElementById('sl-status');
   if(freshStatus)freshStatus.textContent=printOk
     ? ('Printed & logged: '+product+' · '+Number(weight).toFixed(2)+' lbs')
-    : ('Logged, but printing failed ('+printError+'). Check this browser\'s pop-up permissions for this site.');
+    : ('Logged, but printing failed ('+printError+').');
 }
 
 function reprintLabel(id){
@@ -4554,7 +4561,7 @@ function reprintLabel(id){
     doPrintLabel(entry);
   }catch(e){
     console.error('Reprint failed:', e);
-    alert('Printing failed: '+(e&&e.message?e.message:e)+'\n\nCheck this browser\'s pop-up permissions for this site.');
+    alert('Printing failed: '+(e&&e.message?e.message:e));
   }
 }
 
@@ -4619,51 +4626,63 @@ function exportScaleLogToExcel(){
 function doPrintLabel(entry){
   var labelSize=getLabelSize(entry.department);
   var labelW=labelSize.w+'in', labelH=labelSize.h+'in';
-  var winW=Math.round(labelSize.w*96+80), winH=Math.round(labelSize.h*96+100);
 
   var labelHTML='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Label — '+esc(entry.product)+'</title>'
     +'<style>@page { size: '+labelW+' '+labelH+'; margin: 0; } '
     +'* { margin:0; padding:0; box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; } '
     +'html,body { width:'+labelW+'; height:'+labelH+'; overflow:hidden; }</style></head>'
-    +'<body onload="'
-      +'window.addEventListener(\'afterprint\',function(){window.close();});'
-      +'window.print();'
-      +'setTimeout(function(){window.close();},420000);'
-    +'">'
+    +'<body>'
     +buildLabelHTML(entry,true)
     +'</body></html>';
 
-  // Use a Blob URL instead of document.write() to load the label into the
-  // popup window.  The label HTML can be ~300 KB (base64 logo) — passing that
-  // through document.write() hangs Android Chrome every time.  A Blob URL
-  // hands the browser a reference it loads normally, with no freezing.
+  // Printing now happens through a hidden <iframe> in THIS page, not a
+  // separate popup window/tab. Previously, on some browsers/devices, the
+  // popup was effectively a full page navigation — cancelling the print
+  // dialog and returning to the app could reload the whole single-page app
+  // from scratch, which raced against the background save/sync and made a
+  // label that had *already been logged* appear to vanish. An iframe never
+  // navigates the app itself, so the app's in-memory state (including the
+  // entry already pushed into scaleLogs before this function even runs) is
+  // completely unaffected no matter what the user does with the print
+  // dialog — print, cancel, or just close it.
+  var iframe=document.createElement('iframe');
+  iframe.setAttribute('aria-hidden','true');
+  // Positioned off-screen rather than display:none/visibility:hidden —
+  // some browsers refuse to run window.print() properly on content that
+  // was never actually laid out/rendered.
+  iframe.style.cssText='position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;border:0;opacity:0;';
+
   var blobUrl=null;
   try{
     var blob=new Blob([labelHTML],{type:'text/html'});
     blobUrl=URL.createObjectURL(blob);
-  }catch(e){ /* Blob API unavailable — fall back to document.write() */ }
+  }catch(e){ /* Blob API unavailable — extremely rare in modern browsers */ }
+  if(!blobUrl) throw new Error('This browser does not support printing labels — please update it.');
 
-  var pw;
-  if(blobUrl){
-    pw=window.open(blobUrl,'_blank','width='+winW+',height='+winH);
-    if(!pw){
-      URL.revokeObjectURL(blobUrl);
-      throw new Error('Pop-up blocked — allow pop-ups for this site to print labels.');
-    }
-    // Clean up the blob URL after the print window has had time to finish.
-    setTimeout(function(){URL.revokeObjectURL(blobUrl);},420000);
-  }else{
-    // Fallback: document.write() for browsers without Blob API
-    pw=window.open('','_blank','width='+winW+',height='+winH);
-    if(!pw) throw new Error('Pop-up blocked — allow pop-ups for this site to print labels.');
-    try{
-      pw.document.write(labelHTML);
-      pw.document.close();
-    }catch(e){
-      try{pw.close();}catch(e2){}
-      throw new Error('Could not write the label into the print window: '+(e&&e.message?e.message:e));
-    }
+  var cleaned=false;
+  function cleanup(){
+    if(cleaned) return;
+    cleaned=true;
+    try{ if(iframe.parentNode) iframe.parentNode.removeChild(iframe); }catch(e){}
+    try{ URL.revokeObjectURL(blobUrl); }catch(e){}
   }
+
+  iframe.onload=function(){
+    try{
+      iframe.contentWindow.focus();
+      iframe.contentWindow.print();
+    }catch(e){
+      console.error('Print dialog failed to open:', e);
+    }
+    // Give the (possibly modal/blocking) print dialog time to be handled —
+    // printed, cancelled, whatever — before tearing the iframe down.
+    setTimeout(cleanup,3000);
+  };
+  // Absolute fallback in case onload never fires for some reason.
+  setTimeout(cleanup,60000);
+
+  document.body.appendChild(iframe);
+  iframe.src=blobUrl;
 }
 
 /* ===== TRANSACTIONS ===== */

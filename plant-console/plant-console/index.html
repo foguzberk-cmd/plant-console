@@ -856,6 +856,23 @@ var SYNC_URL='/api/data';
 // even if the network is slow. IDs are cleared after 15 s — long enough for
 // any push to complete even on a slow connection.
 var _deletedScaleLogIds={};
+// ----- Temporary sync diagnostics (see the "Sync debug log" panel on the
+// Scale Log page) — logs exactly what pull/push events happen and when,
+// including scale log counts and whether a specific ID was involved, so the
+// actual sequence of events can be read/screenshotted directly instead of
+// guessing at what's happening behind the scenes. Safe to remove later. -----
+var _syncDebugLog=[];
+function logSync(msg){
+  var t=new Date().toLocaleTimeString('en-US',{hour12:false})+'.'+String(new Date().getMilliseconds()).padStart(3,'0');
+  _syncDebugLog.push(t+'  '+msg);
+  if(_syncDebugLog.length>60) _syncDebugLog.shift();
+  renderSyncDebugLog();
+}
+function renderSyncDebugLog(){
+  var el=document.getElementById('syncDebugLog');
+  if(!el) return;
+  el.textContent=_syncDebugLog.slice().reverse().join('\n')||'(no events logged yet)';
+}
 var __syncBusy=false; // true while a QuickBooks sync is actively running
 // True for the brief moment a write (e.g. printing a label) is actively
 // waiting on the server to confirm it. A pull that happened to land in
@@ -892,8 +909,9 @@ async function pullFromServer(){
   // (or still empty, on a first-ever sync) compared to what's being built up
   // locally right now, so pulling here would overwrite freshly-synced data
   // with the older/emptier server copy right as the sync finishes.
-  if(__syncBusy) return false;
-  if(_writeInFlight) return false;
+  if(__syncBusy){ logSync('PULL skipped (QuickBooks sync busy)'); return false; }
+  if(_writeInFlight){ logSync('PULL skipped (write in flight, count='+_writeInFlight+')'); return false; }
+  logSync('PULL start (local scaleLogs='+scaleLogs.length+', guarded ids=['+Object.keys(_deletedScaleLogIds).join(',')+'])');
   try{
     var res=await fetch(SYNC_URL+'?_ts='+Date.now(),{cache:'no-store',headers:{'Cache-Control':'no-cache, no-store, must-revalidate','Pragma':'no-cache'}});
     if(res.status===401){ forceLogout(); return false; }
@@ -923,7 +941,9 @@ async function pullFromServer(){
       // exists is what every device should show, full stop. Locally-deleted
       // IDs still get filtered out below in case that specific delete-push
       // is still in flight.
+      var serverCount=data.scaleLogs.length;
       scaleLogs=data.scaleLogs.filter(function(l){ return !_deletedScaleLogIds[l.id]; });
+      logSync('PULL got scaleLogs: server had '+serverCount+', kept '+scaleLogs.length+' after filtering guarded ids');
     }
     if(Array.isArray(data.labelAllowed)&&data.labelAllowed.length) labelAllowed=data.labelAllowed;
     if(Array.isArray(data.customers)&&data.customers.length) customers=data.customers;
@@ -1143,7 +1163,7 @@ restoreSession();
 // "check what's new" step could still land in the exact instant a delete
 // is being confirmed and interfere with it.
 function ambientPushIfIdle(){
-  if(_writeInFlight) return;
+  if(_writeInFlight){ logSync('Ambient push skipped (write in flight, count='+_writeInFlight+')'); return; }
   pushToServer().catch(function(){});
 }
 setInterval(pullFromServer,1500);
@@ -4276,7 +4296,16 @@ function renderScaleLog(){
         ${(_slDeptFilter||_slDateFrom||_slDateTo)?'<button class="btn btn-sm" onclick="clearScaleLogFilters()">Clear filters</button>':''}
       </div>
       <div id="scaleLogTableWrap"></div>
+      <!-- Temporary diagnostic panel for tracking down the delete-sync issue.
+           Shows exactly what pull/push events actually happen and when, so
+           this can be read/screenshotted directly instead of guessing at
+           what's happening behind the scenes. Safe to remove later. -->
+      <details style="margin-top:16px;font-family:var(--mono);font-size:11px;color:var(--muted)">
+        <summary style="cursor:pointer">Sync debug log (tap to expand)</summary>
+        <div id="syncDebugLog" style="margin-top:8px;max-height:240px;overflow-y:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;white-space:pre-wrap;line-height:1.6"></div>
+      </details>
     </div>`;
+  renderSyncDebugLog();
   document.getElementById('sl-date').value=new Date().toISOString().slice(0,10);
   updateLabelPreview();
   renderScaleLogTable();
@@ -4796,6 +4825,7 @@ function liftDeleteGuardSoon(id){
 }
 async function deleteScaleLog(id){
   if(!confirm('Delete this label log entry? This cannot be undone.')) return;
+  logSync('DELETE tap confirmed for id='+id+' (local scaleLogs before='+scaleLogs.length+')');
   // Register the ID immediately so any pull that arrives before the delete
   // is confirmed on the server will filter it out and won't restore the
   // deleted record locally. This guard stays in place until the deletion is
@@ -4804,6 +4834,7 @@ async function deleteScaleLog(id){
   scaleLogs=scaleLogs.filter(function(l){return l.id!==id;});
   safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs));
   renderScaleLog();
+  logSync('DELETE removed locally (scaleLogs now='+scaleLogs.length+'), guard set, calling server…');
   // ALWAYS show a clear, unambiguous message once this settles — previously
   // a successful delete showed nothing at all, so there was no way to
   // actually confirm it went through versus just assuming so. Reuses the
@@ -4826,6 +4857,7 @@ async function deleteScaleLog(id){
   finally{
     _writeInFlight--;
   }
+  logSync('DELETE server call finished: ok='+ok+' (local scaleLogs now='+scaleLogs.length+')');
   var freshStatusEl=document.getElementById('sl-status'); // re-grab in case anything re-rendered the form meanwhile
   if(ok){
     liftDeleteGuardSoon(id);

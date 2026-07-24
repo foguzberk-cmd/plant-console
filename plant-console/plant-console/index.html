@@ -735,7 +735,8 @@ var DEFAULT_LABEL_LAYOUT_STD={
   shTitle:   {left:0.10, top:2.98, fontSize:8},
   shText:    {left:0.10, top:3.16, fontSize:5.4},
   lot:       {left:0.10, top:2.50, fontSize:7},
-  customer:  {left:0.10, top:2.56, fontSize:7}
+  customer:  {left:0.10, top:2.56, fontSize:7},
+  tagNumber: {left:1.30, top:2.50, fontSize:7}
 };
 // Default layout for the 4in x 6in Brother QL-1110NWB label (Carcass
 // Process/Retail). Same key set as the standard layout above so the editor
@@ -754,7 +755,8 @@ var DEFAULT_LABEL_LAYOUT_4X6={
   shTitle:   {left:0.15, top:4.35, fontSize:11},
   shText:    {left:0.15, top:4.65, fontSize:8},
   lot:       {left:0.15, top:3.60, fontSize:10},
-  customer:  {left:0.15, top:3.72, fontSize:10}
+  customer:  {left:0.15, top:3.72, fontSize:10},
+  tagNumber: {left:2.30, top:3.60, fontSize:10}
 };
 // Picks the right baseline layout for a department based on its label
 // paper size (see DEPT_LABEL_SIZES above).
@@ -3443,7 +3445,7 @@ function updateLabelTemplatePreview(){
   prev.style.transformOrigin='top left';
   prev.style.background='#fff';
   if(titleEl) titleEl.textContent='Preview \u00b7 '+size.w+'\u2033 \u00d7 '+size.h+'\u2033';
-  var fakeEntry={product:'Sample Product',weight:'10.00',date:new Date().toISOString().slice(0,10),lot:'LOT-0001',customer:'Sample Customer',department:_ltPanelDept};
+  var fakeEntry={product:'Sample Product',weight:'10.00',date:new Date().toISOString().slice(0,10),lot:'LOT-0001',customer:'Sample Customer',tagNumber:'TAG-0001',department:_ltPanelDept};
   var saved=labelTemplates[_ltPanelDept];
   var draft={
     companyName:document.getElementById('lt-company').value,
@@ -3497,7 +3499,7 @@ var LLL_FRIENDLY_NAMES={
   pkgLabel:'"Packaging Date" label', pkgDate:'Date value', prodName:'Product name',
   seal:'USDA seal text', wtValue:'Weight value', wtUnit:'Weight unit',
   keepText:'"Keep Refrigerated" bar', shTitle:'"Safe Handling" title', shText:'Safe handling body text',
-  lot:'Lot number', customer:'Customer name'
+  lot:'Lot number', customer:'Customer name', tagNumber:'Tag number'
 };
 // Which of the built-in draggable pieces have editable TEXT (as opposed to
 // purely dynamic data like the product name/date/weight, which come from the
@@ -3540,7 +3542,7 @@ function renderLabelLayoutEditor(){
 function refreshLabelLayoutCanvas(){
   var canvas=document.getElementById('lllCanvas');
   if(!canvas) return;
-  var fakeEntry={product:'Sample Product',weight:'10.00',date:new Date().toISOString().slice(0,10),lot:'LOT-0001',customer:'Sample Customer',department:_lllDept};
+  var fakeEntry={product:'Sample Product',weight:'10.00',date:new Date().toISOString().slice(0,10),lot:'LOT-0001',customer:'Sample Customer',tagNumber:'TAG-0001',department:_lllDept};
   canvas.innerHTML=buildLabelHTML(fakeEntry,false,true,_lllDraftLayout,_lllDraftTemplate,_lllDraftCustom);
   var page=canvas.querySelector('.lbl-page');
   if(page){ page.style.boxShadow='0 4px 20px rgba(0,0,0,.25)'; page.style.background='#fff'; page.style.flexShrink='0'; }
@@ -4108,6 +4110,7 @@ function renderScaleLog(){
           <div class="form-group"><label>Packaging date</label><input type="date" id="sl-date" oninput="updateLabelPreview()"/></div>
         </div>
         <div class="form-group"><label>Lot / Batch (optional)</label><input type="text" id="sl-lot" placeholder="e.g. LOT-0627" oninput="updateLabelPreview()"/></div>
+        <div class="form-group"><label>Tag Number (optional)</label><input type="text" id="sl-tag" placeholder="e.g. TAG-4471" oninput="updateLabelPreview()"/></div>
         <div class="form-group"><label>Customer (optional)</label>
           <div class="item-search-wrap">
             <input type="text" id="sl-customer-search" class="item-search-input" placeholder="Search customer..." autocomplete="off" oninput="filterScaleCustomers();updateLabelPreview()" onblur="hideCustomerSugg()"/>
@@ -4142,7 +4145,7 @@ function renderScaleLog(){
       </div>
       <!-- Log filters: everything here scopes BOTH the table below and the Excel export -->
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
-        <input type="text" id="sl-filter" placeholder="Search product/lot..." oninput="renderScaleLogTable()" style="padding:7px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;width:200px"/>
+        <input type="text" id="sl-filter" placeholder="Search product/lot/tag..." oninput="renderScaleLogTable()" style="padding:7px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;width:200px"/>
         <select id="sl-view-dept" onchange="onScaleViewDeptChange()" style="padding:7px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none">${filterDeptOpts}</select>
         <label style="font-size:11px;color:var(--muted);font-family:var(--mono)">From <input type="date" id="sl-date-from" value="${esc(_slDateFrom)}" onchange="onScaleDateRangeChange()" style="padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;margin-left:4px"/></label>
         <label style="font-size:11px;color:var(--muted);font-family:var(--mono)">To <input type="date" id="sl-date-to" value="${esc(_slDateTo)}" onchange="onScaleDateRangeChange()" style="padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;margin-left:4px"/></label>
@@ -4181,7 +4184,7 @@ function clearScaleLogFilters(){
 function getFilteredScaleLogs(){
   var q=(document.getElementById('sl-filter')&&document.getElementById('sl-filter').value||'').toLowerCase().trim();
   var list=scaleLogs.slice().reverse();
-  if(q) list=list.filter(function(l){return (l.product||'').toLowerCase().includes(q)||(l.lot||'').toLowerCase().includes(q)||(l.customer||'').toLowerCase().includes(q);});
+  if(q) list=list.filter(function(l){return (l.product||'').toLowerCase().includes(q)||(l.lot||'').toLowerCase().includes(q)||(l.tagNumber||'').toLowerCase().includes(q)||(l.customer||'').toLowerCase().includes(q);});
   if(_slDeptFilter){
     list=list.filter(function(l){
       if(_slDeptFilter==='__none__') return !l.department;
@@ -4245,6 +4248,7 @@ function buildLabelHTML(entry, forPrint, editable, layoutOverride, templateOverr
       +wrap('keepText','width:3.7in;text-align:center;font-weight:bold;border-top:2px solid #000;border-bottom:2px solid #000;padding:5px 0;box-sizing:border-box;',esc(tpl.keepText))
       +(entry.lot?wrap('lot','font-family:monospace;','LOT: '+esc(entry.lot)):'')
       +(entry.customer?wrap('customer','font-family:monospace;','CUSTOMER: '+esc(entry.customer)):'')
+      +(entry.tagNumber?wrap('tagNumber','font-family:monospace;','TAG: '+esc(entry.tagNumber)):'')
       +wrap('shTitle','width:3.7in;text-align:center;font-weight:bold;',esc(tpl.shTitleText))
       +wrap('shText','width:3.7in;line-height:1.4;text-align:left;','This product was prepared from inspected and passed meat and/or poultry. Some food products may contain bacteria that could cause illness if mishandled or cooked improperly. For your protection, follow these safe handling instructions.<br>'+safeHandlingHTML)
       +customFieldsHTML
@@ -4271,6 +4275,7 @@ function buildLabelHTML(entry, forPrint, editable, layoutOverride, templateOverr
     +wrap('keepText','width:2.2in;text-align:center;font-weight:bold;border-top:1.5px solid #000;border-bottom:1.5px solid #000;padding:3px 0;box-sizing:border-box;',esc(tpl.keepText))
     +(entry.lot?wrap('lot','font-family:monospace;','LOT: '+esc(entry.lot)):'')
     +(entry.customer?wrap('customer','font-family:monospace;','CUSTOMER: '+esc(entry.customer)):'')
+    +(entry.tagNumber?wrap('tagNumber','font-family:monospace;','TAG: '+esc(entry.tagNumber)):'')
     +wrap('shTitle','width:2.2in;text-align:center;font-weight:bold;',esc(tpl.shTitleText))
     +wrap('shText','width:2.2in;line-height:1.25;text-align:left;','This product was prepared from inspected and passed meat and/or poultry. Some food products may contain bacteria that could cause illness if mishandled or cooked improperly. For your protection, follow these safe handling instructions.<br>'+safeHandlingHTML)
     +customFieldsHTML
@@ -4318,6 +4323,7 @@ function updateLabelPreview(){
     weight:document.getElementById('sl-weight')?document.getElementById('sl-weight').value:'',
     date:document.getElementById('sl-date')?document.getElementById('sl-date').value:'',
     lot:document.getElementById('sl-lot')?document.getElementById('sl-lot').value.trim():'',
+    tagNumber:document.getElementById('sl-tag')?document.getElementById('sl-tag').value.trim():'',
     customer:document.getElementById('sl-customer')?document.getElementById('sl-customer').value.trim():'',
     department:_slPrintDept
   };
@@ -4338,6 +4344,7 @@ function renderScaleLogTable(){
       +'<td class="txn-date" style="white-space:nowrap">'+ds+'</td>'
       +'<td style="font-family:var(--mono);font-size:12px">'+esc(l.time||'')+'</td>'
       +'<td><div style="font-weight:600;font-size:13px">'+esc(l.product||'')+'</div>'+(l.lot?'<div class="txn-desc">'+esc(l.lot)+'</div>':'')+'</td>'
+      +'<td style="font-family:var(--mono);font-size:12px;color:var(--muted)">'+esc(l.tagNumber||'—')+'</td>'
       +'<td style="font-size:12px;color:var(--muted)">'+esc(l.department||'—')+'</td>'
       +'<td style="font-size:12px;color:var(--muted)">'+esc(l.customer||'—')+'</td>'
       +'<td style="font-size:12px;color:var(--muted)">'+esc(l.loggedBy||'—')+'</td>'
@@ -4347,7 +4354,7 @@ function renderScaleLogTable(){
       +'<button class="btn btn-sm btn-danger" onclick="deleteScaleLog(this.dataset.id)" data-id="'+l.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>'
       +'</div></td></tr>';
   }).join('');
-  wrap.innerHTML='<table class="txn-table"><thead><tr><th>Date</th><th>Time</th><th>Product</th><th>Department</th><th>Customer</th><th>Logged By</th><th style="text-align:right">Weight</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
+  wrap.innerHTML='<table class="txn-table"><thead><tr><th>Date</th><th>Time</th><th>Product</th><th>Tag #</th><th>Department</th><th>Customer</th><th>Logged By</th><th style="text-align:right">Weight</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
 function filterScaleItems(){
@@ -4476,6 +4483,7 @@ function printScaleLabel(){
   var weight=document.getElementById('sl-weight').value;
   var date=document.getElementById('sl-date').value;
   var lot=document.getElementById('sl-lot').value.trim();
+  var tagNumber=document.getElementById('sl-tag').value.trim();
   var customer=document.getElementById('sl-customer').value.trim();
   var status=document.getElementById('sl-status');
   if(!_slPrintDept){ if(status)status.textContent='Select a department first.'; document.getElementById('sl-dept').focus(); return; }
@@ -4494,6 +4502,7 @@ function printScaleLabel(){
     date:date,
     time:time,
     lot:lot,
+    tagNumber:tagNumber,
     customer:customer,
     loggedBy:currentUser?(currentUser.name||currentUser.email||''):''
   };
@@ -4523,6 +4532,7 @@ function printScaleLabel(){
   // in case that call is ever removed or changed.
   document.getElementById('sl-weight').value='';
   document.getElementById('sl-lot').value='';
+  document.getElementById('sl-tag').value='';
   document.getElementById('sl-customer').value='';
   document.getElementById('sl-customer-search').value='';
   renderScaleLog();
@@ -4576,6 +4586,7 @@ function exportScaleLogToExcel(){
         'Date': l.date||'',
         'Time': l.time||'',
         'Product': l.product||'',
+        'Tag Number': l.tagNumber||'',
         'Department': l.department||'',
         'Customer': l.customer||'',
         'Logged By': l.loggedBy||'',
@@ -4584,7 +4595,7 @@ function exportScaleLogToExcel(){
       };
     });
     var ws=XLSX.utils.json_to_sheet(rows);
-    ws['!cols']=[{wch:12},{wch:8},{wch:32},{wch:20},{wch:20},{wch:18},{wch:16},{wch:12}];
+    ws['!cols']=[{wch:12},{wch:8},{wch:32},{wch:14},{wch:20},{wch:20},{wch:18},{wch:16},{wch:12}];
     var wb=XLSX.utils.book_new();
     // Excel sheet names can't contain : \ / ? * [ ] or exceed 31 characters —
     // "Carcass Process/Retail" hit exactly this (the "/"), which silently

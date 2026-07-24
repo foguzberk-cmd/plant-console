@@ -4614,6 +4614,29 @@ function selectScaleCustomer(el){
 }
 function hideCustomerSugg(){ setTimeout(function(){var s=document.getElementById('sl-customer-sugg'); if(s) s.remove();},200); }
 
+// When a save can't reach the server, this actively retries every 3s (up to
+// ~10 tries, roughly 30s) rather than passively waiting on the background
+// 4s timer — recovers from a brief network blip much faster, and updates
+// the status message the instant it actually confirms, so the person isn't
+// left staring at a red warning longer than necessary.
+async function retryPushUntilConfirmed(product, weight){
+  for(var attempt=0;attempt<10;attempt++){
+    await new Promise(function(r){ setTimeout(r,3000); });
+    var ok=false;
+    try{ ok=await pushToServer(); }catch(e){ ok=false; }
+    if(ok){
+      var el=document.getElementById('sl-status');
+      // Only overwrite the message if it's still showing the original
+      // failure — if the person has since printed something else (a new
+      // #sl-status element with its own message), leave that alone.
+      if(el && el.textContent.indexOf('could not reach the server')>=0){
+        el.textContent='Now confirmed on the server: '+product+' · '+Number(weight).toFixed(2)+' lbs';
+        el.style.color='#0f6e40';
+      }
+      return;
+    }
+  }
+}
 async function printScaleLabel(){
   var product=document.getElementById('sl-search').value.trim();
   var weight=document.getElementById('sl-weight').value;
@@ -4703,6 +4726,7 @@ async function printScaleLabel(){
     if(!savedOk){
       freshStatus.textContent='Saved on THIS device only — could not reach the server ('+saveError+'). It will keep retrying automatically; other devices won\'t see it until that succeeds.';
       freshStatus.style.color='#c0392b';
+      retryPushUntilConfirmed(product, weight);
     }else{
       freshStatus.textContent=printOk
         ? ('Saved to server & printed: '+product+' · '+Number(weight).toFixed(2)+' lbs')

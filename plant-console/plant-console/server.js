@@ -174,7 +174,7 @@ function updateSharedData(mutator) {
 // file itself gets overwritten/corrupted.
 const BACKUP_FILENAME_RE = /^backup-[0-9\-T]+Z-(auto|manual|pre-restore)\.json$/;
 const AUTO_BACKUP_INTERVAL_MS = 60 * 60 * 1000; // at most one automatic backup per hour
-const BACKUP_KEEP_MAX = 200; // rotating cap so the disk doesn't grow unbounded
+const BACKUP_KEEP_MAX = 5; // rotating cap so the disk doesn't grow unbounded
 let _lastAutoBackupAt = 0;
 
 async function ensureBackupDir() {
@@ -1179,4 +1179,10 @@ const server = http.createServer(async (req, res) => {
   res.writeHead(404); res.end('Not found');
 });
 
-server.listen(PORT, () => console.log('Plant Console running on port ' + PORT));
+server.listen(PORT, () => {
+  console.log('Plant Console running on port ' + PORT);
+  // Apply the (possibly just-lowered) BACKUP_KEEP_MAX to whatever's already
+  // on disk right away, instead of waiting for the next backup to be taken
+  // (which could be up to an hour away) to trim down existing excess files.
+  pruneOldBackups().catch(e => console.error('Could not prune old backups on startup:', e.message));
+});

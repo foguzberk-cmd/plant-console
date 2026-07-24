@@ -4118,10 +4118,11 @@ function renderScaleLog(){
           </div>
           ${!customers.length?'<div style="font-size:11px;color:var(--muted);margin-top:5px">No customers synced yet — go to <strong>Settings → Customers</strong> and click Sync from QuickBooks.</div>':''}
         </div>
-        <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:6px" onclick="printScaleLabel()">
+        <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:6px" onclick="printScaleLabel()" title="Saved to the log immediately — even if you cancel the print dialog">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-          Print label &amp; log
+          Print / Save
         </button>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px">Logged to the record as soon as you click — canceling the print dialog won't undo it.</div>
         <div id="sl-status" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:10px;min-height:14px"></div>
       </div>
       <div class="sl-preview-col">

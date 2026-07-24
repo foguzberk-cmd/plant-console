@@ -4771,6 +4771,7 @@ async function printScaleLabel(){
       loggedBy:currentUser?(currentUser.name||currentUser.email||''):''
     };
     scaleLogs.push(entry);
+    logSync('SAVE created entry id='+entry.id+' weight='+entry.weight+' (local scaleLogs now='+scaleLogs.length+')');
     safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs)); // instant local save, regardless of network
     // Protect this entry from being stripped back out by a pull that was
     // already in flight before it existed (see _recentlyAddedScaleLogs
@@ -4794,6 +4795,7 @@ async function printScaleLabel(){
     // actually finished (or failed) yet.
     var savedOk=false, saveError='';
     _writeInFlight++;
+    logSync('SAVE calling server (write-in-flight now blocks pulls)…');
     try{
       // On a flaky connection (intermittent failures rather than a fully
       // dead one), an immediate retry very often just succeeds — same
@@ -4815,6 +4817,7 @@ async function printScaleLabel(){
     }finally{
       _writeInFlight--;
     }
+    logSync('SAVE server call finished: ok='+savedOk+' (local scaleLogs now has entry: '+scaleLogs.some(function(l){return l.id===entry.id;})+', count='+scaleLogs.length+')');
 
     // The entry is at minimum saved to THIS device's local storage above
     // regardless of what happens next — a failed print (or anything else
@@ -4840,6 +4843,7 @@ async function printScaleLabel(){
     if(customerEl) customerEl.value='';
     var custSearchEl=document.getElementById('sl-customer-search');
     if(custSearchEl) custSearchEl.value='';
+    logSync('SAVE about to render table: scaleLogs.length='+scaleLogs.length+', entry present='+scaleLogs.some(function(l){return l.id===entry.id;}));
     renderScaleLog();
     // IMPORTANT: renderScaleLog() just rebuilt the entire form, including a
     // brand-new #sl-status element — setting the message on the OLD `status`
@@ -4862,6 +4866,7 @@ async function printScaleLabel(){
     // Absolute last resort: something totally unanticipated broke, but the
     // user still gets told SOMETHING went wrong instead of silence.
     console.error('printScaleLabel crashed unexpectedly:', e);
+    logSync('SAVE CRASHED unexpectedly: '+(e&&e.message?e.message:String(e)));
     var msg='Something went wrong before saving ('+(e&&e.message?e.message:String(e))+'). Please try again; if it keeps happening, try a full refresh of the app.';
     if(status) status.textContent=msg; else alert(msg);
   }

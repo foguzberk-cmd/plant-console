@@ -4314,10 +4314,6 @@ function renderScaleLog(){
         </button>
         <div style="font-size:11px;color:var(--muted);margin-top:6px">Saved to the server before printing — canceling the print dialog won't undo it, and every device will see it.</div>
         <div id="sl-status" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:10px;min-height:14px"></div>
-        <details open style="margin-top:14px;font-family:var(--mono);font-size:11px;color:var(--muted);border:2px solid #2a7fff;border-radius:10px;padding:10px;background:#f0f6ff">
-          <summary style="cursor:pointer;font-weight:700;color:#2a7fff">🔍 SYNC DEBUG LOG (open by default — scroll inside the box below)</summary>
-          <div id="syncDebugLog2" style="margin-top:8px;max-height:220px;overflow-y:auto;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;white-space:pre-wrap;line-height:1.6"></div>
-        </details>
       </div>
       <div class="sl-preview-col">
         <div id="labelPreviewTitle" style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Label preview · 2.4″ × 3.9″</div>
@@ -4347,16 +4343,7 @@ function renderScaleLog(){
         ${(_slDeptFilter||_slDateFrom||_slDateTo)?'<button class="btn btn-sm" onclick="clearScaleLogFilters()">Clear filters</button>':''}
       </div>
       <div id="scaleLogTableWrap"></div>
-      <!-- Temporary diagnostic panel for tracking down the delete-sync issue.
-           Shows exactly what pull/push events actually happen and when, so
-           this can be read/screenshotted directly instead of guessing at
-           what's happening behind the scenes. Safe to remove later. -->
-      <details open style="margin-top:16px;font-family:var(--mono);font-size:11px;color:var(--muted);border:2px solid #2a7fff;border-radius:10px;padding:10px;background:#f0f6ff">
-        <summary style="cursor:pointer;font-weight:700;color:#2a7fff">🔍 SYNC DEBUG LOG (open by default — scroll inside the box below)</summary>
-        <div id="syncDebugLog" style="margin-top:8px;max-height:300px;overflow-y:auto;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;white-space:pre-wrap;line-height:1.6"></div>
-      </details>
     </div>`;
-  renderSyncDebugLog();
   document.getElementById('sl-date').value=new Date().toISOString().slice(0,10);
   updateLabelPreview();
   renderScaleLogTable();
@@ -4781,18 +4768,47 @@ async function printScaleLabel(){
     _recentlyAddedScaleLogs[entry.id]=entry;
     setTimeout(function(){ delete _recentlyAddedScaleLogs[entry.id]; },8000);
 
-    // Give immediate feedback that a save is in flight — the button click
-    // shouldn't feel like it did nothing while the server round-trip runs.
-    var btn=document.querySelector('button[onclick="printScaleLabel()"]');
-    if(btn) btn.disabled=true;
-    if(status) status.textContent='Saving to server…';
+    // Print RIGHT AWAY — don't make the print dialog wait on the server
+    // round-trip. The entry is already safely in local storage above
+    // regardless of what happens with printing OR the server confirmation
+    // below, so there's no reason to hold up the thing the person is
+    // standing at the scale waiting for.
+    var printOk=true, printError='';
+    try{
+      doPrintLabel(entry);
+    }catch(e){
+      printOk=false;
+      printError=e&&e.message?e.message:String(e);
+      console.error('Print failed:', e);
+    }
 
-    // THIS is "server holds the data": actually wait for the server to
-    // confirm it has this entry before doing anything else — printing,
-    // clearing the form, telling the user it's done. Previously this just
-    // fired the push in the background and moved on immediately, so a device
-    // could believe something was saved when the server round-trip hadn't
-    // actually finished (or failed) yet.
+    // Reset the form and show the new entry in the table immediately too —
+    // both already reflect reality (the local save above), no reason to
+    // wait on the network for either of these.
+    var btn=document.querySelector('button[onclick="printScaleLabel()"]');
+    if(weightEl) weightEl.value='';
+    if(lotEl) lotEl.value='';
+    if(tagEl) tagEl.value='';
+    if(customerEl) customerEl.value='';
+    var custSearchEl=document.getElementById('sl-customer-search');
+    if(custSearchEl) custSearchEl.value='';
+    renderScaleLog();
+    // IMPORTANT: renderScaleLog() just rebuilt the entire form, including a
+    // brand-new #sl-status element and #print button — grab fresh
+    // references, since the ones from the top of this function now point
+    // at removed DOM nodes.
+    var freshStatus=document.getElementById('sl-status');
+    var freshBtn=document.querySelector('button[onclick="printScaleLabel()"]');
+    if(freshBtn) freshBtn.disabled=true;
+    if(freshStatus){
+      freshStatus.textContent=printOk
+        ? ('Printed: '+product+' · '+Number(weight).toFixed(2)+' lbs. Saving to server…')
+        : ('Printing failed ('+printError+'), but it is saved locally. Saving to server…');
+    }
+
+    // NOW confirm with the server — this can take a moment on a slow
+    // connection, but that no longer holds up printing or the table update
+    // above, only the final part of the status message.
     var savedOk=false, saveError='';
     _writeInFlight++;
     logSync('SAVE calling server (write-in-flight now blocks pulls)…');
@@ -4819,47 +4835,19 @@ async function printScaleLabel(){
     }
     logSync('SAVE server call finished: ok='+savedOk+' (local scaleLogs now has entry: '+scaleLogs.some(function(l){return l.id===entry.id;})+', count='+scaleLogs.length+')');
 
-    // The entry is at minimum saved to THIS device's local storage above
-    // regardless of what happens next — a failed print (or anything else
-    // going wrong while opening the print dialog) must never also hide the
-    // fact that it was logged locally.
-    var printOk=true, printError='';
-    try{
-      doPrintLabel(entry);
-    }catch(e){
-      printOk=false;
-      printError=e&&e.message?e.message:String(e);
-      console.error('Print failed:', e);
-    }
-
-    // reset for next package (department stays selected — same station keeps
-    // printing for the same department without having to re-pick it every
-    // time). renderScaleLog() below rebuilds the whole form fresh, which
-    // already clears these fields — these explicit resets are just
-    // belt-and-braces, now null-guarded so they can never themselves throw.
-    if(weightEl) weightEl.value='';
-    if(lotEl) lotEl.value='';
-    if(tagEl) tagEl.value='';
-    if(customerEl) customerEl.value='';
-    var custSearchEl=document.getElementById('sl-customer-search');
-    if(custSearchEl) custSearchEl.value='';
-    logSync('SAVE about to render table: scaleLogs.length='+scaleLogs.length+', entry present='+scaleLogs.some(function(l){return l.id===entry.id;}));
-    renderScaleLog();
-    // IMPORTANT: renderScaleLog() just rebuilt the entire form, including a
-    // brand-new #sl-status element — setting the message on the OLD `status`
-    // reference from the top of this function would get silently discarded
-    // the instant that render ran. Grab the fresh one instead.
-    var freshStatus=document.getElementById('sl-status');
-    if(freshStatus){
+    // Grab the status element again — nothing should have re-rendered the
+    // form in between, but this is cheap insurance against exactly that.
+    var finalStatus=document.getElementById('sl-status');
+    var finalBtn=document.querySelector('button[onclick="printScaleLabel()"]');
+    if(finalBtn) finalBtn.disabled=false;
+    if(finalStatus){
       if(!savedOk){
-        freshStatus.textContent='Saved on THIS device only — could not reach the server ('+saveError+'). It will keep retrying automatically; other devices won\'t see it until that succeeds.';
-        freshStatus.style.color='#c0392b';
+        finalStatus.textContent='Printed and saved on THIS device only — could not reach the server ('+saveError+'). It will keep retrying automatically; other devices won\'t see it until that succeeds.';
+        finalStatus.style.color='#c0392b';
         retryPushUntilConfirmed(product, weight);
       }else{
-        freshStatus.textContent=printOk
-          ? ('Saved to server & printed: '+product+' · '+Number(weight).toFixed(2)+' lbs — all '+scaleLogs.length+' records on this device are now on the server')
-          : ('Saved to server, but printing failed ('+printError+').');
-        freshStatus.style.color='';
+        finalStatus.textContent='Saved to server & printed: '+product+' · '+Number(weight).toFixed(2)+' lbs — all '+scaleLogs.length+' records on this device are now on the server';
+        finalStatus.style.color='';
       }
     }
   }catch(e){

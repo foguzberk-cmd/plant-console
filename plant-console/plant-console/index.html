@@ -896,9 +896,11 @@ function logSync(msg){
   renderSyncDebugLog();
 }
 function renderSyncDebugLog(){
+  var text=_syncDebugLog.slice().reverse().join('\n')||'(no events logged yet)';
   var el=document.getElementById('syncDebugLog');
-  if(!el) return;
-  el.textContent=_syncDebugLog.slice().reverse().join('\n')||'(no events logged yet)';
+  if(el) el.textContent=text;
+  var el2=document.getElementById('syncDebugLog2');
+  if(el2) el2.textContent=text;
 }
 var __syncBusy=false; // true while a QuickBooks sync is actively running
 // True for the brief moment a write (e.g. printing a label) is actively
@@ -4312,6 +4314,10 @@ function renderScaleLog(){
         </button>
         <div style="font-size:11px;color:var(--muted);margin-top:6px">Saved to the server before printing — canceling the print dialog won't undo it, and every device will see it.</div>
         <div id="sl-status" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:10px;min-height:14px"></div>
+        <details open style="margin-top:14px;font-family:var(--mono);font-size:11px;color:var(--muted);border:2px solid #2a7fff;border-radius:10px;padding:10px;background:#f0f6ff">
+          <summary style="cursor:pointer;font-weight:700;color:#2a7fff">🔍 SYNC DEBUG LOG (open by default — scroll inside the box below)</summary>
+          <div id="syncDebugLog2" style="margin-top:8px;max-height:220px;overflow-y:auto;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;white-space:pre-wrap;line-height:1.6"></div>
+        </details>
       </div>
       <div class="sl-preview-col">
         <div id="labelPreviewTitle" style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Label preview · 2.4″ × 3.9″</div>
@@ -4345,9 +4351,9 @@ function renderScaleLog(){
            Shows exactly what pull/push events actually happen and when, so
            this can be read/screenshotted directly instead of guessing at
            what's happening behind the scenes. Safe to remove later. -->
-      <details style="margin-top:16px;font-family:var(--mono);font-size:11px;color:var(--muted)">
-        <summary style="cursor:pointer">Sync debug log (tap to expand)</summary>
-        <div id="syncDebugLog" style="margin-top:8px;max-height:240px;overflow-y:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;white-space:pre-wrap;line-height:1.6"></div>
+      <details open style="margin-top:16px;font-family:var(--mono);font-size:11px;color:var(--muted);border:2px solid #2a7fff;border-radius:10px;padding:10px;background:#f0f6ff">
+        <summary style="cursor:pointer;font-weight:700;color:#2a7fff">🔍 SYNC DEBUG LOG (open by default — scroll inside the box below)</summary>
+        <div id="syncDebugLog" style="margin-top:8px;max-height:300px;overflow-y:auto;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;white-space:pre-wrap;line-height:1.6"></div>
       </details>
     </div>`;
   renderSyncDebugLog();

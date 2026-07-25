@@ -1800,9 +1800,13 @@ async function finishDocSync(data, onProgress){
     // silently dropped: it's tagged with a synthetic itemId ('__discount__')
     // so the Reports tab can always show it as its own "Discounts" line,
     // guaranteeing every real discount QuickBooks applied is accounted for
-    // somewhere, never invisibly missing from the totals. Only applies to
-    // outflow docs (Invoice, SalesReceipt); Bills don't use this line type.
-    if(cfg.sign<0){
+    // somewhere, never invisibly missing from the totals. Applies to
+    // Invoice, SalesReceipt, AND CreditMemo — a "Customer Credit Adjustment"
+    // is exactly this kind of line living inside a CreditMemo, and it was
+    // being missed entirely before this fix because the check only allowed
+    // Invoice/SalesReceipt (sign<0) documents through. Bills don't use this
+    // line type at all, so they're still excluded.
+    if(cfg.key==='Invoice'||cfg.key==='SalesReceipt'||cfg.key==='CreditMemo'){
       (doc.Line||[]).forEach(function(dl,dli){
         if(dl.DetailType!=='DiscountLineDetail') return;
         var discAmt=Number(dl.Amount||0);
@@ -2259,7 +2263,8 @@ function buildBalanceReport(){
   // "Other Services" — a dedicated row for items whose name is exactly
   // "Services" (case-insensitive). QB often applies service discounts/credits
   // as a DiscountLineDetail or SalesItemLineDetail for a "Services" account,
-  // which doesn't belong in the inventory Shipments row.
+  // which doesn't belong in the inventory Shipments row — but it does still
+  // count toward the grand total (see where outflowTotal is finalized below).
   var svcItemIds={};
   items.forEach(function(it){ if(it.name&&it.name.trim().toLowerCase()==='services') svcItemIds[it.id]=true; });
   var otherSvcTotal=0;
@@ -2347,14 +2352,17 @@ function buildBalanceReport(){
     // against — they're tied to the invoice as a whole, not a specific
     // stock item — so they're counted plant-wide (not filtered by
     // department) and shown as their own always-visible row, same idea as
-    // Other Services above.
+    // Other Services above. No sign flip for 'return' type here (unlike
+    // Other Services below it) — a discount-style line found inside a
+    // CreditMemo (e.g. "Customer Credit Adjustment") is a straightforward
+    // revenue reduction, not a physical-goods return that should reverse
+    // direction; it always counts the same way a regular invoice discount does.
     if(t.itemId==='__discount__' && (OUTFLOW[t.type]||t.type==='return')){
-      var discSign=(t.type==='return')?-1:1;
-      discountTotal+=discSign*v;
+      discountTotal+=v;
       var discKey=t.desc||'Discount';
       if(!discountItems[discKey]) discountItems[discKey]={name:discKey,qty:0,value:0};
-      discountItems[discKey].qty+=discSign*q;
-      discountItems[discKey].value+=discSign*v;
+      discountItems[discKey].qty+=q;
+      discountItems[discKey].value+=v;
       return;
     }
 
@@ -2418,12 +2426,16 @@ function buildBalanceReport(){
   inflowItems['starting']=openingBreakdown;
   inflowTotal+=openingValue;
 
-  // Discounts genuinely reduce the sales value QuickBooks recorded, so
-  // (unlike "Other Services", which is shown for visibility only and
-  // intentionally excluded from the inventory total) they DO count toward
-  // the grand total — otherwise the statement wouldn't reconcile with
-  // QuickBooks's actual net sales figure.
+  // Discounts genuinely reduce the sales value QuickBooks recorded, so they
+  // count toward the grand total — otherwise the statement wouldn't
+  // reconcile with QuickBooks's actual net sales figure.
   outflowTotal+=discountTotal;
+  // Other Services is shown as its own row (separate from Shipments, since
+  // it isn't inventory) — but it's still real revenue-affecting data from
+  // QuickBooks, so it needs to count toward the grand total too. Previously
+  // it was excluded entirely, which is exactly why this report's total
+  // didn't match QuickBooks' own sales total by the Services amount.
+  outflowTotal+=otherSvcTotal;
 
   // The grand total — everything that was on hand, plus everything added,
   // minus everything that left. This is the headline number for the report.

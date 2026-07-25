@@ -480,7 +480,15 @@ async function ensureFreshToken() {
 }
 
 async function fetchQBItemsPage(startPosition, retry) {
-  const query = `SELECT * FROM Item STARTPOSITION ${startPosition} MAXRESULTS 100`;
+  // QuickBooks Online silently defaults to Active=true when a query has no
+  // WHERE clause on Active at all — any item that's since been deactivated
+  // or merged in QuickBooks never comes back from a plain "SELECT * FROM
+  // Item" and can never be matched again, even though historical invoices
+  // and credit memos still reference it. Explicitly requesting both active
+  // and inactive items fixes this — without it, thousands of historical
+  // line items end up permanently unmatchable ("item not matched") no
+  // matter how many times items are re-synced.
+  const query = `SELECT * FROM Item WHERE Active IN (true, false) STARTPOSITION ${startPosition} MAXRESULTS 100`;
   const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
   const res = await httpsRequest({
     hostname: 'quickbooks.api.intuit.com',

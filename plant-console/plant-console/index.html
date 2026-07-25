@@ -3029,6 +3029,10 @@ function renderItemsView(){
         <input type="checkbox" id="groupByLoc" onchange="renderItemsTable()" style="width:14px;height:14px;accent-color:var(--cold)"/>
         Group by location
       </label>
+      <label style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--ink);cursor:pointer;background:var(--panel);border:1.5px solid var(--line);border-radius:8px;padding:7px 14px">
+        <input type="checkbox" id="groupByCategory" onchange="renderItemsTable()" style="width:14px;height:14px;accent-color:var(--cold)"/>
+        Group by category
+      </label>
     </div>
     <div id="itemsTableWrap"></div>`;
   populateLocFilter();
@@ -3076,12 +3080,18 @@ function renderItemsTable(){
   var hideZero=document.getElementById('hideZero')?.checked||false;
   var showZeroOnly=document.getElementById('showZeroOnly')?.checked||false;
   var groupByLoc=document.getElementById('groupByLoc')?.checked||false;
+  var groupByCategory=document.getElementById('groupByCategory')?.checked||false;
 
   // sync checkboxes so they don't conflict
   if(hideZero&&showZeroOnly){
     var last=event&&event.target?event.target.id:'';
     if(last==='hideZero') document.getElementById('showZeroOnly').checked=false, showZeroOnly=false;
     else document.getElementById('hideZero').checked=false, hideZero=false;
+  }
+  if(groupByLoc&&groupByCategory){
+    var lastGrp=event&&event.target?event.target.id:'';
+    if(lastGrp==='groupByLoc') document.getElementById('groupByCategory').checked=false, groupByCategory=false;
+    else document.getElementById('groupByLoc').checked=false, groupByLoc=false;
   }
 
   var filtered=items.filter(function(it){
@@ -3098,8 +3108,36 @@ function renderItemsTable(){
   var status=document.getElementById('qbStatus');
   if(status) status.textContent=filtered.length+' of '+items.length+' item'+(items.length!==1?'s':'');
 
-  if(!groupByLoc){
+  if(!groupByLoc && !groupByCategory){
     wrap.innerHTML='<div class="txn-table-wrap">'+itemsTable(filtered)+'</div>';
+    return;
+  }
+
+  if(groupByCategory){
+    // Groups by the QuickBooks parent category (see qbSyncItemsCore's
+    // groupName capture) — same category structure QuickBooks itself shows
+    // (e.g. everything filed under "AL ZAHMAR BEEF"). Matches the pattern
+    // already used for "Group by location" just below.
+    var catGroups={};
+    filtered.forEach(function(it){
+      var g=it.groupName||'Ungrouped';
+      if(!catGroups[g]) catGroups[g]=[];
+      catGroups[g].push(it);
+    });
+    var catNames=Object.keys(catGroups).sort(function(a,b){
+      if(a==='Ungrouped') return 1;
+      if(b==='Ungrouped') return -1;
+      return a.localeCompare(b);
+    });
+    var catHtml='';
+    catNames.forEach(function(g){
+      var groupItems=catGroups[g].slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
+      catHtml+='<div style="margin-bottom:28px">'
+        +'<div style="font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:'+(g==='Ungrouped'?'var(--muted)':'var(--cold)')+';padding:10px 0 8px;border-bottom:2px solid '+(g==='Ungrouped'?'var(--line)':'var(--cold-soft)')+';margin-bottom:0">'
+        +esc(g)+' <span style="color:var(--muted);font-weight:400">('+groupItems.length+' item'+(groupItems.length!==1?'s':'')+')</span></div>'
+        +'<div class="txn-table-wrap">'+itemsTable(groupItems)+'</div></div>';
+    });
+    wrap.innerHTML=catHtml||'<div style="padding:28px;text-align:center;color:var(--muted);font-size:13px">No items match the current filters.</div>';
     return;
   }
 

@@ -4520,7 +4520,7 @@ function renderScaleLog(){
         <div class="form-group"><label>Tag Number (optional)</label><input type="text" id="sl-tag" placeholder="e.g. TAG-4471" oninput="updateLabelPreview()"/></div>
         <div class="form-group"><label>Customer (optional)</label>
           <div class="item-search-wrap">
-            <input type="text" id="sl-customer-search" class="item-search-input" placeholder="Search customer..." autocomplete="off" oninput="filterScaleCustomers();updateLabelPreview()" onblur="hideCustomerSugg()"/>
+            <input type="text" id="sl-customer-search" class="item-search-input" placeholder="Search customer..." autocomplete="off" oninput="filterScaleCustomers();updateLabelPreview()" onfocus="showScaleCustomerDropdown()" onblur="hideCustomerSugg()"/>
             <input type="hidden" id="sl-customer" value=""/>
           </div>
           ${!customers.length?'<div style="font-size:11px;color:var(--muted);margin-top:5px">No customers synced yet — go to <strong>Settings → Customers</strong> and click Sync from QuickBooks.</div>':''}
@@ -4868,14 +4868,24 @@ function selectScaleItem(el){
 
 function hideScaleSugg(){ setTimeout(function(){var s=document.getElementById('sl-sugg'); if(s) s.remove();},200); }
 
+// Called on focus/click — shows the dropdown (full list if nothing's typed
+// yet) WITHOUT touching whatever customer is currently selected. Mirrors
+// showScaleItemDropdown()/filterScaleItems() above exactly, same reasoning:
+// clicking back into an already-filled field shouldn't silently clear your
+// selection — only actually typing something new should.
+function showScaleCustomerDropdown(){
+  renderScaleCustomerSuggestions(document.getElementById('sl-customer-search').value.toLowerCase().trim());
+}
 function filterScaleCustomers(){
+  var q=document.getElementById('sl-customer-search').value.toLowerCase().trim();
+  document.getElementById('sl-customer').value=''; // typing means the old selection no longer applies
+  renderScaleCustomerSuggestions(q);
+}
+function renderScaleCustomerSuggestions(q){
   var inp=document.getElementById('sl-customer-search');
   var wrap=inp.parentElement; // .item-search-wrap, already position:relative
   var existing=document.getElementById('sl-customer-sugg');
-  var q=inp.value.toLowerCase().trim();
-  document.getElementById('sl-customer').value='';
   if(existing) existing.remove();
-  if(q.length<1) return;
   var sugg=document.createElement('div');
   sugg.id='sl-customer-sugg';
   sugg.className='item-suggestions';
@@ -4902,9 +4912,9 @@ function filterScaleCustomers(){
     wrap.appendChild(sugg);
     return;
   }
-  var matches=allowed.filter(function(c){return (c.name||'').toLowerCase().includes(q);}).sort(function(a,b){return (a.name||'').localeCompare(b.name||'');}).slice(0,12);
+  var matches=allowed.filter(function(c){return (c.name||'').toLowerCase().includes(q);}).sort(function(a,b){return (a.name||'').localeCompare(b.name||'');}).slice(0,25);
   if(!matches.length){
-    sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No match for "'+esc(q)+'"</div>';
+    sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">'+(q?('No match for "'+esc(q)+'"'):'No customers available')+'</div>';
     wrap.appendChild(sugg);
     return;
   }

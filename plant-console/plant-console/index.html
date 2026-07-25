@@ -1791,12 +1791,17 @@ async function finishDocSync(data, onProgress){
 
     // ── Second pass: DiscountLineDetail lines ──────────────────────────────
     // QB invoices/sales receipts sometimes include a DiscountLineDetail (a
-    // discount applied as a named account, e.g. "Services: -$734"). These have
-    // NO ItemRef, so the main loop above silently skips them — they never get
-    // stored in Plant Console and never affect the Reports total. We catch them
-    // here by matching the DiscountAccountRef name to a Plant Console item
-    // (e.g. the "Services" item synced from QB). Only applies to outflow docs
-    // (Invoice, SalesReceipt); Bills don't use this line type.
+    // discount applied as a named account, e.g. "Services: -$734" or a plain
+    // "Discount: -$50"). These have NO ItemRef, so the main loop above
+    // silently skips them — they never get stored in Plant Console and never
+    // affect the Reports total. If the DiscountAccountRef name happens to
+    // match an existing Plant Console item (e.g. "Services"), attribute it
+    // there as before. Otherwise — this is the fix — it no longer gets
+    // silently dropped: it's tagged with a synthetic itemId ('__discount__')
+    // so the Reports tab can always show it as its own "Discounts" line,
+    // guaranteeing every real discount QuickBooks applied is accounted for
+    // somewhere, never invisibly missing from the totals. Only applies to
+    // outflow docs (Invoice, SalesReceipt); Bills don't use this line type.
     if(cfg.sign<0){
       (doc.Line||[]).forEach(function(dl,dli){
         if(dl.DetailType!=='DiscountLineDetail') return;
@@ -1804,11 +1809,9 @@ async function finishDocSync(data, onProgress){
         if(!discAmt) return;
         var discDetail=dl.DiscountLineDetail||{};
         var acctName=(discDetail.DiscountAccountRef&&discDetail.DiscountAccountRef.name)||'';
-        if(!acctName) return;
-        var discLocal=items.find(function(x){
+        var discLocal=acctName ? items.find(function(x){
           return x.name&&x.name.toLowerCase()===acctName.toLowerCase();
-        });
-        if(!discLocal) return;
+        }) : null;
         var dCreateSort=(doc.MetaData&&doc.MetaData.CreateTime)||'';
         var dDocNum=doc.DocNumber||doc.Id;
         var dAccount=(doc.CustomerRef&&doc.CustomerRef.name)||'';
@@ -1819,14 +1822,14 @@ async function finishDocSync(data, onProgress){
           date:docDate, time:timeStr,
           createTime:dCreateSort,
           type:cfg.txnType,
-          itemId:discLocal.id,
+          itemId:discLocal?discLocal.id:'__discount__',
           qty:1, unit:'',
           unitPrice:0,
           lineAmount:discAmt,
           account:dAccount,
-          locOut:discLocal.locationId||'',
+          locOut:discLocal?(discLocal.locationId||''):'',
           locIn:'',
-          desc:cfg.key+' '+dDocNum+' (services adj)'+(dAccount?' · '+dAccount:'')
+          desc:cfg.key+' '+dDocNum+' ('+(discLocal?'services adj':(acctName||'discount'))+')'+(dAccount?' · '+dAccount:'')
         });
         added++;
       });
@@ -2261,6 +2264,13 @@ function buildBalanceReport(){
   items.forEach(function(it){ if(it.name&&it.name.trim().toLowerCase()==='services') svcItemIds[it.id]=true; });
   var otherSvcTotal=0;
   var otherSvcItems={}; // itemId -> {name, qty, value}
+  // "Discounts" — a dedicated row for QuickBooks DiscountLineDetail lines
+  // that don't match any existing Plant Console item (see the sync-side fix
+  // above, tagged with itemId '__discount__'). Previously these were
+  // silently dropped entirely; now they always show up here instead of
+  // invisibly missing from the totals.
+  var discountTotal=0;
+  var discountItems={}; // keyed by description since there's no real item
   var pcPosItems={}, pcNegItems={};
   var trInItems={}, trOutItems={};
 
@@ -2333,6 +2343,21 @@ function buildBalanceReport(){
       return;
     }
 
+    // Discount lines have no real item/location to match a department
+    // against — they're tied to the invoice as a whole, not a specific
+    // stock item — so they're counted plant-wide (not filtered by
+    // department) and shown as their own always-visible row, same idea as
+    // Other Services above.
+    if(t.itemId==='__discount__' && (OUTFLOW[t.type]||t.type==='return')){
+      var discSign=(t.type==='return')?-1:1;
+      discountTotal+=discSign*v;
+      var discKey=t.desc||'Discount';
+      if(!discountItems[discKey]) discountItems[discKey]={name:discKey,qty:0,value:0};
+      discountItems[discKey].qty+=discSign*q;
+      discountItems[discKey].value+=discSign*v;
+      return;
+    }
+
     if(INFLOW[t.type]){
       if(!matchesDept(locDept(t.locIn))) return;
       inflowGroups[t.type]=(inflowGroups[t.type]||0)+v;
@@ -2392,6 +2417,13 @@ function buildBalanceReport(){
   inflowGroups=inflowGroupsOrdered;
   inflowItems['starting']=openingBreakdown;
   inflowTotal+=openingValue;
+
+  // Discounts genuinely reduce the sales value QuickBooks recorded, so
+  // (unlike "Other Services", which is shown for visibility only and
+  // intentionally excluded from the inventory total) they DO count toward
+  // the grand total — otherwise the statement wouldn't reconcile with
+  // QuickBooks's actual net sales figure.
+  outflowTotal+=discountTotal;
 
   // The grand total — everything that was on hand, plus everything added,
   // minus everything that left. This is the headline number for the report.
@@ -2492,6 +2524,10 @@ function buildBalanceReport(){
     if(k==='shipment'){
       var svcItems_=Object.keys(otherSvcItems).map(function(id){return otherSvcItems[id];});
       html+=rowLine('rpt-out-svc','Other Services',otherSvcTotal,'#c23b33',svcItems_);
+      // Always visible (even at $0) so it's easy to compare against
+      // QuickBooks's own discount total and confirm nothing's missing.
+      var discItems_=Object.keys(discountItems).map(function(k2){return discountItems[k2];});
+      html+=rowLine('rpt-out-discount','Discounts',discountTotal,'#c23b33',discItems_);
     }
   });
   html+='<div style="display:flex;justify-content:space-between;padding:9px 0;font-weight:700;border-bottom:3px double var(--ink)"><span>Total subtractions</span><span style="font-family:var(--mono);color:#c23b33">'+money(outflowTotal)+'</span></div>';

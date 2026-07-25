@@ -801,6 +801,19 @@ const server = http.createServer(async (req, res) => {
           for (const id of tombstoned) merged.delete(id);
           incoming.scaleLogs = Array.from(merged.values());
         }
+        // labelTemplates is a plain object keyed by department, e.g.
+        // { "Carcass Process/Retail": {...}, "Slaughter": {...} }. A blind
+        // top-level replace here has the exact same problem scaleLogs did:
+        // if someone edits department A's layout on one device, and
+        // another device (which hasn't pulled that edit yet) pushes its own
+        // routine snapshot shortly after, a plain replace would silently
+        // discard the edit to A the moment it lands — that device's copy
+        // of A is just older, not deliberately reverted. Merging per
+        // department key means each device's edits to its own department(s)
+        // survive regardless of what order pushes happen to land in.
+        if (incoming.labelTemplates && typeof incoming.labelTemplates === 'object') {
+          incoming.labelTemplates = Object.assign({}, current.labelTemplates || {}, incoming.labelTemplates);
+        }
         // Merge: only overwrite the keys actually sent, so saving e.g. just
         // "users" never wipes out items/transactions/storages.
         const merged = Object.assign({}, current, incoming);

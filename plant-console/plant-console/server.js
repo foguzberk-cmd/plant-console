@@ -32,7 +32,7 @@ if (!QB_REALM || !CLIENT_ID || !CLIENT_SECRET) {
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'plant-data.json');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
-const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: [], savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [] };
+const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [] };
 
 // ===== PIN HASHING =====
 // PINs are hashed with scrypt before they ever touch disk. Any user record
@@ -101,6 +101,13 @@ async function _readSharedDataUnlocked() {
   try {
     const raw = await fs.promises.readFile(DATA_FILE, 'utf8');
     const data = Object.assign({}, DATA_DEFAULT, JSON.parse(raw || '{}'));
+    // labelAllowed used to be a flat array shared across all departments;
+    // it's now an object keyed by department. If a pre-migration array is
+    // still on disk, don't let it flow through as-is (every downstream
+    // merge assumes an object) — clients already migrate their own local
+    // copy on load and will push the correct per-department shape on their
+    // next save, so it's safe to just reset this to empty in the meantime.
+    if (Array.isArray(data.labelAllowed)) data.labelAllowed = {};
     // Defensive: never let the app get into a state where no user can log in.
     if (!Array.isArray(data.users) || data.users.length === 0) {
       data.users = [defaultAdmin()];
@@ -813,6 +820,12 @@ const server = http.createServer(async (req, res) => {
         // survive regardless of what order pushes happen to land in.
         if (incoming.labelTemplates && typeof incoming.labelTemplates === 'object') {
           incoming.labelTemplates = Object.assign({}, current.labelTemplates || {}, incoming.labelTemplates);
+        }
+        // labelAllowed is likewise now a per-department object (each
+        // department has its own product allow-list for printing) — same
+        // merge-not-replace reasoning as labelTemplates directly above.
+        if (incoming.labelAllowed && typeof incoming.labelAllowed === 'object' && !Array.isArray(incoming.labelAllowed)) {
+          incoming.labelAllowed = Object.assign({}, (current.labelAllowed && typeof current.labelAllowed === 'object' && !Array.isArray(current.labelAllowed)) ? current.labelAllowed : {}, incoming.labelAllowed);
         }
         // Merge: only overwrite the keys actually sent, so saving e.g. just
         // "users" never wipes out items/transactions/storages.

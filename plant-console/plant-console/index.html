@@ -4361,7 +4361,7 @@ function renderScaleLog(){
         </div>
         <div class="form-group"><label>Product</label>
           <div class="item-search-wrap">
-            <input type="text" id="sl-search" class="item-search-input" placeholder="Search product..." autocomplete="off" oninput="filterScaleItems();updateLabelPreview()" onblur="hideScaleSugg()"/>
+            <input type="text" id="sl-search" class="item-search-input" placeholder="Search product..." autocomplete="off" oninput="filterScaleItems();updateLabelPreview()" onfocus="showScaleItemDropdown()" onblur="hideScaleSugg()"/>
             <input type="hidden" id="sl-item" value=""/>
           </div>
         </div>
@@ -4631,14 +4631,25 @@ function renderScaleLogTable(){
   wrap.innerHTML='<table class="txn-table"><thead><tr><th>Date</th><th>Time</th><th>Product</th><th>Tag #</th><th>Department</th><th>Customer</th><th>Logged By</th><th style="text-align:right">Weight</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
+// Called on focus/click — just shows the dropdown (full list if nothing's
+// typed yet, filtered if there's already text in the box), WITHOUT
+// touching whatever item is currently selected. Clicking back into an
+// already-filled field to glance at the list shouldn't silently clear your
+// selection — only actually typing something new should do that (see
+// filterScaleItems below).
+function showScaleItemDropdown(){
+  renderScaleItemSuggestions(document.getElementById('sl-search').value.toLowerCase().trim());
+}
 function filterScaleItems(){
+  var q=document.getElementById('sl-search').value.toLowerCase().trim();
+  document.getElementById('sl-item').value=''; // typing means the old selection no longer applies
+  renderScaleItemSuggestions(q);
+}
+function renderScaleItemSuggestions(q){
   var inp=document.getElementById('sl-search');
   var wrap=inp.parentElement; // .item-search-wrap, already position:relative
   var existing=document.getElementById('sl-sugg');
-  var q=inp.value.toLowerCase().trim();
-  document.getElementById('sl-item').value='';
   if(existing) existing.remove();
-  if(q.length<1) return;
   var allItems=items;
   var sugg=document.createElement('div');
   sugg.id='sl-sugg';
@@ -4684,9 +4695,9 @@ function filterScaleItems(){
     var key=(it.name||'').toLowerCase().trim();
     if(!byName[key] || (!byName[key].sku && it.sku)) byName[key]=it;
   });
-  var matches=Object.keys(byName).map(function(k){return byName[k];}).slice(0,12);
+  var matches=Object.keys(byName).map(function(k){return byName[k];}).sort(function(a,b){return (a.name||'').localeCompare(b.name||'');}).slice(0,25);
   if(!matches.length){
-    sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No match for "'+esc(q)+'"</div>';
+    sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">'+(q?('No match for "'+esc(q)+'"'):'No active products available')+'</div>';
     wrap.appendChild(sugg);
     return;
   }

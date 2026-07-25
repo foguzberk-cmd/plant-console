@@ -1464,6 +1464,16 @@ async function qbSyncItemsCore(){
   var qbItems=(data.QueryResponse&&data.QueryResponse.Item)||[];
   qbItems.forEach(function(qi){
     var existing=items.findIndex(function(x){return x.qbId===qi.Id});
+    // QuickBooks organizes items hierarchically via sub-items — e.g. "AL
+    // ZAHMAR" as a parent/category with "BEEF FEMUR BONE AL ZAHMAR" etc.
+    // filed underneath it as sub-items. ParentRef.name is the authoritative
+    // source for this; FullyQualifiedName ("AL ZAHMAR:BEEF FEMUR BONE AL
+    // ZAHMAR") is a fallback for cases where ParentRef isn't present but
+    // the qualified name still reveals the hierarchy.
+    var groupName=(qi.ParentRef && qi.ParentRef.name) || '';
+    if(!groupName && qi.FullyQualifiedName && qi.FullyQualifiedName.indexOf(':')>=0){
+      groupName=qi.FullyQualifiedName.slice(0, qi.FullyQualifiedName.lastIndexOf(':'));
+    }
     var mapped={
       id: existing>=0 ? items[existing].id : 'item_'+Date.now()+'_'+Math.random().toString(36).slice(2),
       qbId: qi.Id,
@@ -1476,6 +1486,7 @@ async function qbSyncItemsCore(){
       qty: qi.QtyOnHand||0,
       qbQty: qi.QtyOnHand||0,
       active: qi.Active!==false,
+      groupName: groupName,
       qbSynced: new Date().toISOString(),
       locationId: existing>=0 ? items[existing].locationId : undefined,
       locQtys: existing>=0 ? items[existing].locQtys : undefined,
@@ -3467,17 +3478,67 @@ function renderLabelingList(){
   var allItems=items;
   var q=(document.getElementById('lbl-filter')&&document.getElementById('lbl-filter').value||'').toLowerCase().trim();
   var shown=allItems.filter(function(it){ return !q || (it.name||'').toLowerCase().includes(q) || (it.sku||'').toLowerCase().includes(q); });
-  // sort alphabetically by name
-  shown.sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
-  listEl.innerHTML=shown.map(function(it){
-    var on=labelAllowed.indexOf(it.id)>=0;
-    return '<label style="display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer">'
-      +'<input type="checkbox" '+(on?'checked':'')+' onchange="toggleLabelAllowed(\''+it.id+'\',this.checked)" style="width:17px;height:17px;cursor:pointer;accent-color:var(--brand)"/>'
-      +'<div style="flex:1"><div style="font-size:13px;font-weight:600">'+esc(it.name)+'</div>'+(it.sku?'<div style="font-family:var(--mono);font-size:10px;color:var(--cold)">'+esc(it.sku)+'</div>':'')+'</div>'
-      +'</label>';
+
+  // Group by QuickBooks parent category (see qbSyncItemsCore's groupName
+  // capture) so a whole category — e.g. everything filed under "AL ZAHMAR"
+  // in QuickBooks — can be turned on/off for labeling in one click, instead
+  // of checking dozens of individual items one at a time. Items with no
+  // parent in QuickBooks fall into "Ungrouped".
+  var groups={};
+  shown.forEach(function(it){
+    var g=it.groupName||'Ungrouped';
+    if(!groups[g]) groups[g]=[];
+    groups[g].push(it);
+  });
+  var groupNames=Object.keys(groups).sort(function(a,b){
+    if(a==='Ungrouped') return 1;
+    if(b==='Ungrouped') return -1;
+    return a.localeCompare(b);
+  });
+
+  listEl.innerHTML=groupNames.map(function(g){
+    var groupItems=groups[g].slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
+    var allowedCount=groupItems.filter(function(it){ return labelAllowed.indexOf(it.id)>=0; }).length;
+    var allOn=allowedCount===groupItems.length;
+    var noneOn=allowedCount===0;
+    var groupCheckboxId='grp_'+g.replace(/[^a-z0-9]/gi,'_');
+    return '<div class="lbl-group">'
+      +'<div style="display:flex;align-items:center;gap:11px;padding:9px 14px;background:var(--bg);border-bottom:1px solid var(--line);position:sticky;top:0">'
+        +'<input type="checkbox" id="'+groupCheckboxId+'" '+(allOn?'checked':'')+' data-indeterminate="'+(!allOn&&!noneOn)+'" onchange="toggleLabelGroup(\''+esc(g).replace(/'/g,"\\'")+'\',this.checked)" style="width:17px;height:17px;cursor:pointer;accent-color:var(--brand)"/>'
+        +'<div style="flex:1;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;color:var(--muted)">'+esc(g)+'</div>'
+        +'<span style="font-family:var(--mono);font-size:10px;color:var(--muted)">'+allowedCount+'/'+groupItems.length+'</span>'
+      +'</div>'
+      +groupItems.map(function(it){
+        var on=labelAllowed.indexOf(it.id)>=0;
+        return '<label style="display:flex;align-items:center;gap:11px;padding:10px 14px 10px 34px;border-bottom:1px solid var(--line);cursor:pointer">'
+          +'<input type="checkbox" '+(on?'checked':'')+' onchange="toggleLabelAllowed(\''+it.id+'\',this.checked)" style="width:17px;height:17px;cursor:pointer;accent-color:var(--brand)"/>'
+          +'<div style="flex:1"><div style="font-size:13px;font-weight:600">'+esc(it.name)+'</div>'+(it.sku?'<div style="font-family:var(--mono);font-size:10px;color:var(--cold)">'+esc(it.sku)+'</div>':'')+'</div>'
+          +'</label>';
+      }).join('')
+      +'</div>';
   }).join('');
+  // Reflects the "some but not all" state visually as a dash rather than
+  // an unchecked box — set via JS since there's no HTML attribute for it.
+  groupNames.forEach(function(g){
+    var el=document.getElementById('grp_'+g.replace(/[^a-z0-9]/gi,'_'));
+    if(el && el.dataset.indeterminate==='true') el.indeterminate=true;
+  });
   var countEl=document.getElementById('lbl-count');
   if(countEl) countEl.textContent=labelAllowed.length+' of '+allItems.length+' products allowed';
+}
+
+// Toggles every item in a QuickBooks parent-category group at once, e.g.
+// turning on/off ALL items filed under "AL ZAHMAR" with a single click
+// instead of checking each one individually.
+function toggleLabelGroup(groupName,on){
+  var groupItems=items.filter(function(it){ return (it.groupName||'Ungrouped')===groupName; });
+  groupItems.forEach(function(it){
+    var i=labelAllowed.indexOf(it.id);
+    if(on && i<0) labelAllowed.push(it.id);
+    else if(!on && i>=0) labelAllowed.splice(i,1);
+  });
+  saveLabelAllowed();
+  renderLabelingList();
 }
 
 function toggleLabelAllowed(id,on){
@@ -3485,9 +3546,7 @@ function toggleLabelAllowed(id,on){
   if(on && i<0) labelAllowed.push(id);
   else if(!on && i>=0) labelAllowed.splice(i,1);
   saveLabelAllowed();
-  var countEl=document.getElementById('lbl-count');
-  var allItems=items;
-  if(countEl) countEl.textContent=labelAllowed.length+' of '+allItems.length+' products allowed';
+  renderLabelingList();
 }
 
 function labelSelectAll(on){

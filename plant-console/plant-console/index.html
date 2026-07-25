@@ -724,7 +724,16 @@ function itemHasDeptConflict(it){
   return itemSpanningDepts(it).length>1;
 }
 let scaleLogs=JSON.parse(localStorage.getItem('pc_scalelogs')||'[]');
-let labelAllowed=JSON.parse(localStorage.getItem('pc_labelallowed')||'[]'); // array of item ids permitted to print labels
+let labelAllowed=JSON.parse(localStorage.getItem('pc_labelallowed')||'{}'); // { [department]: [item ids permitted to print labels for that department] }
+if(Array.isArray(labelAllowed)){
+  // Migrating from the old format, where one shared list applied to every
+  // department regardless of which was selected. Seed every department
+  // with that same previously-shared list so nothing already configured is
+  // lost — admins can then narrow each department down from there.
+  var _oldFlatLabelAllowed=labelAllowed;
+  labelAllowed={};
+  DEPARTMENTS.forEach(function(d){ labelAllowed[d]=_oldFlatLabelAllowed.slice(); });
+}
 let customers=JSON.parse(localStorage.getItem('pc_customers')||'[]'); // full customer list synced from QuickBooks (like items), each {id, qbId, name}
 let customerAllowed=JSON.parse(localStorage.getItem('pc_customerallowed')||'[]'); // array of customer ids permitted to appear in the Scale Log's customer picker
 let labelTemplates=JSON.parse(localStorage.getItem('pc_labeltemplates')||'{}'); // { [department]: {companyName, addressText, estNumber, keepText, safeHandlingText} } — per-department label text overrides
@@ -895,6 +904,8 @@ var _recentlyAddedScaleLogs={};
 // response would otherwise silently revert the change back to whatever it
 // was before, right on the device that just made it.
 var _recentlySavedLabelTemplates={};
+// Same idea, for per-department product allow-lists (labelAllowed).
+var _recentlySavedLabelAllowed={};
 // ----- Temporary sync diagnostics (see the "Sync debug log" panel on the
 // Scale Log page) — logs exactly what pull/push events happen and when,
 // including scale log counts and whether a specific ID was involved, so the
@@ -998,7 +1009,16 @@ async function pullFromServer(){
       scaleLogs=mergedPulledLogs;
       logSync('PULL got scaleLogs: server had '+serverCount+', kept '+scaleLogs.length+' after filtering guarded ids');
     }
-    if(Array.isArray(data.labelAllowed)&&data.labelAllowed.length) labelAllowed=data.labelAllowed;
+    if(data.labelAllowed && typeof data.labelAllowed==='object' && !Array.isArray(data.labelAllowed) && Object.keys(data.labelAllowed).length){
+      labelAllowed=data.labelAllowed;
+      // Same timing-gap protection as labelTemplates: a pull already in
+      // flight before a per-department save began has no way to know
+      // about it, and its stale response would otherwise silently revert
+      // the save right back on the device that just made it.
+      Object.keys(_recentlySavedLabelAllowed).forEach(function(d){
+        labelAllowed[d]=_recentlySavedLabelAllowed[d];
+      });
+    }
     if(Array.isArray(data.customers)&&data.customers.length) customers=data.customers;
     if(Array.isArray(data.customerAllowed)&&data.customerAllowed.length) customerAllowed=data.customerAllowed;
     if(data.labelTemplates && typeof data.labelTemplates==='object' && Object.keys(data.labelTemplates).length){
@@ -1043,7 +1063,7 @@ async function pullFromServer(){
       (Array.isArray(data.users)&&!data.users.length&&users.length) ||
       (Array.isArray(data.savedReports)&&!data.savedReports.length&&savedReports.length) ||
       (Array.isArray(data.scaleLogs)&&!data.scaleLogs.length&&scaleLogs.length) ||
-      (Array.isArray(data.labelAllowed)&&!data.labelAllowed.length&&labelAllowed.length) ||
+      (data.labelAllowed && typeof data.labelAllowed==='object' && !Array.isArray(data.labelAllowed) && !Object.keys(data.labelAllowed).length && Object.keys(labelAllowed).length) ||
       (Array.isArray(data.customers)&&!data.customers.length&&customers.length) ||
       (Array.isArray(data.customerAllowed)&&!data.customerAllowed.length&&customerAllowed.length);
     if(serverIsMissingData){
@@ -1067,8 +1087,8 @@ function unionById(local, remote){
   var missing=remote.filter(function(r){return r&&localIds.indexOf(r.id)<0;});
   return missing.length ? local.concat(missing) : local;
 }
-// Same idea, for plain-value arrays (labelAllowed is a list of item id
-// strings, not objects with an .id field).
+// Same idea, for plain-value arrays (customerAllowed is a list of customer
+// id strings, not objects with an .id field).
 function unionSimple(local, remote){
   if(!Array.isArray(remote)||!remote.length) return local;
   var missing=remote.filter(function(x){return local.indexOf(x)<0;});
@@ -1114,8 +1134,10 @@ async function _pushToServerImpl(){
         if(newUsers!==users){ users=newUsers; safeSetLocal('pc_users',JSON.stringify(users)); }
         var mergedScaleLogs=unionById(scaleLogs, smallData.scaleLogs).filter(function(l){ return !_deletedScaleLogIds[l.id]; });
         scaleLogs=mergedScaleLogs; safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs));
-        var newLabelAllowed=unionSimple(labelAllowed, smallData.labelAllowed);
-        if(newLabelAllowed!==labelAllowed){ labelAllowed=newLabelAllowed; safeSetLocal('pc_labelallowed',JSON.stringify(labelAllowed)); }
+        if(smallData.labelAllowed && typeof smallData.labelAllowed==='object' && !Array.isArray(smallData.labelAllowed)){
+          var newLabelAllowed=Object.assign({}, smallData.labelAllowed, labelAllowed);
+          if(JSON.stringify(newLabelAllowed)!==JSON.stringify(labelAllowed)){ labelAllowed=newLabelAllowed; safeSetLocal('pc_labelallowed',JSON.stringify(labelAllowed)); }
+        }
         var newSavedReports=unionById(savedReports, smallData.savedReports);
         if(newSavedReports!==savedReports){ savedReports=newSavedReports; safeSetLocal('pc_savedreports',JSON.stringify(savedReports)); }
         var newCustomerAllowed=unionSimple(customerAllowed, smallData.customerAllowed);
@@ -3453,6 +3475,8 @@ function renderSettings(){
   renderBackupsPanel();
 }
 
+var _lblPanelDept=null; // which department's product list is currently being edited
+var _lblDraft=null; // working copy of labelAllowed[_lblPanelDept] — nothing persists until Save is clicked
 function renderLabelingPanel(){
   var panel=document.getElementById('labelingPanel');
   if(!panel) return;
@@ -3461,15 +3485,81 @@ function renderLabelingPanel(){
     panel.innerHTML='<div class="txn-empty" style="margin:0"><p>No products yet. Run <strong>Sync from QuickBooks</strong> on the Items tab first, then come back to choose which products can be labeled.</p></div>';
     return;
   }
+  if(!_lblPanelDept || DEPARTMENTS.indexOf(_lblPanelDept)<0) _lblPanelDept=DEPARTMENTS[0];
+  _lblDraft=(labelAllowed[_lblPanelDept]||[]).slice();
   panel.innerHTML=`
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      <label style="font-size:12px;color:var(--muted);white-space:nowrap">Department:</label>
+      <select id="lbl-dept" onchange="onLabelDeptChange()" style="padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink)">
+        ${DEPARTMENTS.map(function(d){return '<option value="'+esc(d)+'" '+(d===_lblPanelDept?'selected':'')+'>'+esc(d)+'</option>';}).join('')}
+      </select>
+      <span style="font-size:11px;color:var(--muted);font-style:italic">Each department has its own product list — this only affects what shows up when printing for "${esc(_lblPanelDept)}".</span>
+    </div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
       <input type="text" id="lbl-filter" placeholder="Search products..." oninput="renderLabelingList()" style="flex:1;min-width:200px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
       <button class="btn btn-sm" onclick="labelSelectAll(true)">Select all</button>
       <button class="btn btn-sm" onclick="labelSelectAll(false)">Clear all</button>
       <span id="lbl-count" style="font-family:var(--mono);font-size:11px;color:var(--muted)"></span>
     </div>
-    <div id="labelingList" style="max-height:420px;overflow-y:auto;border:1px solid var(--line);border-radius:10px"></div>`;
+    <div id="labelingList" style="max-height:420px;overflow-y:auto;border:1px solid var(--line);border-radius:10px"></div>
+    <div style="display:flex;align-items:center;gap:12px;margin-top:12px">
+      <button class="btn btn-primary btn-sm" onclick="saveLabelingForDept()">Save changes for ${esc(_lblPanelDept)}</button>
+      <span id="lbl-save-status" style="font-family:var(--mono);font-size:11px;color:var(--muted)"></span>
+    </div>`;
   renderLabelingList();
+}
+function onLabelDeptChange(){
+  var sel=document.getElementById('lbl-dept');
+  _lblPanelDept=sel?sel.value:DEPARTMENTS[0];
+  renderLabelingPanel();
+}
+async function saveLabelingForDept(){
+  var dept=_lblPanelDept;
+  labelAllowed[dept]=_lblDraft.slice();
+  safeSetLocal('pc_labelallowed',JSON.stringify(labelAllowed));
+  _recentlySavedLabelAllowed[dept]=labelAllowed[dept].slice();
+  setTimeout(function(){ delete _recentlySavedLabelAllowed[dept]; },8000);
+  var statusEl=document.getElementById('lbl-save-status');
+  if(statusEl){ statusEl.textContent='Saving to server…'; statusEl.style.color=''; }
+  _writeInFlight++;
+  var ok=false;
+  try{
+    for(var attempt=0;attempt<3 && !ok;attempt++){
+      if(attempt>0) await new Promise(function(r){ setTimeout(r,800); });
+      ok=await pushToServer();
+    }
+  }catch(e){ ok=false; }
+  finally{
+    _writeInFlight--;
+  }
+  var freshStatus=document.getElementById('lbl-save-status');
+  if(freshStatus){
+    if(ok){
+      freshStatus.textContent='Saved for '+dept+' — confirmed on the server.';
+      freshStatus.style.color='';
+    }else{
+      freshStatus.textContent='Saved on THIS device only — could not confirm with the server ('+(_lastPushFailureDetail||'unknown error')+'). It will keep retrying automatically.';
+      freshStatus.style.color='#c0392b';
+      retryLabelAllowedSaveUntilConfirmed(dept);
+    }
+  }
+}
+// Mirrors retryLabelTemplateSaveUntilConfirmed — same pattern, different
+// element/message, for the product-allow-list save specifically.
+async function retryLabelAllowedSaveUntilConfirmed(dept){
+  for(var attempt=0;attempt<10;attempt++){
+    await new Promise(function(r){ setTimeout(r,3000); });
+    var ok=false;
+    try{ ok=await pushToServer(); }catch(e){ ok=false; }
+    if(ok){
+      var el=document.getElementById('lbl-save-status');
+      if(el && el.textContent.indexOf('could not confirm with the server')>=0){
+        el.textContent='Now confirmed on the server for '+dept+'.';
+        el.style.color='#0f6e40';
+      }
+      return;
+    }
+  }
 }
 
 function renderLabelingList(){
@@ -3498,7 +3588,7 @@ function renderLabelingList(){
 
   listEl.innerHTML=groupNames.map(function(g){
     var groupItems=groups[g].slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
-    var allowedCount=groupItems.filter(function(it){ return labelAllowed.indexOf(it.id)>=0; }).length;
+    var allowedCount=groupItems.filter(function(it){ return _lblDraft.indexOf(it.id)>=0; }).length;
     var allOn=allowedCount===groupItems.length;
     var noneOn=allowedCount===0;
     var groupCheckboxId='grp_'+g.replace(/[^a-z0-9]/gi,'_');
@@ -3509,7 +3599,7 @@ function renderLabelingList(){
         +'<span style="font-family:var(--mono);font-size:10px;color:var(--muted)">'+allowedCount+'/'+groupItems.length+'</span>'
       +'</div>'
       +groupItems.map(function(it){
-        var on=labelAllowed.indexOf(it.id)>=0;
+        var on=_lblDraft.indexOf(it.id)>=0;
         return '<label style="display:flex;align-items:center;gap:11px;padding:10px 14px 10px 34px;border-bottom:1px solid var(--line);cursor:pointer">'
           +'<input type="checkbox" '+(on?'checked':'')+' onchange="toggleLabelAllowed(\''+it.id+'\',this.checked)" style="width:17px;height:17px;cursor:pointer;accent-color:var(--brand)"/>'
           +'<div style="flex:1"><div style="font-size:13px;font-weight:600">'+esc(it.name)+'</div>'+(it.sku?'<div style="font-family:var(--mono);font-size:10px;color:var(--cold)">'+esc(it.sku)+'</div>':'')+'</div>'
@@ -3524,28 +3614,27 @@ function renderLabelingList(){
     if(el && el.dataset.indeterminate==='true') el.indeterminate=true;
   });
   var countEl=document.getElementById('lbl-count');
-  if(countEl) countEl.textContent=labelAllowed.length+' of '+allItems.length+' products allowed';
+  if(countEl) countEl.textContent=_lblDraft.length+' of '+allItems.length+' products allowed for '+_lblPanelDept+' (unsaved until you click Save)';
 }
 
 // Toggles every item in a QuickBooks parent-category group at once, e.g.
 // turning on/off ALL items filed under "AL ZAHMAR" with a single click
-// instead of checking each one individually.
+// instead of checking each one individually. Only affects the draft —
+// nothing persists until Save is clicked.
 function toggleLabelGroup(groupName,on){
   var groupItems=items.filter(function(it){ return (it.groupName||'Ungrouped')===groupName; });
   groupItems.forEach(function(it){
-    var i=labelAllowed.indexOf(it.id);
-    if(on && i<0) labelAllowed.push(it.id);
-    else if(!on && i>=0) labelAllowed.splice(i,1);
+    var i=_lblDraft.indexOf(it.id);
+    if(on && i<0) _lblDraft.push(it.id);
+    else if(!on && i>=0) _lblDraft.splice(i,1);
   });
-  saveLabelAllowed();
   renderLabelingList();
 }
 
 function toggleLabelAllowed(id,on){
-  var i=labelAllowed.indexOf(id);
-  if(on && i<0) labelAllowed.push(id);
-  else if(!on && i>=0) labelAllowed.splice(i,1);
-  saveLabelAllowed();
+  var i=_lblDraft.indexOf(id);
+  if(on && i<0) _lblDraft.push(id);
+  else if(!on && i>=0) _lblDraft.splice(i,1);
   renderLabelingList();
 }
 
@@ -3554,11 +3643,10 @@ function labelSelectAll(on){
   var q=(document.getElementById('lbl-filter')&&document.getElementById('lbl-filter').value||'').toLowerCase().trim();
   var shown=allItems.filter(function(it){ return !q || (it.name||'').toLowerCase().includes(q) || (it.sku||'').toLowerCase().includes(q); });
   shown.forEach(function(it){
-    var i=labelAllowed.indexOf(it.id);
-    if(on && i<0) labelAllowed.push(it.id);
-    else if(!on && i>=0) labelAllowed.splice(i,1);
+    var i=_lblDraft.indexOf(it.id);
+    if(on && i<0) _lblDraft.push(it.id);
+    else if(!on && i>=0) _lblDraft.splice(i,1);
   });
-  saveLabelAllowed();
   renderLabelingList();
 }
 
@@ -4730,15 +4818,15 @@ function renderScaleItemSuggestions(q){
     wrap.appendChild(sugg);
     return;
   }
-  // Only products permitted to print labels (set in Settings → Labeling).
-  // If no allow-list has been configured yet, fall back to all items.
-  // NOTE: this is intentionally NOT further restricted by which department is
-  // selected — every department can reach any labelable product. The chosen
-  // department is only recorded on the log entry (and used for
-  // filtering/exporting the log afterward), not used to gate what can be printed.
-  var allowed=labelAllowed.length ? allItems.filter(function(it){return labelAllowed.indexOf(it.id)>=0;}) : allItems;
-  if(labelAllowed.length && !allowed.length){
-    sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No products are enabled for labeling. Set them in Settings → Labeling.</div>';
+  // Only products permitted to print labels for the CURRENTLY SELECTED
+  // department (set per-department in Settings → Labeling). If that
+  // department has no allow-list configured yet, fall back to all items —
+  // same "unconfigured means unrestricted" behavior as before, just scoped
+  // per department instead of shared globally.
+  var deptAllowed=labelAllowed[_slPrintDept]||[];
+  var allowed=deptAllowed.length ? allItems.filter(function(it){return deptAllowed.indexOf(it.id)>=0;}) : allItems;
+  if(deptAllowed.length && !allowed.length){
+    sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No products are enabled for labeling in '+esc(_slPrintDept||'this department')+'. Set them in Settings → Labeling.</div>';
     wrap.appendChild(sugg);
     return;
   }

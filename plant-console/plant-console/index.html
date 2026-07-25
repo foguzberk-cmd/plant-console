@@ -3953,17 +3953,64 @@ function resetLabelLayoutFonts(){
   });
   renderLabelLayoutEditor();
 }
-function saveLabelLayout(){
+// Mirrors retryPushUntilConfirmed() above, but for label layout saves
+// specifically — targets the correct status element (#ltSaveStatus) and
+// message format rather than misusing the scale-log-specific one.
+async function retryLabelTemplateSaveUntilConfirmed(dept){
+  for(var attempt=0;attempt<10;attempt++){
+    await new Promise(function(r){ setTimeout(r,3000); });
+    var ok=false;
+    try{ ok=await pushToServer(); }catch(e){ ok=false; }
+    if(ok){
+      var el=document.getElementById('ltSaveStatus');
+      if(el && el.textContent.indexOf('could not confirm with the server')>=0){
+        el.textContent='Layout now confirmed on the server for '+dept+'.';
+        el.style.color='#0f6e40';
+      }
+      return;
+    }
+  }
+}
+async function saveLabelLayout(){
   var merged=Object.assign({}, getLabelTemplate(_lllDept), _lllDraftTemplate);
   merged.layout=JSON.parse(JSON.stringify(_lllDraftLayout));
   merged.customFields=JSON.parse(JSON.stringify(_lllDraftCustom));
   labelTemplates[_lllDept]=merged;
-  saveLabelTemplates();
+  safeSetLocal('pc_labeltemplates',JSON.stringify(labelTemplates)); // instant local save regardless of network
   var dept=_lllDept;
   closeLabelLayoutModal();
   renderLabelTemplatesPanel();
   var status=document.getElementById('ltSaveStatus');
-  if(status) status.textContent='Layout saved for '+dept+'.';
+  if(status){ status.textContent='Saving layout for '+dept+' to server…'; status.style.color=''; }
+
+  // Actually wait for server confirmation before declaring success — the
+  // same class of bug already found and fixed for scale logs applies here
+  // too: a background pull landing right after a fire-and-forget push
+  // could silently replace labelTemplates with a stale server copy that
+  // predates this edit, discarding it without any indication anything
+  // went wrong.
+  _writeInFlight++;
+  var ok=false;
+  try{
+    for(var attempt=0;attempt<3 && !ok;attempt++){
+      if(attempt>0) await new Promise(function(r){ setTimeout(r,800); });
+      ok=await pushToServer();
+    }
+  }catch(e){ ok=false; }
+  finally{
+    _writeInFlight--;
+  }
+  var freshStatus=document.getElementById('ltSaveStatus'); // re-grab in case anything re-rendered meanwhile
+  if(freshStatus){
+    if(ok){
+      freshStatus.textContent='Layout saved for '+dept+' — confirmed on the server.';
+      freshStatus.style.color='';
+    }else{
+      freshStatus.textContent='Layout saved on THIS device only — could not confirm with the server ('+(_lastPushFailureDetail||'unknown error')+'). It will keep retrying automatically.';
+      freshStatus.style.color='#c0392b';
+      retryLabelTemplateSaveUntilConfirmed(dept);
+    }
+  }
 }
 
 function renderMyProfile(){

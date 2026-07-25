@@ -735,7 +735,14 @@ if(Array.isArray(labelAllowed)){
   DEPARTMENTS.forEach(function(d){ labelAllowed[d]=_oldFlatLabelAllowed.slice(); });
 }
 let customers=JSON.parse(localStorage.getItem('pc_customers')||'[]'); // full customer list synced from QuickBooks (like items), each {id, qbId, name}
-let customerAllowed=JSON.parse(localStorage.getItem('pc_customerallowed')||'[]'); // array of customer ids permitted to appear in the Scale Log's customer picker
+let customerAllowed=JSON.parse(localStorage.getItem('pc_customerallowed')||'{}'); // { [department]: [customer ids permitted to appear in that department's Scale Log picker] }
+if(Array.isArray(customerAllowed)){
+  // Same migration reasoning as labelAllowed above: seed every department
+  // with the previously-shared list so nothing configured is lost.
+  var _oldFlatCustomerAllowed=customerAllowed;
+  customerAllowed={};
+  DEPARTMENTS.forEach(function(d){ customerAllowed[d]=_oldFlatCustomerAllowed.slice(); });
+}
 let labelTemplates=JSON.parse(localStorage.getItem('pc_labeltemplates')||'{}'); // { [department]: {companyName, addressText, estNumber, keepText, safeHandlingText} } — per-department label text overrides
 // Baseline label content — what prints if a department has no override set yet.
 var DEFAULT_LABEL_TEMPLATE={
@@ -906,6 +913,8 @@ var _recentlyAddedScaleLogs={};
 var _recentlySavedLabelTemplates={};
 // Same idea, for per-department product allow-lists (labelAllowed).
 var _recentlySavedLabelAllowed={};
+// Same idea, for per-department customer allow-lists.
+var _recentlySavedCustomerAllowed={};
 // ----- Temporary sync diagnostics (see the "Sync debug log" panel on the
 // Scale Log page) — logs exactly what pull/push events happen and when,
 // including scale log counts and whether a specific ID was involved, so the
@@ -1020,7 +1029,12 @@ async function pullFromServer(){
       });
     }
     if(Array.isArray(data.customers)&&data.customers.length) customers=data.customers;
-    if(Array.isArray(data.customerAllowed)&&data.customerAllowed.length) customerAllowed=data.customerAllowed;
+    if(data.customerAllowed && typeof data.customerAllowed==='object' && !Array.isArray(data.customerAllowed) && Object.keys(data.customerAllowed).length){
+      customerAllowed=data.customerAllowed;
+      Object.keys(_recentlySavedCustomerAllowed).forEach(function(d){
+        customerAllowed[d]=_recentlySavedCustomerAllowed[d];
+      });
+    }
     if(data.labelTemplates && typeof data.labelTemplates==='object' && Object.keys(data.labelTemplates).length){
       labelTemplates=data.labelTemplates;
       // Guard against the same timing gap as scale logs: a pull that was
@@ -1065,7 +1079,7 @@ async function pullFromServer(){
       (Array.isArray(data.scaleLogs)&&!data.scaleLogs.length&&scaleLogs.length) ||
       (data.labelAllowed && typeof data.labelAllowed==='object' && !Array.isArray(data.labelAllowed) && !Object.keys(data.labelAllowed).length && Object.keys(labelAllowed).length) ||
       (Array.isArray(data.customers)&&!data.customers.length&&customers.length) ||
-      (Array.isArray(data.customerAllowed)&&!data.customerAllowed.length&&customerAllowed.length);
+      (data.customerAllowed && typeof data.customerAllowed==='object' && !Array.isArray(data.customerAllowed) && !Object.keys(data.customerAllowed).length && Object.keys(customerAllowed).length);
     if(serverIsMissingData){
       _lastPushedSnapshot=''; // force the next push through even if nothing local changed
       pushToServer();
@@ -1085,13 +1099,6 @@ function unionById(local, remote){
   if(!Array.isArray(remote)||!remote.length) return local;
   var localIds=local.map(function(x){return x&&x.id;});
   var missing=remote.filter(function(r){return r&&localIds.indexOf(r.id)<0;});
-  return missing.length ? local.concat(missing) : local;
-}
-// Same idea, for plain-value arrays (customerAllowed is a list of customer
-// id strings, not objects with an .id field).
-function unionSimple(local, remote){
-  if(!Array.isArray(remote)||!remote.length) return local;
-  var missing=remote.filter(function(x){return local.indexOf(x)<0;});
   return missing.length ? local.concat(missing) : local;
 }
 // All calls to pushToServer() are serialized through this chain. Without
@@ -1140,8 +1147,10 @@ async function _pushToServerImpl(){
         }
         var newSavedReports=unionById(savedReports, smallData.savedReports);
         if(newSavedReports!==savedReports){ savedReports=newSavedReports; safeSetLocal('pc_savedreports',JSON.stringify(savedReports)); }
-        var newCustomerAllowed=unionSimple(customerAllowed, smallData.customerAllowed);
-        if(newCustomerAllowed!==customerAllowed){ customerAllowed=newCustomerAllowed; safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed)); }
+        if(smallData.customerAllowed && typeof smallData.customerAllowed==='object' && !Array.isArray(smallData.customerAllowed)){
+          var newCustomerAllowed=Object.assign({}, smallData.customerAllowed, customerAllowed);
+          if(JSON.stringify(newCustomerAllowed)!==JSON.stringify(customerAllowed)){ customerAllowed=newCustomerAllowed; safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed)); }
+        }
       }
     }catch(e){ /* if this check fails, fall through and push local state as-is */ }
 
@@ -3650,6 +3659,8 @@ function labelSelectAll(on){
   renderLabelingList();
 }
 
+var _custPanelDept=null; // which department's customer list is currently being edited
+var _custDraft=null; // working copy of customerAllowed[_custPanelDept] — nothing persists until Save is clicked
 function renderCustomersPanel(){
   var panel=document.getElementById('customersPanel');
   if(!panel) return;
@@ -3661,7 +3672,16 @@ function renderCustomersPanel(){
       +'<div id="custSyncStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>';
     return;
   }
+  if(!_custPanelDept || DEPARTMENTS.indexOf(_custPanelDept)<0) _custPanelDept=DEPARTMENTS[0];
+  _custDraft=(customerAllowed[_custPanelDept]||[]).slice();
   panel.innerHTML=`
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      <label style="font-size:12px;color:var(--muted);white-space:nowrap">Department:</label>
+      <select id="cust-dept" onchange="onCustomerDeptChange()" style="padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink)">
+        ${DEPARTMENTS.map(function(d){return '<option value="'+esc(d)+'" '+(d===_custPanelDept?'selected':'')+'>'+esc(d)+'</option>';}).join('')}
+      </select>
+      <span style="font-size:11px;color:var(--muted);font-style:italic">Each department has its own customer list — this only affects who shows up when printing for "${esc(_custPanelDept)}".</span>
+    </div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
       <input type="text" id="cust-filter" placeholder="Search customers..." oninput="renderCustomersList()" style="flex:1;min-width:200px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
       <button class="btn btn-sm" onclick="customerSelectAll(true)">Select all</button>
@@ -3672,8 +3692,17 @@ function renderCustomersPanel(){
       <span id="cust-count" style="font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap"></span>
     </div>
     <div id="customersList" style="max-height:420px;overflow-y:auto;border:1px solid var(--line);border-radius:10px"></div>
+    <div style="display:flex;align-items:center;gap:12px;margin-top:12px">
+      <button class="btn btn-primary btn-sm" onclick="saveCustomerAllowedForDept()">Save changes for ${esc(_custPanelDept)}</button>
+      <span id="cust-save-status" style="font-family:var(--mono);font-size:11px;color:var(--muted)"></span>
+    </div>
     <div id="custSyncStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>`;
   renderCustomersList();
+}
+function onCustomerDeptChange(){
+  var sel=document.getElementById('cust-dept');
+  _custPanelDept=sel?sel.value:DEPARTMENTS[0];
+  renderCustomersPanel();
 }
 function renderCustomersList(){
   var listEl=document.getElementById('customersList');
@@ -3682,33 +3711,77 @@ function renderCustomersList(){
   var shown=customers.filter(function(c){ return !q || (c.name||'').toLowerCase().includes(q); });
   shown.sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
   listEl.innerHTML=shown.map(function(c){
-    var on=customerAllowed.indexOf(c.id)>=0;
+    var on=_custDraft.indexOf(c.id)>=0;
     return '<label style="display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer">'
       +'<input type="checkbox" '+(on?'checked':'')+' onchange="toggleCustomerAllowed(\''+c.id+'\',this.checked)" style="width:17px;height:17px;cursor:pointer;accent-color:var(--brand)"/>'
       +'<div style="flex:1;font-size:13px;font-weight:600">'+esc(c.name)+'</div>'
       +'</label>';
   }).join('');
   var countEl=document.getElementById('cust-count');
-  if(countEl) countEl.textContent=customerAllowed.length+' of '+customers.length+' customers allowed';
+  if(countEl) countEl.textContent=_custDraft.length+' of '+customers.length+' customers allowed for '+_custPanelDept+' (unsaved until you click Save)';
 }
 function toggleCustomerAllowed(id,on){
-  var i=customerAllowed.indexOf(id);
-  if(on && i<0) customerAllowed.push(id);
-  else if(!on && i>=0) customerAllowed.splice(i,1);
-  saveCustomerAllowed();
-  var countEl=document.getElementById('cust-count');
-  if(countEl) countEl.textContent=customerAllowed.length+' of '+customers.length+' customers allowed';
+  var i=_custDraft.indexOf(id);
+  if(on && i<0) _custDraft.push(id);
+  else if(!on && i>=0) _custDraft.splice(i,1);
+  renderCustomersList();
 }
 function customerSelectAll(on){
   var q=(document.getElementById('cust-filter')&&document.getElementById('cust-filter').value||'').toLowerCase().trim();
   var shown=customers.filter(function(c){ return !q || (c.name||'').toLowerCase().includes(q); });
   shown.forEach(function(c){
-    var i=customerAllowed.indexOf(c.id);
-    if(on && i<0) customerAllowed.push(c.id);
-    else if(!on && i>=0) customerAllowed.splice(i,1);
+    var i=_custDraft.indexOf(c.id);
+    if(on && i<0) _custDraft.push(c.id);
+    else if(!on && i>=0) _custDraft.splice(i,1);
   });
-  saveCustomerAllowed();
   renderCustomersList();
+}
+async function saveCustomerAllowedForDept(){
+  var dept=_custPanelDept;
+  customerAllowed[dept]=_custDraft.slice();
+  safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed));
+  _recentlySavedCustomerAllowed[dept]=customerAllowed[dept].slice();
+  setTimeout(function(){ delete _recentlySavedCustomerAllowed[dept]; },8000);
+  var statusEl=document.getElementById('cust-save-status');
+  if(statusEl){ statusEl.textContent='Saving to server…'; statusEl.style.color=''; }
+  _writeInFlight++;
+  var ok=false;
+  try{
+    for(var attempt=0;attempt<3 && !ok;attempt++){
+      if(attempt>0) await new Promise(function(r){ setTimeout(r,800); });
+      ok=await pushToServer();
+    }
+  }catch(e){ ok=false; }
+  finally{
+    _writeInFlight--;
+  }
+  var freshStatus=document.getElementById('cust-save-status');
+  if(freshStatus){
+    if(ok){
+      freshStatus.textContent='Saved for '+dept+' — confirmed on the server.';
+      freshStatus.style.color='';
+    }else{
+      freshStatus.textContent='Saved on THIS device only — could not confirm with the server ('+(_lastPushFailureDetail||'unknown error')+'). It will keep retrying automatically.';
+      freshStatus.style.color='#c0392b';
+      retryCustomerAllowedSaveUntilConfirmed(dept);
+    }
+  }
+}
+// Mirrors retryLabelAllowedSaveUntilConfirmed — same pattern, different element/message.
+async function retryCustomerAllowedSaveUntilConfirmed(dept){
+  for(var attempt=0;attempt<10;attempt++){
+    await new Promise(function(r){ setTimeout(r,3000); });
+    var ok=false;
+    try{ ok=await pushToServer(); }catch(e){ ok=false; }
+    if(ok){
+      var el=document.getElementById('cust-save-status');
+      if(el && el.textContent.indexOf('could not confirm with the server')>=0){
+        el.textContent='Now confirmed on the server for '+dept+'.';
+        el.style.color='#0f6e40';
+      }
+      return;
+    }
+  }
 }
 async function qbSyncCustomers(){
   var btn=document.getElementById('custSyncBtn');
@@ -4903,12 +4976,14 @@ function renderScaleCustomerSuggestions(q){
     wrap.appendChild(sugg);
     return;
   }
-  // Only customers permitted to appear (set in Settings → Customers). If no
-  // allow-list has been configured yet, fall back to all synced customers —
-  // same fallback rule used for labelAllowed/products.
-  var allowed=customerAllowed.length ? customers.filter(function(c){return customerAllowed.indexOf(c.id)>=0;}) : customers;
-  if(customerAllowed.length && !allowed.length){
-    sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No customers are enabled. Set them in Settings → Customers.</div>';
+  // Only customers permitted to appear for the CURRENTLY SELECTED
+  // department (set per-department in Settings → Customers). If that
+  // department has no allow-list configured yet, fall back to all synced
+  // customers — same fallback rule used for labelAllowed/products.
+  var deptCustomerAllowed=customerAllowed[_slPrintDept]||[];
+  var allowed=deptCustomerAllowed.length ? customers.filter(function(c){return deptCustomerAllowed.indexOf(c.id)>=0;}) : customers;
+  if(deptCustomerAllowed.length && !allowed.length){
+    sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No customers are enabled for '+esc(_slPrintDept||'this department')+'. Set them in Settings → Customers.</div>';
     wrap.appendChild(sugg);
     return;
   }

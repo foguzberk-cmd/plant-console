@@ -888,6 +888,13 @@ var _deletedScaleLogIds={};
 // pullFromServer() below re-adds anything still in this map that the
 // server's response is missing.
 var _recentlyAddedScaleLogs={};
+// Mirrors the above, for label template/layout saves: maps department name
+// -> the just-saved template object, for a grace period after a confirmed
+// save. Protects against the same timing gap — a pull already in flight
+// before the save began has no way to know about it, and its (now-stale)
+// response would otherwise silently revert the change back to whatever it
+// was before, right on the device that just made it.
+var _recentlySavedLabelTemplates={};
 // ----- Temporary sync diagnostics (see the "Sync debug log" panel on the
 // Scale Log page) — logs exactly what pull/push events happen and when,
 // including scale log counts and whether a specific ID was involved, so the
@@ -994,7 +1001,16 @@ async function pullFromServer(){
     if(Array.isArray(data.labelAllowed)&&data.labelAllowed.length) labelAllowed=data.labelAllowed;
     if(Array.isArray(data.customers)&&data.customers.length) customers=data.customers;
     if(Array.isArray(data.customerAllowed)&&data.customerAllowed.length) customerAllowed=data.customerAllowed;
-    if(data.labelTemplates && typeof data.labelTemplates==='object' && Object.keys(data.labelTemplates).length) labelTemplates=data.labelTemplates;
+    if(data.labelTemplates && typeof data.labelTemplates==='object' && Object.keys(data.labelTemplates).length){
+      labelTemplates=data.labelTemplates;
+      // Guard against the same timing gap as scale logs: a pull that was
+      // already in flight before a layout save began has no way to know
+      // about it, and its stale response would otherwise silently revert
+      // the save right back on the device that just made it.
+      Object.keys(_recentlySavedLabelTemplates).forEach(function(d){
+        labelTemplates[d]=_recentlySavedLabelTemplates[d];
+      });
+    }
     // Smallest/most operationally-critical data first, largest/most
     // quota-prone last — if this browser's localStorage is ever tight on
     // space (as on some mobile browsers with smaller per-origin quotas),
@@ -3977,6 +3993,8 @@ async function saveLabelLayout(){
   merged.customFields=JSON.parse(JSON.stringify(_lllDraftCustom));
   labelTemplates[_lllDept]=merged;
   safeSetLocal('pc_labeltemplates',JSON.stringify(labelTemplates)); // instant local save regardless of network
+  _recentlySavedLabelTemplates[_lllDept]=merged;
+  setTimeout(function(){ delete _recentlySavedLabelTemplates[_lllDept]; },8000);
   var dept=_lllDept;
   closeLabelLayoutModal();
   renderLabelTemplatesPanel();

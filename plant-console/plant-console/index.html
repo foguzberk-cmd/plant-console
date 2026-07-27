@@ -836,7 +836,48 @@ let editingDocMeta=null; // preserves createTime/qb flags of a doc being edited
 let deletingId=null,deletingKind=null;
 
 function saveStorages(){safeSetLocal('pc_storages',JSON.stringify(storages));pushToServer();}
-function saveTxns(){safeSetLocal('pc_transactions',JSON.stringify(transactions));pushToServer();}
+// IMPORTANT: unlike the other simple save*() helpers below, this one blocks
+// ambient pulls (_writeInFlight) and retries on failure. A full QuickBooks
+// sync can produce tens of thousands of transactions — pushing that much
+// data can take longer than the 1.5s background poll interval, and without
+// this guard a routine ambient pull could land mid-push, fetch the server's
+// still-old data, and silently overwrite the freshly-synced local copy with
+// no error ever shown (this is exactly what was happening: sync would
+// report far fewer skipped items, but the Reports tab kept showing
+// unchanged, stale totals). saveTxns is called both from the QB sync flow
+// (where callers should await it) and from older fire-and-forget call sites
+// (which still work fine — they just won't wait for confirmation).
+async function saveTxns(){
+  safeSetLocal('pc_transactions',JSON.stringify(transactions));
+  _writeInFlight++;
+  var ok=false;
+  try{
+    for(var attempt=0;attempt<3 && !ok;attempt++){
+      if(attempt>0) await new Promise(function(r){ setTimeout(r,800); });
+      ok=await pushToServer();
+    }
+  }catch(e){ ok=false; }
+  finally{
+    _writeInFlight--;
+  }
+  if(!ok){
+    // Keep retrying in the background so a slow/large push eventually lands
+    // even if the initial attempts above didn't succeed, without blocking
+    // the UI or the caller any further.
+    retryTxnsSaveUntilConfirmed();
+  }
+  return ok;
+}
+async function retryTxnsSaveUntilConfirmed(){
+  for(var attempt=0;attempt<15;attempt++){
+    await new Promise(function(r){ setTimeout(r,4000); });
+    var ok=false;
+    _writeInFlight++;
+    try{ ok=await pushToServer(); }catch(e){ ok=false; }
+    finally{ _writeInFlight--; }
+    if(ok) return;
+  }
+}
 function saveUsers(){safeSetLocal('pc_users',JSON.stringify(users));pushToServer();}
 function saveSavedReports(){safeSetLocal('pc_savedreports',JSON.stringify(savedReports));pushToServer();}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
@@ -1159,7 +1200,15 @@ async function _pushToServerImpl(){
     // whatever is currently true at the moment it actually runs.
     var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates});
     if(snapshot===_lastPushedSnapshot){ _lastPushFailureDetail=''; return true; } // this exact state was already confirmed sent
-    var res=await fetchWithTimeout(SYNC_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:snapshot});
+    // 60s (not the 10s default) — every push sends the FULL app state,
+    // including every transaction, and that array has grown into the tens
+    // of thousands of entries with a full QuickBooks history synced. 10s is
+    // very likely too short for a payload that size, especially over the
+    // plant's known-flaky WiFi, and a timed-out push here would fail
+    // completely silently (no error shown anywhere) while leaving the
+    // server holding stale data that a later ambient pull could then
+    // re-fetch and overwrite fresh local data with.
+    var res=await fetchWithTimeout(SYNC_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:snapshot},60000);
     if(res.status===401){ _lastPushFailureDetail='session expired (401) — signed out'; forceLogout(); return false; }
     if(!res.ok){
       // Capture whatever the server actually said, instead of a vague
@@ -1862,7 +1911,13 @@ async function finishDocSync(data, onProgress){
   if(onProgress) onProgress('__processing__', totalDocs, totalDocs, totalDocs);
   await new Promise(function(r){ setTimeout(r,0); });
 
-  saveTxns();
+  // Await this specifically — for a large sync (tens of thousands of
+  // transactions) the push can take a while, and it's critical that
+  // ambient/background pulls stay blocked (via _writeInFlight inside
+  // saveTxns) for the whole duration, or a routine poll could land mid-push
+  // and silently overwrite this freshly-synced data with the server's
+  // still-old copy before it's confirmed saved.
+  await saveTxns();
 
   var docCounts={
     Bill:(data.Bill||[]).length,

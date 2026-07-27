@@ -4831,6 +4831,23 @@ async function saveUser(){
     return;
   }
   const pin=pinInput||(existing?.pin||'');
+  // Email is the username used to log in (see the Sign In screen) — two
+  // users sharing one would make login ambiguous and effectively lock one
+  // of them out, since only one record could ever be matched. Checked
+  // case-insensitively, and skips the user's own existing record when
+  // editing (so saving without changing your own email doesn't falsely
+  // flag as a duplicate).
+  if(email){
+    var emailLower=email.toLowerCase();
+    var dupe=users.find(function(u){
+      return u.id!==editingUserId && (u.email||'').trim().toLowerCase()===emailLower;
+    });
+    if(dupe){
+      alert('A user with this email already exists ("'+dupe.name+'"). Please use a different email address.');
+      document.getElementById('u-email').focus();
+      return;
+    }
+  }
   const data={id:editingUserId||('user_'+Date.now()),name,email,role,pin,perms};
   if(editingUserId){const i=users.findIndex(x=>x.id===editingUserId);users[i]=data;if(currentUser?.id===editingUserId)currentUser=data;}else users.push(data);
   await saveUsers();closeUserModal();renderUserList();

@@ -2593,8 +2593,15 @@ function buildBalanceReport(){
       html+=rowLine('rpt-out-svc','Other Services',otherSvcTotal,'#c23b33',svcItems_);
       // Always visible (even at $0) so it's easy to compare against
       // QuickBooks's own discount total and confirm nothing's missing.
-      var discItems_=Object.keys(discountItems).map(function(k2){return discountItems[k2];});
-      html+=rowLine('rpt-out-discount','Discounts',discountTotal,'#c23b33',discItems_);
+      var discItems_=Object.keys(discountItems).map(function(k2){
+        var it=discountItems[k2];
+        return {name:it.name, qty:it.qty, value:-it.value}; // negate for display, same reasoning as above
+      });
+      // Displayed as negative to match QuickBooks' own sign convention (and
+      // the visual language of "Other Services" above it) — this is display
+      // only. discountTotal itself must stay positive internally, since
+      // that's what's added to outflowTotal to correctly reduce the total.
+      html+=rowLine('rpt-out-discount','Discounts',-discountTotal,'#c23b33',discItems_);
     }
   });
   html+='<div style="display:flex;justify-content:space-between;padding:9px 0;font-weight:700;border-bottom:3px double var(--ink)"><span>Total subtractions</span><span style="font-family:var(--mono);color:#c23b33">'+money(outflowTotal)+'</span></div>';
@@ -6487,3 +6494,4 @@ tick();setInterval(tick,1000);
 </script>
 </body>
 </html>
+

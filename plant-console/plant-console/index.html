@@ -2331,6 +2331,12 @@ function buildBalanceReport(){
   // invisibly missing from the totals.
   var discountTotal=0;
   var discountItems={}; // keyed by description since there's no real item
+  // Separate, always-visible breakout of Credit Memo totals — parallel
+  // bookkeeping alongside the existing return-vs-shipment netting above
+  // (which is unchanged), purely so this figure can be sanity-checked
+  // directly against QuickBooks' own credit memo total.
+  var creditMemoTotal=0;
+  var creditMemoItems={};
   var pcPosItems={}, pcNegItems={};
   var trInItems={}, trOutItems={};
 
@@ -2439,6 +2445,14 @@ function buildBalanceReport(){
       if(!outflowItems['shipment'][t.itemId]) outflowItems['shipment'][t.itemId]={name:nm,qty:0,value:0};
       outflowItems['shipment'][t.itemId].qty-=q;
       outflowItems['shipment'][t.itemId].value-=v;
+      // Parallel bookkeeping only — this does NOT change the Shipments math
+      // above at all. It exists purely so credit memos can also be shown as
+      // their own visible row, to make it easy to sanity-check this figure
+      // directly against QuickBooks' own credit memo total.
+      creditMemoTotal+=v;
+      if(!creditMemoItems[t.itemId]) creditMemoItems[t.itemId]={name:nm,qty:0,value:0};
+      creditMemoItems[t.itemId].qty+=q;
+      creditMemoItems[t.itemId].value+=v;
     } else if(OUTFLOW[t.type]){
       if(!matchesDept(locDept(t.locOut))) return;
       outflowGroups[t.type]=(outflowGroups[t.type]||0)+v;
@@ -2589,6 +2603,16 @@ function buildBalanceReport(){
     // Show "Other Services" immediately after the Shipments row — always
     // visible so you can compare it against QB even when the amount is $0.00
     if(k==='shipment'){
+      // Always visible (even at $0) — a direct, separate look at the total
+      // credited back via Credit Memos, for comparing against QuickBooks'
+      // own credit memo figure. This does NOT double-count: the amount is
+      // already netted into the Shipments row above (unchanged), this is
+      // just a visible breakout of that same netting.
+      var cmItems_=Object.keys(creditMemoItems).map(function(k2){
+        var it=creditMemoItems[k2];
+        return {name:it.name, qty:it.qty, value:-it.value}; // negative for display, same convention as Discounts
+      });
+      html+=rowLine('rpt-out-creditmemo','Customer Credit Memos (−)',-creditMemoTotal,'#c23b33',cmItems_);
       var svcItems_=Object.keys(otherSvcItems).map(function(id){return otherSvcItems[id];});
       html+=rowLine('rpt-out-svc','Other Services',otherSvcTotal,'#c23b33',svcItems_);
       // Always visible (even at $0) so it's easy to compare against
@@ -6494,4 +6518,3 @@ tick();setInterval(tick,1000);
 </script>
 </body>
 </html>
-

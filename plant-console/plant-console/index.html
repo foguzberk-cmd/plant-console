@@ -2582,7 +2582,7 @@ function buildBalanceReport(){
   // with a subtotal per category — mirrors QuickBooks' own category-grouped
   // Sales-by-Product/Service view, so the Shipments breakdown here can be
   // compared category-by-category directly against that QuickBooks report.
-  function detailRowsGrouped(arr){
+  function detailRowsGrouped(arr,parentId){
     if(!arr||!arr.length) return '<div style="padding:7px 0 7px 22px;font-size:11.5px;color:var(--muted)">No line-level detail for this period.</div>';
     var groups={};
     arr.forEach(function(b){
@@ -2596,15 +2596,21 @@ function buildBalanceReport(){
       if(b2==='Ungrouped') return -1;
       return groups[b2].total-groups[a].total; // biggest category first, matching QB's typical ordering
     });
-    return names.map(function(g){
+    return names.map(function(g,gi){
       var items=groups[g].items.sort(function(a,b2){return b2.value-a.value;});
-      return '<div style="padding:7px 0 3px 22px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--cold);border-bottom:1px solid var(--cold-soft);display:flex;justify-content:space-between">'
-        +'<span>'+esc(g)+'</span><span>'+money(groups[g].total)+'</span></div>'
-        +items.map(function(b){
-          return '<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0 6px 30px;font-size:12px;color:var(--muted);border-bottom:1px dashed var(--line)">'
-            +'<span>'+esc(b.name)+'</span>'
-            +'<span style="font-family:var(--mono);white-space:nowrap">'+Number(b.qty).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+' &nbsp;·&nbsp; '+money(b.value)+'</span></div>';
-        }).join('');
+      var catId=(parentId||'rpt-cat')+'-'+gi;
+      return '<div>'
+        +'<div onclick="toggleReportRow(\''+catId+'\')" style="cursor:pointer;padding:7px 0 3px 22px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--cold);border-bottom:1px solid var(--cold-soft);display:flex;justify-content:space-between;align-items:center">'
+          +'<span style="display:flex;align-items:center;gap:6px">'
+            +'<svg id="'+catId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;stroke:var(--cold);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
+            +esc(g)+'</span><span>'+money(groups[g].total)+'</span></div>'
+        +'<div id="'+catId+'" style="display:none">'
+          +items.map(function(b){
+            return '<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0 6px 30px;font-size:12px;color:var(--muted);border-bottom:1px dashed var(--line)">'
+              +'<span>'+esc(b.name)+'</span>'
+              +'<span style="font-family:var(--mono);white-space:nowrap">'+Number(b.qty).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+' &nbsp;·&nbsp; '+money(b.value)+'</span></div>';
+          }).join('')
+        +'</div></div>';
     }).join('');
   }
   function rowLineGrouped(id,label,val,color,breakdownArr){
@@ -2614,7 +2620,7 @@ function buildBalanceReport(){
           +'<svg id="'+id+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
           +label+'</span>'
         +'<span style="font-family:var(--mono);font-size:13px;font-weight:600;'+(color?'color:'+color:'')+'">'+money(val)+'</span></div>'
-      +'<div id="'+id+'" style="display:none;padding-bottom:4px">'+detailRowsGrouped(breakdownArr)+'</div>'
+      +'<div id="'+id+'" style="display:none;padding-bottom:4px">'+detailRowsGrouped(breakdownArr,id)+'</div>'
     +'</div>';
   }
   function rowLine(id,label,val,color,breakdownArr){

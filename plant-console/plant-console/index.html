@@ -2337,6 +2337,14 @@ function buildBalanceReport(){
   // directly against QuickBooks' own credit memo total.
   var creditMemoTotal=0;
   var creditMemoItems={};
+  // "Customer Credit Adjustment" — pulled into its own dedicated row for
+  // the same reason "Services" gets its own "Other Services" row: it's a
+  // financial adjustment rather than a physical product, so it doesn't
+  // belong mixed in among real SKUs in the Credit Memo/Shipments breakdown.
+  var custCreditItemIds={};
+  items.forEach(function(it){ if(it.name&&it.name.trim().toLowerCase()==='customer credit adjustment') custCreditItemIds[it.id]=true; });
+  var custCreditTotal=0;
+  var custCreditItems={};
   var pcPosItems={}, pcNegItems={};
   var trInItems={}, trOutItems={};
 
@@ -2398,6 +2406,23 @@ function buildBalanceReport(){
     // "Services" item transactions go to a dedicated "Other Services" row
     // (not Shipments) so the Shipments total matches QB's product sales figure
     // and the Services credit/charge is visible on its own line.
+    // "Customer Credit Adjustment" gets pulled out to its own row before
+    // any of the general processing below (Services, Discounts, Shipments/
+    // Credit Memos) has a chance to fold it in among regular items. No sign
+    // flip for 'return' type here — same reasoning as the Discounts bucket
+    // below: this is a financial adjustment, not a physical-goods return,
+    // so it always counts the same direction whether it shows up on an
+    // Invoice or inside a CreditMemo.
+    if(custCreditItemIds[t.itemId] && (OUTFLOW[t.type]||t.type==='return')){
+      var ccDept=(t.type==='return')?locDept(t.locIn):locDept(t.locOut);
+      if(!matchesDept(ccDept)) return;
+      custCreditTotal+=v;
+      if(!custCreditItems[t.itemId]) custCreditItems[t.itemId]={name:nm,qty:0,value:0};
+      custCreditItems[t.itemId].qty+=q;
+      custCreditItems[t.itemId].value+=v;
+      return;
+    }
+
     if(svcItemIds[t.itemId] && (OUTFLOW[t.type]||t.type==='return')){
       var svcSign=(t.type==='return')?-1:1;
       var svcDept=(t.type==='return')?locDept(t.locIn):locDept(t.locOut);
@@ -2505,6 +2530,9 @@ function buildBalanceReport(){
   // it was excluded entirely, which is exactly why this report's total
   // didn't match QuickBooks' own sales total by the Services amount.
   outflowTotal+=otherSvcTotal;
+  // Same reasoning — Customer Credit Adjustment is real revenue-affecting
+  // data, so it counts toward the grand total just like the other two.
+  outflowTotal+=custCreditTotal;
 
   // The grand total — everything that was on hand, plus everything added,
   // minus everything that left. This is the headline number for the report.
@@ -2613,6 +2641,13 @@ function buildBalanceReport(){
         return {name:it.name, qty:it.qty, value:-it.value}; // negative for display, same convention as Discounts
       });
       html+=rowLine('rpt-out-creditmemo','Customer Credit Memos (−)',-creditMemoTotal,'#c23b33',cmItems_);
+      // Always visible (even at $0), displayed negative to match the same
+      // convention as Discounts and Customer Credit Memos above.
+      var ccItems_=Object.keys(custCreditItems).map(function(k2){
+        var it=custCreditItems[k2];
+        return {name:it.name, qty:it.qty, value:-it.value};
+      });
+      html+=rowLine('rpt-out-custcredit','Customer Credit Adjustment',-custCreditTotal,'#c23b33',ccItems_);
       var svcItems_=Object.keys(otherSvcItems).map(function(id){return otherSvcItems[id];});
       html+=rowLine('rpt-out-svc','Other Services',otherSvcTotal,'#c23b33',svcItems_);
       // Always visible (even at $0) so it's easy to compare against

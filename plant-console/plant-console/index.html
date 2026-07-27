@@ -2540,6 +2540,46 @@ function buildBalanceReport(){
         +'<span style="font-family:var(--mono);white-space:nowrap">'+Number(b.qty).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+' &nbsp;·&nbsp; '+money(b.value)+'</span></div>';
     }).join('');
   }
+  // Same idea as detailRows, but grouped by QuickBooks parent category
+  // (groupName, same field used for "Group by category" on the Items page)
+  // with a subtotal per category — mirrors QuickBooks' own category-grouped
+  // Sales-by-Product/Service view, so the Shipments breakdown here can be
+  // compared category-by-category directly against that QuickBooks report.
+  function detailRowsGrouped(arr){
+    if(!arr||!arr.length) return '<div style="padding:7px 0 7px 22px;font-size:11.5px;color:var(--muted)">No line-level detail for this period.</div>';
+    var groups={};
+    arr.forEach(function(b){
+      var g=b.groupName||'Ungrouped';
+      if(!groups[g]) groups[g]={total:0,items:[]};
+      groups[g].total+=b.value;
+      groups[g].items.push(b);
+    });
+    var names=Object.keys(groups).sort(function(a,b2){
+      if(a==='Ungrouped') return 1;
+      if(b2==='Ungrouped') return -1;
+      return groups[b2].total-groups[a].total; // biggest category first, matching QB's typical ordering
+    });
+    return names.map(function(g){
+      var items=groups[g].items.sort(function(a,b2){return b2.value-a.value;});
+      return '<div style="padding:7px 0 3px 22px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--cold);border-bottom:1px solid var(--cold-soft);display:flex;justify-content:space-between">'
+        +'<span>'+esc(g)+'</span><span>'+money(groups[g].total)+'</span></div>'
+        +items.map(function(b){
+          return '<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0 6px 30px;font-size:12px;color:var(--muted);border-bottom:1px dashed var(--line)">'
+            +'<span>'+esc(b.name)+'</span>'
+            +'<span style="font-family:var(--mono);white-space:nowrap">'+Number(b.qty).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+' &nbsp;·&nbsp; '+money(b.value)+'</span></div>';
+        }).join('');
+    }).join('');
+  }
+  function rowLineGrouped(id,label,val,color,breakdownArr){
+    return '<div style="border-bottom:1px solid var(--line)">'
+      +'<div onclick="toggleReportRow(\''+id+'\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:8px 0">'
+        +'<span style="font-size:13px;display:flex;align-items:center;gap:6px">'
+          +'<svg id="'+id+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
+          +label+'</span>'
+        +'<span style="font-family:var(--mono);font-size:13px;font-weight:600;'+(color?'color:'+color:'')+'">'+money(val)+'</span></div>'
+      +'<div id="'+id+'" style="display:none;padding-bottom:4px">'+detailRowsGrouped(breakdownArr)+'</div>'
+    +'</div>';
+  }
   function rowLine(id,label,val,color,breakdownArr){
     return '<div style="border-bottom:1px solid var(--line)">'
       +'<div onclick="toggleReportRow(\''+id+'\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:8px 0">'
@@ -2615,8 +2655,17 @@ function buildBalanceReport(){
   var outKeys=Object.keys(outflowGroups);
   if(!outKeys.length) html+='<div style="font-size:12px;color:var(--muted);padding:8px 0;border-bottom:1px solid var(--line)">No subtractions in this period.</div>';
   outKeys.forEach(function(k){
-    var items_=Object.keys(outflowItems[k]||{}).map(function(id){return outflowItems[k][id];}).sort(function(a,b){return b.value-a.value;});
-    html+=rowLine('rpt-out-'+k, labelMap[k]||k, outflowGroups[k], '#c23b33', items_);
+    var items_=Object.keys(outflowItems[k]||{}).map(function(id){
+      var it=outflowItems[k][id];
+      if(k!=='shipment') return it;
+      var fi=items.find(function(x){return x.id===id;});
+      return {name:it.name, qty:it.qty, value:it.value, groupName:(fi&&fi.groupName)||''};
+    }).sort(function(a,b){return b.value-a.value;});
+    if(k==='shipment'){
+      html+=rowLineGrouped('rpt-out-'+k, labelMap[k]||k, outflowGroups[k], '#c23b33', items_);
+    } else {
+      html+=rowLine('rpt-out-'+k, labelMap[k]||k, outflowGroups[k], '#c23b33', items_);
+    }
     // Show "Other Services" immediately after the Shipments row — always
     // visible so you can compare it against QB even when the amount is $0.00
     if(k==='shipment'){

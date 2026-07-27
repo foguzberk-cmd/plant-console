@@ -878,7 +878,37 @@ async function retryTxnsSaveUntilConfirmed(){
     if(ok) return;
   }
 }
-function saveUsers(){safeSetLocal('pc_users',JSON.stringify(users));pushToServer();}
+// Same race-condition fix as saveTxns (see above) — without this, a new
+// user could appear briefly right after Save, then vanish once a routine
+// background pull landed before the push had actually been confirmed by
+// the server. This was the exact cause of "added user disappears after
+// refresh."
+async function saveUsers(){
+  safeSetLocal('pc_users',JSON.stringify(users));
+  _writeInFlight++;
+  var ok=false;
+  try{
+    for(var attempt=0;attempt<3 && !ok;attempt++){
+      if(attempt>0) await new Promise(function(r){ setTimeout(r,800); });
+      ok=await pushToServer();
+    }
+  }catch(e){ ok=false; }
+  finally{
+    _writeInFlight--;
+  }
+  if(!ok){ retryUsersSaveUntilConfirmed(); }
+  return ok;
+}
+async function retryUsersSaveUntilConfirmed(){
+  for(var attempt=0;attempt<15;attempt++){
+    await new Promise(function(r){ setTimeout(r,4000); });
+    var ok=false;
+    _writeInFlight++;
+    try{ ok=await pushToServer(); }catch(e){ ok=false; }
+    finally{ _writeInFlight--; }
+    if(ok) return;
+  }
+}
 function saveSavedReports(){safeSetLocal('pc_savedreports',JSON.stringify(savedReports));pushToServer();}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 // Browsers cap localStorage at roughly 5-10MB per site. A large QuickBooks
@@ -4782,7 +4812,7 @@ function onRoleChange(){const role=document.getElementById('u-role').value;const
 function openAddUserModal(){editingUserId=null;document.getElementById('userModalTitle').textContent='Add user';['u-name','u-email','u-pin'].forEach(id=>document.getElementById(id).value='');document.getElementById('u-role').value='operator';buildPermGrid({},false);document.getElementById('userModal').classList.remove('hidden');document.getElementById('u-name').focus();}
 function openEditUserModal(id){const u=users.find(x=>x.id===id);if(!u)return;editingUserId=id;document.getElementById('userModalTitle').textContent='Edit user';document.getElementById('u-name').value=u.name;document.getElementById('u-email').value=u.email;document.getElementById('u-role').value=u.role;document.getElementById('u-pin').value='';buildPermGrid(u.perms||{},u.role==='admin');document.getElementById('userModal').classList.remove('hidden');document.getElementById('u-name').focus();}
 function closeUserModal(){document.getElementById('userModal').classList.add('hidden')}
-function saveUser(){
+async function saveUser(){
  try{
   const name=document.getElementById('u-name').value.trim();const email=document.getElementById('u-email').value.trim();
   if(!name){document.getElementById('u-name').focus();return;}
@@ -4803,7 +4833,7 @@ function saveUser(){
   const pin=pinInput||(existing?.pin||'');
   const data={id:editingUserId||('user_'+Date.now()),name,email,role,pin,perms};
   if(editingUserId){const i=users.findIndex(x=>x.id===editingUserId);users[i]=data;if(currentUser?.id===editingUserId)currentUser=data;}else users.push(data);
-  saveUsers();closeUserModal();renderUserList();
+  await saveUsers();closeUserModal();renderUserList();
  }catch(err){
   // Surface any unexpected failure instead of silently doing nothing, so
   // it's actually diagnosable instead of just "the button doesn't work".

@@ -1574,15 +1574,22 @@ async function qbSyncItemsCore(){
   var qbItems=(data.QueryResponse&&data.QueryResponse.Item)||[];
   qbItems.forEach(function(qi){
     var existing=items.findIndex(function(x){return x.qbId===qi.Id});
-    // QuickBooks organizes items hierarchically via sub-items — e.g. "AL
-    // ZAHMAR" as a parent/category with "BEEF FEMUR BONE AL ZAHMAR" etc.
-    // filed underneath it as sub-items. ParentRef.name is the authoritative
-    // source for this; FullyQualifiedName ("AL ZAHMAR:BEEF FEMUR BONE AL
-    // ZAHMAR") is a fallback for cases where ParentRef isn't present but
-    // the qualified name still reveals the hierarchy.
-    var groupName=(qi.ParentRef && qi.ParentRef.name) || '';
-    if(!groupName && qi.FullyQualifiedName && qi.FullyQualifiedName.indexOf(':')>=0){
-      groupName=qi.FullyQualifiedName.slice(0, qi.FullyQualifiedName.lastIndexOf(':'));
+    // QuickBooks organizes items hierarchically via sub-items, and that
+    // hierarchy can be MORE than one level deep — e.g. "FRESH MEATS" (top
+    // level) > "WHOLE LAMB BIG" (mid level) > "LAMB SHOULDER B/I" (the
+    // actual item). ParentRef.name only gives the IMMEDIATE parent
+    // ("WHOLE LAMB BIG" in that example), which would incorrectly create
+    // "Whole Lamb Big" as its own top-level category here instead of
+    // rolling it up under "Fresh Meats" the way QuickBooks' own reports do.
+    // FullyQualifiedName ("FRESH MEATS:WHOLE LAMB BIG:LAMB SHOULDER B/I")
+    // always reflects the FULL path from the true root, so its first
+    // segment is used as the authoritative top-level category — this is
+    // correct for both multi-level and single-level hierarchies alike.
+    var groupName='';
+    if(qi.FullyQualifiedName && qi.FullyQualifiedName.indexOf(':')>=0){
+      groupName=qi.FullyQualifiedName.split(':')[0];
+    } else if(qi.ParentRef && qi.ParentRef.name){
+      groupName=qi.ParentRef.name;
     }
     var mapped={
       id: existing>=0 ? items[existing].id : 'item_'+Date.now()+'_'+Math.random().toString(36).slice(2),

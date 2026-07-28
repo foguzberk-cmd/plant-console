@@ -606,8 +606,8 @@ async function fetchQBEntity(entity, since, from) {
 async function fetchQBDocuments() {
   // Refresh once up front
   if (!accessToken) await refreshAccessToken();
-  const result = { Bill: [], Invoice: [], SalesReceipt: [], CreditMemo: [], errors: {} };
-  const entities = ['Bill', 'Invoice', 'SalesReceipt', 'CreditMemo'];
+  const result = { Bill: [], Invoice: [], SalesReceipt: [], CreditMemo: [], VendorCredit: [], errors: {} };
+  const entities = ['Bill', 'Invoice', 'SalesReceipt', 'CreditMemo', 'VendorCredit'];
   for (const entity of entities) {
     try {
       result[entity] = await fetchQBEntity(entity);
@@ -1055,7 +1055,7 @@ const server = http.createServer(async (req, res) => {
       const since = queryParams.since || null;
       const from = queryParams.from || null;
       const startPos = queryParams.startposition ? parseInt(queryParams.startposition, 10) : null;
-      if (ent && ['Bill','Invoice','SalesReceipt','CreditMemo'].indexOf(ent) >= 0) {
+      if (ent && ['Bill','Invoice','SalesReceipt','CreditMemo','VendorCredit'].indexOf(ent) >= 0) {
         if (!accessToken) await refreshAccessToken();
         // Single-page mode: return just one page so each HTTP request is fast.
         if (startPos !== null && !isNaN(startPos)) {

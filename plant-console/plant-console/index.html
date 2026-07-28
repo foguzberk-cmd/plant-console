@@ -2097,6 +2097,12 @@ function renderReports(){
       +'<button class="btn btn-primary" onclick="try{recalcQuantities();}catch(e){} buildBalanceReport()">Run report</button>'
       +'<button class="btn" onclick="printBalanceReport()">Print</button>'
       +'<button class="btn" onclick="saveCurrentReport()" title="Keep a frozen snapshot of this report to view, print, or share later">Save</button>'
+      +'<button class="btn" onclick="toggleAllReportRows()" title="Expand or collapse every row and category at once">Expand/Collapse all</button>'
+    +'</div>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:0 0 22px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px">'
+      +'<div style="flex:1;min-width:220px"><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Compare to QuickBooks total</label>'
+      +'<input type="text" id="rpt-qb-total" placeholder="e.g. 2,257,399.23" oninput="updateQbCompare()" style="width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);font-family:var(--mono)"/></div>'
+      +'<div id="rpt-qb-compare" style="font-family:var(--mono);font-size:13px;padding-bottom:9px"></div>'
     +'</div>'
     +'<div id="rpt-body"></div>'
     +'<div style="margin-top:28px">'
@@ -2560,6 +2566,14 @@ function buildBalanceReport(){
   // Shipments above), so it needs its own fold-in here too.
   outflowTotal+=creditMemoTotal;
 
+  // The QuickBooks-comparable sales total — the sum of every row displayed
+  // under Shipments, exactly as shown (matching signs), so the "Compare to
+  // QuickBooks" box below can check against precisely what someone would
+  // get by manually adding up the visible rows themselves.
+  var qbCompareTotal=(outflowGroups['shipment']||0) - creditMemoTotal - specialTotals['customer credit adjustment'] - discountTotal;
+  specialNames.forEach(function(k){ if(k!=='customer credit adjustment') qbCompareTotal+=specialTotals[k]; });
+  window.__lastReportSalesTotal=qbCompareTotal;
+
   // The grand total — everything that was on hand, plus everything added,
   // minus everything that left. This is the headline number for the report.
   var total=inflowTotal-outflowTotal;
@@ -2642,6 +2656,53 @@ function buildBalanceReport(){
   }
   window.toggleReportRow=toggleReportRow;
 
+  // Expand/Collapse all — finds every collapsible row and category by
+  // locating their chevron icons (every togglable section has one, with id
+  // = its content div's id + "-chev"), then flips them all to the opposite
+  // of whatever the first one is currently doing.
+  function toggleAllReportRows(){
+    var body=document.getElementById('rpt-body');
+    if(!body) return;
+    var chevs=body.querySelectorAll('svg[id$="-chev"]');
+    var anyCollapsed=false;
+    chevs.forEach(function(c){
+      var baseId=c.id.slice(0,-5);
+      var el=document.getElementById(baseId);
+      if(el && el.style.display==='none') anyCollapsed=true;
+    });
+    chevs.forEach(function(c){
+      var baseId=c.id.slice(0,-5);
+      var el=document.getElementById(baseId);
+      if(!el) return;
+      el.style.display=anyCollapsed?'block':'none';
+      c.style.transform=anyCollapsed?'rotate(90deg)':'';
+    });
+  }
+  window.toggleAllReportRows=toggleAllReportRows;
+
+  // Compare to QuickBooks — reads whatever number was typed/pasted into the
+  // input, strips everything except digits/decimal/minus (so "$2,257,399.23"
+  // or "2257399.23" both work), and checks it against qbCompareTotal (the
+  // sum of everything shown under Shipments, matching signs exactly as
+  // displayed) computed above. This exists specifically so reconciling
+  // against QuickBooks doesn't require manually adding up every row by hand.
+  function updateQbCompare(){
+    var input=document.getElementById('rpt-qb-total');
+    var out=document.getElementById('rpt-qb-compare');
+    if(!input||!out) return;
+    var raw=(input.value||'').replace(/[^0-9.\-]/g,'');
+    if(!raw){ out.innerHTML=''; return; }
+    var qbVal=Number(raw);
+    if(isNaN(qbVal)){ out.innerHTML='<span style="color:var(--muted)">Enter a valid number</span>'; return; }
+    var ours=window.__lastReportSalesTotal||0;
+    var diff=ours-qbVal;
+    var match=Math.abs(diff)<0.01;
+    out.innerHTML='<span style="color:'+(match?'#0f6e40':'#c23b33')+';font-weight:600">'
+      +(match?'✓ Matches exactly':('Difference: '+(diff>=0?'+':'−')+money(Math.abs(diff))))
+      +'</span>';
+  }
+  window.updateQbCompare=updateQbCompare;
+
   var fromDisp=fromD?new Date(fromD+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—';
   var toDisp=toD?new Date(toD+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—';
 
@@ -2722,27 +2783,25 @@ function buildBalanceReport(){
         return {name:it.name, qty:it.qty, value:-it.value}; // negative for display, same convention as Discounts
       });
       html+=rowLine('rpt-out-creditmemo','Customer Credit Memos (−)',-creditMemoTotal,'#c23b33',cmItems_);
-      // Customer Credit Adjustment kept in this specific position (right
-      // after Credit Memos) since they're closely related concepts.
-      var ccItems_=Object.keys(specialItems['customer credit adjustment']).map(function(id){
-        var it=specialItems['customer credit adjustment'][id];
-        return {name:it.name, qty:it.qty, value:-it.value};
-      });
-      html+=rowLine('rpt-out-custcredit','Customer Credit Adjustment',-specialTotals['customer credit adjustment'],'#c23b33',ccItems_);
-      // Every other special (non-inventory) category gets its own row too,
-      // so each QuickBooks Sales-by-Product/Service category has a direct
-      // one-to-one counterpart here — immediately showing (rather than
-      // requiring a dig through the Shipments breakdown) if any of these
-      // are missing entirely or came out with an unexpected total.
-      // "Customer Credit Adjustment" displays forced-negative to match
-      // QuickBooks showing it as a reduction; the rest (Services, Credit
-      // Card Processing Fees, Delivery Fee, Other Service and Products)
-      // display their natural sign, since QuickBooks shows those as
-      // ordinary positive charges.
+      // Merged into ONE combined row — matching QuickBooks' own collapsed
+      // Sales-by-Product/Service view, where Services, Customer Credit
+      // Adjustment, Credit Card Processing Fees, Delivery Fee, and Other
+      // Service and Products all roll up together under a single "Other
+      // Service and Products" category rather than showing as five
+      // separate lines. Each original category still shows as its own
+      // expandable sub-group inside it (via the grouped renderer already
+      // used for Shipments), so nothing is actually lost — it's just
+      // presented the same way QuickBooks presents it.
+      var mergedTotal=0, mergedItems=[];
       specialNames.forEach(function(k){
-        if(k==='customer credit adjustment') return; // rendered above, kept separate/first for visibility
-        html+=rowLine('rpt-out-special-'+k.replace(/\s+/g,'_'),specialLabels[k],specialTotals[k],'#c23b33',Object.keys(specialItems[k]).map(function(id){return specialItems[k][id];}));
+        var sign=(k==='customer credit adjustment')?-1:1;
+        mergedTotal+=sign*specialTotals[k];
+        Object.keys(specialItems[k]).forEach(function(id){
+          var it=specialItems[k][id];
+          mergedItems.push({name:it.name, qty:sign*it.qty, value:sign*it.value, groupName:specialLabels[k]});
+        });
       });
+      html+=rowLineGrouped('rpt-out-mergedsvc','Other Service and Products',mergedTotal,'#c23b33',mergedItems);
       // Always visible (even at $0) so it's easy to compare against
       // QuickBooks's own discount total and confirm nothing's missing.
       var discItems_=Object.keys(discountItems).map(function(k2){
@@ -2762,6 +2821,7 @@ function buildBalanceReport(){
   html+='</div>';
 
   body.innerHTML=html;
+  updateQbCompare();
 }
 
 function printBalanceReport(){

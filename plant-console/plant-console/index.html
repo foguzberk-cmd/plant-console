@@ -1948,6 +1948,27 @@ async function finishDocSync(data, onProgress){
   if(onProgress) onProgress('__processing__', totalDocs, totalDocs, totalDocs);
   await new Promise(function(r){ setTimeout(r,0); });
 
+  // Defensive deduplication — each transaction has a deterministic id (e.g.
+  // qb_Invoice_<docId>_line<n>), so two entries sharing the same id are
+  // always exact duplicates of the same underlying QuickBooks line, never a
+  // legitimate distinct transaction. QuickBooks' STARTPOSITION-based
+  // pagination can occasionally shift mid-sync across a dataset this large
+  // (10,000+ invoices) if records change while paging through, which can
+  // duplicate a handful of documents into two pages — silently double-
+  // counting their value in every report total. This catches that
+  // regardless of root cause.
+  var duplicatesRemoved=0;
+  (function dedupeTransactions(){
+    var seen={}, deduped=[];
+    transactions.forEach(function(t){
+      if(t.id && seen[t.id]){ duplicatesRemoved++; return; }
+      if(t.id) seen[t.id]=true;
+      deduped.push(t);
+    });
+    if(duplicatesRemoved>0) console.warn('Sync: removed '+duplicatesRemoved+' duplicate transaction(s) sharing an id with another entry.');
+    transactions=deduped;
+  })();
+
   // Await this specifically — for a large sync (tens of thousands of
   // transactions) the push can take a while, and it's critical that
   // ambient/background pulls stay blocked (via _writeInFlight inside
@@ -1971,7 +1992,8 @@ async function finishDocSync(data, onProgress){
     skippedNoItem:skippedNoItem,
     skippedNoQty:skippedNoQty,
     docErrors:docErrors,
-    unmatchedSample:Object.keys(unmatchedIds).slice(0,8)
+    unmatchedSample:Object.keys(unmatchedIds).slice(0,8),
+    duplicatesRemoved:duplicatesRemoved
   };
 }
 
@@ -3244,6 +3266,7 @@ function diagnoseLocations(){
     msg+='  Skipped (item not matched): '+d.skippedNoItem+'\n';
     msg+='  Skipped (no quantity on line): '+d.skippedNoQty+'\n';
     msg+='  Skipped (unexpected error while processing): '+(d.docErrors||0)+'\n';
+    if(d.duplicatesRemoved) msg+='  Duplicate transactions removed (same line seen twice): '+d.duplicatesRemoved+'\n';
     if(d.serverErrors&&Object.keys(d.serverErrors).length){
       msg+='  SERVER FETCH ERRORS:\n';
       Object.keys(d.serverErrors).forEach(function(k){ msg+='    '+k+': '+d.serverErrors[k]+'\n'; });

@@ -2459,14 +2459,17 @@ function buildBalanceReport(){
     // Credit Card Processing Fees, Delivery Fee, Other Service and Products)
     // are pulled out to their own dedicated rows before any of the general
     // processing below (Discounts, Shipments/Credit Memos) has a chance to
-    // fold them in among regular items. "services" keeps its historical
-    // sign flip for return-type transactions (tested, working); the others
-    // are financial line items, not physical-goods returns, so they always
-    // count the same direction regardless of Invoice vs CreditMemo — same
-    // reasoning as the Discounts bucket further below.
+    // fold them in among regular items. The sign flips for return-type
+    // (CreditMemo) transactions, same as a real product return — verified
+    // directly against QuickBooks' own transaction-level detail export
+    // (Customer Credit Adjustment mixes Invoice lines with natural signed
+    // amounts and CreditMemo lines shown as positive "Sales price" that
+    // QuickBooks itself nets as a reduction); without this flip, quantities
+    // and dollar totals from CreditMemo-sourced lines add instead of
+    // netting against Invoice-sourced lines, producing the wrong total.
     var specialKey=specialItemIds[t.itemId];
     if(specialKey && (OUTFLOW[t.type]||t.type==='return')){
-      var spSign=(specialKey==='services' && t.type==='return')?-1:1;
+      var spSign=(t.type==='return')?-1:1;
       var spDept=(t.type==='return')?locDept(t.locIn):locDept(t.locOut);
       if(!matchesDept(spDept)) return;
       specialTotals[specialKey]+=spSign*v;
@@ -2570,8 +2573,8 @@ function buildBalanceReport(){
   // under Shipments, exactly as shown (matching signs), so the "Compare to
   // QuickBooks" box below can check against precisely what someone would
   // get by manually adding up the visible rows themselves.
-  var qbCompareTotal=(outflowGroups['shipment']||0) - creditMemoTotal - specialTotals['customer credit adjustment'] - discountTotal;
-  specialNames.forEach(function(k){ if(k!=='customer credit adjustment') qbCompareTotal+=specialTotals[k]; });
+  var qbCompareTotal=(outflowGroups['shipment']||0) - creditMemoTotal - discountTotal;
+  specialNames.forEach(function(k){ qbCompareTotal+=specialTotals[k]; });
   window.__lastReportSalesTotal=qbCompareTotal;
 
   // The grand total — everything that was on hand, plus everything added,
@@ -2794,11 +2797,10 @@ function buildBalanceReport(){
       // presented the same way QuickBooks presents it.
       var mergedTotal=0, mergedItems=[];
       specialNames.forEach(function(k){
-        var sign=(k==='customer credit adjustment')?-1:1;
-        mergedTotal+=sign*specialTotals[k];
+        mergedTotal+=specialTotals[k];
         Object.keys(specialItems[k]).forEach(function(id){
           var it=specialItems[k][id];
-          mergedItems.push({name:it.name, qty:sign*it.qty, value:sign*it.value, groupName:specialLabels[k]});
+          mergedItems.push({name:it.name, qty:it.qty, value:it.value, groupName:specialLabels[k]});
         });
       });
       html+=rowLineGrouped('rpt-out-mergedsvc','Other Service and Products',mergedTotal,'#c23b33',mergedItems);

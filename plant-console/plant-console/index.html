@@ -2814,7 +2814,7 @@ function buildBalanceReport(){
       // the visual language of "Other Services" above it) — this is display
       // only. discountTotal itself must stay positive internally, since
       // that's what's added to outflowTotal to correctly reduce the total.
-      html+=rowLine('rpt-out-discount','Discounts',-discountTotal,'#c23b33',discItems_);
+      html+=rowLine('rpt-out-discount','Not specified (Discounts)',-discountTotal,'#c23b33',discItems_);
     }
   });
   html+='<div style="display:flex;justify-content:space-between;padding:9px 0;font-weight:700;border-bottom:3px double var(--ink)"><span>Total subtractions</span><span style="font-family:var(--mono);color:#c23b33">'+money(outflowTotal)+'</span></div>';

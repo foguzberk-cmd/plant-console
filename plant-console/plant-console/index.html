@@ -2253,7 +2253,13 @@ function buildBalanceReport(){
       // Amount directly — this is what QB actually charged/recorded, and may
       // differ from qty × unitPrice when QB applies per-line discounts or
       // rounding. For manually-entered shipments, fall back to qty × price.
-      if(t.qbDoc && t.lineAmount){
+      // IMPORTANT: check for undefined specifically, not just truthiness —
+      // a genuine $0.00 QuickBooks line (e.g. a promotional/comp item sold
+      // for $0) is a real, valid captured amount, not "missing data." Using
+      // a plain truthiness check here treated 0 as falsy and silently fell
+      // through to qty × stored price, inventing revenue QuickBooks never
+      // actually recorded for that line.
+      if(t.qbDoc && t.lineAmount!==undefined && t.lineAmount!==null && t.lineAmount!==''){
         return Number(t.lineAmount);
       }
       var sale=(t.unitPrice!==undefined&&t.unitPrice!=='')?Number(t.unitPrice):0;
@@ -2265,7 +2271,9 @@ function buildBalanceReport(){
       // cost price. Service/fee items often have $0 cost in Plant Console, so
       // using cost price would make the credit memo reduce the total by $0
       // instead of its real value, causing Plant Console to run higher than QB.
-      if(t.qbDoc && t.lineAmount){
+      // Same undefined-check fix as the shipment branch above — a genuine
+      // $0.00 line is valid captured data, not "missing."
+      if(t.qbDoc && t.lineAmount!==undefined && t.lineAmount!==null && t.lineAmount!==''){
         return Number(t.lineAmount);
       }
       var retPrice=(t.unitPrice!==undefined&&t.unitPrice!=='')?Number(t.unitPrice):0;

@@ -869,13 +869,16 @@ async function saveTxns(){
   return ok;
 }
 async function retryTxnsSaveUntilConfirmed(){
-  for(var attempt=0;attempt<15;attempt++){
-    await new Promise(function(r){ setTimeout(r,4000); });
-    var ok=false;
-    _writeInFlight++;
-    try{ ok=await pushToServer(); }catch(e){ ok=false; }
-    finally{ _writeInFlight--; }
-    if(ok) return;
+  _writeInFlight++;
+  try{
+    for(var attempt=0;attempt<15;attempt++){
+      await new Promise(function(r){ setTimeout(r,4000); });
+      var ok=false;
+      try{ ok=await pushToServer(); }catch(e){ ok=false; }
+      if(ok) return;
+    }
+  } finally {
+    _writeInFlight--;
   }
 }
 // Same race-condition fix as saveTxns (see above) — without this, a new
@@ -900,13 +903,16 @@ async function saveUsers(){
   return ok;
 }
 async function retryUsersSaveUntilConfirmed(){
-  for(var attempt=0;attempt<15;attempt++){
-    await new Promise(function(r){ setTimeout(r,4000); });
-    var ok=false;
-    _writeInFlight++;
-    try{ ok=await pushToServer(); }catch(e){ ok=false; }
-    finally{ _writeInFlight--; }
-    if(ok) return;
+  _writeInFlight++;
+  try{
+    for(var attempt=0;attempt<15;attempt++){
+      await new Promise(function(r){ setTimeout(r,4000); });
+      var ok=false;
+      try{ ok=await pushToServer(); }catch(e){ ok=false; }
+      if(ok) return;
+    }
+  } finally {
+    _writeInFlight--;
   }
 }
 function saveSavedReports(){safeSetLocal('pc_savedreports',JSON.stringify(savedReports));pushToServer();}
@@ -1061,7 +1067,7 @@ async function pullFromServer(){
     if(Array.isArray(data.items)&&data.items.length) items=data.items;
     if(Array.isArray(data.transactions)&&data.transactions.length) transactions=data.transactions;
     if(Array.isArray(data.storages)&&data.storages.length) storages=data.storages;
-    if(Array.isArray(data.users)&&data.users.length) users=data.users;
+    if(Array.isArray(data.users)&&data.users.length) users=dedupeUsersByEmail(data.users);
     if(Array.isArray(data.savedReports)&&data.savedReports.length) savedReports=data.savedReports;
     if(Array.isArray(data.scaleLogs)&&data.scaleLogs.length){
       // The server is the single source of truth here: every write now goes
@@ -1172,6 +1178,23 @@ function unionById(local, remote){
   var missing=remote.filter(function(r){return r&&localIds.indexOf(r.id)<0;});
   return missing.length ? local.concat(missing) : local;
 }
+// Defensive dedup for users — two user records with the same email (case
+// insensitive) are always duplicates of the same person, never two
+// legitimate distinct accounts, since email is what's used to log in. This
+// catches any duplicate that predates the saveUser() duplicate-email check
+// (added later) or slipped in through any other path. Keeps the first
+// occurrence of each email.
+function dedupeUsersByEmail(arr){
+  if(!Array.isArray(arr)) return arr;
+  var seen={}, deduped=[];
+  arr.forEach(function(u){
+    var key=(u.email||'').trim().toLowerCase();
+    if(key && seen[key]) return; // drop duplicate
+    if(key) seen[key]=true;
+    deduped.push(u);
+  });
+  return deduped;
+}
 // All calls to pushToServer() are serialized through this chain. Without
 // this, two overlapping pushes (e.g. the background 4s timer plus an
 // explicit awaited push from printing a label) could complete OUT OF
@@ -1208,8 +1231,9 @@ async function _pushToServerImpl(){
       var smallRes=await fetchWithTimeout('/api/data/small?_ts='+Date.now(),{cache:'no-store',headers:{'Cache-Control':'no-cache, no-store, must-revalidate','Pragma':'no-cache'}});
       if(smallRes.ok){
         var smallData=await smallRes.json();
-        var newUsers=unionById(users, smallData.users);
-        if(newUsers!==users){ users=newUsers; safeSetLocal('pc_users',JSON.stringify(users)); }
+        var afterUnion=unionById(users, smallData.users);
+        var newUsers=dedupeUsersByEmail(afterUnion);
+        if(afterUnion!==users || newUsers.length!==afterUnion.length){ users=newUsers; safeSetLocal('pc_users',JSON.stringify(users)); }
         var mergedScaleLogs=unionById(scaleLogs, smallData.scaleLogs).filter(function(l){ return !_deletedScaleLogIds[l.id]; });
         scaleLogs=mergedScaleLogs; safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs));
         if(smallData.labelAllowed && typeof smallData.labelAllowed==='object' && !Array.isArray(smallData.labelAllowed)){
@@ -3962,18 +3986,23 @@ async function saveLabelingForDept(){
 // Mirrors retryLabelTemplateSaveUntilConfirmed — same pattern, different
 // element/message, for the product-allow-list save specifically.
 async function retryLabelAllowedSaveUntilConfirmed(dept){
-  for(var attempt=0;attempt<10;attempt++){
-    await new Promise(function(r){ setTimeout(r,3000); });
-    var ok=false;
-    try{ ok=await pushToServer(); }catch(e){ ok=false; }
-    if(ok){
-      var el=document.getElementById('lbl-save-status');
-      if(el && el.textContent.indexOf('could not confirm with the server')>=0){
-        el.textContent='Now confirmed on the server for '+dept+'.';
-        el.style.color='#0f6e40';
+  _writeInFlight++;
+  try{
+    for(var attempt=0;attempt<10;attempt++){
+      await new Promise(function(r){ setTimeout(r,3000); });
+      var ok=false;
+      try{ ok=await pushToServer(); }catch(e){ ok=false; }
+      if(ok){
+        var el=document.getElementById('lbl-save-status');
+        if(el && el.textContent.indexOf('could not confirm with the server')>=0){
+          el.textContent='Now confirmed on the server for '+dept+'.';
+          el.style.color='#0f6e40';
+        }
+        return;
       }
-      return;
     }
+  } finally {
+    _writeInFlight--;
   }
 }
 
@@ -4175,18 +4204,23 @@ async function saveCustomerAllowedForDept(){
 }
 // Mirrors retryLabelAllowedSaveUntilConfirmed — same pattern, different element/message.
 async function retryCustomerAllowedSaveUntilConfirmed(dept){
-  for(var attempt=0;attempt<10;attempt++){
-    await new Promise(function(r){ setTimeout(r,3000); });
-    var ok=false;
-    try{ ok=await pushToServer(); }catch(e){ ok=false; }
-    if(ok){
-      var el=document.getElementById('cust-save-status');
-      if(el && el.textContent.indexOf('could not confirm with the server')>=0){
-        el.textContent='Now confirmed on the server for '+dept+'.';
-        el.style.color='#0f6e40';
+  _writeInFlight++;
+  try{
+    for(var attempt=0;attempt<10;attempt++){
+      await new Promise(function(r){ setTimeout(r,3000); });
+      var ok=false;
+      try{ ok=await pushToServer(); }catch(e){ ok=false; }
+      if(ok){
+        var el=document.getElementById('cust-save-status');
+        if(el && el.textContent.indexOf('could not confirm with the server')>=0){
+          el.textContent='Now confirmed on the server for '+dept+'.';
+          el.style.color='#0f6e40';
+        }
+        return;
       }
-      return;
     }
+  } finally {
+    _writeInFlight--;
   }
 }
 async function qbSyncCustomers(){
@@ -4599,18 +4633,23 @@ function resetLabelLayoutFonts(){
 // specifically — targets the correct status element (#ltSaveStatus) and
 // message format rather than misusing the scale-log-specific one.
 async function retryLabelTemplateSaveUntilConfirmed(dept){
-  for(var attempt=0;attempt<10;attempt++){
-    await new Promise(function(r){ setTimeout(r,3000); });
-    var ok=false;
-    try{ ok=await pushToServer(); }catch(e){ ok=false; }
-    if(ok){
-      var el=document.getElementById('ltSaveStatus');
-      if(el && el.textContent.indexOf('could not confirm with the server')>=0){
-        el.textContent='Layout now confirmed on the server for '+dept+'.';
-        el.style.color='#0f6e40';
+  _writeInFlight++;
+  try{
+    for(var attempt=0;attempt<10;attempt++){
+      await new Promise(function(r){ setTimeout(r,3000); });
+      var ok=false;
+      try{ ok=await pushToServer(); }catch(e){ ok=false; }
+      if(ok){
+        var el=document.getElementById('ltSaveStatus');
+        if(el && el.textContent.indexOf('could not confirm with the server')>=0){
+          el.textContent='Layout now confirmed on the server for '+dept+'.';
+          el.style.color='#0f6e40';
+        }
+        return;
       }
-      return;
     }
+  } finally {
+    _writeInFlight--;
   }
 }
 async function saveLabelLayout(){

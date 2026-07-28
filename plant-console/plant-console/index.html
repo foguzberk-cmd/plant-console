@@ -2666,12 +2666,12 @@ function buildBalanceReport(){
             +'<svg id="'+catId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;stroke:var(--cold);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
             +esc(g)+(cm&&cm.total?' <span style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(net of credit memos)</span>':'')+'</span><span>'+money(netTotal)+'</span></div>'
         +'<div id="'+catId+'" style="display:none">'
+          +cmLine
           +items.map(function(b){
             return '<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0 6px 30px;font-size:12px;color:var(--muted);border-bottom:1px dashed var(--line)">'
               +'<span>'+esc(b.name)+'</span>'
               +'<span style="font-family:var(--mono);white-space:nowrap">'+Number(b.qty).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+' &nbsp;·&nbsp; '+money(b.value)+'</span></div>';
           }).join('')
-          +cmLine
         +'</div></div>';
     }).join('');
   }

@@ -1445,7 +1445,7 @@ async function doSync(incremental){
   // 2. Sync documents (incremental fetches only changed since last sync)
   if(status)status.textContent='Step 2/3 — syncing bills, invoices & credit memos…';
   showSyncProgress(50,'Step 2 of 3 — fetching documents…');
-  var docLabels={Bill:'bills',Invoice:'invoices',SalesReceipt:'sales receipts',CreditMemo:'credit memos'};
+  var docLabels={Bill:'bills',Invoice:'invoices',SalesReceipt:'sales receipts',CreditMemo:'credit memos',VendorCredit:'vendor credits'};
   var docsResult=await qbSyncDocumentsCore(function(typeName,idx,total,runningCount){
     if(typeName==='__processing__'){
       if(total>0 && runningCount!==null){
@@ -1707,8 +1707,8 @@ function earliestOpeningDate(){
 async function qbSyncDocumentsCore(onProgress, since){
   var base=window.location.origin;
   var sinceParam = since ? ('&since='+encodeURIComponent(since)) : '';
-  var types=['Bill','Invoice','SalesReceipt','CreditMemo'];
-  var data={Bill:[],Invoice:[],SalesReceipt:[],CreditMemo:[],errors:{}};
+  var types=['Bill','Invoice','SalesReceipt','CreditMemo','VendorCredit'];
+  var data={Bill:[],Invoice:[],SalesReceipt:[],CreditMemo:[],VendorCredit:[],errors:{}};
 
   for(var ti=0;ti<types.length;ti++){
     var t=types[ti];
@@ -1764,12 +1764,15 @@ async function finishDocSync(data, onProgress){
   items.forEach(function(it){ if(it.qbId) byQbId[it.qbId]=it; });
 
   // Map each QB doc type to a transaction type and direction
-  // Bill = purchase IN (receive). Invoice & SalesReceipt = sold OUT (shipment). CreditMemo = returned IN (return).
+  // Bill = purchase IN (receive). Invoice & SalesReceipt = sold OUT (shipment).
+  // CreditMemo = returned IN (return). VendorCredit = a credit FROM a vendor,
+  // reducing what was purchased — the purchasing-side mirror of CreditMemo.
   var docConfig=[
     {key:'Bill', txnType:'receive', sign:1, numPrefix:'BILL'},
     {key:'Invoice', txnType:'shipment', sign:-1, numPrefix:'INV'},
     {key:'SalesReceipt', txnType:'shipment', sign:-1, numPrefix:'SR'},
-    {key:'CreditMemo', txnType:'return', sign:1, numPrefix:'CM'}
+    {key:'CreditMemo', txnType:'return', sign:1, numPrefix:'CM'},
+    {key:'VendorCredit', txnType:'vendor_credit', sign:-1, numPrefix:'VC'}
   ];
 
   // Remove previously-synced QB docs so re-syncing doesn't double-count.
@@ -1778,7 +1781,7 @@ async function finishDocSync(data, onProgress){
   // in THIS batch (changed docs), so unchanged history is preserved.
   if(window.__incrementalSync){
     var incomingDocIds={};
-    ['Bill','Invoice','SalesReceipt','CreditMemo'].forEach(function(k){
+    ['Bill','Invoice','SalesReceipt','CreditMemo','VendorCredit'].forEach(function(k){
       (data[k]||[]).forEach(function(doc){ incomingDocIds[k+'_'+doc.Id]=true; });
     });
     transactions=transactions.filter(function(t){
@@ -2005,7 +2008,8 @@ async function finishDocSync(data, onProgress){
     Bill:(data.Bill||[]).length,
     Invoice:(data.Invoice||[]).length,
     SalesReceipt:(data.SalesReceipt||[]).length,
-    CreditMemo:(data.CreditMemo||[]).length
+    CreditMemo:(data.CreditMemo||[]).length,
+    VendorCredit:(data.VendorCredit||[]).length
   };
   // Stash a diagnostic snapshot for the Check button
   window.__lastDocSync={
@@ -2304,6 +2308,17 @@ function buildBalanceReport(){
       if(!retPrice && fi) retPrice=Number(fi.price||fi.cost||0);
       return q*retPrice;
     }
+    if(t.type==='vendor_credit'){
+      // Same reasoning as shipment/return above — use QuickBooks' actual
+      // recorded line Amount, checking for undefined specifically (not just
+      // truthiness) so a genuine $0.00 line isn't mistaken for missing data.
+      if(t.qbDoc && t.lineAmount!==undefined && t.lineAmount!==null && t.lineAmount!==''){
+        return Number(t.lineAmount);
+      }
+      var vcPrice=(t.unitPrice!==undefined&&t.unitPrice!=='')?Number(t.unitPrice):0;
+      if(!vcPrice && fi) vcPrice=Number(fi.price||fi.cost||0);
+      return q*vcPrice;
+    }
     // cost basis for opening, receive, production, physical count, transfer
     var cost=fi?Number(fi.cost||0):0;
     if(!cost){
@@ -2447,6 +2462,9 @@ function buildBalanceReport(){
   // directly against QuickBooks' own credit memo total.
   var creditMemoTotal=0;
   var creditMemoItems={};
+  // Vendor Credits — purchasing-side mirror of Credit Memos.
+  var vendorCreditTotal=0;
+  var vendorCreditItems={};
   var pcPosItems={}, pcNegItems={};
   var trInItems={}, trOutItems={};
 
@@ -2568,6 +2586,17 @@ function buildBalanceReport(){
       if(!creditMemoItems[t.itemId]) creditMemoItems[t.itemId]={name:nm,qty:0,value:0};
       creditMemoItems[t.itemId].qty+=q;
       creditMemoItems[t.itemId].value+=v;
+    } else if(t.type==='vendor_credit'){
+      // Vendor Credits — the purchasing-side mirror of Customer Credit
+      // Memos. A credit issued BY a vendor reduces what was actually
+      // purchased, so (same reasoning as Credit Memos above) this is its
+      // own separate row rather than netted into Receivings/Purchases,
+      // folded into inflowTotal on its own below.
+      if(!matchesDept(locDept(t.locIn))) return;
+      vendorCreditTotal+=v;
+      if(!vendorCreditItems[t.itemId]) vendorCreditItems[t.itemId]={name:nm,qty:0,value:0};
+      vendorCreditItems[t.itemId].qty+=q;
+      vendorCreditItems[t.itemId].value+=v;
     } else if(OUTFLOW[t.type]){
       if(!matchesDept(locDept(t.locOut))) return;
       outflowGroups[t.type]=(outflowGroups[t.type]||0)+v;
@@ -2622,6 +2651,9 @@ function buildBalanceReport(){
   // Credit Memos is now a fully separate subtraction (no longer netted into
   // Shipments above), so it needs its own fold-in here too.
   outflowTotal+=creditMemoTotal;
+  // Vendor Credits reduce net purchases — subtract from inflowTotal (the
+  // purchasing-side mirror of how Credit Memos reduce the sales side above).
+  inflowTotal-=vendorCreditTotal;
 
   // The QuickBooks-comparable sales total — the sum of every row displayed
   // under Shipments, exactly as shown (matching signs), so the "Compare to
@@ -2819,7 +2851,27 @@ function buildBalanceReport(){
   inKeys.forEach(function(k){
     var items_=Object.keys(inflowItems[k]||{}).map(function(id){return inflowItems[k][id];}).sort(function(a,b){return b.value-a.value;});
     html+=rowLine('rpt-in-'+k, labelMap[k]||k, inflowGroups[k], '#0f6e40', items_);
+    if(k==='receive'){
+      // Always visible (even at $0) — the purchasing-side mirror of
+      // Customer Credit Memos, shown right after Receivings/Purchases so
+      // it's easy to compare against QuickBooks' own vendor credit figure.
+      var vcItems_=Object.keys(vendorCreditItems).map(function(id){
+        var it=vendorCreditItems[id];
+        return {name:it.name, qty:it.qty, value:-it.value}; // negative for display — it's a reduction
+      });
+      html+=rowLine('rpt-in-vendorcredit','Vendor Credits (−)',-vendorCreditTotal,'#c23b33',vcItems_);
+    }
   });
+  // Safety net: if there were zero regular Receivings transactions this
+  // period (so 'receive' never appeared in inKeys above) but Vendor
+  // Credits still exist, show the row anyway rather than silently hiding it.
+  if(inKeys.indexOf('receive')<0){
+    var vcItems2_=Object.keys(vendorCreditItems).map(function(id){
+      var it=vendorCreditItems[id];
+      return {name:it.name, qty:it.qty, value:-it.value};
+    });
+    html+=rowLine('rpt-in-vendorcredit','Vendor Credits (−)',-vendorCreditTotal,'#c23b33',vcItems2_);
+  }
   html+='<div style="display:flex;justify-content:space-between;padding:9px 0;font-weight:700"><span>Total additions</span><span style="font-family:var(--mono);color:#0f6e40">'+money(inflowTotal)+'</span></div>';
 
   // Outflows
@@ -3305,7 +3357,7 @@ function diagnoseLocations(){
   if(!d){
     msg+='  No sync run this session. Click "Sync from QuickBooks", then Check again.\n';
   } else {
-    msg+='  Returned: '+d.docCounts.Bill+' bills, '+d.docCounts.Invoice+' invoices, '+d.docCounts.SalesReceipt+' sales receipts, '+d.docCounts.CreditMemo+' credit memos\n';
+    msg+='  Returned: '+d.docCounts.Bill+' bills, '+d.docCounts.Invoice+' invoices, '+d.docCounts.SalesReceipt+' sales receipts, '+d.docCounts.CreditMemo+' credit memos, '+(d.docCounts.VendorCredit||0)+' vendor credits\n';
     msg+='  Item lines seen: '+d.lineItemsSeen+'\n';
     msg+='  Movements added: '+d.added+'\n';
     msg+='  Skipped (item not matched): '+d.skippedNoItem+'\n';
@@ -3355,7 +3407,7 @@ function diagnoseLocationsOLD(){
   if(!d){
     msg+='  No document sync run yet this session. Click "Sync from QuickBooks".\n';
   } else {
-    msg+='  Documents pulled: '+d.docCounts.Bill+' bills, '+d.docCounts.Invoice+' invoices, '+d.docCounts.SalesReceipt+' sales receipts, '+d.docCounts.CreditMemo+' credit memos\n';
+    msg+='  Documents pulled: '+d.docCounts.Bill+' bills, '+d.docCounts.Invoice+' invoices, '+d.docCounts.SalesReceipt+' sales receipts, '+d.docCounts.CreditMemo+' credit memos, '+(d.docCounts.VendorCredit||0)+' vendor credits\n';
     msg+='  Item lines seen: '+d.lineItemsSeen+'\n';
     msg+='  Movements added: '+d.added+'\n';
     msg+='  Skipped (item not matched): '+d.skippedNoItem+'\n';

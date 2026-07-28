@@ -2633,12 +2633,15 @@ function buildBalanceReport(){
     var names=Object.keys(groups).sort(function(a,b2){
       if(a==='Ungrouped') return 1;
       if(b2==='Ungrouped') return -1;
-      return groups[b2].total-groups[a].total; // biggest category first, matching QB's typical ordering
+      var netA=groups[a].total-((cmByCategory&&cmByCategory[a]&&cmByCategory[a].total)||0);
+      var netB=groups[b2].total-((cmByCategory&&cmByCategory[b2]&&cmByCategory[b2].total)||0);
+      return netB-netA; // biggest (net) category first, matching QB's typical ordering
     });
     return names.map(function(g,gi){
       var items=groups[g].items.sort(function(a,b2){return b2.value-a.value;});
       var catId=(parentId||'rpt-cat')+'-'+gi;
       var cm=cmByCategory&&cmByCategory[g];
+      var netTotal=groups[g].total-(cm?cm.total:0);
       // Credit Memos for this specific category, shown as a (−) sub-line
       // right after its items — same total already netted into the
       // standalone "Customer Credit Memos" row elsewhere, just broken out
@@ -2653,7 +2656,7 @@ function buildBalanceReport(){
         +'<div onclick="toggleReportRow(\''+catId+'\')" style="cursor:pointer;padding:7px 0 3px 22px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--cold);border-bottom:1px solid var(--cold-soft);display:flex;justify-content:space-between;align-items:center">'
           +'<span style="display:flex;align-items:center;gap:6px">'
             +'<svg id="'+catId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;stroke:var(--cold);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
-            +esc(g)+'</span><span>'+money(groups[g].total)+'</span></div>'
+            +esc(g)+(cm&&cm.total?' <span style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(net of credit memos)</span>':'')+'</span><span>'+money(netTotal)+'</span></div>'
         +'<div id="'+catId+'" style="display:none">'
           +items.map(function(b){
             return '<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0 6px 30px;font-size:12px;color:var(--muted);border-bottom:1px dashed var(--line)">'

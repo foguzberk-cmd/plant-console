@@ -1820,7 +1820,51 @@ async function finishDocSync(data, onProgress){
       // objects: SalesItemLineDetail (invoice/salesreceipt/creditmemo),
       // ItemBasedExpenseLineDetail (bill). Some bills use AccountBasedExpenseLineDetail (skip).
       var detail=line.SalesItemLineDetail||line.ItemBasedExpenseLineDetail||line.ItemLineDetail;
-      if(!detail||!detail.ItemRef) continue;
+      if(!detail||!detail.ItemRef){
+        // Account-coded lines (AccountBasedExpenseLineDetail) have no
+        // ItemRef at all — they're coded straight to an account (e.g.
+        // "Inventory Asset") rather than a specific product. These were
+        // previously silently skipped with zero visibility, which is
+        // exactly what caused a real Vendor Credit to go missing entirely.
+        // Captured here as a synthetic, item-less transaction (same idea as
+        // the __discount__ bucket for sales-side discount lines) so the
+        // dollar impact isn't invisibly lost.
+        if((cfg.key==='Bill'||cfg.key==='VendorCredit') && line.AccountBasedExpenseLineDetail){
+          var acctAmt=Number(line.Amount||0);
+          if(acctAmt){
+            var acctDetail=line.AccountBasedExpenseLineDetail;
+            var acctName=(acctDetail.AccountRef&&acctDetail.AccountRef.name)||'Uncategorized';
+            var aDocDate=doc.TxnDate||'';
+            var aCreateTime=(doc.MetaData&&doc.MetaData.CreateTime)||'';
+            var aTimeStr='';
+            if(aCreateTime){
+              var act=new Date(aCreateTime);
+              if(!isNaN(act.getTime())){
+                aTimeStr=String(act.getHours()).padStart(2,'0')+':'+String(act.getMinutes()).padStart(2,'0');
+              }
+            }
+            var aDocNum=doc.DocNumber||doc.Id;
+            var aAccount=(doc.VendorRef&&doc.VendorRef.name)||'';
+            transactions.push({
+              id:'qb_'+cfg.key+'_'+doc.Id+'_acctline'+li,
+              qbDoc:true, qbDocType:cfg.key,
+              num:cfg.numPrefix+'-'+aDocNum,
+              date:aDocDate, time:aTimeStr,
+              createTime:aCreateTime,
+              type:cfg.txnType,
+              itemId:'__acct_'+cfg.key.toLowerCase()+'__',
+              qty:1, unit:'',
+              unitPrice:0,
+              lineAmount:acctAmt,
+              account:aAccount,
+              locOut:'', locIn:'',
+              desc:cfg.key+' '+aDocNum+' ('+acctName+')'+(aAccount?' · '+aAccount:'')
+            });
+            added++;
+          }
+        }
+        continue;
+      }
       lineItemsSeen++;
       var qbItemId=detail.ItemRef.value;
       var local=byQbId[qbItemId];

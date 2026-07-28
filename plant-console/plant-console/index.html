@@ -2829,16 +2829,6 @@ function buildBalanceReport(){
     // Show "Other Services" immediately after the Shipments row — always
     // visible so you can compare it against QB even when the amount is $0.00
     if(k==='shipment'){
-      // Always visible (even at $0) — a direct, separate look at the total
-      // credited back via Credit Memos, for comparing against QuickBooks'
-      // own credit memo figure. This does NOT double-count: the amount is
-      // already netted into the Shipments row above (unchanged), this is
-      // just a visible breakout of that same netting.
-      var cmItems_=Object.keys(creditMemoItems).map(function(k2){
-        var it=creditMemoItems[k2];
-        return {name:it.name, qty:it.qty, value:-it.value}; // negative for display, same convention as Discounts
-      });
-      html+=rowLine('rpt-out-creditmemo','Customer Credit Memos (−)',-creditMemoTotal,'#c23b33',cmItems_);
       // Merged into ONE combined row — matching QuickBooks' own collapsed
       // Sales-by-Product/Service view, where Services, Customer Credit
       // Adjustment, Credit Card Processing Fees, Delivery Fee, and Other

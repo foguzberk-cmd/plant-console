@@ -2363,7 +2363,27 @@ function buildBalanceReport(){
       if(!vcPrice && fi) vcPrice=Number(fi.price||fi.cost||0);
       return q*vcPrice;
     }
-    // cost basis for opening, receive, production, physical count, transfer
+    if(t.type==='receive'){
+      // Same reasoning as shipment/return/vendor_credit above — use
+      // QuickBooks' actual recorded line Amount for synced Bills, instead
+      // of falling back to the item's CURRENTLY stored cost. This was a
+      // significant, longstanding gap: every Bill synced from QuickBooks
+      // was silently using today's stored cost instead of what was
+      // actually invoiced on that specific historical bill — only correct
+      // by coincidence when the two happened to match, and always wrong
+      // (typically $0) for account-coded lines with no matching item at
+      // all. Checks for undefined specifically, not just truthiness, so a
+      // genuine $0.00 line isn't mistaken for missing data.
+      if(t.qbDoc && t.lineAmount!==undefined && t.lineAmount!==null && t.lineAmount!==''){
+        return Number(t.lineAmount);
+      }
+      var rcvCost=fi?Number(fi.cost||0):0;
+      if(!rcvCost){
+        rcvCost=(t.unitPrice!==undefined&&t.unitPrice!=='')?Number(t.unitPrice):0;
+      }
+      return q*rcvCost;
+    }
+    // cost basis for opening, production, physical count, transfer
     var cost=fi?Number(fi.cost||0):0;
     if(!cost){
       cost=(t.unitPrice!==undefined&&t.unitPrice!=='')?Number(t.unitPrice):0;

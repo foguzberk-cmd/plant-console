@@ -2749,7 +2749,8 @@ function buildBalanceReport(){
   // with a subtotal per category — mirrors QuickBooks' own category-grouped
   // Sales-by-Product/Service view, so the Shipments breakdown here can be
   // compared category-by-category directly against that QuickBooks report.
-  function detailRowsGrouped(arr,parentId,cmByCategory){
+  function detailRowsGrouped(arr,parentId,cmByCategory,cmLabel){
+    cmLabel=cmLabel||'Credit Memos';
     if(!arr||!arr.length) return '<div style="padding:7px 0 7px 22px;font-size:11.5px;color:var(--muted)">No line-level detail for this period.</div>';
     var groups={};
     arr.forEach(function(b){
@@ -2777,14 +2778,14 @@ function buildBalanceReport(){
       // without having to cross-reference a separate combined row.
       var cmLine=(cm&&cm.total)?(
         '<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0 6px 30px;font-size:12px;color:#c23b33;font-weight:600;border-bottom:1px dashed var(--line)">'
-          +'<span>Credit Memos (−)</span>'
+          +'<span>'+esc(cmLabel)+' (−)</span>'
           +'<span style="font-family:var(--mono);white-space:nowrap">'+money(-cm.total)+'</span></div>'
       ):'';
       return '<div>'
         +'<div onclick="toggleReportRow(\''+catId+'\')" style="cursor:pointer;padding:7px 0 3px 22px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--cold);border-bottom:1px solid var(--cold-soft);display:flex;justify-content:space-between;align-items:center">'
           +'<span style="display:flex;align-items:center;gap:6px">'
             +'<svg id="'+catId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;stroke:var(--cold);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
-            +esc(g)+(cm&&cm.total?' <span style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(net of credit memos)</span>':'')+'</span><span>'+money(netTotal)+'</span></div>'
+            +esc(g)+(cm&&cm.total?' <span style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(net of '+esc(cmLabel.toLowerCase())+')</span>':'')+'</span><span>'+money(netTotal)+'</span></div>'
         +'<div id="'+catId+'" style="display:none">'
           +cmLine
           +items.map(function(b){
@@ -2795,14 +2796,14 @@ function buildBalanceReport(){
         +'</div></div>';
     }).join('');
   }
-  function rowLineGrouped(id,label,val,color,breakdownArr,cmByCategory){
+  function rowLineGrouped(id,label,val,color,breakdownArr,cmByCategory,cmLabel){
     return '<div style="border-bottom:1px solid var(--line)">'
       +'<div onclick="toggleReportRow(\''+id+'\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:8px 0">'
         +'<span style="font-size:13px;display:flex;align-items:center;gap:6px">'
           +'<svg id="'+id+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
           +label+'</span>'
         +'<span style="font-family:var(--mono);font-size:13px;font-weight:600;'+(color?'color:'+color:'')+'">'+money(val)+'</span></div>'
-      +'<div id="'+id+'" style="display:none;padding-bottom:4px">'+detailRowsGrouped(breakdownArr,id,cmByCategory)+'</div>'
+      +'<div id="'+id+'" style="display:none;padding-bottom:4px">'+detailRowsGrouped(breakdownArr,id,cmByCategory,cmLabel)+'</div>'
     +'</div>';
   }
   function rowLine(id,label,val,color,breakdownArr){
@@ -2913,8 +2914,28 @@ function buildBalanceReport(){
   var inKeys=Object.keys(inflowGroups);
   if(!inKeys.length) html+='<div style="font-size:12px;color:var(--muted);padding:8px 0;border-bottom:1px solid var(--line)">No additions in this period.</div>';
   inKeys.forEach(function(k){
-    var items_=Object.keys(inflowItems[k]||{}).map(function(id){return inflowItems[k][id];}).sort(function(a,b){return b.value-a.value;});
-    html+=rowLine('rpt-in-'+k, labelMap[k]||k, inflowGroups[k], '#0f6e40', items_);
+    var items_=Object.keys(inflowItems[k]||{}).map(function(id){
+      var it=inflowItems[k][id];
+      if(k!=='receive') return it;
+      var fi=items.find(function(x){return x.id===id;});
+      return {name:it.name, qty:it.qty, value:it.value, groupName:(fi&&fi.groupName)||''};
+    }).sort(function(a,b){return b.value-a.value;});
+    if(k==='receive'){
+      // Same category grouping as Shipments (biggest category first, each
+      // one independently collapsible), so Purchases can be compared
+      // against QuickBooks' own categories the same way Sales can.
+      var vcByCategory={};
+      Object.keys(vendorCreditItems).forEach(function(id){
+        var it=vendorCreditItems[id];
+        var fi=items.find(function(x){return x.id===id;});
+        var g=(fi&&fi.groupName)||'Ungrouped';
+        if(!vcByCategory[g]) vcByCategory[g]={total:0};
+        vcByCategory[g].total+=it.value;
+      });
+      html+=rowLineGrouped('rpt-in-'+k, labelMap[k]||k, inflowGroups[k], '#0f6e40', items_, vcByCategory, 'Vendor Credits');
+    } else {
+      html+=rowLine('rpt-in-'+k, labelMap[k]||k, inflowGroups[k], '#0f6e40', items_);
+    }
     if(k==='receive'){
       // Always visible (even at $0) — the purchasing-side mirror of
       // Customer Credit Memos, shown right after Receivings/Purchases so

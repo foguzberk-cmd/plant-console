@@ -1852,7 +1852,7 @@ async function finishDocSync(data, onProgress){
               date:aDocDate, time:aTimeStr,
               createTime:aCreateTime,
               type:cfg.txnType,
-              itemId:'__acct_'+cfg.key.toLowerCase()+'__',
+              itemId:'__acct_'+cfg.key.toLowerCase()+'_'+doc.Id+'_'+li+'__',
               qty:1, unit:'',
               unitPrice:0,
               lineAmount:acctAmt,

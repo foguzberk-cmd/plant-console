@@ -1834,6 +1834,18 @@ async function finishDocSync(data, onProgress){
           if(acctAmt){
             var acctDetail=line.AccountBasedExpenseLineDetail;
             var acctName=(acctDetail.AccountRef&&acctDetail.AccountRef.name)||'Uncategorized';
+            // Only genuinely inventory/purchasing-related accounts belong in
+            // Receivings/Purchases — obvious general operating expenses
+            // (repairs, tolls, fuel, rent, etc.) get billed through the same
+            // Bill/VendorCredit document types in QuickBooks but have
+            // nothing to do with inventory, so they're filtered out here
+            // rather than inflating the purchases total with unrelated costs.
+            var acctNameLower=acctName.toLowerCase();
+            var NON_INVENTORY_KEYWORDS=['repair','maintenance','logistics','toll','fuel','parking','rent','utilit','insurance','office','payroll','travel','advertising','bank charge','legal','professional fee','software','subscription','telephone','internet','meals','entertainment'];
+            var isNonInventory=NON_INVENTORY_KEYWORDS.some(function(kw){ return acctNameLower.indexOf(kw)>=0; });
+            if(isNonInventory) acctAmt=0; // treat as if there's nothing to capture
+          }
+          if(acctAmt){
             var aDocDate=doc.TxnDate||'';
             var aCreateTime=(doc.MetaData&&doc.MetaData.CreateTime)||'';
             var aTimeStr='';

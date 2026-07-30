@@ -2309,8 +2309,15 @@ function buildBalanceReport(){
     var loc=storages.find(function(s){return s.id===locId;});
     return loc?loc.department:undefined;
   }
-  function matchesDept(dept){
-    if(!deptSel) return true; // All departments: everything counts
+  function matchesDept(dept, groupName){
+    if(!deptSel) return true; // All departments: shows everything combined, unaffected by the Boxed Meats rule below
+    var isBoxedMeats=groupName && groupName.trim().toUpperCase()==='BOXED MEATS';
+    // Boxed Meats items belong exclusively to Resale Box for reporting
+    // purposes, regardless of which department their actual storage
+    // location is assigned to — they count under Resale Box only, and are
+    // excluded from whichever department they'd otherwise have matched.
+    if(deptSel==='Resale Box') return isBoxedMeats || dept===deptSel;
+    if(isBoxedMeats) return false;
     if(deptSel==='__none__') return !dept;
     return dept===deptSel;
   }
@@ -2646,7 +2653,7 @@ function buildBalanceReport(){
     }
 
     if(INFLOW[t.type]){
-      if(!matchesDept(locDept(t.locIn))) return;
+      if(!matchesDept(locDept(t.locIn), fi&&fi.groupName)) return;
       inflowGroups[t.type]=(inflowGroups[t.type]||0)+v;
       inflowTotal+=v;
       if(!inflowItems[t.type][t.itemId]) inflowItems[t.type][t.itemId]={name:nm,qty:0,value:0};
@@ -2657,7 +2664,7 @@ function buildBalanceReport(){
       // netted in) — Shipments shows gross invoiced sales, and this bucket
       // is its own real subtraction, folded into outflowTotal on its own
       // (see where outflowTotal is finalized below).
-      if(!matchesDept(locDept(t.locIn))) return;
+      if(!matchesDept(locDept(t.locIn), fi&&fi.groupName)) return;
       creditMemoTotal+=v;
       if(!creditMemoItems[t.itemId]) creditMemoItems[t.itemId]={name:nm,qty:0,value:0};
       creditMemoItems[t.itemId].qty+=q;
@@ -2674,7 +2681,7 @@ function buildBalanceReport(){
       vendorCreditItems[t.itemId].qty+=q;
       vendorCreditItems[t.itemId].value+=v;
     } else if(OUTFLOW[t.type]){
-      if(!matchesDept(locDept(t.locOut))) return;
+      if(!matchesDept(locDept(t.locOut), fi&&fi.groupName)) return;
       outflowGroups[t.type]=(outflowGroups[t.type]||0)+v;
       outflowTotal+=v;
       if(!outflowItems[t.type][t.itemId]) outflowItems[t.type][t.itemId]={name:nm,qty:0,value:0};

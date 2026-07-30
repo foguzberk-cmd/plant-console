@@ -2938,22 +2938,30 @@ function buildBalanceReport(){
       // Same category grouping as Shipments (biggest category first, each
       // one independently collapsible), so Purchases can be compared
       // against QuickBooks' own categories the same way Sales can.
+      // Vendor Credits can't be reliably attributed to a specific
+      // department (they're often account-coded with no location info at
+      // all), so they only ever show on the All Departments view — an
+      // empty object here means no per-category sub-lines appear when a
+      // specific department is selected.
       var vcByCategory={};
-      Object.keys(vendorCreditItems).forEach(function(id){
-        var it=vendorCreditItems[id];
-        var fi=items.find(function(x){return x.id===id;});
-        var g=(fi&&fi.groupName)||'Ungrouped';
-        if(!vcByCategory[g]) vcByCategory[g]={total:0};
-        vcByCategory[g].total+=it.value;
-      });
+      if(!deptSel){
+        Object.keys(vendorCreditItems).forEach(function(id){
+          var it=vendorCreditItems[id];
+          var fi=items.find(function(x){return x.id===id;});
+          var g=(fi&&fi.groupName)||'Ungrouped';
+          if(!vcByCategory[g]) vcByCategory[g]={total:0};
+          vcByCategory[g].total+=it.value;
+        });
+      }
       html+=rowLineGrouped('rpt-in-'+k, labelMap[k]||k, inflowGroups[k], '#0f6e40', items_, vcByCategory, 'Vendor Credits');
     } else {
       html+=rowLine('rpt-in-'+k, labelMap[k]||k, inflowGroups[k], '#0f6e40', items_);
     }
-    if(k==='receive'){
+    if(k==='receive' && !deptSel){
       // Always visible (even at $0) — the purchasing-side mirror of
       // Customer Credit Memos, shown right after Receivings/Purchases so
       // it's easy to compare against QuickBooks' own vendor credit figure.
+      // Only shown on All Departments — see reasoning above.
       var vcItems_=Object.keys(vendorCreditItems).map(function(id){
         var it=vendorCreditItems[id];
         return {name:it.name, qty:it.qty, value:-it.value}; // negative for display — it's a reduction
@@ -2964,7 +2972,8 @@ function buildBalanceReport(){
   // Safety net: if there were zero regular Receivings transactions this
   // period (so 'receive' never appeared in inKeys above) but Vendor
   // Credits still exist, show the row anyway rather than silently hiding it.
-  if(inKeys.indexOf('receive')<0){
+  // Still only on All Departments, same restriction as above.
+  if(inKeys.indexOf('receive')<0 && !deptSel){
     var vcItems2_=Object.keys(vendorCreditItems).map(function(id){
       var it=vendorCreditItems[id];
       return {name:it.name, qty:it.qty, value:-it.value};

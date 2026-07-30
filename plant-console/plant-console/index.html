@@ -2234,6 +2234,7 @@ function renderReports(){
         +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">To</label>'
         +'<input type="date" id="coll-to" value="'+today+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
         +'<button class="btn btn-primary" onclick="runCollectionReport()">Pull from QuickBooks</button>'
+        +'<button class="btn" onclick="diagnoseSalesRepField()" title="Shows the actual custom field names QuickBooks has on your customers">Diagnose Sales Rep field</button>'
       +'</div>'
       +'<div id="coll-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'<div id="coll-body"></div>'
@@ -2243,6 +2244,64 @@ function renderReports(){
 }
 // Switches between the two Reports sub-tabs without re-rendering the whole
 // page (so neither report's inputs/state get reset when switching back).
+// Diagnostic: directly inspects the raw CustomField data QuickBooks sends
+// back on Customer records, so we can see the EXACT field name/values being
+// used for Sales Rep instead of guessing at name-matching logic.
+async function diagnoseSalesRepField(){
+  var statusEl=document.getElementById('coll-status');
+  var bodyEl=document.getElementById('coll-body');
+  if(statusEl){ statusEl.textContent='Fetching raw customer data from QuickBooks…'; statusEl.style.color=''; }
+  if(bodyEl) bodyEl.innerHTML='';
+  var base=window.location.origin;
+  var resp;
+  try{ resp=await fetch(base+'/api/qb/customers'); }
+  catch(e){ if(statusEl){ statusEl.textContent='Network error.'; statusEl.style.color='#c0392b'; } return; }
+  var data;
+  try{ data=await resp.json(); }catch(e){ data={}; }
+  var qbCustomers=(data.QueryResponse&&data.QueryResponse.Customer)||[];
+  if(!qbCustomers.length){
+    if(statusEl){ statusEl.textContent='No customers returned from QuickBooks.'; statusEl.style.color='#c0392b'; }
+    return;
+  }
+  // Collect every distinct custom field name seen, with a couple of sample
+  // values for each, plus a few customers that have NO custom fields at all
+  // (so we know whether the field is simply missing on some records).
+  var fieldSamples={}; // name -> [{customer, value}]
+  var noCustomFieldCount=0;
+  qbCustomers.forEach(function(qc){
+    var fields=qc.CustomField||[];
+    if(!fields.length){ noCustomFieldCount++; return; }
+    fields.forEach(function(f){
+      var name=f.Name||'(unnamed field)';
+      var val=f.StringValue!==undefined?f.StringValue:JSON.stringify(f);
+      if(!fieldSamples[name]) fieldSamples[name]=[];
+      if(fieldSamples[name].length<5){
+        fieldSamples[name].push({customer:(qc.DisplayName||qc.Id),value:val});
+      }
+    });
+  });
+  var names=Object.keys(fieldSamples);
+  var html='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px">';
+  html+='<div style="font-weight:700;margin-bottom:10px">Checked '+qbCustomers.length+' customer(s) from QuickBooks</div>';
+  if(!names.length){
+    html+='<div style="color:var(--muted);font-size:13px">None of them have ANY custom fields set at all — "Sales Rep" is likely tracked some other way in your QuickBooks (e.g. a dedicated built-in field rather than a custom field, or set only on some customers that weren\'t in this batch). '+noCustomFieldCount+' customer(s) checked had zero custom fields.</div>';
+  } else {
+    html+='<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Found '+names.length+' distinct custom field name(s) across your customers. '+noCustomFieldCount+' customer(s) had no custom fields at all.</div>';
+    names.forEach(function(name){
+      html+='<div style="margin-bottom:12px;padding:10px;border:1px solid var(--line);border-radius:8px">'
+        +'<div style="font-family:var(--mono);font-weight:700;font-size:13px;margin-bottom:6px">"'+esc(name)+'"</div>'
+        +fieldSamples[name].map(function(s){
+          return '<div style="font-size:12px;color:var(--muted)">'+esc(s.customer)+' → '+esc(s.value)+'</div>';
+        }).join('')
+      +'</div>';
+    });
+  }
+  html+='</div>';
+  if(bodyEl) bodyEl.innerHTML=html;
+  if(statusEl){ statusEl.textContent='Done — find the field name that holds the salesperson above and tell Claude what it\'s called.'; statusEl.style.color=''; }
+}
+window.diagnoseSalesRepField=diagnoseSalesRepField;
+
 // Collection Report — pulls QuickBooks Payment records for a date range and
 // groups them by salesperson (read from a custom field on the Payment,
 // e.g. "Sales Rep"). Uses the same page-at-a-time fetch pattern as the

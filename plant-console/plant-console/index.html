@@ -2205,11 +2205,6 @@ function renderReports(){
       +'<button class="btn" onclick="saveCurrentReport()" title="Keep a frozen snapshot of this report to view, print, or share later">Save</button>'
       +'<button class="btn" onclick="toggleAllReportRows()" title="Expand or collapse every row and category at once">Expand/Collapse all</button>'
     +'</div>'
-    +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:0 0 22px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px">'
-      +'<div style="flex:1;min-width:220px"><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Compare to QuickBooks total</label>'
-      +'<input type="text" id="rpt-qb-total" placeholder="e.g. 2,257,399.23" oninput="updateQbCompare()" style="width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);font-family:var(--mono)"/></div>'
-      +'<div id="rpt-qb-compare" style="font-family:var(--mono);font-size:13px;padding-bottom:9px"></div>'
-    +'</div>'
     +'<div id="rpt-body"></div>'
     +'<div style="margin-top:28px">'
       +'<div style="font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Saved reports</div>'
@@ -3046,7 +3041,6 @@ function buildBalanceReport(){
   html+='</div>';
 
   body.innerHTML=html;
-  updateQbCompare();
 }
 
 function printBalanceReport(){

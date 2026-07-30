@@ -2237,15 +2237,6 @@ function renderReports(){
       +'</div>'
       +'<div id="coll-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'<div id="coll-body"></div>'
-      +'<div style="margin-top:28px;border:1px dashed var(--line);border-radius:12px;padding:14px">'
-        +'<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Temporary — Sales Rep field test (remove once settled)</div>'
-        +'<p style="font-size:12px;color:var(--muted);margin-bottom:10px">The bulk customer sync reports 0 customers with any custom fields, but QuickBooks\' own UI shows a "Sales Rep" field on at least one. This checks whether fetching that one customer directly by ID (instead of via the bulk query) returns it.</p>'
-        +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
-          +'<input type="text" id="sr-search" placeholder="Type customer name…" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;min-width:220px;background:var(--bg);color:var(--ink)"/>'
-          +'<button class="btn" onclick="testDirectCustomerFetch()">Test direct fetch</button>'
-        +'</div>'
-        +'<div id="sr-test-result" style="margin-top:10px;font-size:12px"></div>'
-      +'</div>'
     +'</div>';
   buildBalanceReport();
   renderSavedReportsList();
@@ -2357,47 +2348,6 @@ async function runCollectionReport(){
   html+='</div>';
   if(bodyEl) bodyEl.innerHTML=html;
 }
-// TEMPORARY — tests whether fetching a customer directly by ID from
-// QuickBooks (rather than via the bulk SELECT * query) returns CustomField
-// data. Matches on the locally-synced customers list to find a QB id, then
-// hits the new /api/qb/customer-direct diagnostic endpoint.
-async function testDirectCustomerFetch(){
-  var input=document.getElementById('sr-search');
-  var resultEl=document.getElementById('sr-test-result');
-  var q=(input&&input.value||'').trim().toLowerCase();
-  if(!resultEl) return;
-  if(!q){ resultEl.innerHTML='<span style="color:var(--muted)">Type part of a customer name first.</span>'; return; }
-  if(!customers.length){ resultEl.innerHTML='<span style="color:var(--muted)">No customers synced locally yet — visit Settings → Customers and sync from QuickBooks first.</span>'; return; }
-  var match=customers.find(function(c){ return c.qbId && (c.name||'').toLowerCase().indexOf(q)>=0; });
-  if(!match){ resultEl.innerHTML='<span style="color:var(--muted)">No locally-synced customer matches "'+esc(q)+'".</span>'; return; }
-  resultEl.innerHTML='<span style="color:var(--muted)">Fetching "'+esc(match.name)+'" (QB id '+esc(match.qbId)+') directly…</span>';
-  var base=window.location.origin;
-  var resp, data;
-  try{
-    resp=await fetch(base+'/api/qb/customer-direct?id='+encodeURIComponent(match.qbId));
-    data=await resp.json();
-  }catch(e){
-    resultEl.innerHTML='<span style="color:#c0392b">Network error.</span>';
-    return;
-  }
-  if(!resp.ok||data.error){
-    resultEl.innerHTML='<span style="color:#c0392b">Error: '+esc(data.error||resp.status)+'</span>';
-    return;
-  }
-  var custRecord=data.Customer||data;
-  var fields=custRecord.CustomField||[];
-  var html='<div style="font-weight:700;margin-bottom:6px">'+esc(match.name)+'</div>';
-  if(fields.length){
-    html+='<div style="color:#0f6e40;margin-bottom:6px">Direct fetch DID return '+fields.length+' custom field(s):</div>';
-    html+='<pre style="background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;white-space:pre-wrap;overflow-x:auto">'+esc(JSON.stringify(fields,null,2))+'</pre>';
-  } else {
-    html+='<div style="color:#c0392b;margin-bottom:6px">Direct fetch also returned NO custom fields for this customer — so the field isn\'t exposed via the standard QuickBooks API at all (not just a bulk-query quirk).</div>';
-    html+='<details style="font-size:11px;color:var(--muted)"><summary style="cursor:pointer">Show raw response</summary><pre style="background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;white-space:pre-wrap;overflow-x:auto">'+esc(JSON.stringify(custRecord,null,2))+'</pre></details>';
-  }
-  resultEl.innerHTML=html;
-}
-window.testDirectCustomerFetch=testDirectCustomerFetch;
-
 function switchReportTab(tab){
   var invPanel=document.getElementById('rpt-panel-inventory');
   var collPanel=document.getElementById('rpt-panel-collection');

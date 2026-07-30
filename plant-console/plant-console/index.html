@@ -2203,7 +2203,7 @@ function renderReports(){
     +'<p class="lede">Inventory movement statement — opening value, what came in, what went out, and the net change over a period. Pick a department to see that department\'s own statement, or leave it on "All departments" for the plant-wide total.</p>'
     +'<div style="display:flex;gap:8px;margin:6px 0 18px;border-bottom:1px solid var(--line)">'
       +'<button id="rpt-tab-inventory" class="btn" onclick="switchReportTab(\'inventory\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--panel);font-weight:700">Inventory Statement</button>'
-      +'<button id="rpt-tab-collection" class="btn" onclick="switchReportTab(\'collection\')" style="border-radius:9px 9px 0 0;border-bottom:none">Collection Report</button>'
+      +'<button id="rpt-tab-collection" class="btn" onclick="switchReportTab(\'collection\')" style="border-radius:9px 9px 0 0;border-bottom:none">Customer Payments</button>'
     +'</div>'
     +'<div id="rpt-panel-inventory">'
     +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
@@ -2234,7 +2234,6 @@ function renderReports(){
         +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">To</label>'
         +'<input type="date" id="coll-to" value="'+today+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
         +'<button class="btn btn-primary" onclick="runCollectionReport()">Pull from QuickBooks</button>'
-        +'<button class="btn" onclick="diagnoseSalesRepField()" title="Shows the actual custom field names QuickBooks has on your customers">Diagnose Sales Rep field</button>'
       +'</div>'
       +'<div id="coll-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'<div id="coll-body"></div>'
@@ -2244,69 +2243,10 @@ function renderReports(){
 }
 // Switches between the two Reports sub-tabs without re-rendering the whole
 // page (so neither report's inputs/state get reset when switching back).
-// Diagnostic: directly inspects the raw CustomField data QuickBooks sends
-// back on Customer records, so we can see the EXACT field name/values being
-// used for Sales Rep instead of guessing at name-matching logic.
-async function diagnoseSalesRepField(){
-  var statusEl=document.getElementById('coll-status');
-  var bodyEl=document.getElementById('coll-body');
-  if(statusEl){ statusEl.textContent='Fetching raw customer data from QuickBooks…'; statusEl.style.color=''; }
-  if(bodyEl) bodyEl.innerHTML='';
-  var base=window.location.origin;
-  var resp;
-  try{ resp=await fetch(base+'/api/qb/customers'); }
-  catch(e){ if(statusEl){ statusEl.textContent='Network error.'; statusEl.style.color='#c0392b'; } return; }
-  var data;
-  try{ data=await resp.json(); }catch(e){ data={}; }
-  var qbCustomers=(data.QueryResponse&&data.QueryResponse.Customer)||[];
-  if(!qbCustomers.length){
-    if(statusEl){ statusEl.textContent='No customers returned from QuickBooks.'; statusEl.style.color='#c0392b'; }
-    return;
-  }
-  // Collect every distinct custom field name seen, with a couple of sample
-  // values for each, plus a few customers that have NO custom fields at all
-  // (so we know whether the field is simply missing on some records).
-  var fieldSamples={}; // name -> [{customer, value}]
-  var noCustomFieldCount=0;
-  qbCustomers.forEach(function(qc){
-    var fields=qc.CustomField||[];
-    if(!fields.length){ noCustomFieldCount++; return; }
-    fields.forEach(function(f){
-      var name=f.Name||'(unnamed field)';
-      var val=f.StringValue!==undefined?f.StringValue:JSON.stringify(f);
-      if(!fieldSamples[name]) fieldSamples[name]=[];
-      if(fieldSamples[name].length<5){
-        fieldSamples[name].push({customer:(qc.DisplayName||qc.Id),value:val});
-      }
-    });
-  });
-  var names=Object.keys(fieldSamples);
-  var html='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px">';
-  html+='<div style="font-weight:700;margin-bottom:10px">Checked '+qbCustomers.length+' customer(s) from QuickBooks</div>';
-  if(!names.length){
-    html+='<div style="color:var(--muted);font-size:13px">None of them have ANY custom fields set at all — "Sales Rep" is likely tracked some other way in your QuickBooks (e.g. a dedicated built-in field rather than a custom field, or set only on some customers that weren\'t in this batch). '+noCustomFieldCount+' customer(s) checked had zero custom fields.</div>';
-  } else {
-    html+='<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Found '+names.length+' distinct custom field name(s) across your customers. '+noCustomFieldCount+' customer(s) had no custom fields at all.</div>';
-    names.forEach(function(name){
-      html+='<div style="margin-bottom:12px;padding:10px;border:1px solid var(--line);border-radius:8px">'
-        +'<div style="font-family:var(--mono);font-weight:700;font-size:13px;margin-bottom:6px">"'+esc(name)+'"</div>'
-        +fieldSamples[name].map(function(s){
-          return '<div style="font-size:12px;color:var(--muted)">'+esc(s.customer)+' → '+esc(s.value)+'</div>';
-        }).join('')
-      +'</div>';
-    });
-  }
-  html+='</div>';
-  if(bodyEl) bodyEl.innerHTML=html;
-  if(statusEl){ statusEl.textContent='Done — find the field name that holds the salesperson above and tell Claude what it\'s called.'; statusEl.style.color=''; }
-}
-window.diagnoseSalesRepField=diagnoseSalesRepField;
-
-// Collection Report — pulls QuickBooks Payment records for a date range and
-// groups them by salesperson (read from a custom field on the Payment,
-// e.g. "Sales Rep"). Uses the same page-at-a-time fetch pattern as the
-// document sync above, so it stays fast and reliable even with thousands
-// of payments.
+// Customer Payments Report — pulls QuickBooks Payment records for a date
+// range and groups them by customer. Uses the same page-at-a-time fetch
+// pattern as the document sync above, so it stays fast and reliable even
+// with thousands of payments.
 async function runCollectionReport(){
   function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
   var fromEl=document.getElementById('coll-from');
@@ -2321,44 +2261,6 @@ async function runCollectionReport(){
   var startPos=1;
   var pageSize=100;
   var safety=0;
-  if(statusEl){ statusEl.textContent='Refreshing customer list from QuickBooks…'; statusEl.style.color=''; }
-  try{ await qbSyncCustomersCore(); }catch(e){}
-
-  // Guaranteed-visible diagnostic (an alert, not a UI element that could
-  // fail to render due to a deploy mismatch) — shows exactly what raw
-  // custom field data QuickBooks' API actually sent for a few customers
-  // known to have a Sales Rep set in the QuickBooks UI, so the matching
-  // logic can be corrected against the real structure instead of guessing.
-  try{
-    var diagBase=window.location.origin;
-    var diagResp=await fetch(diagBase+'/api/qb/customers');
-    var diagData=await diagResp.json();
-    var diagCustomers=(diagData.QueryResponse&&diagData.QueryResponse.Customer)||[];
-    var withFields=diagCustomers.filter(function(c){ return c.CustomField && c.CustomField.length; });
-    var diagMsg='=== SALES REP FIELD DIAGNOSTIC ===\n';
-    diagMsg+='Total customers: '+diagCustomers.length+'\n';
-    diagMsg+='Customers with ANY custom fields: '+withFields.length+'\n\n';
-    if(withFields.length){
-      diagMsg+='Sample (first 3 with custom fields):\n';
-      withFields.slice(0,3).forEach(function(c){
-        diagMsg+='\n'+(c.DisplayName||c.Id)+':\n'+JSON.stringify(c.CustomField)+'\n';
-      });
-    } else {
-      // We KNOW "Little Istanbul Restaurant" has Sales Rep set (confirmed
-      // in the QuickBooks UI), so dump its ENTIRE raw record — Sales Rep
-      // must be somewhere in here even if not under CustomField.
-      var known=diagCustomers.find(function(c){
-        return (c.DisplayName||'').toLowerCase().indexOf('little istanbul')>=0;
-      });
-      if(known){
-        diagMsg+='Found "Little Istanbul Restaurant" — here is its COMPLETE raw record from QuickBooks (Sales Rep must be in here somewhere):\n\n'+JSON.stringify(known,null,2);
-      } else {
-        diagMsg+='Could not find "Little Istanbul Restaurant" in this batch. Sample raw customer object instead:\n\n'+JSON.stringify(diagCustomers[0],null,2).slice(0,2000);
-      }
-    }
-    alert(diagMsg);
-  }catch(e){ /* diagnostic only — don't block the report if this fails */ }
-
   if(statusEl){ statusEl.textContent='Fetching payments from QuickBooks…'; statusEl.style.color=''; }
   if(bodyEl) bodyEl.innerHTML='';
   while(true){
@@ -2393,61 +2295,51 @@ async function runCollectionReport(){
     return d && d>=from && d<=to;
   });
 
-  // Salesperson comes from the CUSTOMER record, not the payment itself —
-  // look up each payment's customer (by QuickBooks id) in our synced
-  // customers list and read the Sales Rep field captured during the
-  // customer sync just above.
-  var custByQbId={};
-  customers.forEach(function(c){ if(c.qbId) custByQbId[c.qbId]=c; });
-  function salesRepOf(p){
-    var qbCustId=p.CustomerRef&&p.CustomerRef.value;
-    var c=qbCustId?custByQbId[qbCustId]:null;
-    return (c&&c.salesRep)?c.salesRep.trim():'';
-  }
-
-  var byRep={}; // rep name -> {total, payments:[]}
+  // Group by customer, keyed by QuickBooks customer id where available
+  // (falling back to the name) so the same customer never gets split into
+  // two buckets due to a name/whitespace quirk.
+  var byCust={}; // key -> {name, total, payments:[]}
   var grandTotal=0;
   payments.forEach(function(p){
-    var rep=salesRepOf(p)||'Unassigned';
+    var custName=(p.CustomerRef&&p.CustomerRef.name)||'No customer on file';
+    var custKey=(p.CustomerRef&&p.CustomerRef.value)||custName;
     var amt=Number(p.TotalAmt||0);
-    var cust=(p.CustomerRef&&p.CustomerRef.name)||'—';
     var ref=p.PaymentRefNum||'';
-    if(!byRep[rep]) byRep[rep]={total:0,payments:[]};
-    byRep[rep].total+=amt;
-    byRep[rep].payments.push({date:(p.TxnDate||'').slice(0,10),customer:cust,amount:amt,ref:ref});
+    if(!byCust[custKey]) byCust[custKey]={name:custName,total:0,payments:[]};
+    byCust[custKey].total+=amt;
+    byCust[custKey].payments.push({date:(p.TxnDate||'').slice(0,10),amount:amt,ref:ref});
     grandTotal+=amt;
   });
 
-  var reps=Object.keys(byRep).sort(function(a,b){
-    if(a==='Unassigned') return 1;
-    if(b==='Unassigned') return -1;
-    return byRep[b].total-byRep[a].total;
+  var custKeys=Object.keys(byCust).sort(function(a,b){
+    return byCust[b].total-byCust[a].total;
   });
 
   if(statusEl){
-    statusEl.textContent=payments.length+' payment(s) found, '+esc(from)+' to '+esc(to)+(byRep['Unassigned']?' — some customers have no Sales Rep set in QuickBooks.':'');
+    statusEl.textContent=payments.length+' payment(s) found across '+custKeys.length+' customer(s), '+esc(from)+' to '+esc(to);
     statusEl.style.color='';
   }
 
-  if(!reps.length){
+  if(!custKeys.length){
     if(bodyEl) bodyEl.innerHTML='<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">No payments found for this date range.</div>';
     return;
   }
 
   var html='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden">';
-  reps.forEach(function(rep,ri){
-    var rows=byRep[rep].payments.sort(function(a,b){ return a.date<b.date?1:-1; });
-    var repId='coll-rep-'+ri;
+  custKeys.forEach(function(custKey,ri){
+    var entry=byCust[custKey];
+    var rows=entry.payments.sort(function(a,b){ return a.date<b.date?1:-1; });
+    var rowId='coll-cust-'+ri;
     html+='<div style="border-bottom:1px solid var(--line)">'
-      +'<div onclick="toggleReportRow(\''+repId+'\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:12px 16px">'
+      +'<div onclick="toggleReportRow(\''+rowId+'\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:12px 16px">'
         +'<span style="font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px">'
-          +'<svg id="'+repId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
-          +esc(rep)+' <span style="color:var(--muted);font-weight:400;font-family:var(--mono);font-size:12px">('+rows.length+' payment'+(rows.length!==1?'s':'')+')</span></span>'
-        +'<span style="font-family:var(--mono);font-size:14px;font-weight:700;color:#0f6e40">'+money(byRep[rep].total)+'</span></div>'
-      +'<div id="'+repId+'" style="display:none;padding-bottom:6px">'
+          +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
+          +esc(entry.name)+' <span style="color:var(--muted);font-weight:400;font-family:var(--mono);font-size:12px">('+rows.length+' payment'+(rows.length!==1?'s':'')+')</span></span>'
+        +'<span style="font-family:var(--mono);font-size:14px;font-weight:700;color:#0f6e40">'+money(entry.total)+'</span></div>'
+      +'<div id="'+rowId+'" style="display:none;padding-bottom:6px">'
         +rows.map(function(row){
           return '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 16px 7px 40px;font-size:12px;color:var(--muted);border-bottom:1px dashed var(--line)">'
-            +'<span>'+esc(row.date)+' · '+esc(row.customer)+(row.ref?' · Ref '+esc(row.ref):'')+'</span>'
+            +'<span>'+esc(row.date)+(row.ref?' · Ref '+esc(row.ref):'')+'</span>'
             +'<span style="font-family:var(--mono);white-space:nowrap">'+money(row.amount)+'</span></div>';
         }).join('')
       +'</div></div>';

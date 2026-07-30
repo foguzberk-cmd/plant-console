@@ -2344,7 +2344,17 @@ async function runCollectionReport(){
         diagMsg+='\n'+(c.DisplayName||c.Id)+':\n'+JSON.stringify(c.CustomField)+'\n';
       });
     } else {
-      diagMsg+='None of your customers have anything in the CustomField array at all — Sales Rep is very likely NOT exposed via the standard CustomField mechanism in QuickBooks\' API for Customer records specifically (even though it shows as a custom field in the QuickBooks UI). Sample raw customer object:\n\n'+JSON.stringify(diagCustomers[0],null,2).slice(0,1500);
+      // We KNOW "Little Istanbul Restaurant" has Sales Rep set (confirmed
+      // in the QuickBooks UI), so dump its ENTIRE raw record — Sales Rep
+      // must be somewhere in here even if not under CustomField.
+      var known=diagCustomers.find(function(c){
+        return (c.DisplayName||'').toLowerCase().indexOf('little istanbul')>=0;
+      });
+      if(known){
+        diagMsg+='Found "Little Istanbul Restaurant" — here is its COMPLETE raw record from QuickBooks (Sales Rep must be in here somewhere):\n\n'+JSON.stringify(known,null,2);
+      } else {
+        diagMsg+='Could not find "Little Istanbul Restaurant" in this batch. Sample raw customer object instead:\n\n'+JSON.stringify(diagCustomers[0],null,2).slice(0,2000);
+      }
     }
     alert(diagMsg);
   }catch(e){ /* diagnostic only — don't block the report if this fails */ }

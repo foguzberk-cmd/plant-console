@@ -561,6 +561,32 @@ async function fetchQBCustomers(retry) {
   return { QueryResponse: { Customer: allCustomers, maxResults: allCustomers.length } };
 }
 
+// Diagnostic: fetch ONE customer directly by ID (GET /v3/company/{realm}/customer/{id})
+// instead of via the SELECT * bulk query used by fetchQBCustomers above. The bulk
+// query came back reporting 0 of 547 customers with any CustomField data, even
+// though QuickBooks's own UI clearly shows a "Sales Rep" custom field on at least
+// one customer — this checks whether the direct single-record GET returns it when
+// the bulk query doesn't.
+async function fetchQBCustomerDirect(id, retry) {
+  const reqPath = `/v3/company/${activeRealm}/customer/${encodeURIComponent(id)}?minorversion=75`;
+  const res = await httpsRequest({
+    hostname: 'quickbooks.api.intuit.com',
+    path: reqPath,
+    method: 'GET',
+    headers: {
+      'Authorization': 'Bearer ' + accessToken,
+      'Accept': 'application/json'
+    }
+  });
+  if (res.status === 401 && !retry) {
+    const ok = await refreshAccessToken();
+    if (ok) return fetchQBCustomerDirect(id, true);
+    throw new Error('NEEDS_RECONNECT');
+  }
+  if (res.status !== 200) throw new Error('QB API error ' + res.status + ': ' + res.body);
+  return JSON.parse(res.body);
+}
+
 // Generic paginated query for any QB entity (Bill, Invoice, SalesReceipt, CreditMemo)
 // `since`: only records changed at/after this timestamp (incremental).
 // `from`:  only records with TxnDate on/after this date (inventory start floor).
@@ -1118,6 +1144,31 @@ const server = http.createServer(async (req, res) => {
         error: needsReconnect ? 'QuickBooks connection expired. Please reconnect.' : err.message,
         needsReconnect: needsReconnect
       }));
+    }
+    return;
+  }
+
+  // TEMPORARY DIAGNOSTIC — fetches one customer directly by ID (bypassing the
+  // bulk SELECT * query) to check whether QuickBooks returns CustomField data
+  // that way. Safe to remove once the Sales Rep sync question is settled.
+  // Usage: /api/qb/customer-direct?id=123
+  if (url === '/api/qb/customer-direct') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const id = queryParams.id;
+      if (!id) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing ?id=' }));
+        return;
+      }
+      if (!accessToken) await refreshAccessToken();
+      const data = await fetchQBCustomerDirect(id, false);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      const needsReconnect = err.message === 'NEEDS_RECONNECT';
+      res.writeHead(needsReconnect ? 401 : 500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message, needsReconnect: needsReconnect }));
     }
     return;
   }

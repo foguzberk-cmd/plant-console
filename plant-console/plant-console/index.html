@@ -2190,6 +2190,11 @@ function renderReports(){
   var deptOpts=DEPARTMENTS.map(function(d){return '<option value="'+esc(d)+'">'+esc(d)+'</option>';}).join('');
   view.innerHTML='<div class="eyebrow">'+s.kicker+'</div><h2>'+s.title+'</h2>'
     +'<p class="lede">Inventory movement statement — opening value, what came in, what went out, and the net change over a period. Pick a department to see that department\'s own statement, or leave it on "All departments" for the plant-wide total.</p>'
+    +'<div style="display:flex;gap:8px;margin:6px 0 18px;border-bottom:1px solid var(--line)">'
+      +'<button id="rpt-tab-inventory" class="btn" onclick="switchReportTab(\'inventory\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--panel);font-weight:700">Inventory Statement</button>'
+      +'<button id="rpt-tab-collection" class="btn" onclick="switchReportTab(\'collection\')" style="border-radius:9px 9px 0 0;border-bottom:none">Collection Report</button>'
+    +'</div>'
+    +'<div id="rpt-panel-inventory">'
     +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
       +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Department</label>'
       +'<select id="rpt-dept" onchange="buildBalanceReport()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)">'
@@ -2209,9 +2214,155 @@ function renderReports(){
     +'<div style="margin-top:28px">'
       +'<div style="font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Saved reports</div>'
       +'<div id="savedReportsList" style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden"></div>'
+    +'</div>'
+    +'</div>'
+    +'<div id="rpt-panel-collection" style="display:none">'
+      +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
+        +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">From</label>'
+        +'<input type="date" id="coll-from" value="'+firstOpen+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
+        +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">To</label>'
+        +'<input type="date" id="coll-to" value="'+today+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
+        +'<button class="btn btn-primary" onclick="runCollectionReport()">Pull from QuickBooks</button>'
+      +'</div>'
+      +'<div id="coll-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
+      +'<div id="coll-body"></div>'
     +'</div>';
   buildBalanceReport();
   renderSavedReportsList();
+}
+// Switches between the two Reports sub-tabs without re-rendering the whole
+// page (so neither report's inputs/state get reset when switching back).
+// Collection Report — pulls QuickBooks Payment records for a date range and
+// groups them by salesperson (read from a custom field on the Payment,
+// e.g. "Sales Rep"). Uses the same page-at-a-time fetch pattern as the
+// document sync above, so it stays fast and reliable even with thousands
+// of payments.
+async function runCollectionReport(){
+  function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  var fromEl=document.getElementById('coll-from');
+  var toEl=document.getElementById('coll-to');
+  var statusEl=document.getElementById('coll-status');
+  var bodyEl=document.getElementById('coll-body');
+  var from=fromEl?fromEl.value:'';
+  var to=toEl?toEl.value:'';
+  if(!from||!to){ if(statusEl) statusEl.textContent='Pick both a From and To date first.'; return; }
+  var base=window.location.origin;
+  var payments=[];
+  var startPos=1;
+  var pageSize=100;
+  var safety=0;
+  if(statusEl){ statusEl.textContent='Fetching payments from QuickBooks…'; statusEl.style.color=''; }
+  if(bodyEl) bodyEl.innerHTML='';
+  while(true){
+    safety++;
+    if(safety>1000) break; // hard cap (~100k rows)
+    var ctrl=new AbortController();
+    var timer=setTimeout(function(){ctrl.abort();},60000);
+    var pageRows=null;
+    try{
+      var r=await fetch(base+'/api/qb/documents?entity=Payment&startposition='+startPos+'&from='+encodeURIComponent(from),{signal:ctrl.signal});
+      clearTimeout(timer);
+      if(r.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
+      var jd=await r.json();
+      if(jd && jd.error){ if(statusEl){ statusEl.textContent='Error: '+jd.error; statusEl.style.color='#c0392b'; } return; }
+      pageRows=(jd && jd.Payment) ? jd.Payment : [];
+    }catch(e){
+      clearTimeout(timer);
+      if(statusEl){ statusEl.textContent='Network error while fetching payments — try again.'; statusEl.style.color='#c0392b'; }
+      return;
+    }
+    payments=payments.concat(pageRows);
+    if(statusEl) statusEl.textContent='Fetched '+payments.length+' payment(s) so far…';
+    if(pageRows.length<pageSize) break;
+    startPos+=pageSize;
+  }
+
+  // Filter to the exact [from, to] range client-side (the server-side
+  // filter above only applies a "from" floor, to keep the query simple and
+  // cacheable regardless of the selected end date).
+  payments=payments.filter(function(p){
+    var d=(p.TxnDate||'').slice(0,10);
+    return d && d>=from && d<=to;
+  });
+
+  // Read the salesperson from a custom field on the Payment itself — looks
+  // for a field name containing "sales" (case-insensitive) so it matches
+  // "Sales Rep", "Salesperson", etc. without needing an exact name match.
+  function salesRepOf(p){
+    var fields=p.CustomField||[];
+    for(var i=0;i<fields.length;i++){
+      var f=fields[i];
+      if(f.Name && f.Name.toLowerCase().indexOf('sales')>=0 && f.StringValue){
+        return f.StringValue.trim();
+      }
+    }
+    return '';
+  }
+
+  var byRep={}; // rep name -> {total, payments:[]}
+  var grandTotal=0;
+  payments.forEach(function(p){
+    var rep=salesRepOf(p)||'Unassigned';
+    var amt=Number(p.TotalAmt||0);
+    var cust=(p.CustomerRef&&p.CustomerRef.name)||'—';
+    var ref=p.PaymentRefNum||'';
+    if(!byRep[rep]) byRep[rep]={total:0,payments:[]};
+    byRep[rep].total+=amt;
+    byRep[rep].payments.push({date:(p.TxnDate||'').slice(0,10),customer:cust,amount:amt,ref:ref});
+    grandTotal+=amt;
+  });
+
+  var reps=Object.keys(byRep).sort(function(a,b){
+    if(a==='Unassigned') return 1;
+    if(b==='Unassigned') return -1;
+    return byRep[b].total-byRep[a].total;
+  });
+
+  if(statusEl){
+    statusEl.textContent=payments.length+' payment(s) found, '+esc(from)+' to '+esc(to)+(byRep['Unassigned']?' — some payments have no Sales Rep set in QuickBooks.':'');
+    statusEl.style.color='';
+  }
+
+  if(!reps.length){
+    if(bodyEl) bodyEl.innerHTML='<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">No payments found for this date range.</div>';
+    return;
+  }
+
+  var html='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden">';
+  reps.forEach(function(rep,ri){
+    var rows=byRep[rep].payments.sort(function(a,b){ return a.date<b.date?1:-1; });
+    var repId='coll-rep-'+ri;
+    html+='<div style="border-bottom:1px solid var(--line)">'
+      +'<div onclick="toggleReportRow(\''+repId+'\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:12px 16px">'
+        +'<span style="font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px">'
+          +'<svg id="'+repId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
+          +esc(rep)+' <span style="color:var(--muted);font-weight:400;font-family:var(--mono);font-size:12px">('+rows.length+' payment'+(rows.length!==1?'s':'')+')</span></span>'
+        +'<span style="font-family:var(--mono);font-size:14px;font-weight:700;color:#0f6e40">'+money(byRep[rep].total)+'</span></div>'
+      +'<div id="'+repId+'" style="display:none;padding-bottom:6px">'
+        +rows.map(function(row){
+          return '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 16px 7px 40px;font-size:12px;color:var(--muted);border-bottom:1px dashed var(--line)">'
+            +'<span>'+esc(row.date)+' · '+esc(row.customer)+(row.ref?' · Ref '+esc(row.ref):'')+'</span>'
+            +'<span style="font-family:var(--mono);white-space:nowrap">'+money(row.amount)+'</span></div>';
+        }).join('')
+      +'</div></div>';
+  });
+  html+='<div style="display:flex;justify-content:space-between;padding:14px 16px;font-weight:700;background:var(--bg)"><span>Total collected</span><span style="font-family:var(--mono);color:#0f6e40">'+money(grandTotal)+'</span></div>';
+  html+='</div>';
+  if(bodyEl) bodyEl.innerHTML=html;
+}
+function switchReportTab(tab){
+  var invPanel=document.getElementById('rpt-panel-inventory');
+  var collPanel=document.getElementById('rpt-panel-collection');
+  var invTab=document.getElementById('rpt-tab-inventory');
+  var collTab=document.getElementById('rpt-tab-collection');
+  if(!invPanel||!collPanel) return;
+  var showColl=(tab==='collection');
+  invPanel.style.display=showColl?'none':'block';
+  collPanel.style.display=showColl?'block':'none';
+  invTab.style.background=showColl?'':'var(--panel)';
+  invTab.style.fontWeight=showColl?'':'700';
+  collTab.style.background=showColl?'var(--panel)':'';
+  collTab.style.fontWeight=showColl?'700':'';
 }
 
 // Freezes the currently rendered report (exact numbers, breakdowns, and

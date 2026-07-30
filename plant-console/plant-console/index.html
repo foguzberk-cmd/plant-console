@@ -2324,6 +2324,31 @@ async function runCollectionReport(){
   if(statusEl){ statusEl.textContent='Refreshing customer list from QuickBooks…'; statusEl.style.color=''; }
   try{ await qbSyncCustomersCore(); }catch(e){}
 
+  // Guaranteed-visible diagnostic (an alert, not a UI element that could
+  // fail to render due to a deploy mismatch) — shows exactly what raw
+  // custom field data QuickBooks' API actually sent for a few customers
+  // known to have a Sales Rep set in the QuickBooks UI, so the matching
+  // logic can be corrected against the real structure instead of guessing.
+  try{
+    var diagBase=window.location.origin;
+    var diagResp=await fetch(diagBase+'/api/qb/customers');
+    var diagData=await diagResp.json();
+    var diagCustomers=(diagData.QueryResponse&&diagData.QueryResponse.Customer)||[];
+    var withFields=diagCustomers.filter(function(c){ return c.CustomField && c.CustomField.length; });
+    var diagMsg='=== SALES REP FIELD DIAGNOSTIC ===\n';
+    diagMsg+='Total customers: '+diagCustomers.length+'\n';
+    diagMsg+='Customers with ANY custom fields: '+withFields.length+'\n\n';
+    if(withFields.length){
+      diagMsg+='Sample (first 3 with custom fields):\n';
+      withFields.slice(0,3).forEach(function(c){
+        diagMsg+='\n'+(c.DisplayName||c.Id)+':\n'+JSON.stringify(c.CustomField)+'\n';
+      });
+    } else {
+      diagMsg+='None of your customers have anything in the CustomField array at all — Sales Rep is very likely NOT exposed via the standard CustomField mechanism in QuickBooks\' API for Customer records specifically (even though it shows as a custom field in the QuickBooks UI). Sample raw customer object:\n\n'+JSON.stringify(diagCustomers[0],null,2).slice(0,1500);
+    }
+    alert(diagMsg);
+  }catch(e){ /* diagnostic only — don't block the report if this fails */ }
+
   if(statusEl){ statusEl.textContent='Fetching payments from QuickBooks…'; statusEl.style.color=''; }
   if(bodyEl) bodyEl.innerHTML='';
   while(true){

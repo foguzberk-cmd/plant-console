@@ -1656,11 +1656,22 @@ async function qbSyncCustomersCore(){
   var qbCustomers=(data.QueryResponse&&data.QueryResponse.Customer)||[];
   qbCustomers.forEach(function(qc){
     var existing=customers.findIndex(function(x){return x.qbId===qc.Id});
+    // Sales Rep lives as a custom field on the Customer record itself (not
+    // on Invoices or Payments) — matched by field name containing "sales"
+    // (case-insensitive) so it works whether QuickBooks calls it
+    // "Sales Rep", "Salesperson", etc.
+    var salesRep='';
+    (qc.CustomField||[]).forEach(function(f){
+      if(!salesRep && f.Name && f.Name.toLowerCase().indexOf('sales')>=0 && f.StringValue){
+        salesRep=f.StringValue.trim();
+      }
+    });
     var mapped={
       id: existing>=0 ? customers[existing].id : 'cust_'+Date.now()+'_'+Math.random().toString(36).slice(2),
       qbId: qc.Id,
       name: qc.DisplayName||qc.FullyQualifiedName||qc.CompanyName||'',
-      active: qc.Active!==false
+      active: qc.Active!==false,
+      salesRep: salesRep
     };
     if(existing>=0){ customers[existing]=mapped; } else { customers.push(mapped); }
   });
@@ -2251,6 +2262,9 @@ async function runCollectionReport(){
   var startPos=1;
   var pageSize=100;
   var safety=0;
+  if(statusEl){ statusEl.textContent='Refreshing customer list from QuickBooks…'; statusEl.style.color=''; }
+  try{ await qbSyncCustomersCore(); }catch(e){}
+
   if(statusEl){ statusEl.textContent='Fetching payments from QuickBooks…'; statusEl.style.color=''; }
   if(bodyEl) bodyEl.innerHTML='';
   while(true){
@@ -2285,18 +2299,16 @@ async function runCollectionReport(){
     return d && d>=from && d<=to;
   });
 
-  // Read the salesperson from a custom field on the Payment itself — looks
-  // for a field name containing "sales" (case-insensitive) so it matches
-  // "Sales Rep", "Salesperson", etc. without needing an exact name match.
+  // Salesperson comes from the CUSTOMER record, not the payment itself —
+  // look up each payment's customer (by QuickBooks id) in our synced
+  // customers list and read the Sales Rep field captured during the
+  // customer sync just above.
+  var custByQbId={};
+  customers.forEach(function(c){ if(c.qbId) custByQbId[c.qbId]=c; });
   function salesRepOf(p){
-    var fields=p.CustomField||[];
-    for(var i=0;i<fields.length;i++){
-      var f=fields[i];
-      if(f.Name && f.Name.toLowerCase().indexOf('sales')>=0 && f.StringValue){
-        return f.StringValue.trim();
-      }
-    }
-    return '';
+    var qbCustId=p.CustomerRef&&p.CustomerRef.value;
+    var c=qbCustId?custByQbId[qbCustId]:null;
+    return (c&&c.salesRep)?c.salesRep.trim():'';
   }
 
   var byRep={}; // rep name -> {total, payments:[]}
@@ -2319,7 +2331,7 @@ async function runCollectionReport(){
   });
 
   if(statusEl){
-    statusEl.textContent=payments.length+' payment(s) found, '+esc(from)+' to '+esc(to)+(byRep['Unassigned']?' — some payments have no Sales Rep set in QuickBooks.':'');
+    statusEl.textContent=payments.length+' payment(s) found, '+esc(from)+' to '+esc(to)+(byRep['Unassigned']?' — some customers have no Sales Rep set in QuickBooks.':'');
     statusEl.style.color='';
   }
 

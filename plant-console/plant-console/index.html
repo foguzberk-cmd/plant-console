@@ -4502,7 +4502,17 @@ function renderCustomersPanel(){
       <button class="btn btn-primary btn-sm" onclick="saveCustomerAllowedForDept()">Save changes for ${esc(_custPanelDept)}</button>
       <span id="cust-save-status" style="font-family:var(--mono);font-size:11px;color:var(--muted)"></span>
     </div>
-    <div id="custSyncStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>`;
+    <div id="custSyncStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>
+    <div style="margin-top:24px;border:1px dashed var(--line);border-radius:12px;padding:14px">
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Sales Rep — bulk edit via CSV</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Sales Rep isn't available from QuickBooks, so it's set here in Plant Console. To fill it in for many customers at once: export the CSV, edit the "Sales Rep" column in Excel, then import it back — matches are made by customer name.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-sm" onclick="exportCustomersSalesRepCSV()">Export CSV</button>
+        <button class="btn btn-sm" onclick="document.getElementById('cust-csv-file').click()">Import CSV</button>
+        <input type="file" id="cust-csv-file" accept=".csv" style="display:none" onchange="importCustomersSalesRepCSV(this.files[0]); this.value='';"/>
+      </div>
+      <div id="cust-csv-status" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>
+    </div>`;
   renderCustomersList();
 }
 function onCustomerDeptChange(){
@@ -4535,6 +4545,84 @@ function updateCustomerSalesRep(id,value){
   if(!c) return;
   c.salesRep=(value||'').trim();
   saveCustomers();
+}
+
+// --- Minimal CSV encode/decode (no library needed for two simple columns) ---
+function _csvField(v){
+  v=String(v==null?'':v);
+  if(/[",\n]/.test(v)) return '"'+v.replace(/"/g,'""')+'"';
+  return v;
+}
+// Parses CSV text into an array of row-arrays, handling quoted fields
+// (including embedded commas/newlines/escaped quotes).
+function _csvParse(text){
+  var rows=[]; var row=[]; var field=''; var inQuotes=false;
+  for(var i=0;i<text.length;i++){
+    var ch=text[i];
+    if(inQuotes){
+      if(ch==='"'){
+        if(text[i+1]==='"'){ field+='"'; i++; } else { inQuotes=false; }
+      } else field+=ch;
+    } else {
+      if(ch==='"') inQuotes=true;
+      else if(ch===','){ row.push(field); field=''; }
+      else if(ch==='\n'){ row.push(field); rows.push(row); row=[]; field=''; }
+      else if(ch==='\r'){ /* skip, \n handles the row break */ }
+      else field+=ch;
+    }
+  }
+  if(field.length||row.length){ row.push(field); rows.push(row); }
+  return rows;
+}
+
+function exportCustomersSalesRepCSV(){
+  var rows=[['Customer Name','Sales Rep']];
+  customers.slice().sort(function(a,b){return (a.name||'').localeCompare(b.name||'');})
+    .forEach(function(c){ rows.push([c.name||'', c.salesRep||'']); });
+  var csv=rows.map(function(r){ return r.map(_csvField).join(','); }).join('\n');
+  var blob=new Blob([csv],{type:'text/csv'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url; a.download='customer-sales-rep-'+new Date().toISOString().slice(0,10)+'.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); },1000);
+}
+
+async function importCustomersSalesRepCSV(file){
+  var statusEl=document.getElementById('cust-csv-status');
+  if(!file){ return; }
+  if(statusEl){ statusEl.textContent='Reading file…'; statusEl.style.color=''; }
+  var text;
+  try{ text=await file.text(); }
+  catch(e){ if(statusEl){ statusEl.textContent='Could not read file.'; statusEl.style.color='#c0392b'; } return; }
+  var rows=_csvParse(text).filter(function(r){ return r.length && r.some(function(f){return f.trim()!=='';}); });
+  if(!rows.length){ if(statusEl){ statusEl.textContent='File is empty.'; statusEl.style.color='#c0392b'; } return; }
+  // Expect header row: Customer Name, Sales Rep (case-insensitive; order
+  // doesn't matter as long as those two headers are present).
+  var header=rows[0].map(function(h){return (h||'').trim().toLowerCase();});
+  var nameCol=header.indexOf('customer name');
+  var repCol=header.indexOf('sales rep');
+  if(nameCol<0||repCol<0){
+    if(statusEl){ statusEl.textContent='Expected columns "Customer Name" and "Sales Rep" — check the header row.'; statusEl.style.color='#c0392b'; }
+    return;
+  }
+  var byName={};
+  customers.forEach(function(c){ byName[(c.name||'').trim().toLowerCase()]=c; });
+  var updated=0, unmatched=[];
+  for(var i=1;i<rows.length;i++){
+    var r=rows[i];
+    var name=(r[nameCol]||'').trim();
+    var rep=(r[repCol]||'').trim();
+    if(!name) continue;
+    var c=byName[name.toLowerCase()];
+    if(c){ c.salesRep=rep; updated++; }
+    else unmatched.push(name);
+  }
+  saveCustomers();
+  renderCustomersList();
+  var msg=updated+' customer(s) updated.';
+  if(unmatched.length) msg+=' '+unmatched.length+' name(s) in the file didn\'t match any synced customer'+(unmatched.length<=5?' ('+unmatched.slice(0,5).join(', ')+')':'')+'.';
+  if(statusEl){ statusEl.textContent=msg; statusEl.style.color=unmatched.length?'#b8860b':''; }
 }
 function toggleCustomerAllowed(id,on){
   var i=_custDraft.indexOf(id);

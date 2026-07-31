@@ -561,31 +561,6 @@ async function fetchQBCustomers(retry) {
   return { QueryResponse: { Customer: allCustomers, maxResults: allCustomers.length } };
 }
 
-// Fetches ONE customer directly by ID (GET /v3/company/{realm}/customer/{id})
-// instead of via the bulk SELECT * query above. Confirmed the bulk query does
-// not reliably return CustomField data (e.g. "Sales Person") even when it's
-// visibly set on the customer in QuickBooks's own UI — so per-customer detail
-// fetches are required to read that field.
-async function fetchQBCustomerDetail(id, retry) {
-  const reqPath = `/v3/company/${activeRealm}/customer/${encodeURIComponent(id)}?minorversion=75`;
-  const res = await httpsRequest({
-    hostname: 'quickbooks.api.intuit.com',
-    path: reqPath,
-    method: 'GET',
-    headers: {
-      'Authorization': 'Bearer ' + accessToken,
-      'Accept': 'application/json'
-    }
-  });
-  if (res.status === 401 && !retry) {
-    const ok = await refreshAccessToken();
-    if (ok) return fetchQBCustomerDetail(id, true);
-    throw new Error('NEEDS_RECONNECT');
-  }
-  if (res.status !== 200) throw new Error('QB API error ' + res.status + ': ' + res.body);
-  return JSON.parse(res.body);
-}
-
 // Generic paginated query for any QB entity (Bill, Invoice, SalesReceipt, CreditMemo)
 // `since`: only records changed at/after this timestamp (incremental).
 // `from`:  only records with TxnDate on/after this date (inventory start floor).
@@ -1143,30 +1118,6 @@ const server = http.createServer(async (req, res) => {
         error: needsReconnect ? 'QuickBooks connection expired. Please reconnect.' : err.message,
         needsReconnect: needsReconnect
       }));
-    }
-    return;
-  }
-
-  // QuickBooks single-customer detail proxy — used to pull CustomField data
-  // (e.g. the "Sales Person" field) that the bulk /api/qb/customers query
-  // does not reliably return. ?id=<QuickBooks customer id>
-  if (url === '/api/qb/customer') {
-    if (!requireAuth(req, res)) return;
-    try {
-      const id = queryParams.id;
-      if (!id) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Missing ?id=' }));
-        return;
-      }
-      if (!accessToken) await refreshAccessToken();
-      const data = await fetchQBCustomerDetail(id, false);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(data));
-    } catch (err) {
-      const needsReconnect = err.message === 'NEEDS_RECONNECT';
-      res.writeHead(needsReconnect ? 401 : 500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message, needsReconnect: needsReconnect }));
     }
     return;
   }

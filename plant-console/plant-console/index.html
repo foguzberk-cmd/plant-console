@@ -1644,14 +1644,12 @@ async function qbSyncItemsCore(){
 // action (button in Settings → Customers), not part of the automatic
 // background item/document sync, since customers change far less often.
 //
-// The bulk /api/qb/customers query does NOT reliably return CustomField data
-// (confirmed: it reported 0 of 547 customers with any custom fields, even
-// though QuickBooks's own UI clearly shows a "Sales Person" field set on
-// several). So after the bulk pass gives us the customer list, we do a
-// second pass fetching each customer individually via /api/qb/customer?id=
-// (a handful at a time, not all at once, so we don't hammer QuickBooks or
-// time out) to pick up Sales Person specifically.
-async function qbSyncCustomersCore(onProgress){
+// Sales Rep is NOT pulled from QuickBooks — confirmed it isn't exposed via
+// the API at all (neither the bulk query nor a direct per-customer fetch
+// returns it, despite being visibly set in QuickBooks's own UI). It's
+// managed locally instead (see Settings → Customers), so this sync
+// preserves whatever salesRep is already stored per customer.
+async function qbSyncCustomersCore(){
   var base=window.location.origin;
   var resp;
   try { resp=await fetch(base+'/api/qb/customers'); }
@@ -1662,8 +1660,6 @@ async function qbSyncCustomersCore(onProgress){
     return {ok:false, error:(data.error||resp.status), needsReconnect:(data.needsReconnect||resp.status===401)};
   }
   var qbCustomers=(data.QueryResponse&&data.QueryResponse.Customer)||[];
-
-  // Pass 1: merge the basic fields from the bulk query, same as before.
   qbCustomers.forEach(function(qc){
     var existing=customers.findIndex(function(x){return x.qbId===qc.Id});
     var mapped={
@@ -1671,47 +1667,11 @@ async function qbSyncCustomersCore(onProgress){
       qbId: qc.Id,
       name: qc.DisplayName||qc.FullyQualifiedName||qc.CompanyName||'',
       active: qc.Active!==false,
-      salesRep: existing>=0 ? customers[existing].salesRep : ''
+      salesRep: existing>=0 ? (customers[existing].salesRep||'') : ''
     };
     if(existing>=0){ customers[existing]=mapped; } else { customers.push(mapped); }
   });
   saveCustomers();
-
-  // Pass 2: fetch each customer individually to pick up Sales Person. Runs
-  // with a small concurrency limit so it doesn't open hundreds of requests
-  // at once or trip QuickBooks rate limits.
-  var CONCURRENCY=6;
-  var ids=qbCustomers.map(function(qc){return qc.Id;});
-  var doneCount=0;
-  var idx=0;
-  async function worker(){
-    while(idx<ids.length){
-      var myIdx=idx++;
-      var qbId=ids[myIdx];
-      try{
-        var dResp=await fetch(base+'/api/qb/customer?id='+encodeURIComponent(qbId));
-        var dData=await dResp.json();
-        if(dResp.ok && !dData.error){
-          var rec=dData.Customer||dData;
-          var salesRep='';
-          (rec.CustomField||[]).forEach(function(f){
-            if(!salesRep && f.Name && f.Name.toLowerCase().indexOf('sales')>=0 && f.StringValue){
-              salesRep=f.StringValue.trim();
-            }
-          });
-          var ci=customers.findIndex(function(x){return x.qbId===qbId});
-          if(ci>=0) customers[ci].salesRep=salesRep;
-        }
-      }catch(e){ /* skip this one, keep going */ }
-      doneCount++;
-      if(onProgress) onProgress(doneCount, ids.length);
-    }
-  }
-  var workers=[];
-  for(var w=0;w<CONCURRENCY;w++) workers.push(worker());
-  await Promise.all(workers);
-  saveCustomers();
-
   return {ok:true, count:qbCustomers.length};
 }
 
@@ -4561,10 +4521,20 @@ function renderCustomersList(){
     return '<label style="display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer">'
       +'<input type="checkbox" '+(on?'checked':'')+' onchange="toggleCustomerAllowed(\''+c.id+'\',this.checked)" style="width:17px;height:17px;cursor:pointer;accent-color:var(--brand)"/>'
       +'<div style="flex:1;font-size:13px;font-weight:600">'+esc(c.name)+'</div>'
+      +'<input type="text" value="'+esc(c.salesRep||'')+'" placeholder="Sales Rep" onclick="event.stopPropagation()" onchange="updateCustomerSalesRep(\''+c.id+'\',this.value)" style="width:140px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink);cursor:text"/>'
       +'</label>';
   }).join('');
   var countEl=document.getElementById('cust-count');
   if(countEl) countEl.textContent=_custDraft.length+' of '+customers.length+' customers allowed for '+_custPanelDept+' (unsaved until you click Save)';
+}
+// Sales Rep is managed locally in Plant Console (not synced from QuickBooks —
+// confirmed that field isn't exposed via the QB API). Saves immediately on
+// blur, independent of the per-department allow-list draft/Save flow above.
+function updateCustomerSalesRep(id,value){
+  var c=customers.find(function(x){return x.id===id;});
+  if(!c) return;
+  c.salesRep=(value||'').trim();
+  saveCustomers();
 }
 function toggleCustomerAllowed(id,on){
   var i=_custDraft.indexOf(id);
@@ -4639,9 +4609,7 @@ async function qbSyncCustomers(){
   var status=document.getElementById('custSyncStatus');
   if(btn) btn.disabled=true;
   if(status) status.textContent='Syncing customers from QuickBooks…';
-  var result=await qbSyncCustomersCore(function(done,total){
-    if(status) status.textContent='Fetching Sales Person for each customer… '+done+' / '+total;
-  });
+  var result=await qbSyncCustomersCore();
   if(btn) btn.disabled=false;
   if(!result.ok){
     if(status) status.textContent='Sync failed: '+(result.needsReconnect?'QuickBooks connection expired — reconnect from the Items tab.':result.error);

@@ -1643,7 +1643,15 @@ async function qbSyncItemsCore(){
 // as qbSyncItemsCore, just for Customer records. This is a separate, manual
 // action (button in Settings → Customers), not part of the automatic
 // background item/document sync, since customers change far less often.
-async function qbSyncCustomersCore(){
+//
+// The bulk /api/qb/customers query does NOT reliably return CustomField data
+// (confirmed: it reported 0 of 547 customers with any custom fields, even
+// though QuickBooks's own UI clearly shows a "Sales Person" field set on
+// several). So after the bulk pass gives us the customer list, we do a
+// second pass fetching each customer individually via /api/qb/customer?id=
+// (a handful at a time, not all at once, so we don't hammer QuickBooks or
+// time out) to pick up Sales Person specifically.
+async function qbSyncCustomersCore(onProgress){
   var base=window.location.origin;
   var resp;
   try { resp=await fetch(base+'/api/qb/customers'); }
@@ -1654,28 +1662,56 @@ async function qbSyncCustomersCore(){
     return {ok:false, error:(data.error||resp.status), needsReconnect:(data.needsReconnect||resp.status===401)};
   }
   var qbCustomers=(data.QueryResponse&&data.QueryResponse.Customer)||[];
+
+  // Pass 1: merge the basic fields from the bulk query, same as before.
   qbCustomers.forEach(function(qc){
     var existing=customers.findIndex(function(x){return x.qbId===qc.Id});
-    // Sales Rep lives as a custom field on the Customer record itself (not
-    // on Invoices or Payments) — matched by field name containing "sales"
-    // (case-insensitive) so it works whether QuickBooks calls it
-    // "Sales Rep", "Salesperson", etc.
-    var salesRep='';
-    (qc.CustomField||[]).forEach(function(f){
-      if(!salesRep && f.Name && f.Name.toLowerCase().indexOf('sales')>=0 && f.StringValue){
-        salesRep=f.StringValue.trim();
-      }
-    });
     var mapped={
       id: existing>=0 ? customers[existing].id : 'cust_'+Date.now()+'_'+Math.random().toString(36).slice(2),
       qbId: qc.Id,
       name: qc.DisplayName||qc.FullyQualifiedName||qc.CompanyName||'',
       active: qc.Active!==false,
-      salesRep: salesRep
+      salesRep: existing>=0 ? customers[existing].salesRep : ''
     };
     if(existing>=0){ customers[existing]=mapped; } else { customers.push(mapped); }
   });
   saveCustomers();
+
+  // Pass 2: fetch each customer individually to pick up Sales Person. Runs
+  // with a small concurrency limit so it doesn't open hundreds of requests
+  // at once or trip QuickBooks rate limits.
+  var CONCURRENCY=6;
+  var ids=qbCustomers.map(function(qc){return qc.Id;});
+  var doneCount=0;
+  var idx=0;
+  async function worker(){
+    while(idx<ids.length){
+      var myIdx=idx++;
+      var qbId=ids[myIdx];
+      try{
+        var dResp=await fetch(base+'/api/qb/customer?id='+encodeURIComponent(qbId));
+        var dData=await dResp.json();
+        if(dResp.ok && !dData.error){
+          var rec=dData.Customer||dData;
+          var salesRep='';
+          (rec.CustomField||[]).forEach(function(f){
+            if(!salesRep && f.Name && f.Name.toLowerCase().indexOf('sales')>=0 && f.StringValue){
+              salesRep=f.StringValue.trim();
+            }
+          });
+          var ci=customers.findIndex(function(x){return x.qbId===qbId});
+          if(ci>=0) customers[ci].salesRep=salesRep;
+        }
+      }catch(e){ /* skip this one, keep going */ }
+      doneCount++;
+      if(onProgress) onProgress(doneCount, ids.length);
+    }
+  }
+  var workers=[];
+  for(var w=0;w<CONCURRENCY;w++) workers.push(worker());
+  await Promise.all(workers);
+  saveCustomers();
+
   return {ok:true, count:qbCustomers.length};
 }
 
@@ -2235,6 +2271,10 @@ function renderReports(){
         +'<input type="date" id="coll-to" value="'+today+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
         +'<button class="btn btn-primary" onclick="runCollectionReport()">Pull from QuickBooks</button>'
       +'</div>'
+      +'<div style="display:flex;gap:8px;margin-bottom:14px">'
+        +'<button id="coll-grp-customer" class="btn btn-sm btn-primary" onclick="setCollGroupMode(\'customer\')">Group by Customer</button>'
+        +'<button id="coll-grp-salesperson" class="btn btn-sm" onclick="setCollGroupMode(\'salesperson\')">Group by Sales Person</button>'
+      +'</div>'
       +'<div id="coll-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'<div id="coll-body"></div>'
     +'</div>';
@@ -2244,11 +2284,27 @@ function renderReports(){
 // Switches between the two Reports sub-tabs without re-rendering the whole
 // page (so neither report's inputs/state get reset when switching back).
 // Customer Payments Report — pulls QuickBooks Payment records for a date
-// range and groups them by customer. Uses the same page-at-a-time fetch
+// range and groups them either by customer or by Sales Person (a custom
+// field read from each customer's QuickBooks record — see
+// qbSyncCustomersCore for how that's captured, since QuickBooks's bulk
+// query doesn't reliably return it). Uses the same page-at-a-time fetch
 // pattern as the document sync above, so it stays fast and reliable even
 // with thousands of payments.
+var _collPayments=null;   // cached raw payments from the last successful fetch
+var _collRange=null;      // {from,to} for the cached fetch
+var _collGroupMode='customer'; // 'customer' | 'salesperson'
+
+function setCollGroupMode(mode){
+  _collGroupMode=mode;
+  var custBtn=document.getElementById('coll-grp-customer');
+  var repBtn=document.getElementById('coll-grp-salesperson');
+  if(custBtn) custBtn.className='btn btn-sm'+(mode==='customer'?' btn-primary':'');
+  if(repBtn) repBtn.className='btn btn-sm'+(mode==='salesperson'?' btn-primary':'');
+  if(_collPayments) renderCollectionReport();
+}
+window.setCollGroupMode=setCollGroupMode;
+
 async function runCollectionReport(){
-  function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
   var fromEl=document.getElementById('coll-from');
   var toEl=document.getElementById('coll-to');
   var statusEl=document.getElementById('coll-status');
@@ -2295,6 +2351,29 @@ async function runCollectionReport(){
     return d && d>=from && d<=to;
   });
 
+  _collPayments=payments;
+  _collRange={from:from,to:to};
+  renderCollectionReport();
+}
+
+function renderCollectionReport(){
+  function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  var statusEl=document.getElementById('coll-status');
+  var bodyEl=document.getElementById('coll-body');
+  var payments=_collPayments||[];
+  var from=_collRange?_collRange.from:'';
+  var to=_collRange?_collRange.to:'';
+
+  // Look up each payment's customer (by QuickBooks id) to read Sales
+  // Person, needed for the by-sales-person grouping mode.
+  var custByQbId={};
+  customers.forEach(function(c){ if(c.qbId) custByQbId[c.qbId]=c; });
+  function salesPersonOf(p){
+    var qbCustId=p.CustomerRef&&p.CustomerRef.value;
+    var c=qbCustId?custByQbId[qbCustId]:null;
+    return (c&&c.salesRep)?c.salesRep.trim():'';
+  }
+
   // Group by customer, keyed by QuickBooks customer id where available
   // (falling back to the name) so the same customer never gets split into
   // two buckets due to a name/whitespace quirk. $0 records are excluded —
@@ -2302,6 +2381,7 @@ async function runCollectionReport(){
   // applied against a credit, or used purely to link documents) that
   // aren't an actual collection and shouldn't show up here.
   var byCust={}; // key -> {name, total, payments:[]}
+  var bySalesPerson={}; // name -> {total, payments:[]} (payments include customer name)
   var grandTotal=0;
   payments.forEach(function(p){
     var amt=Number(p.TotalAmt||0);
@@ -2309,44 +2389,60 @@ async function runCollectionReport(){
     var custName=(p.CustomerRef&&p.CustomerRef.name)||'No customer on file';
     var custKey=(p.CustomerRef&&p.CustomerRef.value)||custName;
     var ref=p.PaymentRefNum||'';
+    var date=(p.TxnDate||'').slice(0,10);
     if(!byCust[custKey]) byCust[custKey]={name:custName,total:0,payments:[]};
     byCust[custKey].total+=amt;
-    byCust[custKey].payments.push({date:(p.TxnDate||'').slice(0,10),amount:amt,ref:ref});
+    byCust[custKey].payments.push({date:date,amount:amt,ref:ref});
+
+    var rep=salesPersonOf(p)||'Unassigned';
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,payments:[]};
+    bySalesPerson[rep].total+=amt;
+    bySalesPerson[rep].payments.push({date:date,amount:amt,ref:ref,customer:custName});
+
     grandTotal+=amt;
   });
 
-  var custKeys=Object.keys(byCust).sort(function(a,b){
-    return byCust[b].total-byCust[a].total;
+  var byMode = (_collGroupMode==='salesperson') ? bySalesPerson : byCust;
+  var groupKeys=Object.keys(byMode).sort(function(a,b){
+    if(_collGroupMode==='salesperson'){
+      if(a==='Unassigned') return 1;
+      if(b==='Unassigned') return -1;
+    }
+    return byMode[b].total-byMode[a].total;
   });
 
-  var shownCount=custKeys.reduce(function(sum,k){ return sum+byCust[k].payments.length; },0);
+  var shownCount=groupKeys.reduce(function(sum,k){ return sum+byMode[k].payments.length; },0);
   var zeroCount=payments.length-shownCount;
   if(statusEl){
-    statusEl.textContent=shownCount+' payment(s) found across '+custKeys.length+' customer(s), '+esc(from)+' to '+esc(to)
-      +(zeroCount>0?' ('+zeroCount+' $0 record(s) excluded)':'');
+    var unit=(_collGroupMode==='salesperson')?'sales person(s)':'customer(s)';
+    statusEl.textContent=shownCount+' payment(s) found across '+groupKeys.length+' '+unit+', '+esc(from)+' to '+esc(to)
+      +(zeroCount>0?' ('+zeroCount+' $0 record(s) excluded)':'')
+      +(_collGroupMode==='salesperson'&&bySalesPerson['Unassigned']?' — some customers have no Sales Person set in QuickBooks.':'');
     statusEl.style.color='';
   }
 
-  if(!custKeys.length){
+  if(!groupKeys.length){
     if(bodyEl) bodyEl.innerHTML='<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">No payments found for this date range.</div>';
     return;
   }
 
   var html='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden">';
-  custKeys.forEach(function(custKey,ri){
-    var entry=byCust[custKey];
-    var rows=entry.payments.sort(function(a,b){ return a.date<b.date?1:-1; });
-    var rowId='coll-cust-'+ri;
+  groupKeys.forEach(function(key,ri){
+    var entry=byMode[key];
+    var label=(_collGroupMode==='salesperson')?key:entry.name;
+    var rows=entry.payments.slice().sort(function(a,b){ return a.date<b.date?1:-1; });
+    var rowId='coll-row-'+ri;
     html+='<div style="border-bottom:1px solid var(--line)">'
       +'<div onclick="toggleReportRow(\''+rowId+'\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:12px 16px">'
         +'<span style="font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px">'
           +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
-          +esc(entry.name)+' <span style="color:var(--muted);font-weight:400;font-family:var(--mono);font-size:12px">('+rows.length+' payment'+(rows.length!==1?'s':'')+')</span></span>'
+          +esc(label)+' <span style="color:var(--muted);font-weight:400;font-family:var(--mono);font-size:12px">('+rows.length+' payment'+(rows.length!==1?'s':'')+')</span></span>'
         +'<span style="font-family:var(--mono);font-size:14px;font-weight:700;color:#0f6e40">'+money(entry.total)+'</span></div>'
       +'<div id="'+rowId+'" style="display:none;padding-bottom:6px">'
         +rows.map(function(row){
+          var custPart=(_collGroupMode==='salesperson')?(esc(row.customer)+' · '):'';
           return '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 16px 7px 40px;font-size:12px;color:var(--muted);border-bottom:1px dashed var(--line)">'
-            +'<span>'+esc(row.date)+(row.ref?' · Ref '+esc(row.ref):'')+'</span>'
+            +'<span>'+custPart+esc(row.date)+(row.ref?' · Ref '+esc(row.ref):'')+'</span>'
             +'<span style="font-family:var(--mono);white-space:nowrap">'+money(row.amount)+'</span></div>';
         }).join('')
       +'</div></div>';
@@ -4543,7 +4639,9 @@ async function qbSyncCustomers(){
   var status=document.getElementById('custSyncStatus');
   if(btn) btn.disabled=true;
   if(status) status.textContent='Syncing customers from QuickBooks…';
-  var result=await qbSyncCustomersCore();
+  var result=await qbSyncCustomersCore(function(done,total){
+    if(status) status.textContent='Fetching Sales Person for each customer… '+done+' / '+total;
+  });
   if(btn) btn.disabled=false;
   if(!result.ok){
     if(status) status.textContent='Sync failed: '+(result.needsReconnect?'QuickBooks connection expired — reconnect from the Items tab.':result.error);

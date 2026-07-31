@@ -2237,6 +2237,12 @@ function renderReports(){
       +'</div>'
       +'<div id="coll-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'<div id="coll-body"></div>'
+      +'<div style="margin-top:28px;border:1px dashed var(--line);border-radius:12px;padding:14px">'
+        +'<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Temporary — Invoice Sales Rep test (remove once settled)</div>'
+        +'<p style="font-size:12px;color:var(--muted);margin-bottom:10px">Sales Rep isn\'t readable off Customer records via the API, but QuickBooks shows it\'s enabled on Invoices. This checks a page of real Invoices to see if the CustomField data actually comes through that way.</p>'
+        +'<button class="btn" onclick="testInvoiceCustomFields()">Test Invoice custom fields</button>'
+        +'<div id="inv-test-result" style="margin-top:10px;font-size:12px"></div>'
+      +'</div>'
     +'</div>';
   buildBalanceReport();
   renderSavedReportsList();
@@ -2263,6 +2269,54 @@ function setCollGroupMode(mode){
   if(_collPayments) renderCollectionReport();
 }
 window.setCollGroupMode=setCollGroupMode;
+
+// TEMPORARY — tests whether Invoice records (which QuickBooks shows as
+// having the Sales Rep custom field enabled) actually return that data
+// through the API, unlike Customer records which confirmed do not. Uses
+// the existing /api/qb/documents endpoint — no new server route needed.
+async function testInvoiceCustomFields(){
+  var resultEl=document.getElementById('inv-test-result');
+  if(!resultEl) return;
+  resultEl.innerHTML='<span style="color:var(--muted)">Fetching a page of Invoices from QuickBooks…</span>';
+  var base=window.location.origin;
+  var resp, data;
+  try{
+    resp=await fetch(base+'/api/qb/documents?entity=Invoice&startposition=1');
+    data=await resp.json();
+  }catch(e){
+    resultEl.innerHTML='<span style="color:#c0392b">Network error.</span>';
+    return;
+  }
+  if(!resp.ok||data.error){
+    resultEl.innerHTML='<span style="color:#c0392b">Error: '+esc(data.error||resp.status)+'</span>';
+    return;
+  }
+  var invoices=data.Invoice||[];
+  if(!invoices.length){
+    resultEl.innerHTML='<span style="color:var(--muted)">No invoices returned to test against.</span>';
+    return;
+  }
+  var withFields=invoices.filter(function(inv){ return inv.CustomField && inv.CustomField.length; });
+  var withSalesRep=invoices.filter(function(inv){
+    return (inv.CustomField||[]).some(function(f){ return f.Name && f.Name.toLowerCase().indexOf('sales')>=0 && f.StringValue; });
+  });
+  var html='<div style="margin-bottom:6px">Checked '+invoices.length+' invoice(s): '+withFields.length+' have ANY custom field data, '+withSalesRep.length+' have a Sales Rep value specifically.</div>';
+  if(withSalesRep.length){
+    html+='<div style="color:#0f6e40;margin-bottom:6px">It works — Sales Rep IS readable off Invoices. Sample:</div>';
+    html+='<pre style="background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;white-space:pre-wrap;overflow-x:auto">'+esc(JSON.stringify(withSalesRep.slice(0,3).map(function(inv){
+      return {customer:(inv.CustomerRef&&inv.CustomerRef.name), customField:inv.CustomField};
+    }),null,2))+'</pre>';
+  } else if(withFields.length){
+    html+='<div style="color:#b8860b;margin-bottom:6px">Invoices have SOME custom field data, but none matched "sales" in the name on this page. Here\'s a sample of what IS there:</div>';
+    html+='<pre style="background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;white-space:pre-wrap;overflow-x:auto">'+esc(JSON.stringify(withFields.slice(0,3).map(function(inv){
+      return {customer:(inv.CustomerRef&&inv.CustomerRef.name), customField:inv.CustomField};
+    }),null,2))+'</pre>';
+  } else {
+    html+='<div style="color:#c0392b">No custom field data at all on this page of Invoices — same dead end as Customer records.</div>';
+  }
+  resultEl.innerHTML=html;
+}
+window.testInvoiceCustomFields=testInvoiceCustomFields;
 
 async function runCollectionReport(){
   var fromEl=document.getElementById('coll-from');

@@ -2297,13 +2297,17 @@ async function runCollectionReport(){
 
   // Group by customer, keyed by QuickBooks customer id where available
   // (falling back to the name) so the same customer never gets split into
-  // two buckets due to a name/whitespace quirk.
+  // two buckets due to a name/whitespace quirk. $0 records are excluded —
+  // QuickBooks can generate zero-dollar "Payment" entities (e.g. fully
+  // applied against a credit, or used purely to link documents) that
+  // aren't an actual collection and shouldn't show up here.
   var byCust={}; // key -> {name, total, payments:[]}
   var grandTotal=0;
   payments.forEach(function(p){
+    var amt=Number(p.TotalAmt||0);
+    if(!amt) return;
     var custName=(p.CustomerRef&&p.CustomerRef.name)||'No customer on file';
     var custKey=(p.CustomerRef&&p.CustomerRef.value)||custName;
-    var amt=Number(p.TotalAmt||0);
     var ref=p.PaymentRefNum||'';
     if(!byCust[custKey]) byCust[custKey]={name:custName,total:0,payments:[]};
     byCust[custKey].total+=amt;
@@ -2315,8 +2319,11 @@ async function runCollectionReport(){
     return byCust[b].total-byCust[a].total;
   });
 
+  var shownCount=custKeys.reduce(function(sum,k){ return sum+byCust[k].payments.length; },0);
+  var zeroCount=payments.length-shownCount;
   if(statusEl){
-    statusEl.textContent=payments.length+' payment(s) found across '+custKeys.length+' customer(s), '+esc(from)+' to '+esc(to);
+    statusEl.textContent=shownCount+' payment(s) found across '+custKeys.length+' customer(s), '+esc(from)+' to '+esc(to)
+      +(zeroCount>0?' ('+zeroCount+' $0 record(s) excluded)':'');
     statusEl.style.color='';
   }
 

@@ -1695,7 +1695,8 @@ async function qbSyncCustomersCore(){
       qbId: qc.Id,
       name: qc.DisplayName||qc.FullyQualifiedName||qc.CompanyName||'',
       active: qc.Active!==false,
-      salesRep: existing>=0 ? (customers[existing].salesRep||'') : ''
+      salesRep: existing>=0 ? (customers[existing].salesRep||'') : '',
+      balance: Number(qc.Balance||0)
     };
     if(existing>=0){ customers[existing]=mapped; } else { customers.push(mapped); }
   });
@@ -2353,7 +2354,11 @@ function renderCollectionReport(){
   var to=_collRange?_collRange.to:'';
 
   // Look up each payment's customer (by QuickBooks id) to read Sales
-  // Person, needed for the by-sales-person grouping mode.
+  // Person and current outstanding balance. Balance is a live snapshot
+  // from QuickBooks's Customer.Balance field (captured at the last
+  // "Sync customers" run in Settings), not tied to the report's date
+  // range — it's "what's still owed right now," so you can compare it
+  // against what came in during the period.
   var custByQbId={};
   customers.forEach(function(c){ if(c.qbId) custByQbId[c.qbId]=c; });
   function salesPersonOf(p){
@@ -2361,6 +2366,11 @@ function renderCollectionReport(){
     var c=qbCustId?custByQbId[qbCustId]:null;
     return (c&&c.salesRep)?c.salesRep.trim():'';
   }
+  function balanceOfCust(qbCustId){
+    var c=qbCustId?custByQbId[qbCustId]:null;
+    return c?Number(c.balance||0):0;
+  }
+  var anyBalanceSynced=customers.some(function(c){ return c.balance!==undefined; });
 
   // Group by customer, keyed by QuickBooks customer id where available
   // (falling back to the name) so the same customer never gets split into
@@ -2368,23 +2378,30 @@ function renderCollectionReport(){
   // QuickBooks can generate zero-dollar "Payment" entities (e.g. fully
   // applied against a credit, or used purely to link documents) that
   // aren't an actual collection and shouldn't show up here.
-  var byCust={}; // key -> {name, total, payments:[]}
-  var bySalesPerson={}; // name -> {total, payments:[]} (payments include customer name)
+  var byCust={}; // key -> {name, total, balance, payments:[]}
+  var bySalesPerson={}; // name -> {total, balance, payments:[], _custKeysSeen:Set}
   var grandTotal=0;
+  var grandBalance=0;
   payments.forEach(function(p){
     var amt=Number(p.TotalAmt||0);
     if(!amt) return;
     var custName=(p.CustomerRef&&p.CustomerRef.name)||'No customer on file';
-    var custKey=(p.CustomerRef&&p.CustomerRef.value)||custName;
+    var qbCustId=p.CustomerRef&&p.CustomerRef.value;
+    var custKey=qbCustId||custName;
     var ref=p.PaymentRefNum||'';
     var date=(p.TxnDate||'').slice(0,10);
-    if(!byCust[custKey]) byCust[custKey]={name:custName,total:0,payments:[]};
+    var bal=balanceOfCust(qbCustId);
+    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,payments:[]}; grandBalance+=bal; }
     byCust[custKey].total+=amt;
     byCust[custKey].payments.push({date:date,amount:amt,ref:ref});
 
     var rep=salesPersonOf(p)||'Unassigned';
-    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,payments:[]};
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,payments:[],_custKeysSeen:{}};
     bySalesPerson[rep].total+=amt;
+    if(!bySalesPerson[rep]._custKeysSeen[custKey]){
+      bySalesPerson[rep]._custKeysSeen[custKey]=true;
+      bySalesPerson[rep].balance+=bal;
+    }
     bySalesPerson[rep].payments.push({date:date,amount:amt,ref:ref,customer:custName});
 
     grandTotal+=amt;
@@ -2405,7 +2422,8 @@ function renderCollectionReport(){
     var unit=(_collGroupMode==='salesperson')?'sales person(s)':'customer(s)';
     statusEl.textContent=shownCount+' payment(s) found across '+groupKeys.length+' '+unit+', '+esc(from)+' to '+esc(to)
       +(zeroCount>0?' ('+zeroCount+' $0 record(s) excluded)':'')
-      +(_collGroupMode==='salesperson'&&bySalesPerson['Unassigned']?' — some customers have no Sales Person set in QuickBooks.':'');
+      +(_collGroupMode==='salesperson'&&bySalesPerson['Unassigned']?' — some customers have no Sales Person set in QuickBooks.':'')
+      +(!anyBalanceSynced?' — balances show as $0: run "Sync customers" in Settings to pull current balances.':'');
     statusEl.style.color='';
   }
 
@@ -2414,18 +2432,38 @@ function renderCollectionReport(){
     return;
   }
 
-  var html='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden">';
+  function ratioOf(collected,balance){
+    var denom=collected+balance;
+    if(denom<=0) return null;
+    return (collected/denom)*100;
+  }
+  function ratioLabel(r){
+    if(r===null) return '—';
+    return Math.round(r)+'%';
+  }
+
+  var html='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden">'
+    +'<div style="display:flex;align-items:center;padding:8px 16px;background:var(--bg);font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">'
+      +'<span style="flex:1">'+((_collGroupMode==='salesperson')?'Sales person':'Customer')+'</span>'
+      +'<span style="width:110px;text-align:right">Balance owed</span>'
+      +'<span style="width:110px;text-align:right">Collected</span>'
+      +'<span style="width:60px;text-align:right">Ratio</span>'
+    +'</div>';
   groupKeys.forEach(function(key,ri){
     var entry=byMode[key];
     var label=(_collGroupMode==='salesperson')?key:entry.name;
     var rows=entry.payments.slice().sort(function(a,b){ return a.date<b.date?1:-1; });
     var rowId='coll-row-'+ri;
+    var ratio=ratioOf(entry.total,entry.balance);
     html+='<div style="border-bottom:1px solid var(--line)">'
-      +'<div onclick="toggleReportRow(\''+rowId+'\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:12px 16px">'
-        +'<span style="font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px">'
+      +'<div onclick="toggleReportRow(\''+rowId+'\')" style="cursor:pointer;display:flex;align-items:center;padding:12px 16px">'
+        +'<span style="flex:1;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px">'
           +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
           +esc(label)+' <span style="color:var(--muted);font-weight:400;font-family:var(--mono);font-size:12px">('+rows.length+' payment'+(rows.length!==1?'s':'')+')</span></span>'
-        +'<span style="font-family:var(--mono);font-size:14px;font-weight:700;color:#0f6e40">'+money(entry.total)+'</span></div>'
+        +'<span style="width:110px;text-align:right;font-family:var(--mono);font-size:13px;color:'+(entry.balance>0?'#b8460b':'var(--muted)')+'">'+money(entry.balance)+'</span>'
+        +'<span style="width:110px;text-align:right;font-family:var(--mono);font-size:14px;font-weight:700;color:#0f6e40">'+money(entry.total)+'</span>'
+        +'<span style="width:60px;text-align:right;font-family:var(--mono);font-size:12px;color:var(--muted)">'+ratioLabel(ratio)+'</span>'
+      +'</div>'
       +'<div id="'+rowId+'" style="display:none;padding-bottom:6px">'
         +rows.map(function(row){
           var custPart=(_collGroupMode==='salesperson')?(esc(row.customer)+' · '):'';
@@ -2435,7 +2473,13 @@ function renderCollectionReport(){
         }).join('')
       +'</div></div>';
   });
-  html+='<div style="display:flex;justify-content:space-between;padding:14px 16px;font-weight:700;background:var(--bg)"><span>Total collected</span><span style="font-family:var(--mono);color:#0f6e40">'+money(grandTotal)+'</span></div>';
+  var grandRatio=ratioOf(grandTotal,grandBalance);
+  html+='<div style="display:flex;align-items:center;padding:14px 16px;font-weight:700;background:var(--bg)">'
+    +'<span style="flex:1">Total</span>'
+    +'<span style="width:110px;text-align:right;font-family:var(--mono);color:'+(grandBalance>0?'#b8460b':'var(--muted)')+'">'+money(grandBalance)+'</span>'
+    +'<span style="width:110px;text-align:right;font-family:var(--mono);color:#0f6e40">'+money(grandTotal)+'</span>'
+    +'<span style="width:60px;text-align:right;font-family:var(--mono);font-size:12px;color:var(--muted)">'+ratioLabel(grandRatio)+'</span>'
+  +'</div>';
   html+='</div>';
   if(bodyEl) bodyEl.innerHTML=html;
 }

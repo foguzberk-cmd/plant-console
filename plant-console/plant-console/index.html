@@ -2263,7 +2263,8 @@ function renderReports(){
       +'<div style="display:flex;gap:8px;margin-bottom:14px;align-items:center">'
         +'<button id="coll-grp-customer" class="btn btn-sm btn-primary" onclick="setCollGroupMode(\'customer\')">Group by Customer</button>'
         +'<button id="coll-grp-salesperson" class="btn btn-sm" onclick="setCollGroupMode(\'salesperson\')">Group by Sales Person</button>'
-        +'<button id="coll-print-all" class="btn btn-sm" style="display:none;margin-left:auto" onclick="doPrintSalesRepReport(null)">🖨 Print all reps</button>'
+        +'<button id="coll-print-all" class="btn btn-sm" style="margin-left:auto" onclick="doPrintReportGroup(null)">🖨 Print all</button>'
+        +'<button class="btn btn-sm" onclick="exportCollectionReportCSV()">⬇ Export CSV</button>'
       +'</div>'
       +'<div id="coll-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'<div id="coll-body"></div>'
@@ -2290,10 +2291,8 @@ function setCollGroupMode(mode){
   _collGroupMode=mode;
   var custBtn=document.getElementById('coll-grp-customer');
   var repBtn=document.getElementById('coll-grp-salesperson');
-  var printAllBtn=document.getElementById('coll-print-all');
   if(custBtn) custBtn.className='btn btn-sm'+(mode==='customer'?' btn-primary':'');
   if(repBtn) repBtn.className='btn btn-sm'+(mode==='salesperson'?' btn-primary':'');
-  if(printAllBtn) printAllBtn.style.display=(mode==='salesperson')?'':'none';
   if(_collPayments) renderCollectionReport();
 }
 window.setCollGroupMode=setCollGroupMode;
@@ -2390,7 +2389,7 @@ async function runCollectionReport(){
 
 // Computes the customer/sales-person groupings from the cached
 // payments+sales data — shared by the on-screen report (renderCollectionReport)
-// and the printable version (doPrintSalesRepReport), so both always agree.
+// and the printable/CSV-export versions (doPrintReportGroup, exportCollectionReportCSV), so all three always agree.
 function computeCollectionGroups(){
   var payments=_collPayments||[];
 
@@ -2552,7 +2551,8 @@ function renderCollectionReport(){
         +'<span style="flex:1;min-width:160px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px">'
           +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
           +esc(label)+' <span style="color:var(--muted);font-weight:400;font-family:var(--mono);font-size:12px">('+rows.length+' payment'+(rows.length!==1?'s':'')+')</span></span>'
-        +((_collGroupMode==='salesperson')?('<button onclick="event.stopPropagation();doPrintSalesRepReport(_collRowKeys['+ri+'])" class="btn btn-sm" title="Print this Sales Person\'s report" style="padding:4px 9px">🖨</button>'):'')
+        +'<button onclick="event.stopPropagation();doPrintReportGroup(_collRowKeys['+ri+'])" class="btn btn-sm" title="Print this row" style="padding:4px 9px">🖨</button>'
+        +'<button onclick="event.stopPropagation();exportCollectionReportGroupCSV(_collRowKeys['+ri+'])" class="btn btn-sm" title="Export this row to CSV/Excel" style="padding:4px 9px">⬇</button>'
         +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
           +valBlock('Sales',entry.sales,false,false)
           +valBlock('Balance owed',opening,true,false)
@@ -2594,23 +2594,24 @@ function renderCollectionReport(){
 // print rule, then window.print(). The @page rule here overrides the
 // label's fixed small size with a normal letter page + margins, since
 // this is a full document, not a fixed-size label.
-function doPrintSalesRepReport(repName){
+function doPrintReportGroup(key){
   function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
   var area=document.getElementById('printLabelArea');
   if(!area) throw new Error('Print area missing from the page — please reload and try again.');
   var g=computeCollectionGroups();
-  var bySalesPerson=g.bySalesPerson;
+  var byMode = (_collGroupMode==='salesperson') ? g.bySalesPerson : g.byCust;
+  var groupLabel = (_collGroupMode==='salesperson') ? 'Sales Person' : 'Customer';
   var from=_collRange?_collRange.from:'', to=_collRange?_collRange.to:'';
 
-  var repKeys;
-  if(repName!==null && repName!==undefined){
-    if(!bySalesPerson[repName]){ alert('No data for that Sales Person in the currently loaded date range.'); return; }
-    repKeys=[repName];
+  var keys;
+  if(key!==null && key!==undefined){
+    if(!byMode[key]){ alert('No data for that '+groupLabel+' in the currently loaded date range.'); return; }
+    keys=[key];
   } else {
-    repKeys=Object.keys(bySalesPerson).sort(function(a,b){
+    keys=Object.keys(byMode).sort(function(a,b){
       if(a==='Unassigned') return 1;
       if(b==='Unassigned') return -1;
-      return bySalesPerson[b].total-bySalesPerson[a].total;
+      return byMode[b].total-byMode[a].total;
     });
   }
 
@@ -2635,9 +2636,11 @@ function doPrintSalesRepReport(repName){
 
   var company=DEFAULT_LABEL_TEMPLATE.companyName;
   var addr=(DEFAULT_LABEL_TEMPLATE.addressText||'').replace(/\n/g,'<br>');
+  var showCustCol=(_collGroupMode==='salesperson'); // Customer column only makes sense when a page covers multiple customers (Sales Person mode) — in Customer mode the whole page IS one customer already
   var html='';
-  repKeys.forEach(function(rep){
-    var entry=bySalesPerson[rep];
+  keys.forEach(function(k){
+    var entry=byMode[k];
+    var label=(_collGroupMode==='salesperson')?k:entry.name;
     var opening=entry.balance+entry.total;
     var rows=entry.payments.slice().sort(function(a,b){ return a.date<b.date?1:-1; });
     html+='<div class="pc-rep-page" style="padding:20px 4px">'
@@ -2645,7 +2648,7 @@ function doPrintSalesRepReport(repName){
         +'<div style="font-weight:bold;font-size:16pt">'+esc(company)+'</div>'
         +'<div style="font-size:9pt;color:#333">'+addr+'</div>'
       +'</div>'
-      +'<div style="font-size:14pt;font-weight:bold;margin-bottom:2px">'+esc(rep)+'</div>'
+      +'<div style="font-size:14pt;font-weight:bold;margin-bottom:2px">'+esc(label)+'</div>'
       +'<div style="font-size:9pt;color:#333;margin-bottom:14px">Customer Payments — '+esc(from)+' to '+esc(to)+'</div>'
       +'<table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:9pt">'
         +'<tr>'
@@ -2666,20 +2669,20 @@ function doPrintSalesRepReport(repName){
       +'<table style="width:100%;border-collapse:collapse;font-size:9pt">'
         +'<tr>'
           +'<td style="padding:5px 8px;border-bottom:1.5px solid #000;font-weight:bold">Date</td>'
-          +'<td style="padding:5px 8px;border-bottom:1.5px solid #000;font-weight:bold">Customer</td>'
+          +(showCustCol?'<td style="padding:5px 8px;border-bottom:1.5px solid #000;font-weight:bold">Customer</td>':'')
           +'<td style="padding:5px 8px;border-bottom:1.5px solid #000;font-weight:bold">Ref</td>'
           +'<td style="padding:5px 8px;border-bottom:1.5px solid #000;font-weight:bold;text-align:right">Amount</td>'
         +'</tr>'
         +rows.map(function(row){
           return '<tr>'
             +'<td style="padding:4px 8px;border-bottom:1px solid #ddd">'+esc(row.date)+'</td>'
-            +'<td style="padding:4px 8px;border-bottom:1px solid #ddd">'+esc(row.customer||'')+'</td>'
+            +(showCustCol?'<td style="padding:4px 8px;border-bottom:1px solid #ddd">'+esc(row.customer||'')+'</td>':'')
             +'<td style="padding:4px 8px;border-bottom:1px solid #ddd">'+esc(row.ref||'')+'</td>'
             +'<td style="padding:4px 8px;border-bottom:1px solid #ddd;text-align:right">'+money(row.amount)+'</td>'
           +'</tr>';
         }).join('')
         +'<tr>'
-          +'<td colspan="3" style="padding:6px 8px;font-weight:bold;border-top:2px solid #000">Total collected</td>'
+          +'<td colspan="'+(showCustCol?3:2)+'" style="padding:6px 8px;font-weight:bold;border-top:2px solid #000">Total collected</td>'
           +'<td style="padding:6px 8px;font-weight:bold;border-top:2px solid #000;text-align:right">'+money(entry.total)+'</td>'
         +'</tr>'
       +'</table>'
@@ -2695,7 +2698,80 @@ function doPrintSalesRepReport(repName){
 
   window.print();
 }
-window.doPrintSalesRepReport=doPrintSalesRepReport;
+window.doPrintReportGroup=doPrintReportGroup;
+
+// Exports the currently displayed report (whichever grouping mode is
+// active) as a CSV — one summary row per group (Sales, Balance Owed,
+// Collected, Ending Balance, % Collected), followed by every underlying
+// payment indented beneath it. Opens directly in Excel.
+function _csvFieldEsc(v){
+  v=String(v==null?'':v);
+  if(/[",\n]/.test(v)) return '"'+v.replace(/"/g,'""')+'"';
+  return v;
+}
+// Builds the CSV rows (header + one summary row per group + indented
+// payment rows) for either the whole report or a single group — shared by
+// exportCollectionReportCSV (all) and exportCollectionReportGroupCSV (one),
+// so both always agree with what's on screen.
+function _buildCollectionCSVRows(onlyKey){
+  var g=computeCollectionGroups();
+  var byMode = (_collGroupMode==='salesperson') ? g.bySalesPerson : g.byCust;
+  var groupLabel = (_collGroupMode==='salesperson') ? 'Sales Person' : 'Customer';
+  if(!Object.keys(byMode).length) return null;
+
+  var keys;
+  if(onlyKey!==null && onlyKey!==undefined){
+    if(!byMode[onlyKey]) return null;
+    keys=[onlyKey];
+  } else {
+    keys=Object.keys(byMode).sort(function(a,b){
+      if(a==='Unassigned') return 1;
+      if(b==='Unassigned') return -1;
+      return byMode[b].total-byMode[a].total;
+    });
+  }
+
+  var rows=[[groupLabel,'Sales','Balance Owed','Collected','Ending Balance','% Collected','Row Type','Date','Customer','Ref','Amount']];
+  keys.forEach(function(k){
+    var entry=byMode[k];
+    var label=(_collGroupMode==='salesperson')?k:entry.name;
+    var opening=entry.balance+entry.total;
+    var pct=opening>0?Math.round((entry.total/opening)*100)+'%':'';
+    rows.push([label,entry.sales.toFixed(2),opening.toFixed(2),entry.total.toFixed(2),entry.balance.toFixed(2),pct,'SUMMARY','','','','']);
+    entry.payments.slice().sort(function(a,b){ return a.date<b.date?1:-1; }).forEach(function(row){
+      rows.push(['','','','','','','PAYMENT',row.date,row.customer||label,row.ref||'',row.amount.toFixed(2)]);
+    });
+  });
+  return rows;
+}
+function _downloadCSVRows(rows,filename){
+  var csv=rows.map(function(r){ return r.map(_csvFieldEsc).join(','); }).join('\r\n');
+  var blob=new Blob([csv],{type:'text/csv'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url;
+  a.download=filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); },1000);
+}
+function exportCollectionReportCSV(){
+  var from=_collRange?_collRange.from:'', to=_collRange?_collRange.to:'';
+  var rows=_buildCollectionCSVRows(null);
+  if(!rows){ alert('Run the report first, then export.'); return; }
+  _downloadCSVRows(rows,'customer-payments-'+(from||'')+'-to-'+(to||'')+'.csv');
+}
+window.exportCollectionReportCSV=exportCollectionReportCSV;
+
+// Exports just one row/group (one customer, or one Sales Person) to CSV —
+// the per-row ⬇ button next to Print.
+function exportCollectionReportGroupCSV(key){
+  var from=_collRange?_collRange.from:'', to=_collRange?_collRange.to:'';
+  var rows=_buildCollectionCSVRows(key);
+  if(!rows){ alert('No data for that row in the currently loaded date range.'); return; }
+  var safeName=String(key).replace(/[^a-z0-9]+/gi,'-').replace(/^-+|-+$/g,'').slice(0,60)||'export';
+  _downloadCSVRows(rows,'customer-payments-'+safeName+'-'+(from||'')+'-to-'+(to||'')+'.csv');
+}
+window.exportCollectionReportGroupCSV=exportCollectionReportGroupCSV;
 function switchReportTab(tab){
   var invPanel=document.getElementById('rpt-panel-inventory');
   var collPanel=document.getElementById('rpt-panel-collection');

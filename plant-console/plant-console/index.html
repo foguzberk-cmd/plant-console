@@ -2266,6 +2266,7 @@ function renderReports(){
         +'<button id="coll-print-all" class="btn btn-sm" style="margin-left:auto" onclick="doPrintReportGroup(null)">🖨 Print all</button>'
         +'<button class="btn btn-sm" onclick="exportCollectionReportCSV()">⬇ Export CSV</button>'
       +'</div>'
+      +'<input type="text" id="coll-search" placeholder="Search customer or sales person..." oninput="renderCollectionReport()" style="width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);margin-bottom:14px;outline:none"/>'
       +'<div id="coll-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'<div id="coll-body"></div>'
     +'</div>';
@@ -2501,6 +2502,14 @@ function renderCollectionReport(){
     return byMode[b].total-byMode[a].total;
   });
 
+  var searchQ=(document.getElementById('coll-search')&&document.getElementById('coll-search').value||'').toLowerCase().trim();
+  if(searchQ){
+    groupKeys=groupKeys.filter(function(k){
+      var label=(_collGroupMode==='salesperson')?k:byMode[k].name;
+      return (label||'').toLowerCase().indexOf(searchQ)>=0;
+    });
+  }
+
   var shownCount=groupKeys.reduce(function(sum,k){ return sum+byMode[k].payments.length; },0);
   var zeroCount=payments.length-shownCount;
   if(statusEl){
@@ -2513,7 +2522,7 @@ function renderCollectionReport(){
   }
 
   if(!groupKeys.length){
-    if(bodyEl) bodyEl.innerHTML='<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">No payments found for this date range.</div>';
+    if(bodyEl) bodyEl.innerHTML='<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">'+(searchQ?'No match for "'+esc(searchQ)+'".':'No payments found for this date range.')+'</div>';
     return;
   }
 

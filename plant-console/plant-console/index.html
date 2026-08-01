@@ -2444,6 +2444,14 @@ function renderCollectionReport(){
       +'<span style="font-family:var(--mono);font-size:'+(bold?'14px':'13px')+';font-weight:'+(bold?'700':'600')+';color:'+(colorPositive&&val>0?'#b8460b':(bold?'#0f6e40':'var(--ink)'))+'">'+money(val)+'</span>'
     +'</span>';
   }
+  function pctBlock(lbl,collected,opening){
+    var pct=opening>0?(collected/opening)*100:null;
+    var label=pct===null?'—':Math.round(pct)+'%';
+    return '<span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.25;min-width:60px">'
+      +'<span style="font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">'+lbl+'</span>'
+      +'<span style="font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ink)">'+label+'</span>'
+    +'</span>';
+  }
 
   var html='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden">';
   groupKeys.forEach(function(key,ri){
@@ -2461,6 +2469,7 @@ function renderCollectionReport(){
           +valBlock('Balance owed',opening,true,false)
           +valBlock('Collected',entry.total,false,true)
           +valBlock('Ending balance',entry.balance,true,false)
+          +pctBlock('% collected',entry.total,opening)
         +'</span>'
       +'</div>'
       +'<div id="'+rowId+'" style="display:none;padding-bottom:6px">'
@@ -2479,6 +2488,7 @@ function renderCollectionReport(){
       +valBlock('Balance owed',grandOpening,true,false)
       +valBlock('Collected',grandTotal,false,true)
       +valBlock('Ending balance',grandBalance,true,false)
+      +pctBlock('% collected',grandTotal,grandOpening)
     +'</span>'
   +'</div>';
   html+='</div>';

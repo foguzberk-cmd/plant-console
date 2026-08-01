@@ -4640,7 +4640,7 @@ function renderCustomersPanel(){
       <span style="font-size:11px;color:var(--muted);font-style:italic">Each department has its own customer list — this only affects who shows up when printing for "${esc(_custPanelDept)}".</span>
     </div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
-      <input type="text" id="cust-filter" placeholder="Search customers..." oninput="renderCustomersList()" style="flex:1;min-width:200px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
+      <input type="text" id="cust-filter" placeholder="Search customers or Sales Rep..." oninput="renderCustomersList()" style="flex:1;min-width:200px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
       <button class="btn btn-sm" onclick="customerSelectAll(true)">Select all</button>
       <button class="btn btn-sm" onclick="customerSelectAll(false)">Clear all</button>
       <button class="btn btn-sm" id="custSyncBtn" onclick="qbSyncCustomers()" title="Pull the latest customer list from QuickBooks">
@@ -4675,7 +4675,7 @@ function renderCustomersList(){
   var listEl=document.getElementById('customersList');
   if(!listEl) return;
   var q=(document.getElementById('cust-filter')&&document.getElementById('cust-filter').value||'').toLowerCase().trim();
-  var shown=customers.filter(function(c){ return !q || (c.name||'').toLowerCase().includes(q); });
+  var shown=customers.filter(function(c){ return !q || (c.name||'').toLowerCase().includes(q) || (c.salesRep||'').toLowerCase().includes(q); });
   shown.sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
   // Distinct Sales Rep names already in use, for the suggestion dropdown —
   // picking from this instead of retyping avoids creating near-duplicate
@@ -4801,7 +4801,7 @@ function toggleCustomerAllowed(id,on){
 }
 function customerSelectAll(on){
   var q=(document.getElementById('cust-filter')&&document.getElementById('cust-filter').value||'').toLowerCase().trim();
-  var shown=customers.filter(function(c){ return !q || (c.name||'').toLowerCase().includes(q); });
+  var shown=customers.filter(function(c){ return !q || (c.name||'').toLowerCase().includes(q) || (c.salesRep||'').toLowerCase().includes(q); });
   shown.forEach(function(c){
     var i=_custDraft.indexOf(c.id);
     if(on && i<0) _custDraft.push(c.id);

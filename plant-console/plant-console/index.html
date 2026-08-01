@@ -4677,12 +4677,19 @@ function renderCustomersList(){
   var q=(document.getElementById('cust-filter')&&document.getElementById('cust-filter').value||'').toLowerCase().trim();
   var shown=customers.filter(function(c){ return !q || (c.name||'').toLowerCase().includes(q); });
   shown.sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
-  listEl.innerHTML=shown.map(function(c){
+  // Distinct Sales Rep names already in use, for the suggestion dropdown —
+  // picking from this instead of retyping avoids creating near-duplicate
+  // reps from typos (e.g. "Hasan Ozlutiras" vs "Hasan Ozluttiras").
+  var repSet={};
+  customers.forEach(function(c){ if(c.salesRep&&c.salesRep.trim()) repSet[c.salesRep.trim()]=true; });
+  var repOptions=Object.keys(repSet).sort();
+  var datalistHtml='<datalist id="salesRepOptions">'+repOptions.map(function(r){ return '<option value="'+esc(r)+'">'; }).join('')+'</datalist>';
+  listEl.innerHTML=datalistHtml+shown.map(function(c){
     var on=_custDraft.indexOf(c.id)>=0;
     return '<label style="display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer">'
       +'<input type="checkbox" '+(on?'checked':'')+' onchange="toggleCustomerAllowed(\''+c.id+'\',this.checked)" style="width:17px;height:17px;cursor:pointer;accent-color:var(--brand)"/>'
       +'<div style="flex:1;font-size:13px;font-weight:600">'+esc(c.name)+'</div>'
-      +'<input type="text" value="'+esc(c.salesRep||'')+'" placeholder="Sales Rep" onclick="event.stopPropagation()" onchange="updateCustomerSalesRep(\''+c.id+'\',this.value)" style="width:140px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink);cursor:text"/>'
+      +'<input type="text" list="salesRepOptions" value="'+esc(c.salesRep||'')+'" placeholder="Sales Rep" onclick="event.stopPropagation(); if(this.showPicker){try{this.showPicker();}catch(e){}}" onchange="updateCustomerSalesRep(\''+c.id+'\',this.value)" style="width:140px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink);cursor:text"/>'
       +'</label>';
   }).join('');
   var countEl=document.getElementById('cust-count');
@@ -4696,6 +4703,17 @@ function updateCustomerSalesRep(id,value){
   if(!c) return;
   c.salesRep=(value||'').trim();
   saveCustomers();
+  // If this introduced a brand-new Sales Rep name, add it to the shared
+  // suggestion list in place (no full re-render, so we don't disrupt
+  // scroll position or focus while typing).
+  if(c.salesRep){
+    var dl=document.getElementById('salesRepOptions');
+    if(dl && !dl.querySelector('option[value="'+CSS.escape(c.salesRep)+'"]')){
+      var opt=document.createElement('option');
+      opt.value=c.salesRep;
+      dl.appendChild(opt);
+    }
+  }
 }
 
 // --- Minimal CSV encode/decode (no library needed for two simple columns) ---

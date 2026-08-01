@@ -2432,37 +2432,36 @@ function renderCollectionReport(){
     return;
   }
 
-  function ratioOf(collected,balance){
-    var denom=collected+balance;
-    if(denom<=0) return null;
-    return (collected/denom)*100;
-  }
-  function ratioLabel(r){
-    if(r===null) return '—';
-    return Math.round(r)+'%';
+  // "Balance Owed" (opening, for this period) is derived — QuickBooks only
+  // gives us the CURRENT balance (Ending Balance), so Opening is estimated
+  // as Ending + Collected. That's exact as long as no new invoices/charges
+  // were added during the period; if new charges did come in, this will
+  // overstate Balance Owed by that amount. Called out below the report so
+  // it's not mistaken for an exact opening-balance figure.
+  function valBlock(lbl,val,colorPositive,bold){
+    return '<span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.25;min-width:88px">'
+      +'<span style="font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">'+lbl+'</span>'
+      +'<span style="font-family:var(--mono);font-size:'+(bold?'14px':'13px')+';font-weight:'+(bold?'700':'600')+';color:'+(colorPositive&&val>0?'#b8460b':(bold?'#0f6e40':'var(--ink)'))+'">'+money(val)+'</span>'
+    +'</span>';
   }
 
-  var html='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden">'
-    +'<div style="display:flex;align-items:center;padding:8px 16px;background:var(--bg);font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">'
-      +'<span style="flex:1">'+((_collGroupMode==='salesperson')?'Sales person':'Customer')+'</span>'
-      +'<span style="width:110px;text-align:right">Balance owed</span>'
-      +'<span style="width:110px;text-align:right">Collected</span>'
-      +'<span style="width:60px;text-align:right">Ratio</span>'
-    +'</div>';
+  var html='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden">';
   groupKeys.forEach(function(key,ri){
     var entry=byMode[key];
     var label=(_collGroupMode==='salesperson')?key:entry.name;
     var rows=entry.payments.slice().sort(function(a,b){ return a.date<b.date?1:-1; });
     var rowId='coll-row-'+ri;
-    var ratio=ratioOf(entry.total,entry.balance);
+    var opening=entry.balance+entry.total;
     html+='<div style="border-bottom:1px solid var(--line)">'
-      +'<div onclick="toggleReportRow(\''+rowId+'\')" style="cursor:pointer;display:flex;align-items:center;padding:12px 16px">'
-        +'<span style="flex:1;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px">'
+      +'<div onclick="toggleReportRow(\''+rowId+'\')" style="cursor:pointer;display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:12px 16px">'
+        +'<span style="flex:1;min-width:160px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px">'
           +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
           +esc(label)+' <span style="color:var(--muted);font-weight:400;font-family:var(--mono);font-size:12px">('+rows.length+' payment'+(rows.length!==1?'s':'')+')</span></span>'
-        +'<span style="width:110px;text-align:right;font-family:var(--mono);font-size:13px;color:'+(entry.balance>0?'#b8460b':'var(--muted)')+'">'+money(entry.balance)+'</span>'
-        +'<span style="width:110px;text-align:right;font-family:var(--mono);font-size:14px;font-weight:700;color:#0f6e40">'+money(entry.total)+'</span>'
-        +'<span style="width:60px;text-align:right;font-family:var(--mono);font-size:12px;color:var(--muted)">'+ratioLabel(ratio)+'</span>'
+        +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
+          +valBlock('Balance owed',opening,true,false)
+          +valBlock('Collected',entry.total,false,true)
+          +valBlock('Ending balance',entry.balance,true,false)
+        +'</span>'
       +'</div>'
       +'<div id="'+rowId+'" style="display:none;padding-bottom:6px">'
         +rows.map(function(row){
@@ -2473,14 +2472,17 @@ function renderCollectionReport(){
         }).join('')
       +'</div></div>';
   });
-  var grandRatio=ratioOf(grandTotal,grandBalance);
-  html+='<div style="display:flex;align-items:center;padding:14px 16px;font-weight:700;background:var(--bg)">'
-    +'<span style="flex:1">Total</span>'
-    +'<span style="width:110px;text-align:right;font-family:var(--mono);color:'+(grandBalance>0?'#b8460b':'var(--muted)')+'">'+money(grandBalance)+'</span>'
-    +'<span style="width:110px;text-align:right;font-family:var(--mono);color:#0f6e40">'+money(grandTotal)+'</span>'
-    +'<span style="width:60px;text-align:right;font-family:var(--mono);font-size:12px;color:var(--muted)">'+ratioLabel(grandRatio)+'</span>'
+  var grandOpening=grandBalance+grandTotal;
+  html+='<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:14px 16px;background:var(--bg)">'
+    +'<span style="flex:1;min-width:120px;font-weight:700">Total</span>'
+    +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
+      +valBlock('Balance owed',grandOpening,true,false)
+      +valBlock('Collected',grandTotal,false,true)
+      +valBlock('Ending balance',grandBalance,true,false)
+    +'</span>'
   +'</div>';
   html+='</div>';
+  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Balance owed" is estimated as Ending balance + Collected — exact as long as no new invoices were issued during this period; new charges during the period will make it look higher than it actually was. "Ending balance" is live from QuickBooks as of your last customer sync.</div>';
   if(bodyEl) bodyEl.innerHTML=html;
 }
 function switchReportTab(tab){

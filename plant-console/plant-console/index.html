@@ -2260,9 +2260,10 @@ function renderReports(){
         +'<input type="date" id="coll-to" value="'+today+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
         +'<button class="btn btn-primary" onclick="runCollectionReport()">Pull from QuickBooks</button>'
       +'</div>'
-      +'<div style="display:flex;gap:8px;margin-bottom:14px">'
+      +'<div style="display:flex;gap:8px;margin-bottom:14px;align-items:center">'
         +'<button id="coll-grp-customer" class="btn btn-sm btn-primary" onclick="setCollGroupMode(\'customer\')">Group by Customer</button>'
         +'<button id="coll-grp-salesperson" class="btn btn-sm" onclick="setCollGroupMode(\'salesperson\')">Group by Sales Person</button>'
+        +'<button id="coll-print-all" class="btn btn-sm" style="display:none;margin-left:auto" onclick="doPrintSalesRepReport(null)">🖨 Print all reps</button>'
       +'</div>'
       +'<div id="coll-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'<div id="coll-body"></div>'
@@ -2283,13 +2284,16 @@ var _collPayments=null;   // cached raw payments from the last successful fetch
 var _collSalesDocs=null;  // cached raw Invoice+SalesReceipt docs for the "Sales" column
 var _collRange=null;      // {from,to} for the cached fetch
 var _collGroupMode='customer'; // 'customer' | 'salesperson'
+var _collRowKeys=[]; // groupKeys from the last render, indexed the same as each row — lets per-row buttons (like Print) reference a rep name safely without embedding raw text (which could contain apostrophes) into an onclick attribute
 
 function setCollGroupMode(mode){
   _collGroupMode=mode;
   var custBtn=document.getElementById('coll-grp-customer');
   var repBtn=document.getElementById('coll-grp-salesperson');
+  var printAllBtn=document.getElementById('coll-print-all');
   if(custBtn) custBtn.className='btn btn-sm'+(mode==='customer'?' btn-primary':'');
   if(repBtn) repBtn.className='btn btn-sm'+(mode==='salesperson'?' btn-primary':'');
+  if(printAllBtn) printAllBtn.style.display=(mode==='salesperson')?'':'none';
   if(_collPayments) renderCollectionReport();
 }
 window.setCollGroupMode=setCollGroupMode;
@@ -2384,13 +2388,11 @@ async function runCollectionReport(){
   renderCollectionReport();
 }
 
-function renderCollectionReport(){
-  function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
-  var statusEl=document.getElementById('coll-status');
-  var bodyEl=document.getElementById('coll-body');
+// Computes the customer/sales-person groupings from the cached
+// payments+sales data — shared by the on-screen report (renderCollectionReport)
+// and the printable version (doPrintSalesRepReport), so both always agree.
+function computeCollectionGroups(){
   var payments=_collPayments||[];
-  var from=_collRange?_collRange.from:'';
-  var to=_collRange?_collRange.to:'';
 
   // Look up each payment's customer (by QuickBooks id) to read Sales
   // Person and current outstanding balance. Balance is a live snapshot
@@ -2472,6 +2474,25 @@ function renderCollectionReport(){
     grandSales+=amt;
   });
 
+  return {
+    payments:payments, byCust:byCust, bySalesPerson:bySalesPerson,
+    grandTotal:grandTotal, grandBalance:grandBalance, grandSales:grandSales,
+    anyBalanceSynced:anyBalanceSynced
+  };
+}
+
+function renderCollectionReport(){
+  function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  var statusEl=document.getElementById('coll-status');
+  var bodyEl=document.getElementById('coll-body');
+  var from=_collRange?_collRange.from:'';
+  var to=_collRange?_collRange.to:'';
+
+  var g=computeCollectionGroups();
+  var payments=g.payments, byCust=g.byCust, bySalesPerson=g.bySalesPerson;
+  var grandTotal=g.grandTotal, grandBalance=g.grandBalance, grandSales=g.grandSales;
+  var anyBalanceSynced=g.anyBalanceSynced;
+
   var byMode = (_collGroupMode==='salesperson') ? bySalesPerson : byCust;
   var groupKeys=Object.keys(byMode).sort(function(a,b){
     if(_collGroupMode==='salesperson'){
@@ -2519,6 +2540,7 @@ function renderCollectionReport(){
   }
 
   var html='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden">';
+  _collRowKeys=groupKeys;
   groupKeys.forEach(function(key,ri){
     var entry=byMode[key];
     var label=(_collGroupMode==='salesperson')?key:entry.name;
@@ -2530,6 +2552,7 @@ function renderCollectionReport(){
         +'<span style="flex:1;min-width:160px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px">'
           +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
           +esc(label)+' <span style="color:var(--muted);font-weight:400;font-family:var(--mono);font-size:12px">('+rows.length+' payment'+(rows.length!==1?'s':'')+')</span></span>'
+        +((_collGroupMode==='salesperson')?('<button onclick="event.stopPropagation();doPrintSalesRepReport(_collRowKeys['+ri+'])" class="btn btn-sm" title="Print this Sales Person\'s report" style="padding:4px 9px">🖨</button>'):'')
         +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
           +valBlock('Sales',entry.sales,false,false)
           +valBlock('Balance owed',opening,true,false)
@@ -2562,6 +2585,111 @@ function renderCollectionReport(){
   html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is gross Invoices + Sales Receipts issued during this period — it does not subtract Credit Memo returns. "Balance owed" is estimated as Ending balance + Collected — exact as long as no new invoices were issued during this period; new charges during the period will make it look higher than it actually was. "Ending balance" is live from QuickBooks as of your last customer sync.</div>';
   if(bodyEl) bodyEl.innerHTML=html;
 }
+
+// Prints a clean, letter-size version of the Sales Person breakdown —
+// either one specific rep (repName as a string) or every rep, each
+// starting on its own page (repName===null). Reuses the same
+// #printLabelArea trick as label printing (see doPrintLabel): populate a
+// hidden area, make it the ONLY thing visible via the existing @media
+// print rule, then window.print(). The @page rule here overrides the
+// label's fixed small size with a normal letter page + margins, since
+// this is a full document, not a fixed-size label.
+function doPrintSalesRepReport(repName){
+  function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  var area=document.getElementById('printLabelArea');
+  if(!area) throw new Error('Print area missing from the page — please reload and try again.');
+  var g=computeCollectionGroups();
+  var bySalesPerson=g.bySalesPerson;
+  var from=_collRange?_collRange.from:'', to=_collRange?_collRange.to:'';
+
+  var repKeys;
+  if(repName!==null && repName!==undefined){
+    if(!bySalesPerson[repName]){ alert('No data for that Sales Person in the currently loaded date range.'); return; }
+    repKeys=[repName];
+  } else {
+    repKeys=Object.keys(bySalesPerson).sort(function(a,b){
+      if(a==='Unassigned') return 1;
+      if(b==='Unassigned') return -1;
+      return bySalesPerson[b].total-bySalesPerson[a].total;
+    });
+  }
+
+  var pageStyle=document.getElementById('dynLabelPageStyle');
+  if(!pageStyle){
+    pageStyle=document.createElement('style');
+    pageStyle.id='dynLabelPageStyle';
+    document.head.appendChild(pageStyle);
+  }
+  // Normal letter page with margins — overrides whatever fixed label size
+  // a previous label print left behind (see doPrintLabel — same style tag
+  // is reused since only one print job ever runs at a time).
+  pageStyle.textContent='@page{ size:letter; margin:0.6in; }'
+    +'@media print{ #printLabelArea{ width:auto; height:auto; overflow:visible; font-family:Arial,Helvetica,sans-serif; color:#000; background:#fff; } '
+    +'.pc-rep-page{ page-break-after:always; } .pc-rep-page:last-child{ page-break-after:auto; } }';
+
+  var company=DEFAULT_LABEL_TEMPLATE.companyName;
+  var addr=(DEFAULT_LABEL_TEMPLATE.addressText||'').replace(/\n/g,'<br>');
+  var html='';
+  repKeys.forEach(function(rep){
+    var entry=bySalesPerson[rep];
+    var opening=entry.balance+entry.total;
+    var rows=entry.payments.slice().sort(function(a,b){ return a.date<b.date?1:-1; });
+    html+='<div class="pc-rep-page" style="padding:20px 4px">'
+      +'<div style="text-align:center;border-bottom:2px solid #000;padding-bottom:10px;margin-bottom:16px">'
+        +'<div style="font-weight:bold;font-size:16pt">'+esc(company)+'</div>'
+        +'<div style="font-size:9pt;color:#333">'+addr+'</div>'
+      +'</div>'
+      +'<div style="font-size:14pt;font-weight:bold;margin-bottom:2px">'+esc(rep)+'</div>'
+      +'<div style="font-size:9pt;color:#333;margin-bottom:14px">Customer Payments — '+esc(from)+' to '+esc(to)+'</div>'
+      +'<table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:9pt">'
+        +'<tr>'
+          +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">Sales</td>'
+          +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">Balance Owed</td>'
+          +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">Collected</td>'
+          +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">Ending Balance</td>'
+          +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">% Collected</td>'
+        +'</tr>'
+        +'<tr>'
+          +'<td style="padding:6px 10px;border:1px solid #999">'+money(entry.sales)+'</td>'
+          +'<td style="padding:6px 10px;border:1px solid #999">'+money(opening)+'</td>'
+          +'<td style="padding:6px 10px;border:1px solid #999">'+money(entry.total)+'</td>'
+          +'<td style="padding:6px 10px;border:1px solid #999">'+money(entry.balance)+'</td>'
+          +'<td style="padding:6px 10px;border:1px solid #999">'+(opening>0?Math.round((entry.total/opening)*100)+'%':'—')+'</td>'
+        +'</tr>'
+      +'</table>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:9pt">'
+        +'<tr>'
+          +'<td style="padding:5px 8px;border-bottom:1.5px solid #000;font-weight:bold">Date</td>'
+          +'<td style="padding:5px 8px;border-bottom:1.5px solid #000;font-weight:bold">Customer</td>'
+          +'<td style="padding:5px 8px;border-bottom:1.5px solid #000;font-weight:bold">Ref</td>'
+          +'<td style="padding:5px 8px;border-bottom:1.5px solid #000;font-weight:bold;text-align:right">Amount</td>'
+        +'</tr>'
+        +rows.map(function(row){
+          return '<tr>'
+            +'<td style="padding:4px 8px;border-bottom:1px solid #ddd">'+esc(row.date)+'</td>'
+            +'<td style="padding:4px 8px;border-bottom:1px solid #ddd">'+esc(row.customer||'')+'</td>'
+            +'<td style="padding:4px 8px;border-bottom:1px solid #ddd">'+esc(row.ref||'')+'</td>'
+            +'<td style="padding:4px 8px;border-bottom:1px solid #ddd;text-align:right">'+money(row.amount)+'</td>'
+          +'</tr>';
+        }).join('')
+        +'<tr>'
+          +'<td colspan="3" style="padding:6px 8px;font-weight:bold;border-top:2px solid #000">Total collected</td>'
+          +'<td style="padding:6px 8px;font-weight:bold;border-top:2px solid #000;text-align:right">'+money(entry.total)+'</td>'
+        +'</tr>'
+      +'</table>'
+    +'</div>';
+  });
+
+  area.innerHTML=html;
+
+  function cleanup(){ area.innerHTML=''; }
+  // Same long flat delay as doPrintLabel — see that function's comment for
+  // why 'afterprint' isn't used (unreliable timing on Android's print flow).
+  setTimeout(cleanup,60000);
+
+  window.print();
+}
+window.doPrintSalesRepReport=doPrintSalesRepReport;
 function switchReportTab(tab){
   var invPanel=document.getElementById('rpt-panel-inventory');
   var collPanel=document.getElementById('rpt-panel-collection');

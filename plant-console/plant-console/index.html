@@ -2280,6 +2280,7 @@ function renderReports(){
 // pattern as the document sync above, so it stays fast and reliable even
 // with thousands of payments.
 var _collPayments=null;   // cached raw payments from the last successful fetch
+var _collSalesDocs=null;  // cached raw Invoice+SalesReceipt docs for the "Sales" column
 var _collRange=null;      // {from,to} for the cached fetch
 var _collGroupMode='customer'; // 'customer' | 'salesperson'
 
@@ -2340,7 +2341,45 @@ async function runCollectionReport(){
     return d && d>=from && d<=to;
   });
 
+  // "Sales" — Invoices + Sales Receipts issued during this same period
+  // (gross sales; does not net out CreditMemo returns). Fetched the same
+  // page-at-a-time way as Payments above.
+  var salesDocs=[];
+  for(var si=0;si<2;si++){
+    var entName=si===0?'Invoice':'SalesReceipt';
+    var sStart=1;
+    var sSafety=0;
+    while(true){
+      sSafety++;
+      if(sSafety>1000) break;
+      var sCtrl=new AbortController();
+      var sTimer=setTimeout(function(){sCtrl.abort();},60000);
+      var sRows=null;
+      try{
+        var sr=await fetch(base+'/api/qb/documents?entity='+entName+'&startposition='+sStart+'&from='+encodeURIComponent(from),{signal:sCtrl.signal});
+        clearTimeout(sTimer);
+        if(sr.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
+        var sjd=await sr.json();
+        if(sjd && sjd.error){ if(statusEl){ statusEl.textContent='Error: '+sjd.error; statusEl.style.color='#c0392b'; } return; }
+        sRows=(sjd && sjd[entName]) ? sjd[entName] : [];
+      }catch(e){
+        clearTimeout(sTimer);
+        if(statusEl){ statusEl.textContent='Network error while fetching sales documents — try again.'; statusEl.style.color='#c0392b'; }
+        return;
+      }
+      salesDocs=salesDocs.concat(sRows);
+      if(statusEl) statusEl.textContent='Fetched '+payments.length+' payment(s), '+salesDocs.length+' sales document(s) so far…';
+      if(sRows.length<pageSize) break;
+      sStart+=pageSize;
+    }
+  }
+  salesDocs=salesDocs.filter(function(d){
+    var dt=(d.TxnDate||'').slice(0,10);
+    return dt && dt>=from && dt<=to;
+  });
+
   _collPayments=payments;
+  _collSalesDocs=salesDocs;
   _collRange={from:from,to:to};
   renderCollectionReport();
 }
@@ -2378,10 +2417,11 @@ function renderCollectionReport(){
   // QuickBooks can generate zero-dollar "Payment" entities (e.g. fully
   // applied against a credit, or used purely to link documents) that
   // aren't an actual collection and shouldn't show up here.
-  var byCust={}; // key -> {name, total, balance, payments:[]}
-  var bySalesPerson={}; // name -> {total, balance, payments:[], _custKeysSeen:Set}
+  var byCust={}; // key -> {name, total, balance, sales, payments:[]}
+  var bySalesPerson={}; // name -> {total, balance, sales, payments:[], _custKeysSeen:Set}
   var grandTotal=0;
   var grandBalance=0;
+  var grandSales=0;
   payments.forEach(function(p){
     var amt=Number(p.TotalAmt||0);
     if(!amt) return;
@@ -2391,12 +2431,12 @@ function renderCollectionReport(){
     var ref=p.PaymentRefNum||'';
     var date=(p.TxnDate||'').slice(0,10);
     var bal=balanceOfCust(qbCustId);
-    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,payments:[]}; grandBalance+=bal; }
+    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,sales:0,payments:[]}; grandBalance+=bal; }
     byCust[custKey].total+=amt;
     byCust[custKey].payments.push({date:date,amount:amt,ref:ref});
 
     var rep=salesPersonOf(p)||'Unassigned';
-    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,payments:[],_custKeysSeen:{}};
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,payments:[],_custKeysSeen:{}};
     bySalesPerson[rep].total+=amt;
     if(!bySalesPerson[rep]._custKeysSeen[custKey]){
       bySalesPerson[rep]._custKeysSeen[custKey]=true;
@@ -2405,6 +2445,31 @@ function renderCollectionReport(){
     bySalesPerson[rep].payments.push({date:date,amount:amt,ref:ref,customer:custName});
 
     grandTotal+=amt;
+  });
+
+  // Second pass: Sales (Invoices + Sales Receipts issued during the same
+  // period). Uses the same customer keying as above, and creates a group
+  // entry if a customer had sales but no payments in range (so they still
+  // show up, with $0 Collected).
+  var salesDocs=_collSalesDocs||[];
+  salesDocs.forEach(function(d){
+    var amt=Number(d.TotalAmt||0);
+    var custName=(d.CustomerRef&&d.CustomerRef.name)||'No customer on file';
+    var qbCustId=d.CustomerRef&&d.CustomerRef.value;
+    var custKey=qbCustId||custName;
+    var bal=balanceOfCust(qbCustId);
+    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,sales:0,payments:[]}; grandBalance+=bal; }
+    byCust[custKey].sales+=amt;
+
+    var rep=salesPersonOf(d)||'Unassigned';
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,payments:[],_custKeysSeen:{}};
+    if(!bySalesPerson[rep]._custKeysSeen[custKey]){
+      bySalesPerson[rep]._custKeysSeen[custKey]=true;
+      bySalesPerson[rep].balance+=bal;
+    }
+    bySalesPerson[rep].sales+=amt;
+
+    grandSales+=amt;
   });
 
   var byMode = (_collGroupMode==='salesperson') ? bySalesPerson : byCust;
@@ -2466,6 +2531,7 @@ function renderCollectionReport(){
           +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
           +esc(label)+' <span style="color:var(--muted);font-weight:400;font-family:var(--mono);font-size:12px">('+rows.length+' payment'+(rows.length!==1?'s':'')+')</span></span>'
         +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
+          +valBlock('Sales',entry.sales,false,false)
           +valBlock('Balance owed',opening,true,false)
           +valBlock('Collected',entry.total,false,true)
           +valBlock('Ending balance',entry.balance,true,false)
@@ -2485,6 +2551,7 @@ function renderCollectionReport(){
   html+='<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:14px 16px;background:var(--bg)">'
     +'<span style="flex:1;min-width:120px;font-weight:700">Total</span>'
     +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
+      +valBlock('Sales',grandSales,false,false)
       +valBlock('Balance owed',grandOpening,true,false)
       +valBlock('Collected',grandTotal,false,true)
       +valBlock('Ending balance',grandBalance,true,false)
@@ -2492,7 +2559,7 @@ function renderCollectionReport(){
     +'</span>'
   +'</div>';
   html+='</div>';
-  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Balance owed" is estimated as Ending balance + Collected — exact as long as no new invoices were issued during this period; new charges during the period will make it look higher than it actually was. "Ending balance" is live from QuickBooks as of your last customer sync.</div>';
+  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is gross Invoices + Sales Receipts issued during this period — it does not subtract Credit Memo returns. "Balance owed" is estimated as Ending balance + Collected — exact as long as no new invoices were issued during this period; new charges during the period will make it look higher than it actually was. "Ending balance" is live from QuickBooks as of your last customer sync.</div>';
   if(bodyEl) bodyEl.innerHTML=html;
 }
 function switchReportTab(tab){

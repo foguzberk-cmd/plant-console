@@ -2623,8 +2623,14 @@ function doPrintSalesRepReport(repName){
   // Normal letter page with margins — overrides whatever fixed label size
   // a previous label print left behind (see doPrintLabel — same style tag
   // is reused since only one print job ever runs at a time).
+  // IMPORTANT: the base stylesheet's @media print rule forces
+  // "overflow:hidden !important" on #printLabelArea (correct for a label,
+  // which must clip to its exact fixed size) — a plain "overflow:visible"
+  // here would silently lose to that !important regardless of document
+  // order, clipping the report down to a single page no matter how long it
+  // actually is. Has to be !important here too to actually win.
   pageStyle.textContent='@page{ size:letter; margin:0.6in; }'
-    +'@media print{ #printLabelArea{ width:auto; height:auto; overflow:visible; font-family:Arial,Helvetica,sans-serif; color:#000; background:#fff; } '
+    +'@media print{ #printLabelArea{ width:auto!important; height:auto!important; overflow:visible!important; font-family:Arial,Helvetica,sans-serif; color:#000; background:#fff; } '
     +'.pc-rep-page{ page-break-after:always; } .pc-rep-page:last-child{ page-break-after:auto; } }';
 
   var company=DEFAULT_LABEL_TEMPLATE.companyName;

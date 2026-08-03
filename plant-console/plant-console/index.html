@@ -2875,17 +2875,24 @@ var CF_COLS=[
 ];
 // Scheduled Date is a local-only plan (QuickBooks has no field for "when we
 // actually intend to pay this") — kept in localStorage, keyed by each
-// Bill's QuickBooks Id so it survives re-syncing (a fresh pull might
-// change bill order/grouping, but the Id stays the same for the same
-// bill). Stores {date, by, at} so the row can show who scheduled it and
-// when, not just the date itself.
+// Bill's QuickBooks Id. Once scheduled, the bill's details (vendor, bill #,
+// due date, balance) are SNAPSHOTTED into this record at that moment —
+// locked in place. The pinned Scheduled Payments section reads only from
+// this snapshot, never from the live QuickBooks pull, so re-syncing never
+// changes what's already pinned, moves it around, or makes it vanish.
 var _cfScheduledDates=(function(){ try{ return JSON.parse(localStorage.getItem('pc_cf_scheduled_dates')||'{}'); }catch(e){ return {}; } })();
 function setCashFlowScheduledDate(billId,value){
   if(value){
+    var bill=(_cashFlowBills||[]).find(function(b){ return b.Id===billId; });
+    var prior=_cfScheduledDates[billId]; // keep original snapshot if this bill was already pinned (e.g. just changing the date)
     _cfScheduledDates[billId]={
       date:value,
       by:(currentUser&&currentUser.name)||'Unknown user',
-      at:new Date().toISOString()
+      at:new Date().toISOString(),
+      vendor:(prior&&prior.vendor)||(bill&&bill.VendorRef&&bill.VendorRef.name)||'No vendor on file',
+      docNum:(prior&&prior.docNum)||(bill&&bill.DocNumber)||'',
+      due:(prior&&prior.due)||(bill&&bill.DueDate)||'',
+      balance:(prior&&prior.balance!==undefined)?prior.balance:Number(bill&&bill.Balance||0)
     };
   } else {
     delete _cfScheduledDates[billId];
@@ -2944,14 +2951,15 @@ function renderScheduledPaymentsSection(allBills){
   function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
   var el=document.getElementById('cf-scheduled-section');
   if(!el) return;
-  var billsById={};
-  (allBills||[]).forEach(function(b){ billsById[b.Id]=b; });
 
+  // Reads purely from the locked snapshot captured at scheduling time (see
+  // setCashFlowScheduledDate) — deliberately NOT cross-referenced against
+  // allBills/the live QuickBooks pull, so re-syncing never changes,
+  // reorders, or removes anything already pinned here.
   var byDate={}; // scheduledDate -> [{bill, sched}]
   Object.keys(_cfScheduledDates).forEach(function(billId){
-    var bill=billsById[billId];
-    if(!bill) return; // bill no longer open/no longer in the last pull
     var sched=_cfScheduledDates[billId];
+    var bill={Id:billId,VendorRef:{name:sched.vendor},DocNumber:sched.docNum,DueDate:sched.due,Balance:sched.balance};
     if(!byDate[sched.date]) byDate[sched.date]=[];
     byDate[sched.date].push({bill:bill,sched:sched});
   });

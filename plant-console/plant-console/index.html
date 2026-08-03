@@ -3040,6 +3040,13 @@ function splitCFPayment(billId,splitId){
     ]
   };
 
+  // Defensive: if a previous modal wasn't fully cleaned up for any reason,
+  // remove it before creating a fresh one — two elements sharing the same
+  // id would mean getElementById could silently keep updating the wrong
+  // (stale/hidden) one while you look at the new one.
+  var existingBg=document.getElementById('cfSplitModalBg');
+  if(existingBg) existingBg.remove();
+
   var bg=document.createElement('div');
   bg.className='modal-bg';
   bg.id='cfSplitModalBg';
@@ -3111,8 +3118,12 @@ window.cfSplitUpdateRow=cfSplitUpdateRow;
 
 function cfSplitAddRow(){
   if(!_cfSplitState) return;
-  _cfSplitState.rows.push({date:_cfSplitState.rows[_cfSplitState.rows.length-1].date, amount:0});
-  _cfRenderSplitRows();
+  try{
+    _cfSplitState.rows.push({date:_cfSplitState.rows[_cfSplitState.rows.length-1].date, amount:0});
+    _cfRenderSplitRows();
+  }catch(err){
+    alert('Could not add a row: '+(err&&err.message?err.message:err));
+  }
 }
 window.cfSplitAddRow=cfSplitAddRow;
 

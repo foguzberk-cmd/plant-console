@@ -2959,6 +2959,27 @@ function renderScheduledPaymentsSection(allBills){
   var dateKeys=Object.keys(byDate).sort();
   if(!dateKeys.length){ el.innerHTML=''; return; }
 
+  // Group dates into weeks (Monday–Sunday). weekKey = that week's Monday,
+  // used both for sorting and as the header label.
+  function mondayOf(dateStr){
+    var d=new Date(dateStr+'T00:00:00');
+    var day=d.getDay(); // 0=Sun..6=Sat
+    var diff=(day===0?-6:1-day); // shift back to Monday
+    d.setDate(d.getDate()+diff);
+    return d.toISOString().slice(0,10);
+  }
+  function fmtShort(dateStr){
+    var d=new Date(dateStr+'T00:00:00');
+    return d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  }
+  var byWeek={}; // weekMonday -> {dates:[dateKey,...]}
+  dateKeys.forEach(function(dateKey){
+    var wk=mondayOf(dateKey);
+    if(!byWeek[wk]) byWeek[wk]={dateKeys:[]};
+    byWeek[wk].dateKeys.push(dateKey);
+  });
+  var weekKeys=Object.keys(byWeek).sort();
+
   var grandTotal=0;
   var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">📌 Scheduled Payments</div>'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#fffdf5;color:#000;border:1px solid #e0c56b">'
@@ -2971,33 +2992,54 @@ function renderScheduledPaymentsSection(allBills){
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:right;font-weight:700">Balance</th>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px"></th>'
     +'</tr></thead><tbody>';
-  dateKeys.forEach(function(dateKey){
-    var rows=byDate[dateKey];
-    var dateTotal=0;
-    rows.forEach(function(row,ri){
-      var bill=row.bill, sched=row.sched;
-      var vName=(bill.VendorRef&&bill.VendorRef.name)||'No vendor on file';
-      var bal=Number(bill.Balance||0);
-      dateTotal+=bal; grandTotal+=bal;
-      var whenStr=sched.at?new Date(sched.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
+
+  weekKeys.forEach(function(weekMonday){
+    var weekSunday=new Date(weekMonday+'T00:00:00'); weekSunday.setDate(weekSunday.getDate()+6);
+    var weekLabel='Week of '+fmtShort(weekMonday)+' – '+fmtShort(weekSunday.toISOString().slice(0,10));
+    var weekTotal=0;
+    byWeek[weekMonday].dateKeys.forEach(function(dk){
+      byDate[dk].forEach(function(row){ weekTotal+=Number(row.bill.Balance||0); });
+    });
+    grandTotal+=weekTotal;
+    html+='<tr>'
+      +'<td colspan="5" style="border:1px solid #c9a227;padding:7px 10px;font-weight:700;background:#ffe082">'+esc(weekLabel)+'</td>'
+      +'<td style="border:1px solid #c9a227;background:#ffe082"></td>'
+    +'</tr>'
+    +'<tr>'
+      +'<td colspan="4" style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-weight:700;background:#ffe082">Total this week</td>'
+      +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-weight:700;background:#ffe082;font-family:var(--mono)">'+money(weekTotal)+'</td>'
+      +'<td style="border:1px solid #e0c56b;background:#ffe082"></td>'
+    +'</tr>';
+
+    byWeek[weekMonday].dateKeys.forEach(function(dateKey){
+      var rows=byDate[dateKey];
+      var dateTotal=0;
+      rows.forEach(function(row,ri){
+        var bill=row.bill, sched=row.sched;
+        var vName=(bill.VendorRef&&bill.VendorRef.name)||'No vendor on file';
+        var bal=Number(bill.Balance||0);
+        dateTotal+=bal;
+        var whenStr=sched.at?new Date(sched.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
+        html+='<tr>'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px;font-weight:'+(ri===0?'700':'400')+'">'+(ri===0?esc(dateKey):'')+'</td>'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(bill.DocNumber||'')+'</td>'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(bill.DueDate||'—')+'</td>'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:center">'
+            +'<span title="Scheduled by '+esc(sched.by)+(whenStr?' — '+esc(whenStr):'')+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#ffd54f;border:1px solid #c9a227;border-radius:2px;font-size:9px;margin-right:6px;cursor:help;transform:rotate(-4deg)">📌</span>'
+            +'<button onclick="setCashFlowScheduledDate(\''+esc(bill.Id)+'\',\'\')" class="btn btn-sm" title="Remove from schedule" style="padding:2px 7px;font-size:11px">✕</button>'
+          +'</td>'
+        +'</tr>';
+      });
       html+='<tr>'
-        +'<td style="border:1px solid #e0c56b;padding:5px 10px;font-weight:'+(ri===0?'700':'400')+'">'+(ri===0?esc(dateKey):'')+'</td>'
-        +'<td style="border:1px solid #e0c56b;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
-        +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(bill.DocNumber||'')+'</td>'
-        +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(bill.DueDate||'—')+'</td>'
-        +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
-        +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:center">'
-          +'<span title="Scheduled by '+esc(sched.by)+(whenStr?' — '+esc(whenStr):'')+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#ffd54f;border:1px solid #c9a227;border-radius:2px;font-size:9px;margin-right:6px;cursor:help;transform:rotate(-4deg)">📌</span>'
-          +'<button onclick="setCashFlowScheduledDate(\''+esc(bill.Id)+'\',\'\')" class="btn btn-sm" title="Remove from schedule" style="padding:2px 7px;font-size:11px">✕</button>'
-        +'</td>'
+        +'<td colspan="4" style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-weight:700;background:#fff8e1">Total for '+esc(dateKey)+'</td>'
+        +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-weight:700;background:#fff8e1;font-family:var(--mono)">'+money(dateTotal)+'</td>'
+        +'<td style="border:1px solid #e0c56b;background:#fff8e1"></td>'
       +'</tr>';
     });
-    html+='<tr>'
-      +'<td colspan="4" style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-weight:700;background:#fff8e1">Total for '+esc(dateKey)+'</td>'
-      +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-weight:700;background:#fff8e1;font-family:var(--mono)">'+money(dateTotal)+'</td>'
-      +'<td style="border:1px solid #e0c56b;background:#fff8e1"></td>'
-    +'</tr>';
   });
+
   html+='<tr>'
     +'<td colspan="4" style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe58a">TOTAL SCHEDULED</td>'
     +'<td style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe58a;font-family:var(--mono)">'+money(grandTotal)+'</td>'

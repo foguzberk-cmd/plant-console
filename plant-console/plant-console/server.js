@@ -32,7 +32,7 @@ if (!QB_REALM || !CLIENT_ID || !CLIENT_SECRET) {
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'plant-data.json');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
-const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [] };
+const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [] };
 
 // ===== PIN HASHING =====
 // PINs are hashed with scrypt before they ever touch disk. Any user record
@@ -772,7 +772,8 @@ const server = http.createServer(async (req, res) => {
       scaleLogs: data.scaleLogs,
       labelAllowed: data.labelAllowed,
       savedReports: data.savedReports,
-      customerAllowed: data.customerAllowed
+      customerAllowed: data.customerAllowed,
+      cfScheduledDates: data.cfScheduledDates
     }));
     return;
   }
@@ -835,6 +836,23 @@ const server = http.createServer(async (req, res) => {
         if (incoming.labelAllowed && typeof incoming.labelAllowed === 'object' && !Array.isArray(incoming.labelAllowed)) {
           incoming.labelAllowed = Object.assign({}, (current.labelAllowed && typeof current.labelAllowed === 'object' && !Array.isArray(current.labelAllowed)) ? current.labelAllowed : {}, incoming.labelAllowed);
         }
+        // cfScheduledDates (Cash Flow's scheduled/approved payment plan) is
+        // keyed by bill id — merged (not blindly replaced) so one device's
+        // stale push can't erase another device's schedule/approval change
+        // to a DIFFERENT bill made moments earlier. Deletions of a WHOLE
+        // bill's record go through the dedicated tombstoned endpoint below
+        // instead of this generic merge — a plain merge can only ADD/UPDATE
+        // keys, never reliably represent "this key was intentionally
+        // removed" (the same reason scaleLogs needed deletedScaleLogIds).
+        // Filtering by the tombstone list here means even a stale device's
+        // full snapshot — one that still has an already-deleted bill in
+        // its local copy — can never bring it back.
+        if (incoming.cfScheduledDates && typeof incoming.cfScheduledDates === 'object' && !Array.isArray(incoming.cfScheduledDates)) {
+          const cfTombstoned = new Set(Array.isArray(current.deletedCfBillIds) ? current.deletedCfBillIds : []);
+          const mergedCf = Object.assign({}, (current.cfScheduledDates && typeof current.cfScheduledDates === 'object' && !Array.isArray(current.cfScheduledDates)) ? current.cfScheduledDates : {}, incoming.cfScheduledDates);
+          for (const id of cfTombstoned) delete mergedCf[id];
+          incoming.cfScheduledDates = mergedCf;
+        }
         // Merge: only overwrite the keys actually sent, so saving e.g. just
         // "users" never wipes out items/transactions/storages.
         const merged = Object.assign({}, current, incoming);
@@ -873,6 +891,40 @@ const server = http.createServer(async (req, res) => {
         // against some ancient stale push.
         const cappedTombstones = tombstones.length > 5000 ? tombstones.slice(tombstones.length - 5000) : tombstones;
         return { data: Object.assign({}, current, { scaleLogs, deletedScaleLogIds: cappedTombstones }) };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // Dedicated, atomic delete for one Cash Flow bill's ENTIRE scheduled/
+  // approved payment record — same reasoning as delete-scalelog above:
+  // going through the generic full-snapshot POST can't reliably represent
+  // "this was intentionally deleted" (a stale device's snapshot would just
+  // look like it never had this bill scheduled, not like it WAS scheduled
+  // and got removed), so this atomically removes it AND tombstones the id
+  // so no later merge can bring it back.
+  if (url === '/api/data/delete-cf-schedule' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      if (!body || !body.billId) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing billId' }));
+        return;
+      }
+      await updateSharedData(async (current) => {
+        const cfScheduledDates = Object.assign({}, current.cfScheduledDates || {});
+        delete cfScheduledDates[body.billId];
+        const tombstones = Array.isArray(current.deletedCfBillIds) ? current.deletedCfBillIds.slice() : [];
+        if (!tombstones.includes(body.billId)) tombstones.push(body.billId);
+        const cappedTombstones = tombstones.length > 5000 ? tombstones.slice(tombstones.length - 5000) : tombstones;
+        return { data: Object.assign({}, current, { cfScheduledDates, deletedCfBillIds: cappedTombstones }) };
       });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true }));

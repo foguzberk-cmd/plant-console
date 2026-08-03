@@ -3242,24 +3242,70 @@ window.removeCFSplit=removeCFSplit;
 
 // Toggles the little ⋮ dropdown menu for one row, closing any other open
 // one first.
-function toggleCFRowMenu(menuId){
-  document.querySelectorAll('.cf-row-menu').forEach(function(m){
-    if(m.id!==menuId) m.style.display='none';
-  });
-  var el=document.getElementById(menuId);
-  if(el) el.style.display=(el.style.display==='none'||!el.style.display)?'block':'none';
-}
-window.toggleCFRowMenu=toggleCFRowMenu;
-document.addEventListener('click',function(e){
-  if(!e.target.closest||!e.target.closest('.cf-row-menu-wrap')){
-    document.querySelectorAll('.cf-row-menu').forEach(function(m){ m.style.display='none'; });
+// The ⋮ menu used to be a position:absolute <div> living inside its
+// table cell — but table rows paint in DOM order regardless of z-index in
+// many browsers, so the NEXT row (rendered after this one) could visually
+// and interactively sit on top of the dropdown, silently eating clicks
+// meant for its buttons. Fixed by using ONE shared menu element appended
+// to <body> (completely outside the table), positioned via the trigger
+// button's actual screen coordinates each time it opens.
+function _cfEnsureGlobalMenu(){
+  var el=document.getElementById('cfGlobalRowMenu');
+  if(!el){
+    el=document.createElement('div');
+    el.id='cfGlobalRowMenu';
+    el.className='cf-row-menu';
+    el.style.cssText='display:none;position:fixed;background:#fff;border:1px solid #999;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.18);z-index:9999;min-width:170px;text-align:left;overflow:hidden;font-family:inherit';
+    document.body.appendChild(el);
   }
+  return el;
+}
+function showCFRowMenu(btn,kind,billId,splitId){
+  var el=_cfEnsureGlobalMenu();
+  var wasOpenForThis=(el.style.display==='block' && el.getAttribute('data-bill')===billId && el.getAttribute('data-split')===splitId);
+  if(wasOpenForThis){ el.style.display='none'; return; }
+
+  var html;
+  if(kind==='scheduled'){
+    html='<button onclick="initiateCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Approve payment</button>'
+      +'<button onclick="editCFScheduledDate(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Edit date</button>'
+      +'<button onclick="splitCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Split payment</button>'
+      +'<button onclick="removeCFSplit(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;color:#b8460b">Remove from schedule</button>';
+  } else {
+    html='<button onclick="editCFScheduledDate(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Edit date</button>'
+      +'<button onclick="initiateCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px">Send back to Scheduled</button>';
+  }
+  el.innerHTML=html;
+  el.setAttribute('data-bill',billId);
+  el.setAttribute('data-split',splitId);
+  el.style.display='block';
+
+  var rect=btn.getBoundingClientRect();
+  el.style.top=(rect.bottom+4)+'px';
+  el.style.left=Math.max(8,rect.right-170)+'px';
+  requestAnimationFrame(function(){
+    var r=el.getBoundingClientRect();
+    if(r.bottom>window.innerHeight-8) el.style.top=Math.max(8,rect.top-r.height-4)+'px';
+    if(r.right>window.innerWidth-8) el.style.left=Math.max(8,window.innerWidth-r.width-8)+'px';
+  });
+}
+window.showCFRowMenu=showCFRowMenu;
+function hideCFRowMenu(){
+  var el=document.getElementById('cfGlobalRowMenu');
+  if(el) el.style.display='none';
+}
+window.hideCFRowMenu=hideCFRowMenu;
+document.addEventListener('click',function(e){
+  var el=document.getElementById('cfGlobalRowMenu');
+  if(!el||el.style.display==='none') return;
+  if(e.target.closest && (e.target.closest('#cfGlobalRowMenu') || e.target.closest('.cf-menu-trigger'))) return;
+  el.style.display='none';
 });
 
 // Swaps one split's date cell into an inline, editable date input — the
 // only thing Edit is allowed to change.
 function editCFScheduledDate(billId,splitId){
-  toggleCFRowMenu('cf-menu-'+billId+'-'+splitId); // close the menu
+  hideCFRowMenu(); // close the menu
   var cell=document.getElementById('cf-datecell-'+billId+'-'+splitId);
   if(!cell) return;
   var rec=_cfScheduledDates[billId];
@@ -3413,7 +3459,6 @@ function renderScheduledPaymentsSection(){
         var vName=row.vendor||'No vendor on file';
         var bal=Number(split.amount||0);
         var whenStr=split.at?new Date(split.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
-        var menuId='cf-menu-'+billId+'-'+split.id;
         var pinTitle='Scheduled by '+esc(split.by)+(whenStr?' — '+esc(whenStr):'');
         html+='<tr>'
           +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #e0c56b;padding:5px 10px;font-weight:400">'+esc(dateKey)
@@ -3423,15 +3468,9 @@ function renderScheduledPaymentsSection(){
           +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(row.docNum||'')+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(row.due||'—')+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
-          +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;position:relative" class="cf-row-menu-wrap">'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right">'
             +'<span title="'+pinTitle+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#ffd54f;border:1px solid #c9a227;border-radius:2px;font-size:9px;margin-right:4px;cursor:help;transform:rotate(-4deg)">📌</span>'
-            +'<button onclick="toggleCFRowMenu(\''+menuId+'\')" class="btn btn-sm" style="padding:2px 7px;font-size:13px;line-height:1">⋮</button>'
-            +'<div id="'+menuId+'" class="cf-row-menu" style="display:none;position:absolute;right:6px;top:100%;margin-top:2px;background:#fff;border:1px solid #999;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.18);z-index:50;min-width:150px;text-align:left;overflow:hidden">'
-              +'<button onclick="initiateCFPayment(\''+esc(billId)+'\',\''+esc(split.id)+'\');toggleCFRowMenu(\''+menuId+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Approve payment</button>'
-              +'<button onclick="editCFScheduledDate(\''+esc(billId)+'\',\''+esc(split.id)+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Edit date</button>'
-              +'<button onclick="splitCFPayment(\''+esc(billId)+'\',\''+esc(split.id)+'\');toggleCFRowMenu(\''+menuId+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Split payment</button>'
-              +'<button onclick="removeCFSplit(\''+esc(billId)+'\',\''+esc(split.id)+'\');toggleCFRowMenu(\''+menuId+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;color:#b8460b">Remove from schedule</button>'
-            +'</div>'
+            +'<button onclick="showCFRowMenu(this,\'scheduled\',\''+esc(billId)+'\',\''+esc(split.id)+'\')" class="btn btn-sm cf-menu-trigger" style="padding:2px 7px;font-size:13px;line-height:1">⋮</button>'
           +'</td>'
         +'</tr>';
       });
@@ -3492,20 +3531,15 @@ function renderApprovedPaymentsSection(){
       var bal=Number(split.amount||0);
       grandTotal+=bal;
       var whenStr=split.initiated.at?new Date(split.initiated.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
-      var menuId='cf-amenu-'+billId+'-'+split.id;
       html+='<tr>'
         +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(dateKey)+'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.docNum||'')+'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.due||'—')+'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
-        +'<td style="border:1px solid #8fcf9a;padding:5px 10px;text-align:right;position:relative" class="cf-row-menu-wrap">'
+        +'<td style="border:1px solid #8fcf9a;padding:5px 10px;text-align:right">'
           +'<span title="Approved by '+esc(split.initiated.by)+(whenStr?' — '+esc(whenStr):'')+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#a5d6a7;border:1px solid #388e3c;border-radius:2px;font-size:9px;margin-right:4px;cursor:help">✓</span>'
-          +'<button onclick="toggleCFRowMenu(\''+menuId+'\')" class="btn btn-sm" style="padding:2px 7px;font-size:13px;line-height:1">⋮</button>'
-          +'<div id="'+menuId+'" class="cf-row-menu" style="display:none;position:absolute;right:6px;top:100%;margin-top:2px;background:#fff;border:1px solid #999;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.18);z-index:50;min-width:160px;text-align:left;overflow:hidden">'
-            +'<button onclick="editCFScheduledDate(\''+esc(billId)+'\',\''+esc(split.id)+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Edit date</button>'
-            +'<button onclick="initiateCFPayment(\''+esc(billId)+'\',\''+esc(split.id)+'\');toggleCFRowMenu(\''+menuId+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px">Send back to Scheduled</button>'
-          +'</div>'
+          +'<button onclick="showCFRowMenu(this,\'approved\',\''+esc(billId)+'\',\''+esc(split.id)+'\')" class="btn btn-sm cf-menu-trigger" style="padding:2px 7px;font-size:13px;line-height:1">⋮</button>'
         +'</td>'
       +'</tr>';
     });

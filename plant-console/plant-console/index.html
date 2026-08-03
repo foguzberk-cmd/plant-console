@@ -2931,34 +2931,138 @@ window.setCashFlowScheduledDate=setCashFlowScheduledDate;
 // dates. Simple 2-way split via a lightweight prompt-based flow — asks for
 // the first installment's amount and date; the second gets the remainder
 // and defaults to the same date as the first (editable afterward via Edit).
+// ===== Split Payment modal — build a payment plan with any number of
+// parts, each with its own date and amount, instead of a fixed 2-way
+// prompt() chain. =====
+var _cfSplitState=null; // {billId, splitId, vendor, docNum, totalAmount, rows:[{date,amount}]}
+
 function splitCFPayment(billId,splitId){
   var rec=_cfScheduledDates[billId];
   if(!rec||!rec.splits||!rec.splits.length){ alert('This payment isn\'t scheduled yet.'); return; }
   if(splitId===undefined) splitId=rec.splits[0].id;
-  var idx=rec.splits.findIndex(function(s){return s.id===splitId;});
-  if(idx<0) return;
-  var target=rec.splits[idx];
-  var amtStr=prompt('Split '+'$'+Number(target.amount).toFixed(2)+' into two payments.\nAmount for the FIRST payment:', (target.amount/2).toFixed(2));
-  if(amtStr===null) return;
-  var amt1=Number(amtStr);
-  if(isNaN(amt1)||amt1<=0||amt1>=target.amount){ alert('Enter an amount between $0 and $'+Number(target.amount).toFixed(2)+'.'); return; }
-  var amt2=Math.round((target.amount-amt1)*100)/100;
-  var date1=prompt('Date for the first payment ('+amt1.toFixed(2)+'):', target.date);
-  if(date1===null) return;
-  var date2=prompt('Date for the second payment ('+amt2.toFixed(2)+'):', target.date);
-  if(date2===null) return;
-  var who=(currentUser&&currentUser.name)||'Unknown user';
-  var now=new Date().toISOString();
-  var newId1=splitId+'a'+Date.now().toString(36);
-  var newId2=splitId+'b'+Date.now().toString(36);
-  rec.splits.splice(idx,1,
-    {id:newId1,date:date1,amount:amt1,by:who,at:now,initiated:null},
-    {id:newId2,date:date2,amount:amt2,by:who,at:now,initiated:null}
-  );
-  _cfSaveScheduled();
-  renderCashFlowReport();
+  var target=rec.splits.find(function(s){return s.id===splitId;});
+  if(!target) return;
+
+  _cfSplitState={
+    billId:billId, splitId:splitId, vendor:rec.vendor, docNum:rec.docNum,
+    totalAmount:Number(target.amount),
+    rows:[
+      {date:target.date, amount:(Math.round((target.amount/2)*100)/100)},
+      {date:target.date, amount:(Math.round((target.amount-Math.round((target.amount/2)*100)/100)*100)/100)}
+    ]
+  };
+
+  var bg=document.createElement('div');
+  bg.className='modal-bg';
+  bg.id='cfSplitModalBg';
+  bg.setAttribute('role','dialog');
+  bg.setAttribute('aria-modal','true');
+  bg.onclick=function(e){ if(e.target===bg) closeCFSplitModal(); };
+  bg.innerHTML='<div class="modal" style="max-width:560px">'
+    +'<h3 style="margin:0 0 4px">Split Payment</h3>'
+    +'<p style="color:var(--muted);font-size:13px;margin:0 0 16px">'+esc(_cfSplitState.vendor)+' · Bill #'+esc(_cfSplitState.docNum)+' · Total '+_cfMoney(_cfSplitState.totalAmount)+'</p>'
+    +'<div id="cfSplitRows"></div>'
+    +'<button class="btn btn-sm" onclick="cfSplitAddRow()" style="margin-top:6px">+ Add another part</button>'
+    +'<div id="cfSplitSummary" style="margin-top:16px;font-size:13px;font-weight:600"></div>'
+    +'<div class="modal-footer">'
+      +'<button class="btn" onclick="closeCFSplitModal()">Cancel</button>'
+      +'<button class="btn btn-primary" onclick="cfSplitSave()">Save payment plan</button>'
+    +'</div>'
+  +'</div>';
+  document.body.appendChild(bg);
+  _cfRenderSplitRows();
 }
 window.splitCFPayment=splitCFPayment;
+
+function _cfMoney(n){ return '$'+Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+function _cfRenderSplitRows(){
+  var st=_cfSplitState;
+  if(!st) return;
+  var rowsEl=document.getElementById('cfSplitRows');
+  var summaryEl=document.getElementById('cfSplitSummary');
+  if(!rowsEl||!summaryEl) return;
+
+  rowsEl.innerHTML=st.rows.map(function(row,i){
+    return '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">'
+      +'<span style="width:20px;color:var(--muted);font-size:12px;flex-shrink:0">'+(i+1)+'.</span>'
+      +'<input type="date" value="'+esc(row.date)+'" oninput="cfSplitUpdateRow('+i+',\'date\',this.value)" style="flex:1;padding:7px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:13px"/>'
+      +'<input type="number" step="0.01" value="'+row.amount+'" oninput="cfSplitUpdateRow('+i+',\'amount\',this.value)" style="width:130px;padding:7px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:13px"/>'
+      +(st.rows.length>1?'<button onclick="cfSplitRemoveRow('+i+')" class="btn btn-sm" title="Remove this part" style="padding:5px 9px">✕</button>':'<span style="width:33px;flex-shrink:0"></span>')
+    +'</div>';
+  }).join('');
+
+  var allocated=st.rows.reduce(function(s,r){ return s+Number(r.amount||0); },0);
+  allocated=Math.round(allocated*100)/100;
+  var remaining=Math.round((st.totalAmount-allocated)*100)/100;
+  if(remaining===0){
+    summaryEl.innerHTML='<span style="color:#0f6e40">✓ Fully allocated — '+_cfMoney(allocated)+' of '+_cfMoney(st.totalAmount)+'</span>';
+  } else {
+    summaryEl.innerHTML='<span style="color:#b8460b">Allocated '+_cfMoney(allocated)+' of '+_cfMoney(st.totalAmount)+' — '+(remaining>0?_cfMoney(remaining)+' left to allocate':_cfMoney(Math.abs(remaining))+' over the total')+'</span>';
+  }
+}
+
+function cfSplitUpdateRow(i,field,value){
+  if(!_cfSplitState) return;
+  if(field==='amount') _cfSplitState.rows[i].amount=Number(value)||0;
+  else _cfSplitState.rows[i].date=value;
+  // Only refresh the summary line here, not the whole row list — otherwise
+  // typing in one field steals focus back from itself on every keystroke.
+  var st=_cfSplitState;
+  var allocated=Math.round(st.rows.reduce(function(s,r){return s+Number(r.amount||0);},0)*100)/100;
+  var remaining=Math.round((st.totalAmount-allocated)*100)/100;
+  var summaryEl=document.getElementById('cfSplitSummary');
+  if(!summaryEl) return;
+  if(remaining===0){
+    summaryEl.innerHTML='<span style="color:#0f6e40">✓ Fully allocated — '+_cfMoney(allocated)+' of '+_cfMoney(st.totalAmount)+'</span>';
+  } else {
+    summaryEl.innerHTML='<span style="color:#b8460b">Allocated '+_cfMoney(allocated)+' of '+_cfMoney(st.totalAmount)+' — '+(remaining>0?_cfMoney(remaining)+' left to allocate':_cfMoney(Math.abs(remaining))+' over the total')+'</span>';
+  }
+}
+window.cfSplitUpdateRow=cfSplitUpdateRow;
+
+function cfSplitAddRow(){
+  if(!_cfSplitState) return;
+  _cfSplitState.rows.push({date:_cfSplitState.rows[_cfSplitState.rows.length-1].date, amount:0});
+  _cfRenderSplitRows();
+}
+window.cfSplitAddRow=cfSplitAddRow;
+
+function cfSplitRemoveRow(i){
+  if(!_cfSplitState||_cfSplitState.rows.length<=1) return;
+  _cfSplitState.rows.splice(i,1);
+  _cfRenderSplitRows();
+}
+window.cfSplitRemoveRow=cfSplitRemoveRow;
+
+function closeCFSplitModal(){
+  var bg=document.getElementById('cfSplitModalBg');
+  if(bg) bg.remove();
+  _cfSplitState=null;
+}
+window.closeCFSplitModal=closeCFSplitModal;
+
+function cfSplitSave(){
+  var st=_cfSplitState;
+  if(!st) return;
+  var bad=st.rows.find(function(r){ return !r.date || !r.amount || r.amount<=0; });
+  if(bad){ alert('Every part needs a date and an amount greater than $0.'); return; }
+  var rec=_cfScheduledDates[st.billId];
+  if(!rec) { closeCFSplitModal(); return; }
+  var idx=rec.splits.findIndex(function(s){return s.id===st.splitId;});
+  if(idx<0){ closeCFSplitModal(); return; }
+  var who=(currentUser&&currentUser.name)||'Unknown user';
+  var now=new Date().toISOString();
+  var baseId=st.splitId+'_'+Date.now().toString(36);
+  var newSplits=st.rows.map(function(row,i){
+    return {id:baseId+'_'+i, date:row.date, amount:Math.round(Number(row.amount)*100)/100, by:who, at:now, initiated:null};
+  });
+  rec.splits.splice.apply(rec.splits,[idx,1].concat(newSplits));
+  _cfSaveScheduled();
+  closeCFSplitModal();
+  renderCashFlowReport();
+}
+window.cfSplitSave=cfSplitSave;
 
 // Marks one split as "initiated" — this app has no real payment-processing
 // integration, so this is a status flag only (who marked it, and when),

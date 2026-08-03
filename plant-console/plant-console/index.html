@@ -2866,11 +2866,24 @@ window.runCashFlowReport=runCashFlowReport;
 // renderCashFlowReport below) — the <colgroup>/<thead> are never rebuilt,
 // so any column widths you drag stay put across every re-sync.
 var CF_COLS=[
-  {id:'vendor',label:'Vendor',width:240,align:'left'},
-  {id:'due',label:'Due Date',width:120,align:'left'},
-  {id:'billnum',label:'Bill #',width:120,align:'left'},
-  {id:'balance',label:'Balance Owed',width:150,align:'right'}
+  {id:'vendor',label:'Vendor',width:220,align:'left'},
+  {id:'billnum',label:'Bill #',width:100,align:'left'},
+  {id:'due',label:'Payment Date (QB)',width:140,align:'left'},
+  {id:'scheduled',label:'Scheduled Date',width:150,align:'left'},
+  {id:'balance',label:'Balance Owed',width:140,align:'right'}
 ];
+// Scheduled Date is a local-only plan (QuickBooks has no field for "when we
+// actually intend to pay this") — kept in localStorage, keyed by each
+// Bill's QuickBooks Id so it survives re-syncing (a fresh pull might
+// change bill order/grouping, but the Id stays the same for the same
+// bill).
+var _cfScheduledDates=(function(){ try{ return JSON.parse(localStorage.getItem('pc_cf_scheduled_dates')||'{}'); }catch(e){ return {}; } })();
+function setCashFlowScheduledDate(billId,value){
+  if(value) _cfScheduledDates[billId]=value;
+  else delete _cfScheduledDates[billId];
+  localStorage.setItem('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates));
+}
+window.setCashFlowScheduledDate=setCashFlowScheduledDate;
 function buildCashFlowTableShell(){
   var bodyEl=document.getElementById('cf-body');
   if(!bodyEl) return;
@@ -2938,7 +2951,7 @@ function renderCashFlowReport(){
     var bal=Number(bill.Balance||0);
     if(!byVendor[vKey]) byVendor[vKey]={name:vName,total:0,bills:[]};
     byVendor[vKey].total+=bal;
-    byVendor[vKey].bills.push({due:bill.DueDate||'',docNum:bill.DocNumber||'',balance:bal});
+    byVendor[vKey].bills.push({id:bill.Id,due:bill.DueDate||'',docNum:bill.DocNumber||'',balance:bal});
     grandTotal+=bal;
   });
 
@@ -2954,20 +2967,24 @@ function renderCashFlowReport(){
     var entry=byVendor[vKey];
     var billsSorted=entry.bills.slice().sort(function(a,b){ return (a.due||'')<(b.due||'')?-1:1; });
     billsSorted.forEach(function(b,bi){
+      var scheduled=_cfScheduledDates[b.id]||'';
       rowsHtml+='<tr>'
         +'<td style="border:1px solid #ccc;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(bi===0?esc(entry.name):'')+'</td>'
-        +'<td style="border:1px solid #ccc;padding:5px 10px">'+esc(b.due||'—')+'</td>'
         +'<td style="border:1px solid #ccc;padding:5px 10px">'+esc(b.docNum||'')+'</td>'
+        +'<td style="border:1px solid #ccc;padding:5px 10px">'+esc(b.due||'—')+'</td>'
+        +'<td style="border:1px solid #ccc;padding:2px 6px">'
+          +'<input type="date" value="'+esc(scheduled)+'" onchange="setCashFlowScheduledDate(\''+esc(b.id)+'\',this.value)" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:3px 5px;font-size:12px;font-family:inherit;background:'+(scheduled?'#fff8e1':'#fff')+'"/>'
+        +'</td>'
         +'<td style="border:1px solid #ccc;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(b.balance)+'</td>'
       +'</tr>';
     });
     rowsHtml+='<tr>'
-      +'<td colspan="3" style="border:1px solid #ccc;padding:5px 10px;text-align:right;font-weight:700;background:#fafafa">Subtotal — '+esc(entry.name)+'</td>'
+      +'<td colspan="4" style="border:1px solid #ccc;padding:5px 10px;text-align:right;font-weight:700;background:#fafafa">Subtotal — '+esc(entry.name)+'</td>'
       +'<td style="border:1px solid #ccc;padding:5px 10px;text-align:right;font-weight:700;background:#fafafa;font-family:var(--mono)">'+money(entry.total)+'</td>'
     +'</tr>';
   });
   rowsHtml+='<tr>'
-    +'<td colspan="3" style="border:1px solid #999;padding:7px 10px;text-align:right;font-weight:700;background:#e8e8e8">TOTAL</td>'
+    +'<td colspan="4" style="border:1px solid #999;padding:7px 10px;text-align:right;font-weight:700;background:#e8e8e8">TOTAL</td>'
     +'<td style="border:1px solid #999;padding:7px 10px;text-align:right;font-weight:700;background:#e8e8e8;font-family:var(--mono)">'+money(grandTotal)+'</td>'
   +'</tr>';
   if(tbody) tbody.innerHTML=rowsHtml;

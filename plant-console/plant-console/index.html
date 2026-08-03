@@ -3489,10 +3489,35 @@ function _cfReconcileApprovedPayments(freshBills){
 }
 
 function renderCashFlowReport(){
+  var statusEl=document.getElementById('cf-status');
+  try{
+    _renderCashFlowReportInner();
+  }catch(err){
+    // If anything in here throws, the table would otherwise be left
+    // silently blank while the status line above still shows whatever text
+    // was set before the error — very confusing to debug from a
+    // screenshot. Surface the actual error instead.
+    if(statusEl){ statusEl.textContent='Error displaying Cash Flow data: '+(err&&err.message?err.message:err); statusEl.style.color='#c0392b'; }
+    var tbody=document.getElementById('cf-tbody');
+    if(tbody) tbody.innerHTML='<tr><td colspan="'+CF_COLS.length+'" style="border:1px solid #ccc;padding:16px;text-align:center;color:#c0392b">Something went wrong rendering this table — see the message above. Try "Pull from QuickBooks" again, or a hard refresh (Ctrl/Cmd+Shift+R).</td></tr>';
+  }
+}
+window.renderCashFlowReport=renderCashFlowReport;
+
+function _renderCashFlowReportInner(){
   function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
   var statusEl=document.getElementById('cf-status');
   buildCashFlowTableShell(); // no-op if it already exists
   var tbody=document.getElementById('cf-tbody');
+  if(!tbody){
+    // Shouldn't happen (buildCashFlowTableShell just ensured it exists),
+    // but if it somehow doesn't, force a rebuild rather than silently
+    // failing to render.
+    var area=document.getElementById('cf-body');
+    if(area) area.innerHTML='';
+    buildCashFlowTableShell();
+    tbody=document.getElementById('cf-tbody');
+  }
   var allBills=_cashFlowBills||[];
 
   renderApprovedPaymentsSection();
@@ -3581,7 +3606,6 @@ function toggleCFVendorGroup(vi){
   if(chev) chev.style.transform=opening?'rotate(90deg)':'';
 }
 window.toggleCFVendorGroup=toggleCFVendorGroup;
-window.renderCashFlowReport=renderCashFlowReport;
 window.buildCashFlowTableShell=buildCashFlowTableShell;
 
 function switchReportTab(tab){

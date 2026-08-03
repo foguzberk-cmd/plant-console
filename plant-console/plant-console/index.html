@@ -2272,7 +2272,7 @@ function renderReports(){
       +'<div id="coll-body"></div>'
     +'</div>'
     +'<div id="rpt-panel-cashflow" style="display:none">'
-      +'<p style="color:var(--muted);font-size:13px;margin-bottom:16px;max-width:640px">Projects expected cash in/out over the coming weeks, based on the due dates of currently open (unpaid) Invoices and Bills in QuickBooks. This is an estimate — it doesn\'t know about payroll, taxes, recurring charges, or anything not tracked as an Invoice/Bill in QuickBooks.</p>'
+      +'<p style="color:var(--muted);font-size:13px;margin-bottom:16px;max-width:640px">Starting point: every currently open (unpaid) vendor Bill, grouped by vendor. We\'ll build this up from here — due-date bucketing, expected incoming cash from open Invoices, and a running balance projection.</p>'
       +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:18px">'
         +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Starting cash balance</label>'
         +'<input type="number" id="cf-start-balance" step="0.01" placeholder="0.00" value="'+(_cashFlowStartBalance!==null?_cashFlowStartBalance:'')+'" oninput="setCashFlowStartBalance(this.value)" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);width:160px"/></div>'
@@ -2845,14 +2845,11 @@ async function _fetchAllOpenQBEntity(entity,onProgress){
 async function runCashFlowReport(){
   var statusEl=document.getElementById('cf-status');
   var bodyEl=document.getElementById('cf-body');
-  if(statusEl){ statusEl.textContent='Fetching open invoices from QuickBooks…'; statusEl.style.color=''; }
+  if(statusEl){ statusEl.textContent='Fetching open vendor bills from QuickBooks…'; statusEl.style.color=''; }
   if(bodyEl) bodyEl.innerHTML='';
   try{
-    _cashFlowInvoices=await _fetchAllOpenQBEntity('Invoice',function(ent,n){
-      if(statusEl) statusEl.textContent='Fetching open invoices… '+n+' checked so far…';
-    });
     _cashFlowBills=await _fetchAllOpenQBEntity('Bill',function(ent,n){
-      if(statusEl) statusEl.textContent='Fetched '+_cashFlowInvoices.length+' open invoice(s). Fetching open bills… '+n+' checked so far…';
+      if(statusEl) statusEl.textContent='Fetching open vendor bills… '+n+' checked so far…';
     });
   }catch(e){
     if(statusEl){ statusEl.textContent='Error: '+e.message; statusEl.style.color='#c0392b'; }
@@ -2866,89 +2863,62 @@ function renderCashFlowReport(){
   function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
   var statusEl=document.getElementById('cf-status');
   var bodyEl=document.getElementById('cf-body');
-  var invoices=_cashFlowInvoices||[];
   var bills=_cashFlowBills||[];
 
-  if(!invoices.length&&!bills.length){
+  if(!bills.length){
     if(statusEl) statusEl.textContent='';
     if(bodyEl) bodyEl.innerHTML='';
     return;
   }
 
-  var today=new Date(); today.setHours(0,0,0,0);
-  function daysFromToday(dateStr){
-    if(!dateStr) return null;
-    var d=new Date(dateStr+'T00:00:00');
-    return Math.round((d-today)/86400000);
-  }
-  var buckets=[
-    {key:'overdue',label:'Overdue',test:function(d){ return d!==null && d<0; }},
-    {key:'week1',label:'This week (0-7 days)',test:function(d){ return d!==null && d>=0 && d<=7; }},
-    {key:'week2',label:'Next 2 weeks (8-14 days)',test:function(d){ return d!==null && d>=8 && d<=14; }},
-    {key:'d30',label:'Next 30 days (15-30 days)',test:function(d){ return d!==null && d>=15 && d<=30; }},
-    {key:'d60',label:'31-60 days out',test:function(d){ return d!==null && d>=31 && d<=60; }},
-    {key:'d90',label:'61-90 days out',test:function(d){ return d!==null && d>=61 && d<=90; }},
-    {key:'far',label:'90+ days out / no due date',test:function(d){ return d===null || d>90; }}
-  ];
-  buckets.forEach(function(b){ b.inflow=0; b.outflow=0; });
-
-  invoices.forEach(function(inv){
-    var d=daysFromToday(inv.DueDate);
-    var bal=Number(inv.Balance||0);
-    var b=buckets.find(function(x){return x.test(d);});
-    if(b) b.inflow+=bal;
-  });
+  // Group open bills by vendor.
+  var byVendor={}; // key -> {name, total, bills:[]}
+  var grandTotal=0;
   bills.forEach(function(bill){
-    var d=daysFromToday(bill.DueDate);
+    var vName=(bill.VendorRef&&bill.VendorRef.name)||'No vendor on file';
+    var vKey=(bill.VendorRef&&bill.VendorRef.value)||vName;
     var bal=Number(bill.Balance||0);
-    var b=buckets.find(function(x){return x.test(d);});
-    if(b) b.outflow+=bal;
+    if(!byVendor[vKey]) byVendor[vKey]={name:vName,total:0,bills:[]};
+    byVendor[vKey].total+=bal;
+    byVendor[vKey].bills.push({due:bill.DueDate||'',docNum:bill.DocNumber||'',balance:bal});
+    grandTotal+=bal;
   });
 
-  var totalIn=buckets.reduce(function(s,b){return s+b.inflow;},0);
-  var totalOut=buckets.reduce(function(s,b){return s+b.outflow;},0);
-  var startBal=_cashFlowStartBalance!==null?_cashFlowStartBalance:0;
+  var vendorKeys=Object.keys(byVendor).sort(function(a,b){ return byVendor[b].total-byVendor[a].total; });
 
   if(statusEl){
-    statusEl.textContent=invoices.length+' open invoice(s) totaling '+money(totalIn)+', '+bills.length+' open bill(s) totaling '+money(totalOut)
-      +(_cashFlowStartBalance===null?' — no starting cash balance entered, so running balance starts at $0.':'');
+    statusEl.textContent=bills.length+' open bill(s) across '+vendorKeys.length+' vendor(s), totaling '+money(grandTotal);
     statusEl.style.color='';
   }
 
-  var running=startBal;
   var html='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden">'
     +'<div style="display:flex;align-items:center;padding:8px 16px;background:var(--bg);font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">'
-      +'<span style="flex:1">Period</span>'
-      +'<span style="width:120px;text-align:right">Expected In</span>'
-      +'<span style="width:120px;text-align:right">Expected Out</span>'
-      +'<span style="width:120px;text-align:right">Net</span>'
-      +'<span style="width:130px;text-align:right">Running Balance</span>'
-    +'</div>'
-    +'<div style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px dashed var(--line);font-size:12px;color:var(--muted)">'
-      +'<span style="flex:1">Starting balance</span>'
-      +'<span style="width:120px"></span><span style="width:120px"></span><span style="width:120px"></span>'
-      +'<span style="width:130px;text-align:right;font-family:var(--mono);font-weight:700">'+money(startBal)+'</span>'
+      +'<span style="flex:1">Vendor</span>'
+      +'<span style="width:130px;text-align:right">Balance Owed</span>'
     +'</div>';
-  buckets.forEach(function(b){
-    var net=b.inflow-b.outflow;
-    running+=net;
-    if(b.inflow===0&&b.outflow===0) return;
-    html+='<div style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);font-size:13px">'
-      +'<span style="flex:1;font-weight:600">'+esc(b.label)+'</span>'
-      +'<span style="width:120px;text-align:right;font-family:var(--mono);color:#0f6e40">'+money(b.inflow)+'</span>'
-      +'<span style="width:120px;text-align:right;font-family:var(--mono);color:#b8460b">'+money(b.outflow)+'</span>'
-      +'<span style="width:120px;text-align:right;font-family:var(--mono);font-weight:600;color:'+(net<0?'#b8460b':'#0f6e40')+'">'+money(net)+'</span>'
-      +'<span style="width:130px;text-align:right;font-family:var(--mono);font-weight:700;color:'+(running<0?'#b8460b':'var(--ink)')+'">'+money(running)+'</span>'
-    +'</div>';
+  vendorKeys.forEach(function(vKey,ri){
+    var entry=byVendor[vKey];
+    var rowId='cf-vendor-'+ri;
+    var billsSorted=entry.bills.slice().sort(function(a,b){ return (a.due||'')<(b.due||'')?-1:1; });
+    html+='<div style="border-bottom:1px solid var(--line)">'
+      +'<div onclick="toggleReportRow(\''+rowId+'\')" style="cursor:pointer;display:flex;align-items:center;padding:12px 16px">'
+        +'<span style="flex:1;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px">'
+          +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
+          +esc(entry.name)+' <span style="color:var(--muted);font-weight:400;font-family:var(--mono);font-size:12px">('+entry.bills.length+' bill'+(entry.bills.length!==1?'s':'')+')</span></span>'
+        +'<span style="width:130px;text-align:right;font-family:var(--mono);font-size:14px;font-weight:700;color:#b8460b">'+money(entry.total)+'</span>'
+      +'</div>'
+      +'<div id="'+rowId+'" style="display:none;padding-bottom:6px">'
+        +billsSorted.map(function(b){
+          return '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 16px 7px 40px;font-size:12px;color:var(--muted);border-bottom:1px dashed var(--line)">'
+            +'<span>Due '+(esc(b.due)||'—')+(b.docNum?' · Bill #'+esc(b.docNum):'')+'</span>'
+            +'<span style="font-family:var(--mono);white-space:nowrap">'+money(b.balance)+'</span></div>';
+        }).join('')
+      +'</div></div>';
   });
   html+='<div style="display:flex;align-items:center;padding:14px 16px;font-weight:700;background:var(--bg)">'
     +'<span style="flex:1">Total</span>'
-    +'<span style="width:120px;text-align:right;font-family:var(--mono);color:#0f6e40">'+money(totalIn)+'</span>'
-    +'<span style="width:120px;text-align:right;font-family:var(--mono);color:#b8460b">'+money(totalOut)+'</span>'
-    +'<span style="width:120px;text-align:right;font-family:var(--mono);color:'+((totalIn-totalOut)<0?'#b8460b':'#0f6e40')+'">'+money(totalIn-totalOut)+'</span>'
-    +'<span style="width:130px;text-align:right;font-family:var(--mono);color:'+(running<0?'#b8460b':'var(--ink)')+'">'+money(running)+'</span>'
+    +'<span style="width:130px;text-align:right;font-family:var(--mono);color:#b8460b">'+money(grandTotal)+'</span>'
   +'</div></div>';
-  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">Buckets are based on each open Invoice/Bill\'s QuickBooks due date. "Overdue" means already past due as of today. This projects Invoices/Bills only — it doesn\'t include payroll, taxes, recurring transactions not entered as a Bill, or any other cash movement outside QuickBooks\'s AR/AP.</div>';
   if(bodyEl) bodyEl.innerHTML=html;
 }
 window.renderCashFlowReport=renderCashFlowReport;

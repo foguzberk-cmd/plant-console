@@ -1179,7 +1179,7 @@ async function pullFromServer(){
         labelTemplates[d]=_recentlySavedLabelTemplates[d];
       });
     }
-    if(data.cfScheduledDates && typeof data.cfScheduledDates==='object' && !Array.isArray(data.cfScheduledDates)){
+    if(data.cfScheduledDates && typeof data.cfScheduledDates==='object' && !Array.isArray(data.cfScheduledDates) && Object.keys(data.cfScheduledDates).length){
       _cfScheduledDates=data.cfScheduledDates;
       // Same timing-gap protection as the others above, plus the
       // mirror-image case: a bill removed here (fully unscheduled, or

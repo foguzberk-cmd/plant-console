@@ -3284,6 +3284,7 @@ function editCFScheduledDate(billId,splitId){
 }
 window.editCFScheduledDate=editCFScheduledDate;
 
+var _cfDidCatchUpPush=false; // ensures the one-time catch-up push (see buildCashFlowTableShell) only fires once per page load
 function buildCashFlowTableShell(){
   var bodyEl=document.getElementById('cf-body');
   if(!bodyEl) return;
@@ -3305,6 +3306,18 @@ function buildCashFlowTableShell(){
   _initCashFlowColumnResize();
   renderApprovedPaymentsSection();
   renderScheduledPaymentsSection(); // shows locally-pinned payments right away — no "Pull from QuickBooks" needed for these, since they're a locked local snapshot, not live data
+
+  // One-time catch-up: if this browser already has scheduled/approved
+  // payments sitting in local storage from before server-syncing this data
+  // was added, nothing has re-triggered a push for them yet — they'd stay
+  // invisible to every other device until someone happens to edit one.
+  // Push whatever's here once per page load so pre-existing data actually
+  // reaches the server (safe to call even if there's nothing to send, and
+  // pushToServer() already no-ops if this exact state was already pushed).
+  if(!_cfDidCatchUpPush && Object.keys(_cfScheduledDates).length){
+    _cfDidCatchUpPush=true;
+    pushToServer();
+  }
 }
 function _initCashFlowColumnResize(){
   var handles=document.querySelectorAll('#cf-table .cf-resize-handle');

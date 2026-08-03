@@ -1008,6 +1008,26 @@ var _recentlySavedCustomerAllowed={};
 // customers right back to their pre-edit state, on the very device that
 // just imported them.
 var _recentlySavedCustomers={};
+// Same idea, for Cash Flow's scheduled/approved payment plan — keyed by
+// bill id, protects against a pull already in flight before a schedule
+// change (approve, split, edit, remove) has a chance to reach the server.
+var _recentlySavedCfScheduledDates={};
+// Mirror-image guard for DELETIONS of a whole bill's schedule record (see
+// removeCFSplit/reconciliation) — a pull already in flight before the
+// delete happened would otherwise resurrect it right back.
+var _recentlyDeletedCfBillIds={};
+function _cfMarkDeleted(billId){
+  _recentlyDeletedCfBillIds[billId]=true;
+  setTimeout(function(){ delete _recentlyDeletedCfBillIds[billId]; },8000);
+  // Atomic, tombstoned delete on the server — see /api/data/delete-cf-schedule.
+  // Fire-and-forget: the local guard above already protects this device
+  // immediately; this just makes sure no OTHER device's stale push can ever
+  // bring the deleted record back.
+  fetch(window.location.origin+'/api/data/delete-cf-schedule',{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({billId:billId})
+  }).catch(function(e){ console.error('Cash Flow delete-schedule sync failed:',e); });
+}
 // ----- Temporary sync diagnostics (see the "Sync debug log" panel on the
 // Scale Log page) — logs exactly what pull/push events happen and when,
 // including scale log counts and whether a specific ID was involved, so the
@@ -1055,6 +1075,15 @@ function rerenderCurrentSection(){
     // so someone mid-entry on one device isn't interrupted while another
     // device's label shows up.
     try{ renderScaleLogTable(); }catch(e){}
+  }
+  else if(currentSectionId==='reports'){
+    // Refresh just Cash Flow's Approved/Scheduled Payments sections (if
+    // they've been built) so a schedule change made on another device
+    // shows up here too — a full renderReports() would reset the date
+    // pickers and active sub-tab, so this stays targeted like the two
+    // above.
+    try{ renderApprovedPaymentsSection(); }catch(e){}
+    try{ renderScheduledPaymentsSection(); }catch(e){}
   }
 }
 async function pullFromServer(){
@@ -1150,6 +1179,19 @@ async function pullFromServer(){
         labelTemplates[d]=_recentlySavedLabelTemplates[d];
       });
     }
+    if(data.cfScheduledDates && typeof data.cfScheduledDates==='object' && !Array.isArray(data.cfScheduledDates)){
+      _cfScheduledDates=data.cfScheduledDates;
+      // Same timing-gap protection as the others above, plus the
+      // mirror-image case: a bill removed here (fully unscheduled, or
+      // cleared by reconciliation) right before an in-flight pull's stale
+      // response would otherwise come back and get resurrected.
+      Object.keys(_recentlySavedCfScheduledDates).forEach(function(id){
+        _cfScheduledDates[id]=_recentlySavedCfScheduledDates[id];
+      });
+      Object.keys(_recentlyDeletedCfBillIds).forEach(function(id){
+        delete _cfScheduledDates[id];
+      });
+    }
     // Smallest/most operationally-critical data first, largest/most
     // quota-prone last — if this browser's localStorage is ever tight on
     // space (as on some mobile browsers with smaller per-origin quotas),
@@ -1163,6 +1205,7 @@ async function pullFromServer(){
     safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed));
     safeSetLocal('pc_labeltemplates',JSON.stringify(labelTemplates));
     safeSetLocal('pc_customers',JSON.stringify(customers));
+    safeSetLocal('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates));
     safeSetLocal('pc_storages',JSON.stringify(storages));
     safeSetLocal('pc_items',JSON.stringify(items));
     safeSetLocal('pc_transactions',JSON.stringify(transactions));
@@ -1274,13 +1317,18 @@ async function _pushToServerImpl(){
           var newCustomerAllowed=Object.assign({}, smallData.customerAllowed, customerAllowed);
           if(JSON.stringify(newCustomerAllowed)!==JSON.stringify(customerAllowed)){ customerAllowed=newCustomerAllowed; safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed)); }
         }
+        if(smallData.cfScheduledDates && typeof smallData.cfScheduledDates==='object' && !Array.isArray(smallData.cfScheduledDates)){
+          var newCfScheduled=Object.assign({}, smallData.cfScheduledDates, _cfScheduledDates);
+          Object.keys(_recentlyDeletedCfBillIds).forEach(function(id){ delete newCfScheduled[id]; });
+          if(JSON.stringify(newCfScheduled)!==JSON.stringify(_cfScheduledDates)){ _cfScheduledDates=newCfScheduled; safeSetLocal('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates)); }
+        }
       }
     }catch(e){ /* if this check fails, fall through and push local state as-is */ }
 
     // Snapshot is built HERE, right before sending — not earlier — so every
     // push (even one that was queued up behind another) always sends
     // whatever is currently true at the moment it actually runs.
-    var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates});
+    var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates,cfScheduledDates:_cfScheduledDates});
     if(snapshot===_lastPushedSnapshot){ _lastPushFailureDetail=''; return true; } // this exact state was already confirmed sent
     // 60s (not the 10s default) — every push sends the FULL app state,
     // including every transaction, and that array has grown into the tens
@@ -2905,7 +2953,16 @@ var _cfScheduledDates=(function(){
   });
   return raw;
 })();
-function _cfSaveScheduled(){ localStorage.setItem('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates)); }
+function _cfSaveScheduled(){
+  localStorage.setItem('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates));
+  // Snapshot every bill's current record, protected for a grace window —
+  // see _recentlySavedCfScheduledDates above for why this is needed.
+  Object.keys(_cfScheduledDates).forEach(function(id){ _recentlySavedCfScheduledDates[id]=JSON.parse(JSON.stringify(_cfScheduledDates[id])); });
+  (function(ids){
+    setTimeout(function(){ ids.forEach(function(id){ delete _recentlySavedCfScheduledDates[id]; }); },8000);
+  })(Object.keys(_cfScheduledDates));
+  pushToServer();
+}
 
 // How much of a bill's balance is already scheduled (sum of all its
 // splits' amounts, across possibly-partial schedules).
@@ -3177,7 +3234,7 @@ function removeCFSplit(billId,splitId){
   var rec=_cfScheduledDates[billId];
   if(!rec) return;
   rec.splits=rec.splits.filter(function(s){return s.id!==splitId;});
-  if(!rec.splits.length) delete _cfScheduledDates[billId];
+  if(!rec.splits.length){ delete _cfScheduledDates[billId]; _cfMarkDeleted(billId); }
   _cfSaveScheduled();
   renderCashFlowReport();
 }
@@ -3482,7 +3539,7 @@ function _cfReconcileApprovedPayments(freshBills){
     if(!approvedSplits.length) return; // nothing approved for this bill — leave any plain scheduled entries as-is
     rec.splits=rec.splits.filter(function(s){ return !s.initiated; });
     clearedCount+=approvedSplits.length;
-    if(!rec.splits.length) delete _cfScheduledDates[billId];
+    if(!rec.splits.length){ delete _cfScheduledDates[billId]; _cfMarkDeleted(billId); }
   });
   if(clearedCount>0) _cfSaveScheduled();
   return clearedCount;

@@ -3002,13 +3002,9 @@ function renderScheduledPaymentsSection(allBills){
     });
     grandTotal+=weekTotal;
     html+='<tr>'
-      +'<td colspan="5" style="border:1px solid #c9a227;padding:7px 10px;font-weight:700;background:#ffe082">'+esc(weekLabel)+'</td>'
+      +'<td colspan="4" style="border:1px solid #c9a227;padding:7px 10px;font-weight:700;background:#ffe082">'+esc(weekLabel)+'</td>'
+      +'<td style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe082;font-family:var(--mono)">'+money(weekTotal)+'</td>'
       +'<td style="border:1px solid #c9a227;background:#ffe082"></td>'
-    +'</tr>'
-    +'<tr>'
-      +'<td colspan="4" style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-weight:700;background:#ffe082">Total this week</td>'
-      +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-weight:700;background:#ffe082;font-family:var(--mono)">'+money(weekTotal)+'</td>'
-      +'<td style="border:1px solid #e0c56b;background:#ffe082"></td>'
     +'</tr>';
 
     byWeek[weekMonday].dateKeys.forEach(function(dateKey){

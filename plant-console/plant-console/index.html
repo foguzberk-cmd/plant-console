@@ -3036,8 +3036,7 @@ function splitCFPayment(billId,splitId){
     billId:billId, splitId:splitId, vendor:rec.vendor, docNum:rec.docNum,
     totalAmount:Number(target.amount),
     rows:[
-      {date:target.date, amount:(Math.round((target.amount/2)*100)/100)},
-      {date:target.date, amount:(Math.round((target.amount-Math.round((target.amount/2)*100)/100)*100)/100)}
+      {date:target.date, amount:Number(target.amount)}
     ]
   };
 
@@ -3048,8 +3047,8 @@ function splitCFPayment(billId,splitId){
   bg.setAttribute('aria-modal','true');
   bg.onclick=function(e){ if(e.target===bg) closeCFSplitModal(); };
   bg.innerHTML='<div class="modal" style="max-width:560px">'
-    +'<h3 style="margin:0 0 4px">Split Payment</h3>'
-    +'<p style="color:var(--muted);font-size:13px;margin:0 0 16px">'+esc(_cfSplitState.vendor)+' · Bill #'+esc(_cfSplitState.docNum)+' · Total '+_cfMoney(_cfSplitState.totalAmount)+'</p>'
+    +'<h3 style="margin:0 0 4px">Payment Plan</h3>'
+    +'<p style="color:var(--muted);font-size:13px;margin:0 0 16px">'+esc(_cfSplitState.vendor)+' · Bill #'+esc(_cfSplitState.docNum)+' · Total '+_cfMoney(_cfSplitState.totalAmount)+'<br>Adjust the date/amount below, or add more parts to split this into multiple payments.</p>'
     +'<div id="cfSplitRows"></div>'
     +'<button class="btn btn-sm" onclick="cfSplitAddRow()" style="margin-top:6px">+ Add another part</button>'
     +'<div id="cfSplitSummary" style="margin-top:16px;font-size:13px;font-weight:600"></div>'

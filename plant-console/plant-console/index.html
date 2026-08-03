@@ -2876,12 +2876,21 @@ var CF_COLS=[
 // actually intend to pay this") — kept in localStorage, keyed by each
 // Bill's QuickBooks Id so it survives re-syncing (a fresh pull might
 // change bill order/grouping, but the Id stays the same for the same
-// bill).
+// bill). Stores {date, by, at} so the row can show who scheduled it and
+// when, not just the date itself.
 var _cfScheduledDates=(function(){ try{ return JSON.parse(localStorage.getItem('pc_cf_scheduled_dates')||'{}'); }catch(e){ return {}; } })();
 function setCashFlowScheduledDate(billId,value){
-  if(value) _cfScheduledDates[billId]=value;
-  else delete _cfScheduledDates[billId];
+  if(value){
+    _cfScheduledDates[billId]={
+      date:value,
+      by:(currentUser&&currentUser.name)||'Unknown user',
+      at:new Date().toISOString()
+    };
+  } else {
+    delete _cfScheduledDates[billId];
+  }
   localStorage.setItem('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates));
+  renderCashFlowReport();
 }
 window.setCashFlowScheduledDate=setCashFlowScheduledDate;
 function buildCashFlowTableShell(){
@@ -2967,13 +2976,22 @@ function renderCashFlowReport(){
     var entry=byVendor[vKey];
     var billsSorted=entry.bills.slice().sort(function(a,b){ return (a.due||'')<(b.due||'')?-1:1; });
     billsSorted.forEach(function(b,bi){
-      var scheduled=_cfScheduledDates[b.id]||'';
-      rowsHtml+='<tr>'
+      var sched=_cfScheduledDates[b.id]||null;
+      var rowBg=sched?'#fff8e1':'#fff';
+      var stickyNote='';
+      if(sched){
+        var whenStr=sched.at?new Date(sched.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
+        stickyNote='<span title="Scheduled by '+esc(sched.by)+(whenStr?' — '+esc(whenStr):'')+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#ffd54f;border:1px solid #c9a227;border-radius:2px;font-size:9px;margin-left:5px;cursor:help;flex-shrink:0;transform:rotate(-4deg)">📌</span>';
+      }
+      rowsHtml+='<tr style="background:'+rowBg+'">'
         +'<td style="border:1px solid #ccc;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(bi===0?esc(entry.name):'')+'</td>'
         +'<td style="border:1px solid #ccc;padding:5px 10px">'+esc(b.docNum||'')+'</td>'
         +'<td style="border:1px solid #ccc;padding:5px 10px">'+esc(b.due||'—')+'</td>'
         +'<td style="border:1px solid #ccc;padding:2px 6px">'
-          +'<input type="date" value="'+esc(scheduled)+'" onchange="setCashFlowScheduledDate(\''+esc(b.id)+'\',this.value)" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:3px 5px;font-size:12px;font-family:inherit;background:'+(scheduled?'#fff8e1':'#fff')+'"/>'
+          +'<div style="display:flex;align-items:center">'
+            +'<input type="date" value="'+esc(sched?sched.date:'')+'" onchange="setCashFlowScheduledDate(\''+esc(b.id)+'\',this.value)" style="flex:1;min-width:0;border:1px solid #ddd;border-radius:4px;padding:3px 5px;font-size:12px;font-family:inherit;background:'+(sched?'#fff8e1':'#fff')+'"/>'
+            +stickyNote
+          +'</div>'
         +'</td>'
         +'<td style="border:1px solid #ccc;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(b.balance)+'</td>'
       +'</tr>';

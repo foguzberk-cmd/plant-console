@@ -2891,34 +2891,34 @@ function renderCashFlowReport(){
     statusEl.style.color='';
   }
 
-  var html='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden">'
-    +'<div style="display:flex;align-items:center;padding:8px 16px;background:var(--bg);font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">'
-      +'<span style="flex:1">Vendor</span>'
-      +'<span style="width:130px;text-align:right">Balance Owed</span>'
-    +'</div>';
-  vendorKeys.forEach(function(vKey,ri){
+  var html='<table id="cf-table" style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;color:#000">'
+    +'<thead><tr>'
+      +'<th style="border:1px solid #999;background:#f2f2f2;padding:6px 10px;text-align:left;font-weight:700">Vendor</th>'
+      +'<th style="border:1px solid #999;background:#f2f2f2;padding:6px 10px;text-align:left;font-weight:700">Due Date</th>'
+      +'<th style="border:1px solid #999;background:#f2f2f2;padding:6px 10px;text-align:left;font-weight:700">Bill #</th>'
+      +'<th style="border:1px solid #999;background:#f2f2f2;padding:6px 10px;text-align:right;font-weight:700">Balance Owed</th>'
+    +'</tr></thead><tbody>';
+  vendorKeys.forEach(function(vKey){
     var entry=byVendor[vKey];
-    var rowId='cf-vendor-'+ri;
     var billsSorted=entry.bills.slice().sort(function(a,b){ return (a.due||'')<(b.due||'')?-1:1; });
-    html+='<div style="border-bottom:1px solid var(--line)">'
-      +'<div onclick="toggleReportRow(\''+rowId+'\')" style="cursor:pointer;display:flex;align-items:center;padding:12px 16px">'
-        +'<span style="flex:1;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px">'
-          +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
-          +esc(entry.name)+' <span style="color:var(--muted);font-weight:400;font-family:var(--mono);font-size:12px">('+entry.bills.length+' bill'+(entry.bills.length!==1?'s':'')+')</span></span>'
-        +'<span style="width:130px;text-align:right;font-family:var(--mono);font-size:14px;font-weight:700;color:#b8460b">'+money(entry.total)+'</span>'
-      +'</div>'
-      +'<div id="'+rowId+'" style="display:none;padding-bottom:6px">'
-        +billsSorted.map(function(b){
-          return '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 16px 7px 40px;font-size:12px;color:var(--muted);border-bottom:1px dashed var(--line)">'
-            +'<span>Due '+(esc(b.due)||'—')+(b.docNum?' · Bill #'+esc(b.docNum):'')+'</span>'
-            +'<span style="font-family:var(--mono);white-space:nowrap">'+money(b.balance)+'</span></div>';
-        }).join('')
-      +'</div></div>';
+    billsSorted.forEach(function(b,bi){
+      html+='<tr>'
+        +'<td style="border:1px solid #ccc;padding:5px 10px">'+(bi===0?esc(entry.name):'')+'</td>'
+        +'<td style="border:1px solid #ccc;padding:5px 10px">'+esc(b.due||'—')+'</td>'
+        +'<td style="border:1px solid #ccc;padding:5px 10px">'+esc(b.docNum||'')+'</td>'
+        +'<td style="border:1px solid #ccc;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(b.balance)+'</td>'
+      +'</tr>';
+    });
+    html+='<tr>'
+      +'<td colspan="3" style="border:1px solid #ccc;padding:5px 10px;text-align:right;font-weight:700;background:#fafafa">Subtotal — '+esc(entry.name)+'</td>'
+      +'<td style="border:1px solid #ccc;padding:5px 10px;text-align:right;font-weight:700;background:#fafafa;font-family:var(--mono)">'+money(entry.total)+'</td>'
+    +'</tr>';
   });
-  html+='<div style="display:flex;align-items:center;padding:14px 16px;font-weight:700;background:var(--bg)">'
-    +'<span style="flex:1">Total</span>'
-    +'<span style="width:130px;text-align:right;font-family:var(--mono);color:#b8460b">'+money(grandTotal)+'</span>'
-  +'</div></div>';
+  html+='<tr>'
+    +'<td colspan="3" style="border:1px solid #999;padding:7px 10px;text-align:right;font-weight:700;background:#e8e8e8">TOTAL</td>'
+    +'<td style="border:1px solid #999;padding:7px 10px;text-align:right;font-weight:700;background:#e8e8e8;font-family:var(--mono)">'+money(grandTotal)+'</td>'
+  +'</tr>';
+  html+='</tbody></table>';
   if(bodyEl) bodyEl.innerHTML=html;
 }
 window.renderCashFlowReport=renderCashFlowReport;

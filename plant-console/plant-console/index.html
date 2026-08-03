@@ -2953,25 +2953,40 @@ var _cfScheduledDates=(function(){
   });
   return raw;
 })();
-function _cfSaveScheduled(){
+function _cfSaveScheduled(billId){
   localStorage.setItem('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates));
-  // Snapshot every bill's current record, protected until the push that's
-  // about to carry it has actually finished — NOT a fixed short timer.
-  // Every push sends the full app snapshot (items, transactions, everything
-  // else too), which can legitimately take up to a minute on a slow
-  // connection (see the 60s push timeout elsewhere in this file) — a fixed
-  // 8-second guard was expiring long before a slow push actually landed,
-  // letting a background pull in that gap fetch the server's still-old
-  // (pre-edit) data and silently wipe the edit back out. A 65s fallback
-  // timeout still exists below in case the push promise never settles for
-  // some unexpected reason, but the real clear happens on completion.
-  Object.keys(_cfScheduledDates).forEach(function(id){ _recentlySavedCfScheduledDates[id]=JSON.parse(JSON.stringify(_cfScheduledDates[id])); });
-  var ids=Object.keys(_cfScheduledDates);
-  var fallback=setTimeout(function(){ ids.forEach(function(id){ delete _recentlySavedCfScheduledDates[id]; }); },65000);
-  pushToServer().then(function(){
-    clearTimeout(fallback);
-    ids.forEach(function(id){ delete _recentlySavedCfScheduledDates[id]; });
-  }).catch(function(){ /* leave the guard in place until the fallback timeout — push may retry */ });
+  if(billId){
+    // Fast path: save just this one bill's record through its own
+    // dedicated endpoint, instead of bundling it into the entire app
+    // snapshot (items, transactions, everything). That full-snapshot push
+    // can legitimately take up to a minute on a slow connection — long
+    // enough for the background pull (every 1.5s) to land in the gap,
+    // fetch the server's still-outdated copy, and silently wipe the edit
+    // back out before the slow push ever finished. This endpoint sends
+    // only the one record that changed, so it completes almost instantly
+    // regardless of how much history this business has accumulated.
+    var rec=_cfScheduledDates[billId];
+    if(rec){
+      _recentlySavedCfScheduledDates[billId]=JSON.parse(JSON.stringify(rec));
+      var fallback=setTimeout(function(){ delete _recentlySavedCfScheduledDates[billId]; },20000);
+      fetch(window.location.origin+'/api/data/save-cf-schedule',{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({billId:billId, record:rec})
+      }).then(function(){
+        clearTimeout(fallback);
+        delete _recentlySavedCfScheduledDates[billId];
+      }).catch(function(e){
+        console.error('Cash Flow save-schedule sync failed:',e);
+        // Leave the guard in place until the fallback timeout — a retry
+        // (or the next edit to this same bill) will try again.
+      });
+    }
+  } else {
+    // No specific bill given (a batch operation touched several at once,
+    // e.g. reconciliation) — save every currently-present record
+    // individually through the same fast path.
+    Object.keys(_cfScheduledDates).forEach(function(id){ _cfSaveScheduled(id); });
+  }
 }
 
 // How much of a bill's balance is already scheduled (sum of all its
@@ -3011,7 +3026,7 @@ function _cfAddSplit(billId,date,amount){
     at:new Date().toISOString(),
     initiated:null
   });
-  _cfSaveScheduled();
+  _cfSaveScheduled(billId);
 }
 
 // Quick-schedule action from the main table's date input — schedules
@@ -3228,7 +3243,7 @@ function cfSplitSave(){
     return {id:baseId+'_'+i, date:row.date, amount:Math.round(Number(row.amount)*100)/100, by:who, at:now, initiated:null};
   });
   rec.splits.splice.apply(rec.splits,[idx,1].concat(newSplits));
-  _cfSaveScheduled();
+  _cfSaveScheduled(st.billId);
   closeCFSplitModal();
   renderCashFlowReport();
 }
@@ -3244,7 +3259,7 @@ function initiateCFPayment(billId,splitId){
   if(!split) return;
   if(split.initiated){ split.initiated=null; } // toggle off if clicked again
   else split.initiated={by:(currentUser&&currentUser.name)||'Unknown user',at:new Date().toISOString()};
-  _cfSaveScheduled();
+  _cfSaveScheduled(billId);
   renderCashFlowReport();
 }
 window.initiateCFPayment=initiateCFPayment;
@@ -3255,7 +3270,7 @@ function removeCFSplit(billId,splitId){
   if(!rec) return;
   rec.splits=rec.splits.filter(function(s){return s.id!==splitId;});
   if(!rec.splits.length){ delete _cfScheduledDates[billId]; _cfMarkDeleted(billId); }
-  _cfSaveScheduled();
+  _cfSaveScheduled(billId);
   renderCashFlowReport();
 }
 window.removeCFSplit=removeCFSplit;
@@ -3339,7 +3354,7 @@ function editCFScheduledDate(billId,splitId){
     if(newVal!==split.date){
       split.date=newVal;
       split.edited={by:(currentUser&&currentUser.name)||'Unknown user',at:new Date().toISOString()};
-      _cfSaveScheduled();
+      _cfSaveScheduled(billId);
       renderCashFlowReport();
     } else {
       renderCashFlowReport(); // no change — just re-render to close the inline input

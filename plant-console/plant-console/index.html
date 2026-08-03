@@ -2282,6 +2282,7 @@ function renderReports(){
       +'<div id="cf-body"></div>'
     +'</div>';
   buildBalanceReport();
+  buildCashFlowTableShell();
   renderSavedReportsList();
 }
 // Switches between the two Reports sub-tabs without re-rendering the whole
@@ -2859,15 +2860,72 @@ async function runCashFlowReport(){
 }
 window.runCashFlowReport=runCashFlowReport;
 
+// Builds the Cash Flow table shell (colgroup + header with resize handles)
+// ONCE, so it's visible immediately even before any data has been pulled.
+// Every subsequent sync only replaces #cf-tbody's contents (see
+// renderCashFlowReport below) — the <colgroup>/<thead> are never rebuilt,
+// so any column widths you drag stay put across every re-sync.
+var CF_COLS=[
+  {id:'vendor',label:'Vendor',width:240,align:'left'},
+  {id:'due',label:'Due Date',width:120,align:'left'},
+  {id:'billnum',label:'Bill #',width:120,align:'left'},
+  {id:'balance',label:'Balance Owed',width:150,align:'right'}
+];
+function buildCashFlowTableShell(){
+  var bodyEl=document.getElementById('cf-body');
+  if(!bodyEl) return;
+  if(document.getElementById('cf-table')) return; // already built — don't rebuild (would lose resized widths)
+
+  var html='<table id="cf-table" style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#fff;color:#000">'
+    +'<colgroup>'+CF_COLS.map(function(c){ return '<col id="cf-col-'+c.id+'" style="width:'+c.width+'px">'; }).join('')+'</colgroup>'
+    +'<thead><tr>'
+      +CF_COLS.map(function(c,ci){
+        return '<th style="position:relative;border:1px solid #999;background:#f2f2f2;padding:6px 10px;text-align:'+c.align+';font-weight:700;overflow:hidden;white-space:nowrap">'
+          +esc(c.label)
+          +(ci<CF_COLS.length-1?'<span class="cf-resize-handle" data-col="'+c.id+'" style="position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize;user-select:none;touch-action:none"></span>':'')
+        +'</th>';
+      }).join('')
+    +'</tr></thead>'
+    +'<tbody id="cf-tbody"><tr><td colspan="'+CF_COLS.length+'" style="border:1px solid #ccc;padding:16px;text-align:center;color:#888">No data yet — click "Pull from QuickBooks" above.</td></tr></tbody>'
+  +'</table>';
+  bodyEl.innerHTML=html;
+  _initCashFlowColumnResize();
+}
+function _initCashFlowColumnResize(){
+  var handles=document.querySelectorAll('#cf-table .cf-resize-handle');
+  handles.forEach(function(h){
+    var dragging=false, startX=0, startWidth=0, colEl=null;
+    h.addEventListener('pointerdown',function(e){
+      e.preventDefault();
+      dragging=true;
+      h.setPointerCapture(e.pointerId);
+      startX=e.clientX;
+      colEl=document.getElementById('cf-col-'+h.getAttribute('data-col'));
+      startWidth=colEl?colEl.offsetWidth:100;
+    });
+    h.addEventListener('pointermove',function(e){
+      if(!dragging||!colEl) return;
+      var dx=e.clientX-startX;
+      colEl.style.width=Math.max(50,startWidth+dx)+'px';
+    });
+    function endDrag(){ dragging=false; }
+    h.addEventListener('pointerup',endDrag);
+    h.addEventListener('pointercancel',endDrag);
+  });
+}
+
+// Updates the table with fresh data — only touches #cf-tbody, so the
+// shell (and any column widths you've dragged) is untouched by re-syncing.
 function renderCashFlowReport(){
   function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
   var statusEl=document.getElementById('cf-status');
-  var bodyEl=document.getElementById('cf-body');
+  buildCashFlowTableShell(); // no-op if it already exists
+  var tbody=document.getElementById('cf-tbody');
   var bills=_cashFlowBills||[];
 
   if(!bills.length){
     if(statusEl) statusEl.textContent='';
-    if(bodyEl) bodyEl.innerHTML='';
+    if(tbody) tbody.innerHTML='<tr><td colspan="'+CF_COLS.length+'" style="border:1px solid #ccc;padding:16px;text-align:center;color:#888">No data yet — click "Pull from QuickBooks" above.</td></tr>';
     return;
   }
 
@@ -2891,37 +2949,31 @@ function renderCashFlowReport(){
     statusEl.style.color='';
   }
 
-  var html='<table id="cf-table" style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;color:#000">'
-    +'<thead><tr>'
-      +'<th style="border:1px solid #999;background:#f2f2f2;padding:6px 10px;text-align:left;font-weight:700">Vendor</th>'
-      +'<th style="border:1px solid #999;background:#f2f2f2;padding:6px 10px;text-align:left;font-weight:700">Due Date</th>'
-      +'<th style="border:1px solid #999;background:#f2f2f2;padding:6px 10px;text-align:left;font-weight:700">Bill #</th>'
-      +'<th style="border:1px solid #999;background:#f2f2f2;padding:6px 10px;text-align:right;font-weight:700">Balance Owed</th>'
-    +'</tr></thead><tbody>';
+  var rowsHtml='';
   vendorKeys.forEach(function(vKey){
     var entry=byVendor[vKey];
     var billsSorted=entry.bills.slice().sort(function(a,b){ return (a.due||'')<(b.due||'')?-1:1; });
     billsSorted.forEach(function(b,bi){
-      html+='<tr>'
-        +'<td style="border:1px solid #ccc;padding:5px 10px">'+(bi===0?esc(entry.name):'')+'</td>'
+      rowsHtml+='<tr>'
+        +'<td style="border:1px solid #ccc;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(bi===0?esc(entry.name):'')+'</td>'
         +'<td style="border:1px solid #ccc;padding:5px 10px">'+esc(b.due||'—')+'</td>'
         +'<td style="border:1px solid #ccc;padding:5px 10px">'+esc(b.docNum||'')+'</td>'
         +'<td style="border:1px solid #ccc;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(b.balance)+'</td>'
       +'</tr>';
     });
-    html+='<tr>'
+    rowsHtml+='<tr>'
       +'<td colspan="3" style="border:1px solid #ccc;padding:5px 10px;text-align:right;font-weight:700;background:#fafafa">Subtotal — '+esc(entry.name)+'</td>'
       +'<td style="border:1px solid #ccc;padding:5px 10px;text-align:right;font-weight:700;background:#fafafa;font-family:var(--mono)">'+money(entry.total)+'</td>'
     +'</tr>';
   });
-  html+='<tr>'
+  rowsHtml+='<tr>'
     +'<td colspan="3" style="border:1px solid #999;padding:7px 10px;text-align:right;font-weight:700;background:#e8e8e8">TOTAL</td>'
     +'<td style="border:1px solid #999;padding:7px 10px;text-align:right;font-weight:700;background:#e8e8e8;font-family:var(--mono)">'+money(grandTotal)+'</td>'
   +'</tr>';
-  html+='</tbody></table>';
-  if(bodyEl) bodyEl.innerHTML=html;
+  if(tbody) tbody.innerHTML=rowsHtml;
 }
 window.renderCashFlowReport=renderCashFlowReport;
+window.buildCashFlowTableShell=buildCashFlowTableShell;
 
 function switchReportTab(tab){
   var invPanel=document.getElementById('rpt-panel-inventory');

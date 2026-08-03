@@ -2972,11 +2972,22 @@ function _cfSaveScheduled(billId){
       fetch(window.location.origin+'/api/data/save-cf-schedule',{
         method:'POST', headers:{'Content-Type':'application/json'},
         body:JSON.stringify({billId:billId, record:rec})
-      }).then(function(){
+      }).then(function(resp){
+        // IMPORTANT: fetch() only rejects on a true network failure — a
+        // 404 (e.g. the server hasn't been redeployed with this route
+        // yet) or a 500 still resolves here as "successful," just with a
+        // bad status. Treating that as success cleared the protection
+        // guard immediately even though the data never actually reached
+        // the server — meaning the very next background pull could wipe
+        // the edit right back out, no differently than if this endpoint
+        // hadn't been called at all. Must check .ok explicitly.
+        if(!resp.ok) throw new Error('Server returned '+resp.status);
         clearTimeout(fallback);
         delete _recentlySavedCfScheduledDates[billId];
       }).catch(function(e){
         console.error('Cash Flow save-schedule sync failed:',e);
+        var statusEl=document.getElementById('cf-status');
+        if(statusEl){ statusEl.textContent='Warning: could not sync this schedule change to the server ('+(e&&e.message?e.message:e)+') — it will only show on this device until this succeeds. Try again, or check that the latest server.js is deployed.'; statusEl.style.color='#c0392b'; }
         // Leave the guard in place until the fallback timeout — a retry
         // (or the next edit to this same bill) will try again.
       });

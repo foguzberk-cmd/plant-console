@@ -3446,7 +3446,6 @@ function renderApprovedPaymentsSection(){
           +'<span title="Approved by '+esc(split.initiated.by)+(whenStr?' — '+esc(whenStr):'')+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#a5d6a7;border:1px solid #388e3c;border-radius:2px;font-size:9px;margin-right:4px;cursor:help">✓</span>'
           +'<button onclick="toggleCFRowMenu(\''+menuId+'\')" class="btn btn-sm" style="padding:2px 7px;font-size:13px;line-height:1">⋮</button>'
           +'<div id="'+menuId+'" class="cf-row-menu" style="display:none;position:absolute;right:6px;top:100%;margin-top:2px;background:#fff;border:1px solid #999;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.18);z-index:50;min-width:160px;text-align:left;overflow:hidden">'
-            +'<button onclick="markCFPaymentPaid(\''+esc(billId)+'\',\''+esc(split.id)+'\');toggleCFRowMenu(\''+menuId+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee;color:#0f6e40">Mark as paid</button>'
             +'<button onclick="editCFScheduledDate(\''+esc(billId)+'\',\''+esc(split.id)+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Edit date</button>'
             +'<button onclick="initiateCFPayment(\''+esc(billId)+'\',\''+esc(split.id)+'\');toggleCFRowMenu(\''+menuId+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px">Send back to Scheduled</button>'
           +'</div>'
@@ -3461,25 +3460,17 @@ function renderApprovedPaymentsSection(){
     +'<td style="border:1px solid #388e3c;background:#c8e6c9"></td>'
   +'</tr>';
   html+='</tbody></table>'
-    +'<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">Cleared automatically once QuickBooks shows the bill is no longer open (i.e. paid) — checked every time you "Pull from QuickBooks." You can also remove one manually with "Mark as paid" if you\'ve confirmed it outside of QuickBooks.</div>';
+    +'<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">Cleared automatically once QuickBooks shows the bill is no longer open (i.e. paid) — checked every time you "Pull from QuickBooks." Only catches a bill being paid off entirely; a partial payment in QuickBooks that doesn\'t fully close the bill won\'t clear a specific approved installment on its own.</div>';
   el.innerHTML=html;
 }
-
-// Marks one approved payment as paid manually — same effect as the
-// automatic reconciliation, just user-triggered (e.g. you know it cleared
-// but haven't re-synced from QuickBooks yet).
-function markCFPaymentPaid(billId,splitId){
-  removeCFSplit(billId,splitId);
-}
-window.markCFPaymentPaid=markCFPaymentPaid;
 
 // After every "Pull from QuickBooks," checks each Approved payment's
 // underlying bill against the fresh open-bills list. If that bill no
 // longer shows up as open, QuickBooks considers it fully paid — so the
-// approved log is removed automatically. (This only catches a bill being
-// paid off ENTIRELY; a partial payment in QuickBooks that doesn't fully
-// close the bill won't auto-clear a specific approved installment — use
-// "Mark as paid" for that case.)
+// approved log is removed automatically. This is the ONLY way approved
+// entries clear — no manual override. (Only catches a bill being paid off
+// ENTIRELY; a partial payment in QuickBooks that doesn't fully close the
+// bill won't auto-clear a specific approved installment.)
 function _cfReconcileApprovedPayments(freshBills){
   var openIds={};
   (freshBills||[]).forEach(function(b){ openIds[b.Id]=true; });

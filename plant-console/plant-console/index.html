@@ -2955,13 +2955,23 @@ var _cfScheduledDates=(function(){
 })();
 function _cfSaveScheduled(){
   localStorage.setItem('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates));
-  // Snapshot every bill's current record, protected for a grace window —
-  // see _recentlySavedCfScheduledDates above for why this is needed.
+  // Snapshot every bill's current record, protected until the push that's
+  // about to carry it has actually finished — NOT a fixed short timer.
+  // Every push sends the full app snapshot (items, transactions, everything
+  // else too), which can legitimately take up to a minute on a slow
+  // connection (see the 60s push timeout elsewhere in this file) — a fixed
+  // 8-second guard was expiring long before a slow push actually landed,
+  // letting a background pull in that gap fetch the server's still-old
+  // (pre-edit) data and silently wipe the edit back out. A 65s fallback
+  // timeout still exists below in case the push promise never settles for
+  // some unexpected reason, but the real clear happens on completion.
   Object.keys(_cfScheduledDates).forEach(function(id){ _recentlySavedCfScheduledDates[id]=JSON.parse(JSON.stringify(_cfScheduledDates[id])); });
-  (function(ids){
-    setTimeout(function(){ ids.forEach(function(id){ delete _recentlySavedCfScheduledDates[id]; }); },8000);
-  })(Object.keys(_cfScheduledDates));
-  pushToServer();
+  var ids=Object.keys(_cfScheduledDates);
+  var fallback=setTimeout(function(){ ids.forEach(function(id){ delete _recentlySavedCfScheduledDates[id]; }); },65000);
+  pushToServer().then(function(){
+    clearTimeout(fallback);
+    ids.forEach(function(id){ delete _recentlySavedCfScheduledDates[id]; });
+  }).catch(function(){ /* leave the guard in place until the fallback timeout — push may retry */ });
 }
 
 // How much of a bill's balance is already scheduled (sum of all its

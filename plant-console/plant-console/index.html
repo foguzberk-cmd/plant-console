@@ -2227,9 +2227,9 @@ function renderReports(){
   view.innerHTML='<div class="eyebrow">'+s.kicker+'</div><h2>'+s.title+'</h2>'
     +'<p class="lede">Inventory movement statement — opening value, what came in, what went out, and the net change over a period. Pick a department to see that department\'s own statement, or leave it on "All departments" for the plant-wide total.</p>'
     +'<div style="display:flex;gap:8px;margin:6px 0 18px;border-bottom:1px solid var(--line)">'
-      +'<button id="rpt-tab-inventory" class="btn" onclick="switchReportTab(\'inventory\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--panel);font-weight:700">Inventory Statement</button>'
-      +'<button id="rpt-tab-collection" class="btn" onclick="switchReportTab(\'collection\')" style="border-radius:9px 9px 0 0;border-bottom:none">Customer Payments</button>'
-      +'<button id="rpt-tab-cashflow" class="btn" onclick="switchReportTab(\'cashflow\')" style="border-radius:9px 9px 0 0;border-bottom:none">Cash Flow</button>'
+      +'<button id="rpt-tab-inventory" class="btn" onclick="switchReportTab(\'inventory\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:#fff;font-weight:700;color:var(--brand);border-top:3px solid var(--brand);border-left:1.5px solid var(--line);border-right:1.5px solid var(--line)">Inventory Statement</button>'
+      +'<button id="rpt-tab-collection" class="btn" onclick="switchReportTab(\'collection\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Customer Payments</button>'
+      +'<button id="rpt-tab-cashflow" class="btn" onclick="switchReportTab(\'cashflow\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Cash Flow</button>'
     +'</div>'
     +'<div id="rpt-panel-inventory">'
     +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
@@ -3162,7 +3162,7 @@ function renderScheduledPaymentsSection(){
           +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(row.docNum||'')+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(row.due||'—')+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
-          +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:center;position:relative" class="cf-row-menu-wrap">'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;position:relative" class="cf-row-menu-wrap">'
             +initiatedBadge
             +'<span title="'+pinTitle+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#ffd54f;border:1px solid #c9a227;border-radius:2px;font-size:9px;margin-right:4px;cursor:help;transform:rotate(-4deg)">📌</span>'
             +'<button onclick="toggleCFRowMenu(\''+menuId+'\')" class="btn btn-sm" style="padding:2px 7px;font-size:13px;line-height:1">⋮</button>'
@@ -3300,8 +3300,12 @@ function switchReportTab(tab){
   cfPanel.style.display=(tab==='cashflow')?'block':'none';
   [[invTab,'inventory'],[collTab,'collection'],[cfTab,'cashflow']].forEach(function(pair){
     var active=(tab===pair[1]);
-    pair[0].style.background=active?'var(--panel)':'';
-    pair[0].style.fontWeight=active?'700':'';
+    pair[0].style.background=active?'#fff':'var(--bg)';
+    pair[0].style.fontWeight=active?'700':'400';
+    pair[0].style.color=active?'var(--brand)':'var(--muted)';
+    pair[0].style.borderTop=active?'3px solid var(--brand)':'3px solid transparent';
+    pair[0].style.borderLeft=active?'1.5px solid var(--line)':'1.5px solid transparent';
+    pair[0].style.borderRight=active?'1.5px solid var(--line)':'1.5px solid transparent';
   });
 }
 

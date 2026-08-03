@@ -3015,9 +3015,15 @@ function editCFScheduledDate(billId,splitId){
   var input=cell.querySelector('input');
   input.focus();
   function commit(){
-    split.date=input.value||split.date;
-    _cfSaveScheduled();
-    renderCashFlowReport();
+    var newVal=input.value||split.date;
+    if(newVal!==split.date){
+      split.date=newVal;
+      split.edited={by:(currentUser&&currentUser.name)||'Unknown user',at:new Date().toISOString()};
+      _cfSaveScheduled();
+      renderCashFlowReport();
+    } else {
+      renderCashFlowReport(); // no change — just re-render to close the inline input
+    }
   }
   input.addEventListener('change',commit);
   input.addEventListener('blur',commit);
@@ -3157,7 +3163,9 @@ function renderScheduledPaymentsSection(){
           initiatedBadge='<span title="Initiated by '+esc(split.initiated.by)+(initWhen?' — '+esc(initWhen):'')+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#a5d6a7;border:1px solid #388e3c;border-radius:2px;font-size:9px;margin-right:4px;cursor:help">✓</span>';
         }
         html+='<tr>'
-          +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #e0c56b;padding:5px 10px;font-weight:400">'+esc(dateKey)+'</td>'
+          +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #e0c56b;padding:5px 10px;font-weight:400">'+esc(dateKey)
+            +(split.edited?' <span title="Edited by '+esc(split.edited.by)+(split.edited.at?' — '+esc(new Date(split.edited.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})):'')+'" style="font-size:11px;color:#8a6d1a;font-style:italic;cursor:help">(edited)</span>':'')
+          +'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(row.docNum||'')+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(row.due||'—')+'</td>'

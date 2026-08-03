@@ -2279,6 +2279,7 @@ function renderReports(){
         +'<button class="btn btn-primary" onclick="runCashFlowReport()">Pull from QuickBooks</button>'
       +'</div>'
       +'<div id="cf-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
+      +'<div id="cf-scheduled-section" style="margin-bottom:24px"></div>'
       +'<div id="cf-body"></div>'
     +'</div>';
   buildBalanceReport();
@@ -2936,6 +2937,76 @@ function _initCashFlowColumnResize(){
   });
 }
 
+// Pinned section at the top of Cash Flow — every bill that has a
+// Scheduled Date set, grouped by that date (soonest first), pulled out of
+// the main vendor list below so each bill only shows up in one place.
+function renderScheduledPaymentsSection(allBills){
+  function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  var el=document.getElementById('cf-scheduled-section');
+  if(!el) return;
+  var billsById={};
+  (allBills||[]).forEach(function(b){ billsById[b.Id]=b; });
+
+  var byDate={}; // scheduledDate -> [{bill, sched}]
+  Object.keys(_cfScheduledDates).forEach(function(billId){
+    var bill=billsById[billId];
+    if(!bill) return; // bill no longer open/no longer in the last pull
+    var sched=_cfScheduledDates[billId];
+    if(!byDate[sched.date]) byDate[sched.date]=[];
+    byDate[sched.date].push({bill:bill,sched:sched});
+  });
+
+  var dateKeys=Object.keys(byDate).sort();
+  if(!dateKeys.length){ el.innerHTML=''; return; }
+
+  var grandTotal=0;
+  var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">📌 Scheduled Payments</div>'
+    +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#fffdf5;color:#000;border:1px solid #e0c56b">'
+    +'<colgroup><col style="width:130px"><col style="width:220px"><col style="width:100px"><col style="width:140px"><col style="width:150px"><col style="width:60px"></colgroup>'
+    +'<thead><tr>'
+      +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Scheduled Date</th>'
+      +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Vendor</th>'
+      +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Bill #</th>'
+      +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Payment Date (QB)</th>'
+      +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:right;font-weight:700">Balance</th>'
+      +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px"></th>'
+    +'</tr></thead><tbody>';
+  dateKeys.forEach(function(dateKey){
+    var rows=byDate[dateKey];
+    var dateTotal=0;
+    rows.forEach(function(row,ri){
+      var bill=row.bill, sched=row.sched;
+      var vName=(bill.VendorRef&&bill.VendorRef.name)||'No vendor on file';
+      var bal=Number(bill.Balance||0);
+      dateTotal+=bal; grandTotal+=bal;
+      var whenStr=sched.at?new Date(sched.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
+      html+='<tr>'
+        +'<td style="border:1px solid #e0c56b;padding:5px 10px;font-weight:'+(ri===0?'700':'400')+'">'+(ri===0?esc(dateKey):'')+'</td>'
+        +'<td style="border:1px solid #e0c56b;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
+        +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(bill.DocNumber||'')+'</td>'
+        +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(bill.DueDate||'—')+'</td>'
+        +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
+        +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:center">'
+          +'<span title="Scheduled by '+esc(sched.by)+(whenStr?' — '+esc(whenStr):'')+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#ffd54f;border:1px solid #c9a227;border-radius:2px;font-size:9px;margin-right:6px;cursor:help;transform:rotate(-4deg)">📌</span>'
+          +'<button onclick="setCashFlowScheduledDate(\''+esc(bill.Id)+'\',\'\')" class="btn btn-sm" title="Remove from schedule" style="padding:2px 7px;font-size:11px">✕</button>'
+        +'</td>'
+      +'</tr>';
+    });
+    html+='<tr>'
+      +'<td colspan="4" style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-weight:700;background:#fff8e1">Total for '+esc(dateKey)+'</td>'
+      +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-weight:700;background:#fff8e1;font-family:var(--mono)">'+money(dateTotal)+'</td>'
+      +'<td style="border:1px solid #e0c56b;background:#fff8e1"></td>'
+    +'</tr>';
+  });
+  html+='<tr>'
+    +'<td colspan="4" style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe58a">TOTAL SCHEDULED</td>'
+    +'<td style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe58a;font-family:var(--mono)">'+money(grandTotal)+'</td>'
+    +'<td style="border:1px solid #c9a227;background:#ffe58a"></td>'
+  +'</tr>';
+  html+='</tbody></table>';
+  el.innerHTML=html;
+}
+
 // Updates the table with fresh data — only touches #cf-tbody, so the
 // shell (and any column widths you've dragged) is untouched by re-syncing.
 function renderCashFlowReport(){
@@ -2943,11 +3014,23 @@ function renderCashFlowReport(){
   var statusEl=document.getElementById('cf-status');
   buildCashFlowTableShell(); // no-op if it already exists
   var tbody=document.getElementById('cf-tbody');
-  var bills=_cashFlowBills||[];
+  var allBills=_cashFlowBills||[];
 
-  if(!bills.length){
+  renderScheduledPaymentsSection(allBills);
+
+  // Bills with a Scheduled Date are pinned in the section above instead —
+  // keep them out of the main vendor list below so each bill shows up
+  // exactly once.
+  var bills=allBills.filter(function(bill){ return !_cfScheduledDates[bill.Id]; });
+
+  if(!allBills.length){
     if(statusEl) statusEl.textContent='';
     if(tbody) tbody.innerHTML='<tr><td colspan="'+CF_COLS.length+'" style="border:1px solid #ccc;padding:16px;text-align:center;color:#888">No data yet — click "Pull from QuickBooks" above.</td></tr>';
+    return;
+  }
+  if(!bills.length){
+    if(statusEl) statusEl.textContent='All '+allBills.length+' open bill(s) have a Scheduled Date — see the section above.';
+    if(tbody) tbody.innerHTML='<tr><td colspan="'+CF_COLS.length+'" style="border:1px solid #ccc;padding:16px;text-align:center;color:#888">Nothing unscheduled right now.</td></tr>';
     return;
   }
 
@@ -2967,7 +3050,8 @@ function renderCashFlowReport(){
   var vendorKeys=Object.keys(byVendor).sort(function(a,b){ return byVendor[b].total-byVendor[a].total; });
 
   if(statusEl){
-    statusEl.textContent=bills.length+' open bill(s) across '+vendorKeys.length+' vendor(s), totaling '+money(grandTotal);
+    statusEl.textContent=bills.length+' unscheduled open bill(s) across '+vendorKeys.length+' vendor(s), totaling '+money(grandTotal)
+      +(allBills.length>bills.length?' ('+(allBills.length-bills.length)+' scheduled — see above)':'');
     statusEl.style.color='';
   }
 

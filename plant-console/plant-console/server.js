@@ -935,6 +935,44 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Dedicated, atomic SAVE for one Cash Flow bill's scheduled/approved
+  // payment record — separate from the general full-snapshot POST for the
+  // same reason the delete endpoint above is separate: that generic POST
+  // bundles this tiny record together with the ENTIRE app snapshot (items,
+  // transactions, everything), which can legitimately take up to a minute
+  // to transfer on a slow connection. A background pull landing in that
+  // gap would fetch the server's still-outdated copy and silently revert
+  // the edit before the slow push ever finished — exactly the "shows up
+  // then disappears" bug this fixes. This endpoint sends just the one
+  // record that changed, so it completes almost immediately regardless of
+  // how much other data this business has accumulated. Also clears this
+  // bill's id from the tombstone list, since actively saving a record for
+  // it means it's no longer deleted.
+  if (url === '/api/data/save-cf-schedule' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      if (!body || !body.billId || !body.record) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing billId or record' }));
+        return;
+      }
+      await updateSharedData(async (current) => {
+        const cfScheduledDates = Object.assign({}, current.cfScheduledDates || {});
+        cfScheduledDates[body.billId] = body.record;
+        const tombstones = (Array.isArray(current.deletedCfBillIds) ? current.deletedCfBillIds : []).filter(id => id !== body.billId);
+        return { data: Object.assign({}, current, { cfScheduledDates, deletedCfBillIds: tombstones }) };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
   // ===== Server-side backups (admin only — these expose everything,
   // including hashed PINs, and a restore can overwrite all shared data) =====
   if (url === '/api/backups' && req.method === 'GET') {

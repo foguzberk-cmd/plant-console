@@ -2870,7 +2870,7 @@ var CF_COLS=[
   {id:'vendor',label:'Vendor',width:220,align:'left'},
   {id:'billnum',label:'Bill #',width:100,align:'left'},
   {id:'due',label:'Payment Date (QB)',width:140,align:'left'},
-  {id:'scheduled',label:'Scheduled Date',width:150,align:'left'},
+  {id:'scheduled',label:'Scheduled Date',width:230,align:'left'},
   {id:'balance',label:'Balance Owed',width:140,align:'right'}
 ];
 // Scheduled Date is a local-only plan (QuickBooks has no field for "when we
@@ -2902,35 +2902,62 @@ var _cfScheduledDates=(function(){
 })();
 function _cfSaveScheduled(){ localStorage.setItem('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates)); }
 
-function setCashFlowScheduledDate(billId,value){
-  if(value){
-    var bill=(_cashFlowBills||[]).find(function(b){ return b.Id===billId; });
-    var prior=_cfScheduledDates[billId]; // keep original snapshot if this bill was already pinned (e.g. just changing the date)
-    var balance=(prior&&prior.balance!==undefined)?prior.balance:Number(bill&&bill.Balance||0);
+// How much of a bill's balance is already scheduled (sum of all its
+// splits' amounts, across possibly-partial schedules).
+function _cfScheduledAmountFor(billId){
+  var rec=_cfScheduledDates[billId];
+  if(!rec||!rec.splits) return 0;
+  return rec.splits.reduce(function(s,sp){ return s+Number(sp.amount||0); },0);
+}
+// What's left of a bill's balance that ISN'T scheduled yet — this is what
+// still shows in the main vendor table.
+function _cfRemainingFor(bill){
+  return Math.round((Number(bill.Balance||0)-_cfScheduledAmountFor(bill.Id))*100)/100;
+}
+
+// Appends one new scheduled installment (date+amount) for a bill —
+// creates the record if this is the bill's first schedule, or adds
+// alongside any splits it already has if this is a partial/additional
+// schedule. Never overwrites existing splits.
+function _cfAddSplit(billId,date,amount){
+  var bill=(_cashFlowBills||[]).find(function(b){ return b.Id===billId; });
+  var prior=_cfScheduledDates[billId];
+  if(!prior){
     _cfScheduledDates[billId]={
-      vendor:(prior&&prior.vendor)||(bill&&bill.VendorRef&&bill.VendorRef.name)||'No vendor on file',
-      docNum:(prior&&prior.docNum)||(bill&&bill.DocNumber)||'',
-      due:(prior&&prior.due)||(bill&&bill.DueDate)||'',
-      balance:balance,
-      splits:[{
-        id:'0', date:value, amount:balance,
-        by:(currentUser&&currentUser.name)||'Unknown user',
-        at:new Date().toISOString(),
-        initiated:null
-      }]
+      vendor:(bill&&bill.VendorRef&&bill.VendorRef.name)||'No vendor on file',
+      docNum:(bill&&bill.DocNumber)||'',
+      due:(bill&&bill.DueDate)||'',
+      balance:Number(bill&&bill.Balance||0),
+      splits:[]
     };
-  } else {
-    delete _cfScheduledDates[billId];
+    prior=_cfScheduledDates[billId];
   }
+  prior.splits.push({
+    id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+    date:date, amount:Math.round(Number(amount)*100)/100,
+    by:(currentUser&&currentUser.name)||'Unknown user',
+    at:new Date().toISOString(),
+    initiated:null
+  });
   _cfSaveScheduled();
+}
+
+// Quick-schedule action from the main table's date input — schedules
+// whatever balance is currently still unscheduled for this bill (the full
+// balance the first time, or just the remainder if it's already been
+// partially scheduled before). For scheduling a SPECIFIC smaller amount,
+// use "Partial..." instead (see scheduleCFPartial).
+function setCashFlowScheduledDate(billId,value){
+  if(!value) return; // nothing to clear here anymore — remove specific installments from the pinned section's ⋮ menu instead
+  var bill=(_cashFlowBills||[]).find(function(b){ return b.Id===billId; });
+  if(!bill) return;
+  var remaining=_cfRemainingFor(bill);
+  if(remaining<=0.004){ return; } // already fully scheduled
+  _cfAddSplit(billId,value,remaining);
   renderCashFlowReport();
 }
 window.setCashFlowScheduledDate=setCashFlowScheduledDate;
 
-// Splits one bill's scheduled payment into two installments on different
-// dates. Simple 2-way split via a lightweight prompt-based flow — asks for
-// the first installment's amount and date; the second gets the remainder
-// and defaults to the same date as the first (editable afterward via Edit).
 // ===== Split Payment modal — build a payment plan with any number of
 // parts, each with its own date and amount, instead of a fixed 2-way
 // prompt() chain. =====
@@ -3041,6 +3068,67 @@ function closeCFSplitModal(){
   _cfSplitState=null;
 }
 window.closeCFSplitModal=closeCFSplitModal;
+
+// ===== Schedule Partial modal — schedule less than the full remaining
+// balance for a bill directly from the main (unscheduled) table, leaving
+// the rest still unscheduled below. =====
+var _cfPartialState=null; // {billId, remaining}
+
+function scheduleCFPartial(billId){
+  var bill=(_cashFlowBills||[]).find(function(b){ return b.Id===billId; });
+  if(!bill){ alert('Bill not found — try re-pulling from QuickBooks.'); return; }
+  var remaining=_cfRemainingFor(bill);
+  if(remaining<=0.004){ alert('This bill is already fully scheduled.'); return; }
+  var vName=(bill.VendorRef&&bill.VendorRef.name)||'No vendor on file';
+  _cfPartialState={billId:billId,remaining:remaining};
+
+  var bg=document.createElement('div');
+  bg.className='modal-bg';
+  bg.id='cfPartialModalBg';
+  bg.setAttribute('role','dialog');
+  bg.setAttribute('aria-modal','true');
+  bg.onclick=function(e){ if(e.target===bg) closeCFPartialModal(); };
+  bg.innerHTML='<div class="modal" style="max-width:420px">'
+    +'<h3 style="margin:0 0 4px">Schedule Partial Payment</h3>'
+    +'<p style="color:var(--muted);font-size:13px;margin:0 0 16px">'+esc(vName)+' · Bill #'+esc(bill.DocNumber||'')+' · Unscheduled: '+_cfMoney(remaining)+'</p>'
+    +'<label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Amount to schedule now</label>'
+    +'<input type="number" id="cfPartialAmount" step="0.01" value="'+remaining+'" max="'+remaining+'" style="width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:14px;margin-bottom:14px"/>'
+    +'<label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Scheduled Date</label>'
+    +'<input type="date" id="cfPartialDate" style="width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:14px"/>'
+    +'<div id="cfPartialWarn" style="margin-top:10px;font-size:12px;color:#b8460b"></div>'
+    +'<div class="modal-footer">'
+      +'<button class="btn" onclick="closeCFPartialModal()">Cancel</button>'
+      +'<button class="btn btn-primary" onclick="cfPartialSave()">Schedule this amount</button>'
+    +'</div>'
+  +'</div>';
+  document.body.appendChild(bg);
+  document.getElementById('cfPartialAmount').focus();
+}
+window.scheduleCFPartial=scheduleCFPartial;
+
+function closeCFPartialModal(){
+  var bg=document.getElementById('cfPartialModalBg');
+  if(bg) bg.remove();
+  _cfPartialState=null;
+}
+window.closeCFPartialModal=closeCFPartialModal;
+
+function cfPartialSave(){
+  var st=_cfPartialState;
+  if(!st) return;
+  var amtEl=document.getElementById('cfPartialAmount');
+  var dateEl=document.getElementById('cfPartialDate');
+  var warnEl=document.getElementById('cfPartialWarn');
+  var amt=Number(amtEl.value);
+  var date=dateEl.value;
+  if(!date){ warnEl.textContent='Pick a date.'; return; }
+  if(isNaN(amt)||amt<=0){ warnEl.textContent='Enter an amount greater than $0.'; return; }
+  if(amt>st.remaining+0.004){ warnEl.textContent='Can\'t schedule more than the unscheduled balance ('+_cfMoney(st.remaining)+').'; return; }
+  _cfAddSplit(st.billId,date,amt);
+  closeCFPartialModal();
+  renderCashFlowReport();
+}
+window.cfPartialSave=cfPartialSave;
 
 function cfSplitSave(){
   var st=_cfSplitState;
@@ -3310,10 +3398,10 @@ function renderCashFlowReport(){
 
   renderScheduledPaymentsSection();
 
-  // Bills with a Scheduled Date are pinned in the section above instead —
-  // keep them out of the main vendor list below so each bill shows up
-  // exactly once.
-  var bills=allBills.filter(function(bill){ return !_cfScheduledDates[bill.Id]; });
+  // A bill only fully disappears from this list once its ENTIRE balance is
+  // scheduled — a partially-scheduled bill still shows here, but for just
+  // the unscheduled remainder (see _cfRemainingFor).
+  var bills=allBills.filter(function(bill){ return _cfRemainingFor(bill)>0.004; });
 
   if(!allBills.length){
     if(statusEl) statusEl.textContent='';
@@ -3321,29 +3409,31 @@ function renderCashFlowReport(){
     return;
   }
   if(!bills.length){
-    if(statusEl) statusEl.textContent='All '+allBills.length+' open bill(s) have a Scheduled Date — see the section above.';
+    if(statusEl) statusEl.textContent='All '+allBills.length+' open bill(s) are fully scheduled — see the section above.';
     if(tbody) tbody.innerHTML='<tr><td colspan="'+CF_COLS.length+'" style="border:1px solid #ccc;padding:16px;text-align:center;color:#888">Nothing unscheduled right now.</td></tr>';
     return;
   }
 
-  // Group open bills by vendor.
+  // Group open bills by vendor — using each bill's REMAINING unscheduled
+  // balance, not its original full balance.
   var byVendor={}; // key -> {name, total, bills:[]}
   var grandTotal=0;
   bills.forEach(function(bill){
     var vName=(bill.VendorRef&&bill.VendorRef.name)||'No vendor on file';
     var vKey=(bill.VendorRef&&bill.VendorRef.value)||vName;
-    var bal=Number(bill.Balance||0);
+    var remaining=_cfRemainingFor(bill);
+    var alreadyScheduled=_cfScheduledAmountFor(bill.Id);
     if(!byVendor[vKey]) byVendor[vKey]={name:vName,total:0,bills:[]};
-    byVendor[vKey].total+=bal;
-    byVendor[vKey].bills.push({id:bill.Id,due:bill.DueDate||'',docNum:bill.DocNumber||'',balance:bal});
-    grandTotal+=bal;
+    byVendor[vKey].total+=remaining;
+    byVendor[vKey].bills.push({id:bill.Id,due:bill.DueDate||'',docNum:bill.DocNumber||'',balance:remaining,alreadyScheduled:alreadyScheduled});
+    grandTotal+=remaining;
   });
 
   var vendorKeys=Object.keys(byVendor).sort(function(a,b){ return byVendor[b].total-byVendor[a].total; });
 
   if(statusEl){
     statusEl.textContent=bills.length+' unscheduled open bill(s) across '+vendorKeys.length+' vendor(s), totaling '+money(grandTotal)
-      +(allBills.length>bills.length?' ('+(allBills.length-bills.length)+' scheduled — see above)':'');
+      +(allBills.length>bills.length?' ('+(allBills.length-bills.length)+' fully scheduled — see above)':'');
     statusEl.style.color='';
   }
 
@@ -3360,22 +3450,17 @@ function renderCashFlowReport(){
       +'<td style="border:1px solid #ccc;padding:6px 10px;text-align:right;font-weight:700;font-family:var(--mono)">'+money(entry.total)+'</td>'
     +'</tr>';
     billsSorted.forEach(function(b){
-      var sched=_cfScheduledDates[b.id]||null;
-      var rowBg=sched?'#fff8e1':'#fff';
-      var stickyNote='';
-      if(sched){
-        var whenStr=sched.at?new Date(sched.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
-        stickyNote='<span title="Scheduled by '+esc(sched.by)+(whenStr?' — '+esc(whenStr):'')+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#ffd54f;border:1px solid #c9a227;border-radius:2px;font-size:9px;margin-left:5px;cursor:help;flex-shrink:0;transform:rotate(-4deg)">📌</span>';
-      }
-      rowsHtml+='<tr class="'+groupClass+'" style="display:none;background:'+rowBg+'">'
+      var partialNote=b.alreadyScheduled>0.004?'<div style="font-size:10px;color:#8a6d1a;margin-top:2px">'+money(b.alreadyScheduled)+' already scheduled</div>':'';
+      rowsHtml+='<tr class="'+groupClass+'" style="display:none">'
         +'<td style="border:1px solid #ccc;padding:5px 10px 5px 28px"></td>'
         +'<td style="border:1px solid #ccc;padding:5px 10px">'+esc(b.docNum||'')+'</td>'
         +'<td style="border:1px solid #ccc;padding:5px 10px">'+esc(b.due||'—')+'</td>'
         +'<td style="border:1px solid #ccc;padding:2px 6px">'
-          +'<div style="display:flex;align-items:center">'
-            +'<input type="date" value="'+esc(sched?sched.date:'')+'" onchange="setCashFlowScheduledDate(\''+esc(b.id)+'\',this.value)" style="flex:1;min-width:0;border:1px solid #ddd;border-radius:4px;padding:3px 5px;font-size:12px;font-family:inherit;background:'+(sched?'#fff8e1':'#fff')+'"/>'
-            +stickyNote
+          +'<div style="display:flex;align-items:center;gap:4px">'
+            +'<input type="date" value="" onchange="setCashFlowScheduledDate(\''+esc(b.id)+'\',this.value)" title="Schedule the full remaining balance for this date" style="flex:1;min-width:0;border:1px solid #ddd;border-radius:4px;padding:3px 5px;font-size:12px;font-family:inherit"/>'
+            +'<button onclick="scheduleCFPartial(\''+esc(b.id)+'\')" class="btn btn-sm" title="Schedule only part of this balance" style="padding:3px 7px;font-size:11px;white-space:nowrap">Partial…</button>'
           +'</div>'
+          +partialNote
         +'</td>'
         +'<td style="border:1px solid #ccc;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(b.balance)+'</td>'
       +'</tr>';

@@ -2880,27 +2880,150 @@ var CF_COLS=[
 // locked in place. The pinned Scheduled Payments section reads only from
 // this snapshot, never from the live QuickBooks pull, so re-syncing never
 // changes what's already pinned, moves it around, or makes it vanish.
-var _cfScheduledDates=(function(){ try{ return JSON.parse(localStorage.getItem('pc_cf_scheduled_dates')||'{}'); }catch(e){ return {}; } })();
+//
+// Shape: { vendor, docNum, due, balance, splits:[{id,date,amount,by,at,initiated:{by,at}|null}] }
+// "splits" lets one bill be paid across multiple dates/amounts (see
+// splitCFPayment) — a normal (non-split) scheduled bill is just a single
+// entry in that array.
+var _cfScheduledDates=(function(){
+  var raw; try{ raw=JSON.parse(localStorage.getItem('pc_cf_scheduled_dates')||'{}'); }catch(e){ raw={}; }
+  // Migrate any pre-split-feature records (which had {date,by,at,...} directly
+  // on the record, no splits array) into the new shape.
+  Object.keys(raw).forEach(function(billId){
+    var rec=raw[billId];
+    if(!rec.splits){
+      raw[billId]={
+        vendor:rec.vendor, docNum:rec.docNum, due:rec.due, balance:rec.balance,
+        splits:[{id:'0',date:rec.date,amount:rec.balance,by:rec.by,at:rec.at,initiated:null}]
+      };
+    }
+  });
+  return raw;
+})();
+function _cfSaveScheduled(){ localStorage.setItem('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates)); }
+
 function setCashFlowScheduledDate(billId,value){
   if(value){
     var bill=(_cashFlowBills||[]).find(function(b){ return b.Id===billId; });
     var prior=_cfScheduledDates[billId]; // keep original snapshot if this bill was already pinned (e.g. just changing the date)
+    var balance=(prior&&prior.balance!==undefined)?prior.balance:Number(bill&&bill.Balance||0);
     _cfScheduledDates[billId]={
-      date:value,
-      by:(currentUser&&currentUser.name)||'Unknown user',
-      at:new Date().toISOString(),
       vendor:(prior&&prior.vendor)||(bill&&bill.VendorRef&&bill.VendorRef.name)||'No vendor on file',
       docNum:(prior&&prior.docNum)||(bill&&bill.DocNumber)||'',
       due:(prior&&prior.due)||(bill&&bill.DueDate)||'',
-      balance:(prior&&prior.balance!==undefined)?prior.balance:Number(bill&&bill.Balance||0)
+      balance:balance,
+      splits:[{
+        id:'0', date:value, amount:balance,
+        by:(currentUser&&currentUser.name)||'Unknown user',
+        at:new Date().toISOString(),
+        initiated:null
+      }]
     };
   } else {
     delete _cfScheduledDates[billId];
   }
-  localStorage.setItem('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates));
+  _cfSaveScheduled();
   renderCashFlowReport();
 }
 window.setCashFlowScheduledDate=setCashFlowScheduledDate;
+
+// Splits one bill's scheduled payment into two installments on different
+// dates. Simple 2-way split via a lightweight prompt-based flow — asks for
+// the first installment's amount and date; the second gets the remainder
+// and defaults to the same date as the first (editable afterward via Edit).
+function splitCFPayment(billId,splitId){
+  var rec=_cfScheduledDates[billId];
+  if(!rec||!rec.splits||!rec.splits.length){ alert('This payment isn\'t scheduled yet.'); return; }
+  if(splitId===undefined) splitId=rec.splits[0].id;
+  var idx=rec.splits.findIndex(function(s){return s.id===splitId;});
+  if(idx<0) return;
+  var target=rec.splits[idx];
+  var amtStr=prompt('Split '+'$'+Number(target.amount).toFixed(2)+' into two payments.\nAmount for the FIRST payment:', (target.amount/2).toFixed(2));
+  if(amtStr===null) return;
+  var amt1=Number(amtStr);
+  if(isNaN(amt1)||amt1<=0||amt1>=target.amount){ alert('Enter an amount between $0 and $'+Number(target.amount).toFixed(2)+'.'); return; }
+  var amt2=Math.round((target.amount-amt1)*100)/100;
+  var date1=prompt('Date for the first payment ('+amt1.toFixed(2)+'):', target.date);
+  if(date1===null) return;
+  var date2=prompt('Date for the second payment ('+amt2.toFixed(2)+'):', target.date);
+  if(date2===null) return;
+  var who=(currentUser&&currentUser.name)||'Unknown user';
+  var now=new Date().toISOString();
+  var newId1=splitId+'a'+Date.now().toString(36);
+  var newId2=splitId+'b'+Date.now().toString(36);
+  rec.splits.splice(idx,1,
+    {id:newId1,date:date1,amount:amt1,by:who,at:now,initiated:null},
+    {id:newId2,date:date2,amount:amt2,by:who,at:now,initiated:null}
+  );
+  _cfSaveScheduled();
+  renderCashFlowReport();
+}
+window.splitCFPayment=splitCFPayment;
+
+// Marks one split as "initiated" — this app has no real payment-processing
+// integration, so this is a status flag only (who marked it, and when),
+// shown as a green check next to the row instead of the yellow pin.
+function initiateCFPayment(billId,splitId){
+  var rec=_cfScheduledDates[billId];
+  if(!rec) return;
+  var split=rec.splits.find(function(s){return s.id===splitId;});
+  if(!split) return;
+  if(split.initiated){ split.initiated=null; } // toggle off if clicked again
+  else split.initiated={by:(currentUser&&currentUser.name)||'Unknown user',at:new Date().toISOString()};
+  _cfSaveScheduled();
+  renderCashFlowReport();
+}
+window.initiateCFPayment=initiateCFPayment;
+
+// Removes one split (or the whole bill if it's the only/last split left).
+function removeCFSplit(billId,splitId){
+  var rec=_cfScheduledDates[billId];
+  if(!rec) return;
+  rec.splits=rec.splits.filter(function(s){return s.id!==splitId;});
+  if(!rec.splits.length) delete _cfScheduledDates[billId];
+  _cfSaveScheduled();
+  renderCashFlowReport();
+}
+window.removeCFSplit=removeCFSplit;
+
+// Toggles the little ⋮ dropdown menu for one row, closing any other open
+// one first.
+function toggleCFRowMenu(menuId){
+  document.querySelectorAll('.cf-row-menu').forEach(function(m){
+    if(m.id!==menuId) m.style.display='none';
+  });
+  var el=document.getElementById(menuId);
+  if(el) el.style.display=(el.style.display==='none'||!el.style.display)?'block':'none';
+}
+window.toggleCFRowMenu=toggleCFRowMenu;
+document.addEventListener('click',function(e){
+  if(!e.target.closest||!e.target.closest('.cf-row-menu-wrap')){
+    document.querySelectorAll('.cf-row-menu').forEach(function(m){ m.style.display='none'; });
+  }
+});
+
+// Swaps one split's date cell into an inline, editable date input — the
+// only thing Edit is allowed to change.
+function editCFScheduledDate(billId,splitId){
+  toggleCFRowMenu('cf-menu-'+billId+'-'+splitId); // close the menu
+  var cell=document.getElementById('cf-datecell-'+billId+'-'+splitId);
+  if(!cell) return;
+  var rec=_cfScheduledDates[billId];
+  var split=rec&&rec.splits.find(function(s){return s.id===splitId;});
+  if(!split) return;
+  cell.innerHTML='<input type="date" value="'+esc(split.date)+'" autofocus style="width:100%;border:1px solid #c9a227;border-radius:4px;padding:3px 5px;font-size:12px;font-family:inherit"/>';
+  var input=cell.querySelector('input');
+  input.focus();
+  function commit(){
+    split.date=input.value||split.date;
+    _cfSaveScheduled();
+    renderCashFlowReport();
+  }
+  input.addEventListener('change',commit);
+  input.addEventListener('blur',commit);
+}
+window.editCFScheduledDate=editCFScheduledDate;
+
 function buildCashFlowTableShell(){
   var bodyEl=document.getElementById('cf-body');
   if(!bodyEl) return;
@@ -2956,13 +3079,16 @@ function renderScheduledPaymentsSection(){
   // Reads purely from the locked snapshot captured at scheduling time (see
   // setCashFlowScheduledDate) — deliberately NOT cross-referenced against
   // allBills/the live QuickBooks pull, so re-syncing never changes,
-  // reorders, or removes anything already pinned here.
-  var byDate={}; // scheduledDate -> [{bill, sched}]
+  // reorders, or removes anything already pinned here. Each bill's splits
+  // are flattened into individual rows here — a split payment shows up as
+  // two separate rows, one per installment, each on its own date.
+  var byDate={}; // scheduledDate -> [{billId, vendor, docNum, due, split}]
   Object.keys(_cfScheduledDates).forEach(function(billId){
-    var sched=_cfScheduledDates[billId];
-    var bill={Id:billId,VendorRef:{name:sched.vendor},DocNumber:sched.docNum,DueDate:sched.due,Balance:sched.balance};
-    if(!byDate[sched.date]) byDate[sched.date]=[];
-    byDate[sched.date].push({bill:bill,sched:sched});
+    var rec=_cfScheduledDates[billId];
+    (rec.splits||[]).forEach(function(split){
+      if(!byDate[split.date]) byDate[split.date]=[];
+      byDate[split.date].push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,split:split});
+    });
   });
 
   var dateKeys=Object.keys(byDate).sort();
@@ -2992,7 +3118,7 @@ function renderScheduledPaymentsSection(){
   var grandTotal=0;
   var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">📌 Scheduled Payments</div>'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#fffdf5;color:#000;border:1px solid #e0c56b">'
-    +'<colgroup><col style="width:130px"><col style="width:220px"><col style="width:100px"><col style="width:140px"><col style="width:150px"><col style="width:60px"></colgroup>'
+    +'<colgroup><col style="width:130px"><col style="width:220px"><col style="width:100px"><col style="width:140px"><col style="width:150px"><col style="width:44px"></colgroup>'
     +'<thead><tr>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Scheduled Date</th>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Vendor</th>'
@@ -3007,7 +3133,7 @@ function renderScheduledPaymentsSection(){
     var weekLabel='Week of '+fmtShort(weekMonday)+' – '+fmtShort(weekSunday.toISOString().slice(0,10));
     var weekTotal=0;
     byWeek[weekMonday].dateKeys.forEach(function(dk){
-      byDate[dk].forEach(function(row){ weekTotal+=Number(row.bill.Balance||0); });
+      byDate[dk].forEach(function(row){ weekTotal+=Number(row.split.amount||0); });
     });
     grandTotal+=weekTotal;
     html+='<tr>'
@@ -3018,20 +3144,34 @@ function renderScheduledPaymentsSection(){
 
     byWeek[weekMonday].dateKeys.forEach(function(dateKey){
       var rows=byDate[dateKey];
-      rows.forEach(function(row,ri){
-        var bill=row.bill, sched=row.sched;
-        var vName=(bill.VendorRef&&bill.VendorRef.name)||'No vendor on file';
-        var bal=Number(bill.Balance||0);
-        var whenStr=sched.at?new Date(sched.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
+      rows.forEach(function(row){
+        var billId=row.billId, split=row.split;
+        var vName=row.vendor||'No vendor on file';
+        var bal=Number(split.amount||0);
+        var whenStr=split.at?new Date(split.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
+        var menuId='cf-menu-'+billId+'-'+split.id;
+        var pinTitle='Scheduled by '+esc(split.by)+(whenStr?' — '+esc(whenStr):'');
+        var initiatedBadge='';
+        if(split.initiated){
+          var initWhen=split.initiated.at?new Date(split.initiated.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
+          initiatedBadge='<span title="Initiated by '+esc(split.initiated.by)+(initWhen?' — '+esc(initWhen):'')+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#a5d6a7;border:1px solid #388e3c;border-radius:2px;font-size:9px;margin-right:4px;cursor:help">✓</span>';
+        }
         html+='<tr>'
-          +'<td style="border:1px solid #e0c56b;padding:5px 10px;font-weight:400">'+esc(dateKey)+'</td>'
+          +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #e0c56b;padding:5px 10px;font-weight:400">'+esc(dateKey)+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
-          +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(bill.DocNumber||'')+'</td>'
-          +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(bill.DueDate||'—')+'</td>'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(row.docNum||'')+'</td>'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(row.due||'—')+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
-          +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:center">'
-            +'<span title="Scheduled by '+esc(sched.by)+(whenStr?' — '+esc(whenStr):'')+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#ffd54f;border:1px solid #c9a227;border-radius:2px;font-size:9px;margin-right:6px;cursor:help;transform:rotate(-4deg)">📌</span>'
-            +'<button onclick="setCashFlowScheduledDate(\''+esc(bill.Id)+'\',\'\')" class="btn btn-sm" title="Remove from schedule" style="padding:2px 7px;font-size:11px">✕</button>'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:center;position:relative" class="cf-row-menu-wrap">'
+            +initiatedBadge
+            +'<span title="'+pinTitle+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#ffd54f;border:1px solid #c9a227;border-radius:2px;font-size:9px;margin-right:4px;cursor:help;transform:rotate(-4deg)">📌</span>'
+            +'<button onclick="toggleCFRowMenu(\''+menuId+'\')" class="btn btn-sm" style="padding:2px 7px;font-size:13px;line-height:1">⋮</button>'
+            +'<div id="'+menuId+'" class="cf-row-menu" style="display:none;position:absolute;right:6px;top:100%;margin-top:2px;background:#fff;border:1px solid #999;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.18);z-index:50;min-width:150px;text-align:left;overflow:hidden">'
+              +'<button onclick="initiateCFPayment(\''+esc(billId)+'\',\''+esc(split.id)+'\');toggleCFRowMenu(\''+menuId+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">'+(split.initiated?'Un-initiate':'Initiate payment')+'</button>'
+              +'<button onclick="editCFScheduledDate(\''+esc(billId)+'\',\''+esc(split.id)+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Edit date</button>'
+              +'<button onclick="splitCFPayment(\''+esc(billId)+'\',\''+esc(split.id)+'\');toggleCFRowMenu(\''+menuId+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Split payment</button>'
+              +'<button onclick="removeCFSplit(\''+esc(billId)+'\',\''+esc(split.id)+'\');toggleCFRowMenu(\''+menuId+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;color:#b8460b">Remove from schedule</button>'
+            +'</div>'
           +'</td>'
         +'</tr>';
       });

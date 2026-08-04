@@ -6919,7 +6919,7 @@ function renderVendorsPanel(){
       <span style="font-size:11px;color:var(--muted);font-style:italic">Checking a vendor here assigns it to "${esc(_vendPanelDept)}" — a vendor can only belong to one department, so checking it here moves it out of any other department it was in.</span>
     </div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
-      <input type="text" id="vend-filter" placeholder="Search vendors..." oninput="renderVendorsList()" style="flex:1;min-width:200px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
+      <input type="text" id="vend-filter" placeholder="Search vendors or Purch Rep..." oninput="renderVendorsList()" style="flex:1;min-width:200px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
       <button class="btn btn-sm" onclick="vendorSelectAll(true)">Select all</button>
       <button class="btn btn-sm" onclick="vendorSelectAll(false)">Clear all</button>
       <button class="btn btn-sm" id="vendSyncBtn" onclick="qbSyncVendors()" title="Pull the latest vendor list from QuickBooks">
@@ -6958,9 +6958,15 @@ function renderVendorsList(){
   var listEl=document.getElementById('vendorsList');
   if(!listEl) return;
   var q=(document.getElementById('vend-filter')&&document.getElementById('vend-filter').value||'').toLowerCase().trim();
-  var shown=vendors.filter(function(v){ return !q || (v.name||'').toLowerCase().indexOf(q)>=0; });
+  var shown=vendors.filter(function(v){ return !q || (v.name||'').toLowerCase().indexOf(q)>=0 || (v.purchRep||'').toLowerCase().indexOf(q)>=0; });
   shown.sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
-  listEl.innerHTML=shown.map(function(v){
+  // Distinct Purch Rep names already in use, for the suggestion dropdown —
+  // same idea as Sales Rep on the Customers panel.
+  var repSet={};
+  vendors.forEach(function(v){ if(v.purchRep&&v.purchRep.trim()) repSet[v.purchRep.trim()]=true; });
+  var repOptions=Object.keys(repSet).sort();
+  var datalistHtml='<datalist id="purchRepOptions">'+repOptions.map(function(r){ return '<option value="'+esc(r)+'">'; }).join('')+'</datalist>';
+  listEl.innerHTML=datalistHtml+shown.map(function(v){
     var vKey=v.qbId||v.name;
     var on=_vendDraft.indexOf(vKey)>=0;
     var otherDept=_vendorDepartments[vKey];
@@ -6968,12 +6974,34 @@ function renderVendorsList(){
     return '<label style="display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer">'
       +'<input type="checkbox" '+(on?'checked':'')+' onchange="toggleVendorDraft(\''+esc(vKey)+'\',this.checked)" style="width:17px;height:17px;cursor:pointer;accent-color:var(--brand)"/>'
       +'<div style="flex:1;font-size:13px;font-weight:600">'+esc(v.name)+otherNote+'</div>'
+      +'<input type="text" list="purchRepOptions" value="'+esc(v.purchRep||'')+'" placeholder="Purch Rep" onclick="event.stopPropagation()" onchange="updateVendorPurchRep(\''+esc(vKey)+'\',this.value)" style="width:150px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink);cursor:text"/>'
     +'</label>';
   }).join('');
   var countEl=document.getElementById('vend-count');
   if(countEl) countEl.textContent=_vendDraft.length+' of '+vendors.length+' vendors assigned to '+_vendPanelDept+' (unsaved until you click Save)';
 }
 window.renderVendorsList=renderVendorsList;
+
+// Purch Rep is managed locally in Plant Console, same as Sales Rep on the
+// Customers panel — confirmed via sync diagnostic that QuickBooks doesn't
+// expose this custom field through the API. Saves immediately on blur.
+function updateVendorPurchRep(vKey,value){
+  var v=vendors.find(function(x){ return (x.qbId||x.name)===vKey; });
+  if(!v) return;
+  v.purchRep=(value||'').trim();
+  saveVendors();
+  // If this introduced a brand-new Purch Rep name, add it to the shared
+  // suggestion list in place, same as Sales Rep does.
+  if(v.purchRep){
+    var dl=document.getElementById('purchRepOptions');
+    if(dl && !dl.querySelector('option[value="'+CSS.escape(v.purchRep)+'"]')){
+      var opt=document.createElement('option');
+      opt.value=v.purchRep;
+      dl.appendChild(opt);
+    }
+  }
+}
+window.updateVendorPurchRep=updateVendorPurchRep;
 
 function toggleVendorDraft(vKey,on){
   var i=_vendDraft.indexOf(vKey);
@@ -6985,7 +7013,7 @@ window.toggleVendorDraft=toggleVendorDraft;
 
 function vendorSelectAll(on){
   var q=(document.getElementById('vend-filter')&&document.getElementById('vend-filter').value||'').toLowerCase().trim();
-  var shown=vendors.filter(function(v){ return !q || (v.name||'').toLowerCase().indexOf(q)>=0; });
+  var shown=vendors.filter(function(v){ return !q || (v.name||'').toLowerCase().indexOf(q)>=0 || (v.purchRep||'').toLowerCase().indexOf(q)>=0; });
   shown.forEach(function(v){
     var vKey=v.qbId||v.name;
     var i=_vendDraft.indexOf(vKey);

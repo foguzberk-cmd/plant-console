@@ -747,6 +747,7 @@ if(Array.isArray(labelAllowed)){
   DEPARTMENTS.forEach(function(d){ labelAllowed[d]=_oldFlatLabelAllowed.slice(); });
 }
 let customers=JSON.parse(localStorage.getItem('pc_customers')||'[]'); // full customer list synced from QuickBooks (like items), each {id, qbId, name}
+let vendors=JSON.parse(localStorage.getItem('pc_vendors')||'[]'); // full vendor list synced from QuickBooks, each {id, qbId, name} — used in Settings → Vendors to assign departments
 let customerAllowed=JSON.parse(localStorage.getItem('pc_customerallowed')||'{}'); // { [department]: [customer ids permitted to appear in that department's Scale Log picker] }
 if(Array.isArray(customerAllowed)){
   // Same migration reasoning as labelAllowed above: seed every department
@@ -1786,6 +1787,47 @@ async function qbSyncCustomersCore(){
   saveCustomers();
   return {ok:true, count:qbCustomers.length};
 }
+
+// Vendors — same idea as customer sync, but there's no dedicated
+// /api/qb/vendors endpoint, so this pages through the generic documents
+// endpoint instead (Vendor has no TxnDate, so omitting &from= just fetches
+// everything, which is what we want for a full name-list sync).
+async function qbSyncVendorsCore(){
+  var base=window.location.origin;
+  var allVendors=[];
+  var startPos=1;
+  var pageSize=100;
+  var safety=0;
+  while(true){
+    safety++;
+    if(safety>500) break; // hard cap (~50k vendors)
+    var resp;
+    try{ resp=await fetch(base+'/api/qb/documents?entity=Vendor&startposition='+startPos); }
+    catch(e){ return {ok:false,error:'network error'}; }
+    var data;
+    try{ data=await resp.json(); }catch(e){ data={}; }
+    if(!resp.ok || data.error){
+      return {ok:false, error:(data.error||resp.status), needsReconnect:(data.needsReconnect||resp.status===401)};
+    }
+    var rows=data.Vendor||[];
+    allVendors=allVendors.concat(rows);
+    if(rows.length<pageSize) break;
+    startPos+=pageSize;
+  }
+  allVendors.forEach(function(qv){
+    var existing=vendors.findIndex(function(x){return x.qbId===qv.Id});
+    var mapped={
+      id: existing>=0 ? vendors[existing].id : 'vend_'+Date.now()+'_'+Math.random().toString(36).slice(2),
+      qbId: qv.Id,
+      name: qv.DisplayName||qv.CompanyName||'',
+      active: qv.Active!==false
+    };
+    if(existing>=0){ vendors[existing]=mapped; } else { vendors.push(mapped); }
+  });
+  saveVendors();
+  return {ok:true, count:allVendors.length};
+}
+function saveVendors(){ localStorage.setItem('pc_vendors',JSON.stringify(vendors)); }
 
 async function qbFetchItems(retry){
   // kept for compatibility — now routes through unified sync
@@ -6365,6 +6407,13 @@ function renderSettings(){
 
       <div class="settings-section">
         <div class="settings-section-head">
+          <div><h3>Vendors</h3><p>Assign each vendor to a department, so Scheduled Payments' vendor bills table can group them the way your plant is organized.</p></div>
+        </div>
+        <div id="vendorsPanel"></div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-head">
           <div><h3>Label Templates</h3><p>Customize the company info, establishment number, "Keep Refrigerated" wording, and safe handling instructions printed on each department's labels.</p></div>
         </div>
         <div id="labelTemplatesPanel"></div>
@@ -6376,6 +6425,7 @@ function renderSettings(){
   renderUserList();
   renderLabelingPanel();
   renderCustomersPanel();
+  renderVendorsPanel();
   renderLabelTemplatesPanel();
   renderBackupsPanel();
 }
@@ -6819,6 +6869,164 @@ async function qbSyncCustomers(){
   if(status) status.textContent=result.count+' customer'+(result.count!==1?'s':'')+' synced.';
   renderCustomersPanel();
 }
+
+async function qbSyncVendors(){
+  var btn=document.getElementById('vendSyncBtn');
+  var status=document.getElementById('vendSyncStatus');
+  if(btn) btn.disabled=true;
+  if(status) status.textContent='Syncing vendors from QuickBooks…';
+  var result=await qbSyncVendorsCore();
+  if(btn) btn.disabled=false;
+  if(!result.ok){
+    if(status) status.textContent='Sync failed: '+(result.needsReconnect?'QuickBooks connection expired — reconnect from the Items tab.':result.error);
+    return;
+  }
+  if(status) status.textContent=result.count+' vendor'+(result.count!==1?'s':'')+' synced.';
+  renderVendorsPanel();
+}
+window.qbSyncVendors=qbSyncVendors;
+
+function renderVendorsPanel(){
+  var panel=document.getElementById('vendorsPanel');
+  if(!panel) return;
+  if(!vendors.length){
+    panel.innerHTML='<div class="txn-empty" style="margin:0"><p>No vendors synced yet.</p></div>'
+      +'<button class="btn btn-primary btn-sm" id="vendSyncBtn" onclick="qbSyncVendors()" style="margin-top:12px">'
+      +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>'
+      +'Sync from QuickBooks</button>'
+      +'<div id="vendSyncStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>';
+    return;
+  }
+  panel.innerHTML=`
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+      <input type="text" id="vend-filter" placeholder="Search vendors or department..." oninput="renderVendorsList()" style="flex:1;min-width:200px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
+      <button class="btn btn-sm" id="vendSyncBtn" onclick="qbSyncVendors()" title="Pull the latest vendor list from QuickBooks">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+      </button>
+      <span id="vend-count" style="font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap"></span>
+    </div>
+    <div id="vendorsList" style="max-height:420px;overflow-y:auto;border:1px solid var(--line);border-radius:10px"></div>
+    <div id="vendSyncStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>
+    <div style="margin-top:24px;border:1px dashed var(--line);border-radius:12px;padding:14px">
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Department — bulk edit via CSV</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:10px">To assign departments for many vendors at once: export the CSV, fill in the "Department" column in Excel (must exactly match one of: ${DEPARTMENTS.map(function(d){return esc(d);}).join(', ')}), then import it back — matches are made by vendor name.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-sm" onclick="exportVendorDepartmentCSV()">Export CSV</button>
+        <button class="btn btn-sm" onclick="document.getElementById('vend-csv-file').click()">Import CSV</button>
+        <input type="file" id="vend-csv-file" accept=".csv" style="display:none" onchange="importVendorDepartmentCSV(this.files[0]); this.value='';"/>
+      </div>
+      <div id="vend-csv-status" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>
+    </div>`;
+  renderVendorsList();
+}
+window.renderVendorsPanel=renderVendorsPanel;
+
+function renderVendorsList(){
+  var listEl=document.getElementById('vendorsList');
+  if(!listEl) return;
+  var q=(document.getElementById('vend-filter')&&document.getElementById('vend-filter').value||'').toLowerCase().trim();
+  var shown=vendors.filter(function(v){
+    if(!q) return true;
+    var dept=_vendorDepartments[v.qbId||v.name]||'';
+    return (v.name||'').toLowerCase().indexOf(q)>=0 || dept.toLowerCase().indexOf(q)>=0;
+  });
+  shown.sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
+  listEl.innerHTML=shown.map(function(v){
+    var vKey=v.qbId||v.name;
+    var currentDept=_vendorDepartments[vKey]||'';
+    return '<div style="display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--line)">'
+      +'<div style="flex:1;font-size:13px;font-weight:600">'+esc(v.name)+'</div>'
+      +'<select onchange="setVendorDepartment(\''+esc(vKey)+'\',this.value); renderVendorsList();" style="width:200px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink)">'
+        +'<option value="">Unassigned</option>'
+        +DEPARTMENTS.map(function(d){ return '<option value="'+esc(d)+'"'+(currentDept===d?' selected':'')+'>'+esc(d)+'</option>'; }).join('')
+      +'</select>'
+    +'</div>';
+  }).join('');
+  var countEl=document.getElementById('vend-count');
+  if(countEl){
+    var assignedCount=vendors.filter(function(v){ return !!_vendorDepartments[v.qbId||v.name]; }).length;
+    countEl.textContent=assignedCount+' of '+vendors.length+' vendors assigned to a department';
+  }
+}
+window.renderVendorsList=renderVendorsList;
+
+function exportVendorDepartmentCSV(){
+  function csvField(v){
+    v=String(v==null?'':v);
+    if(/[",\n]/.test(v)) return '"'+v.replace(/"/g,'""')+'"';
+    return v;
+  }
+  var rows=[['Vendor Name','Department']];
+  vendors.slice().sort(function(a,b){return (a.name||'').localeCompare(b.name||'');})
+    .forEach(function(v){ rows.push([v.name||'', _vendorDepartments[v.qbId||v.name]||'']); });
+  var csv=rows.map(function(r){ return r.map(csvField).join(','); }).join('\r\n');
+  var blob=new Blob([csv],{type:'text/csv'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url; a.download='vendor-departments-'+new Date().toISOString().slice(0,10)+'.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); },1000);
+}
+window.exportVendorDepartmentCSV=exportVendorDepartmentCSV;
+
+async function importVendorDepartmentCSV(file){
+  var statusEl=document.getElementById('vend-csv-status');
+  if(!file) return;
+  if(statusEl){ statusEl.textContent='Reading file…'; statusEl.style.color=''; }
+  var text;
+  try{ text=await file.text(); }
+  catch(e){ if(statusEl){ statusEl.textContent='Could not read file.'; statusEl.style.color='#c0392b'; } return; }
+
+  function csvParse(t){
+    var rows=[]; var row=[]; var field=''; var inQuotes=false;
+    for(var i=0;i<t.length;i++){
+      var ch=t[i];
+      if(inQuotes){
+        if(ch==='"'){ if(t[i+1]==='"'){ field+='"'; i++; } else { inQuotes=false; } }
+        else field+=ch;
+      } else {
+        if(ch==='"') inQuotes=true;
+        else if(ch===','){ row.push(field); field=''; }
+        else if(ch==='\n'){ row.push(field); rows.push(row); row=[]; field=''; }
+        else if(ch==='\r'){ /* skip */ }
+        else field+=ch;
+      }
+    }
+    if(field.length||row.length){ row.push(field); rows.push(row); }
+    return rows;
+  }
+  var rows=csvParse(text).filter(function(r){ return r.length && r.some(function(f){return f.trim()!=='';}); });
+  if(!rows.length){ if(statusEl){ statusEl.textContent='File is empty.'; statusEl.style.color='#c0392b'; } return; }
+  var header=rows[0].map(function(h){return (h||'').trim().toLowerCase();});
+  var nameCol=header.indexOf('vendor name');
+  var deptCol=header.indexOf('department');
+  if(nameCol<0||deptCol<0){
+    if(statusEl){ statusEl.textContent='Expected columns "Vendor Name" and "Department" — check the header row.'; statusEl.style.color='#c0392b'; }
+    return;
+  }
+  var byName={};
+  vendors.forEach(function(v){ byName[(v.name||'').trim().toLowerCase()]=v; });
+  var updated=0, unmatched=[], badDept=[];
+  for(var i=1;i<rows.length;i++){
+    var r=rows[i];
+    var name=(r[nameCol]||'').trim();
+    var dept=(r[deptCol]||'').trim();
+    if(!name) continue;
+    var v=byName[name.toLowerCase()];
+    if(!v){ unmatched.push(name); continue; }
+    if(dept && DEPARTMENTS.indexOf(dept)<0){ badDept.push(name+' ("'+dept+'")'); continue; }
+    var vKey=v.qbId||v.name;
+    if(dept) _vendorDepartments[vKey]=dept; else delete _vendorDepartments[vKey];
+    updated++;
+  }
+  localStorage.setItem('pc_vendor_departments',JSON.stringify(_vendorDepartments));
+  renderVendorsList();
+  var msg=updated+' vendor(s) updated.';
+  if(unmatched.length) msg+=' '+unmatched.length+' name(s) didn\'t match any synced vendor'+(unmatched.length<=5?' ('+unmatched.slice(0,5).join(', ')+')':'')+'.';
+  if(badDept.length) msg+=' '+badDept.length+' had an unrecognized department name and were skipped'+(badDept.length<=5?' ('+badDept.slice(0,5).join(', ')+')':'')+'.';
+  if(statusEl){ statusEl.textContent=msg; statusEl.style.color=(unmatched.length||badDept.length)?'#b8460b':''; }
+}
+window.importVendorDepartmentCSV=importVendorDepartmentCSV;
 
 var _ltPanelDept=''; // which department's template is currently being edited
 function renderLabelTemplatesPanel(){

@@ -4129,6 +4129,31 @@ async function runChecksReport(){
   var allPaymentsInWindow=payments;
   payments=payments.filter(function(p){ return _looksLikeCheckRef(p.PaymentRefNum); });
 
+  // QuickBooks tells us the real deposit status directly: every Payment
+  // has a DepositToAccountRef. If it points to "Undeposited Funds", the
+  // check is genuinely still sitting there, undeposited. If it points to
+  // an actual bank account, QuickBooks already considers it deposited —
+  // so auto-mark those as deposited here instead of relying only on
+  // someone remembering to click "Mark deposited" by hand.
+  var autoDepositedCount=0;
+  payments.forEach(function(p){
+    var acctName=(p.DepositToAccountRef&&p.DepositToAccountRef.name)||'';
+    var stillUndeposited=acctName.toLowerCase().indexOf('undeposited')>=0;
+    if(!stillUndeposited && !_checksDeposited[p.Id]){
+      _checksDeposited[p.Id]={
+        id:p.Id,
+        customer:(p.CustomerRef&&p.CustomerRef.name)||'No customer on file',
+        ref:p.PaymentRefNum||'',
+        amount:Number(p.TotalAmt||0),
+        date:(p.TxnDate||'').slice(0,10),
+        depositedAt:new Date().toISOString(),
+        by:'QuickBooks (auto-detected — deposited to '+(acctName||'a bank account')+')'
+      };
+      autoDepositedCount++;
+    }
+  });
+  if(autoDepositedCount>0) _checksSaveDeposited();
+
   _checksPayments=payments;
   renderChecksInHandSection();
   renderDepositedChecksSection();
@@ -4142,7 +4167,7 @@ async function runChecksReport(){
       statusEl.textContent='0 checks found, but '+allPaymentsInWindow.length+' other payment(s) exist since '+esc(from)+'. Sample Ref # values seen: '+esc(sample)+'. Tell me if checks are recorded differently and I\'ll adjust the match.';
       statusEl.style.color='#b8460b';
     } else {
-      statusEl.textContent=payments.length+' check(s) found (since '+esc(from)+')'+(depositedCount?', '+depositedCount+' already marked deposited':'');
+      statusEl.textContent=payments.length+' check(s) found (since '+esc(from)+')'+(depositedCount?', '+depositedCount+' already deposited per QuickBooks'+(autoDepositedCount?' ('+autoDepositedCount+' newly detected this pull)':'')+'':'');
       statusEl.style.color='';
     }
   }

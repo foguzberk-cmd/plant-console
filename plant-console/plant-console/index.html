@@ -1085,6 +1085,7 @@ function rerenderCurrentSection(){
     try{ renderInProcessPaymentsSection(); }catch(e){}
     try{ renderApprovedPaymentsSection(); }catch(e){}
     try{ renderScheduledPaymentsSection(); }catch(e){}
+    try{ renderPaidPaymentsSection(); }catch(e){}
   }
 }
 async function pullFromServer(){
@@ -2331,6 +2332,7 @@ function renderReports(){
       +'<div id="cf-inprocess-section" style="margin-bottom:24px"></div>'
       +'<div id="cf-approved-section" style="margin-bottom:24px"></div>'
       +'<div id="cf-scheduled-section" style="margin-bottom:24px"></div>'
+      +'<div id="cf-paid-section" style="margin-bottom:24px"></div>'
       +'<div id="cf-body"></div>'
     +'</div>';
   buildBalanceReport();
@@ -3404,6 +3406,7 @@ function buildCashFlowTableShell(){
   renderInProcessPaymentsSection();
   renderApprovedPaymentsSection();
   renderScheduledPaymentsSection(); // shows locally-pinned payments right away — no "Pull from QuickBooks" needed for these, since they're a locked local snapshot, not live data
+  renderPaidPaymentsSection();
 }
 function _initCashFlowColumnResize(){
   var handles=document.querySelectorAll('#cf-table .cf-resize-handle');
@@ -3555,7 +3558,7 @@ function renderApprovedPaymentsSection(){
   Object.keys(_cfScheduledDates).forEach(function(billId){
     var rec=_cfScheduledDates[billId];
     (rec.splits||[]).forEach(function(split){
-      if(!split.initiated || split.inProcess) return;
+      if(!split.initiated || split.inProcess || split.paid) return;
       if(!byDate[split.date]) byDate[split.date]=[];
       byDate[split.date].push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,split:split});
     });
@@ -3621,7 +3624,7 @@ function renderInProcessPaymentsSection(){
   Object.keys(_cfScheduledDates).forEach(function(billId){
     var rec=_cfScheduledDates[billId];
     (rec.splits||[]).forEach(function(split){
-      if(!split.inProcess) return;
+      if(!split.inProcess || split.paid) return;
       if(!byDate[split.date]) byDate[split.date]=[];
       byDate[split.date].push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,split:split});
     });
@@ -3679,6 +3682,63 @@ function renderInProcessPaymentsSection(){
 
 // ===== Start Payment Process modal — choose Wire or Check, moves an
 // Approved payment into In Process. =====
+// Paid — a payment lands here once reconciliation notices QuickBooks
+// showing the bill's balance reduced (fully or partially) since it was
+// first scheduled. Unlike every other tier, this one does NOT clear
+// itself automatically — it just sits here for you to review, with a
+// delete button to remove it once you're done with it.
+function renderPaidPaymentsSection(){
+  function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  var el=document.getElementById('cf-paid-section');
+  if(!el) return;
+
+  var rows=[];
+  Object.keys(_cfScheduledDates).forEach(function(billId){
+    var rec=_cfScheduledDates[billId];
+    (rec.splits||[]).forEach(function(split){
+      if(!split.paid) return;
+      rows.push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,split:split});
+    });
+  });
+  if(!rows.length){ el.innerHTML=''; return; }
+
+  rows.sort(function(a,b){ return (b.split.paid.at||'')<(a.split.paid.at||'')?-1:1; }); // most recently confirmed paid first
+
+  var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">💰 Paid — confirmed by QuickBooks, review and clear</div>'
+    +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#f5f5f5;color:#000;border:1px solid #bbb">'
+    +'<colgroup><col style="width:220px"><col style="width:100px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:60px"></colgroup>'
+    +'<thead><tr>'
+      +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:left;font-weight:700">Vendor</th>'
+      +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:left;font-weight:700">Bill #</th>'
+      +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:right;font-weight:700">Scheduled Amount</th>'
+      +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:right;font-weight:700">Confirmed Paid</th>'
+      +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:left;font-weight:700">Confirmed On</th>'
+      +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px"></th>'
+    +'</tr></thead><tbody>';
+  rows.forEach(function(row){
+    var billId=row.billId, split=row.split;
+    var vName=row.vendor||'No vendor on file';
+    var whenStr=split.paid.at?new Date(split.paid.at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
+    var isPartial=split.paid.amount<Number(split.amount||0)-0.004;
+    html+='<tr>'
+      +'<td style="border:1px solid #bbb;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
+      +'<td style="border:1px solid #bbb;padding:5px 10px">'+esc(row.docNum||'')+'</td>'
+      +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(split.amount)+'</td>'
+      +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:right;font-family:var(--mono);font-weight:700">'+money(split.paid.amount)+(isPartial?' <span style="font-size:10px;font-weight:400;color:#b8460b">(partial)</span>':'')+'</td>'
+      +'<td style="border:1px solid #bbb;padding:5px 10px">'+esc(whenStr)+'</td>'
+      +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:center">'
+        +'<button onclick="deleteCFPaidPayment(\''+esc(billId)+'\',\''+esc(split.id)+'\')" class="btn btn-sm" title="Delete this entry" style="padding:2px 8px;font-size:12px;color:#b8460b">🗑</button>'
+      +'</td>'
+    +'</tr>';
+  });
+  html+='</tbody></table>';
+  el.innerHTML=html;
+}
+function deleteCFPaidPayment(billId,splitId){
+  removeCFSplit(billId,splitId);
+}
+window.deleteCFPaidPayment=deleteCFPaidPayment;
+
 function startCFPaymentProcess(billId,splitId){
   var rec=_cfScheduledDates[billId];
   var split=rec&&rec.splits.find(function(s){return s.id===splitId;});
@@ -3734,31 +3794,39 @@ function revertCFPaymentProcess(billId,splitId){
 }
 window.revertCFPaymentProcess=revertCFPaymentProcess;
 
-// After every "Pull from QuickBooks," checks each Approved payment's
-// underlying bill against the fresh open-bills list. If that bill no
-// longer shows up as open, QuickBooks considers it fully paid — so the
-// approved log is removed automatically. This is the ONLY way approved
-// entries clear — no manual override. (Only catches a bill being paid off
-// ENTIRELY; a partial payment in QuickBooks that doesn't fully close the
-// bill won't auto-clear a specific approved installment.)
+// After every "Pull from QuickBooks," checks each Approved/In Process
+// payment's underlying bill against the fresh open-bills list. If
+// QuickBooks now shows the bill's balance reduced from what it was when
+// first scheduled here — whether the bill closed out entirely or just
+// partially — that's treated as "paid" and moved into the Paid section
+// instead of being deleted outright, so you can review it and clear it
+// out yourself with the delete button there.
+//
+// Approximation worth knowing: if a bill has MULTIPLE approved/in-process
+// installments outstanding at once, this can't tell exactly which
+// installment QuickBooks's payment applied to — it reports the same
+// observed "amount paid so far on this bill" on each of them. In the
+// common case of one installment per bill at a time, this is exact.
 function _cfReconcileApprovedPayments(freshBills){
-  var openIds={};
-  (freshBills||[]).forEach(function(b){ openIds[b.Id]=true; });
-  var clearedCount=0;
+  var currentBalanceById={};
+  (freshBills||[]).forEach(function(b){ currentBalanceById[b.Id]=Number(b.Balance||0); });
+  var movedCount=0;
   Object.keys(_cfScheduledDates).forEach(function(billId){
-    if(openIds[billId]) return; // still open in QuickBooks — leave it alone
     var rec=_cfScheduledDates[billId];
-    // Covers both Approved and In Process splits — inProcess is a further
-    // sub-state that only applies once initiated is already true, so this
-    // single check naturally clears whichever tier a split is currently in.
-    var approvedSplits=(rec.splits||[]).filter(function(s){ return s.initiated; });
-    if(!approvedSplits.length) return; // nothing approved/in-process for this bill — leave any plain scheduled entries as-is
-    rec.splits=rec.splits.filter(function(s){ return !s.initiated; });
-    clearedCount+=approvedSplits.length;
-    if(!rec.splits.length){ delete _cfScheduledDates[billId]; _cfMarkDeleted(billId); }
+    var unpaidActive=(rec.splits||[]).filter(function(s){ return s.initiated && !s.paid; });
+    if(!unpaidActive.length) return; // nothing approved/in-process (and not yet marked paid) for this bill
+    // Not in the fresh open-bills list at all => QuickBooks now shows $0
+    // balance (fully paid). Still in the list => use its current balance.
+    var currentBal=currentBalanceById.hasOwnProperty(billId)?currentBalanceById[billId]:0;
+    var paidSoFar=Math.round((Number(rec.balance||0)-currentBal)*100)/100;
+    if(paidSoFar<=0.004) return; // no reduction detected yet — still fully open, leave it alone
+    unpaidActive.forEach(function(s){
+      s.paid={amount:paidSoFar,at:new Date().toISOString()};
+    });
+    movedCount+=unpaidActive.length;
   });
-  if(clearedCount>0) _cfSaveScheduled();
-  return clearedCount;
+  if(movedCount>0) _cfSaveScheduled();
+  return movedCount;
 }
 
 function renderCashFlowReport(){
@@ -3796,6 +3864,7 @@ function _renderCashFlowReportInner(){
   renderInProcessPaymentsSection();
   renderApprovedPaymentsSection();
   renderScheduledPaymentsSection();
+  renderPaidPaymentsSection();
 
   // A bill only fully disappears from this list once its ENTIRE balance is
   // scheduled — a partially-scheduled bill still shows here, but for just

@@ -6879,6 +6879,9 @@ async function qbSyncVendors(){
 }
 window.qbSyncVendors=qbSyncVendors;
 
+var _vendPanelDept=null; // which department's vendor list is currently being edited
+var _vendDraft=null; // working copy — vendor keys checked (assigned) to _vendPanelDept, nothing persists until Save is clicked
+
 function renderVendorsPanel(){
   var panel=document.getElementById('vendorsPanel');
   if(!panel) return;
@@ -6890,15 +6893,30 @@ function renderVendorsPanel(){
       +'<div id="vendSyncStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>';
     return;
   }
+  if(!_vendPanelDept || DEPARTMENTS.indexOf(_vendPanelDept)<0) _vendPanelDept=DEPARTMENTS[0];
+  _vendDraft=vendors.filter(function(v){ return _vendorDepartments[v.qbId||v.name]===_vendPanelDept; }).map(function(v){ return v.qbId||v.name; });
   panel.innerHTML=`
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      <label style="font-size:12px;color:var(--muted);white-space:nowrap">Department:</label>
+      <select id="vend-dept" onchange="onVendorDeptChange()" style="padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink)">
+        ${DEPARTMENTS.map(function(d){return '<option value="'+esc(d)+'" '+(d===_vendPanelDept?'selected':'')+'>'+esc(d)+'</option>';}).join('')}
+      </select>
+      <span style="font-size:11px;color:var(--muted);font-style:italic">Checking a vendor here assigns it to "${esc(_vendPanelDept)}" — a vendor can only belong to one department, so checking it here moves it out of any other department it was in.</span>
+    </div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
-      <input type="text" id="vend-filter" placeholder="Search vendors or department..." oninput="renderVendorsList()" style="flex:1;min-width:200px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
+      <input type="text" id="vend-filter" placeholder="Search vendors..." oninput="renderVendorsList()" style="flex:1;min-width:200px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
+      <button class="btn btn-sm" onclick="vendorSelectAll(true)">Select all</button>
+      <button class="btn btn-sm" onclick="vendorSelectAll(false)">Clear all</button>
       <button class="btn btn-sm" id="vendSyncBtn" onclick="qbSyncVendors()" title="Pull the latest vendor list from QuickBooks">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
       </button>
       <span id="vend-count" style="font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap"></span>
     </div>
     <div id="vendorsList" style="max-height:420px;overflow-y:auto;border:1px solid var(--line);border-radius:10px"></div>
+    <div style="display:flex;align-items:center;gap:12px;margin-top:12px">
+      <button class="btn btn-primary btn-sm" onclick="saveVendorDeptForDept()">Save changes for ${esc(_vendPanelDept)}</button>
+      <span id="vend-save-status" style="font-family:var(--mono);font-size:11px;color:var(--muted)"></span>
+    </div>
     <div id="vendSyncStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>
     <div style="margin-top:24px;border:1px dashed var(--line);border-radius:12px;padding:14px">
       <div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Department — bulk edit via CSV</div>
@@ -6914,34 +6932,71 @@ function renderVendorsPanel(){
 }
 window.renderVendorsPanel=renderVendorsPanel;
 
+function onVendorDeptChange(){
+  var sel=document.getElementById('vend-dept');
+  _vendPanelDept=sel?sel.value:DEPARTMENTS[0];
+  renderVendorsPanel();
+}
+window.onVendorDeptChange=onVendorDeptChange;
+
 function renderVendorsList(){
   var listEl=document.getElementById('vendorsList');
   if(!listEl) return;
   var q=(document.getElementById('vend-filter')&&document.getElementById('vend-filter').value||'').toLowerCase().trim();
-  var shown=vendors.filter(function(v){
-    if(!q) return true;
-    var dept=_vendorDepartments[v.qbId||v.name]||'';
-    return (v.name||'').toLowerCase().indexOf(q)>=0 || dept.toLowerCase().indexOf(q)>=0;
-  });
+  var shown=vendors.filter(function(v){ return !q || (v.name||'').toLowerCase().indexOf(q)>=0; });
   shown.sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
   listEl.innerHTML=shown.map(function(v){
     var vKey=v.qbId||v.name;
-    var currentDept=_vendorDepartments[vKey]||'';
-    return '<div style="display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--line)">'
-      +'<div style="flex:1;font-size:13px;font-weight:600">'+esc(v.name)+'</div>'
-      +'<select onchange="setVendorDepartment(\''+esc(vKey)+'\',this.value); renderVendorsList();" style="width:200px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink)">'
-        +'<option value="">Unassigned</option>'
-        +DEPARTMENTS.map(function(d){ return '<option value="'+esc(d)+'"'+(currentDept===d?' selected':'')+'>'+esc(d)+'</option>'; }).join('')
-      +'</select>'
-    +'</div>';
+    var on=_vendDraft.indexOf(vKey)>=0;
+    var otherDept=_vendorDepartments[vKey];
+    var otherNote=(otherDept && otherDept!==_vendPanelDept)?' <span style="color:var(--muted);font-weight:400;font-size:11px">(currently in '+esc(otherDept)+')</span>':'';
+    return '<label style="display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer">'
+      +'<input type="checkbox" '+(on?'checked':'')+' onchange="toggleVendorDraft(\''+esc(vKey)+'\',this.checked)" style="width:17px;height:17px;cursor:pointer;accent-color:var(--brand)"/>'
+      +'<div style="flex:1;font-size:13px;font-weight:600">'+esc(v.name)+otherNote+'</div>'
+    +'</label>';
   }).join('');
   var countEl=document.getElementById('vend-count');
-  if(countEl){
-    var assignedCount=vendors.filter(function(v){ return !!_vendorDepartments[v.qbId||v.name]; }).length;
-    countEl.textContent=assignedCount+' of '+vendors.length+' vendors assigned to a department';
-  }
+  if(countEl) countEl.textContent=_vendDraft.length+' of '+vendors.length+' vendors assigned to '+_vendPanelDept+' (unsaved until you click Save)';
 }
 window.renderVendorsList=renderVendorsList;
+
+function toggleVendorDraft(vKey,on){
+  var i=_vendDraft.indexOf(vKey);
+  if(on && i<0) _vendDraft.push(vKey);
+  else if(!on && i>=0) _vendDraft.splice(i,1);
+  renderVendorsList();
+}
+window.toggleVendorDraft=toggleVendorDraft;
+
+function vendorSelectAll(on){
+  var q=(document.getElementById('vend-filter')&&document.getElementById('vend-filter').value||'').toLowerCase().trim();
+  var shown=vendors.filter(function(v){ return !q || (v.name||'').toLowerCase().indexOf(q)>=0; });
+  shown.forEach(function(v){
+    var vKey=v.qbId||v.name;
+    var i=_vendDraft.indexOf(vKey);
+    if(on && i<0) _vendDraft.push(vKey);
+    else if(!on && i>=0) _vendDraft.splice(i,1);
+  });
+  renderVendorsList();
+}
+window.vendorSelectAll=vendorSelectAll;
+
+function saveVendorDeptForDept(){
+  var dept=_vendPanelDept;
+  vendors.forEach(function(v){
+    var vKey=v.qbId||v.name;
+    var isChecked=_vendDraft.indexOf(vKey)>=0;
+    var currentlyThisDept=_vendorDepartments[vKey]===dept;
+    if(isChecked && !currentlyThisDept) _vendorDepartments[vKey]=dept;
+    else if(!isChecked && currentlyThisDept) delete _vendorDepartments[vKey];
+    // Vendors assigned to a DIFFERENT department and left unchecked here are untouched.
+  });
+  localStorage.setItem('pc_vendor_departments',JSON.stringify(_vendorDepartments));
+  var statusEl=document.getElementById('vend-save-status');
+  if(statusEl){ statusEl.textContent='Saved.'; statusEl.style.color='#0f6e40'; }
+  renderCashFlowReport(); // reflect the change in Scheduled Payments' vendor grouping too, if it's built
+}
+window.saveVendorDeptForDept=saveVendorDeptForDept;
 
 function exportVendorDepartmentCSV(){
   function csvField(v){

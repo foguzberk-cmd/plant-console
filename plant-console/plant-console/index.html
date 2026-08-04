@@ -3030,11 +3030,23 @@ function _cfAddSplit(billId,date,amount){
   var bill=(_cashFlowBills||[]).find(function(b){ return b.Id===billId; });
   var prior=_cfScheduledDates[billId];
   if(!prior){
+    var vendorId=(bill&&bill.VendorRef&&bill.VendorRef.value)||'';
+    // Snapshot this VENDOR's total balance across ALL their currently-open
+    // bills, not just this one — QuickBooks doesn't require a payment to
+    // apply to any specific bill, so it can (and does) split one payment
+    // across several of a vendor's open bills. Comparing only this one
+    // bill's balance later would miss money that landed on a different
+    // bill from the same vendor entirely — see _cfReconcileApprovedPayments.
+    var vendorTotalBalance=vendorId
+      ?(_cashFlowBills||[]).filter(function(b){ return b.VendorRef&&b.VendorRef.value===vendorId; }).reduce(function(s,b){ return s+Number(b.Balance||0); },0)
+      :Number(bill&&bill.Balance||0);
     _cfScheduledDates[billId]={
       vendor:(bill&&bill.VendorRef&&bill.VendorRef.name)||'No vendor on file',
+      vendorId:vendorId,
       docNum:(bill&&bill.DocNumber)||'',
       due:(bill&&bill.DueDate)||'',
       balance:Number(bill&&bill.Balance||0),
+      vendorBalanceAtSchedule:Math.round(vendorTotalBalance*100)/100,
       splits:[]
     };
     prior=_cfScheduledDates[billId];
@@ -3799,36 +3811,87 @@ function revertCFPaymentProcess(billId,splitId){
 }
 window.revertCFPaymentProcess=revertCFPaymentProcess;
 
-// After every "Pull from QuickBooks," checks each Approved/In Process
-// payment's underlying bill against the fresh open-bills list. If
-// QuickBooks now shows the bill's balance reduced from what it was when
-// first scheduled here — whether the bill closed out entirely or just
-// partially — that's treated as "paid" and moved into the Paid section
+// After every "Pull from QuickBooks," checks each vendor with an
+// Approved/In Process payment against the fresh open-bills list. If
+// QuickBooks now shows LESS total balance owed to that vendor across ALL
+// their bills than when the payment was first scheduled — whether one
+// bill closed out entirely, several partially reduced, or the payment
+// landed on a completely different bill than the one that was
+// scheduled — that's treated as "paid" and moved into the Paid section
 // instead of being deleted outright, so you can review it and clear it
 // out yourself with the delete button there.
 //
-// Approximation worth knowing: if a bill has MULTIPLE approved/in-process
-// installments outstanding at once, this can't tell exactly which
-// installment QuickBooks's payment applied to — it reports the same
-// observed "amount paid so far on this bill" on each of them. In the
-// common case of one installment per bill at a time, this is exact.
+// This is vendor-wide, not per-bill, deliberately: QuickBooks doesn't
+// require one payment to apply to any specific bill — a single check can
+// (and does) get split across several open bills for the same vendor. A
+// per-bill check would only ever see whatever fraction landed on the one
+// bill that was scheduled and miss the rest entirely.
+//
+// Approximation worth knowing: if a vendor has MULTIPLE approved/in-process
+// installments outstanding at once (across one or several of their bills),
+// this can't tell exactly which installment a given payment corresponds
+// to — it reports the same observed "amount paid so far for this vendor"
+// on each of them. In the common case of one installment in flight per
+// vendor at a time, this is exact.
 function _cfReconcileApprovedPayments(freshBills){
   var currentBalanceById={};
-  (freshBills||[]).forEach(function(b){ currentBalanceById[b.Id]=Number(b.Balance||0); });
-  var movedCount=0;
+  var currentTotalByVendor={};
+  (freshBills||[]).forEach(function(b){
+    currentBalanceById[b.Id]=Number(b.Balance||0);
+    var vid=b.VendorRef&&b.VendorRef.value;
+    if(vid) currentTotalByVendor[vid]=(currentTotalByVendor[vid]||0)+Number(b.Balance||0);
+  });
+
+  // Group every bill with unpaid-active splits by vendor.
+  var byVendor={}; // vendorKey -> {billIds:[], baselineVendorTotal}
   Object.keys(_cfScheduledDates).forEach(function(billId){
     var rec=_cfScheduledDates[billId];
-    var unpaidActive=(rec.splits||[]).filter(function(s){ return s.initiated && !s.paid; });
-    if(!unpaidActive.length) return; // nothing approved/in-process (and not yet marked paid) for this bill
-    // Not in the fresh open-bills list at all => QuickBooks now shows $0
-    // balance (fully paid). Still in the list => use its current balance.
-    var currentBal=currentBalanceById.hasOwnProperty(billId)?currentBalanceById[billId]:0;
-    var paidSoFar=Math.round((Number(rec.balance||0)-currentBal)*100)/100;
-    if(paidSoFar<=0.004) return; // no reduction detected yet — still fully open, leave it alone
-    unpaidActive.forEach(function(s){
-      s.paid={amount:paidSoFar,at:new Date().toISOString()};
+    var hasUnpaidActive=(rec.splits||[]).some(function(s){ return s.initiated && !s.paid; });
+    if(!hasUnpaidActive) return;
+    // Fall back to keying by vendor NAME for records saved before
+    // vendorId/vendorBalanceAtSchedule existed, so old data doesn't break —
+    // just falls back to the old per-bill-only comparison for those.
+    var vendorKey=rec.vendorId||('name:'+(rec.vendor||''));
+    if(!byVendor[vendorKey]) byVendor[vendorKey]={billIds:[],baselineVendorTotal:0,hasVendorBaseline:false};
+    byVendor[vendorKey].billIds.push(billId);
+    if(rec.vendorId && rec.vendorBalanceAtSchedule!==undefined){
+      // Use the largest baseline among this vendor's tracked bills — the
+      // largest snapshot represents the earliest point in time (balances
+      // only go down from payments), which is the right starting point to
+      // measure total reduction from.
+      byVendor[vendorKey].baselineVendorTotal=Math.max(byVendor[vendorKey].baselineVendorTotal,rec.vendorBalanceAtSchedule);
+      byVendor[vendorKey].hasVendorBaseline=true;
+    }
+  });
+
+  var movedCount=0;
+  Object.keys(byVendor).forEach(function(vendorKey){
+    var group=byVendor[vendorKey];
+    var paidSoFar;
+    if(group.hasVendorBaseline){
+      var currentVendorTotal=currentTotalByVendor[vendorKey]||0;
+      paidSoFar=Math.round((group.baselineVendorTotal-currentVendorTotal)*100)/100;
+    } else {
+      // Old-format record with no vendor baseline — fall back to summing
+      // just the tracked bills' own balances (the original, narrower check).
+      var originalSum=0, currentSum=0;
+      group.billIds.forEach(function(billId){
+        var rec=_cfScheduledDates[billId];
+        originalSum+=Number(rec.balance||0);
+        currentSum+=currentBalanceById.hasOwnProperty(billId)?currentBalanceById[billId]:0;
+      });
+      paidSoFar=Math.round((originalSum-currentSum)*100)/100;
+    }
+    if(paidSoFar<=0.004) return; // no reduction detected for this vendor yet
+
+    group.billIds.forEach(function(billId){
+      var rec=_cfScheduledDates[billId];
+      var unpaidActive=(rec.splits||[]).filter(function(s){ return s.initiated && !s.paid; });
+      unpaidActive.forEach(function(s){
+        s.paid={amount:paidSoFar,at:new Date().toISOString()};
+      });
+      movedCount+=unpaidActive.length;
     });
-    movedCount+=unpaidActive.length;
   });
   if(movedCount>0) _cfSaveScheduled();
   return movedCount;

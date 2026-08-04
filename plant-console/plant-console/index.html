@@ -6974,7 +6974,7 @@ function renderVendorsList(){
     return '<label style="display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer">'
       +'<input type="checkbox" '+(on?'checked':'')+' onchange="toggleVendorDraft(\''+esc(vKey)+'\',this.checked)" style="width:17px;height:17px;cursor:pointer;accent-color:var(--brand)"/>'
       +'<div style="flex:1;font-size:13px;font-weight:600">'+esc(v.name)+otherNote+'</div>'
-      +'<input type="text" list="purchRepOptions" value="'+esc(v.purchRep||'')+'" placeholder="Purch Rep" onclick="event.stopPropagation()" onchange="updateVendorPurchRep(\''+esc(vKey)+'\',this.value)" style="width:150px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink);cursor:text"/>'
+      +'<input type="text" list="purchRepOptions" value="'+esc(v.purchRep||'')+'" placeholder="Purch Rep" onclick="event.stopPropagation(); if(this.showPicker){try{this.showPicker();}catch(e){}}" onchange="updateVendorPurchRep(\''+esc(vKey)+'\',this.value)" style="width:150px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink);cursor:text"/>'
     +'</label>';
   }).join('');
   var countEl=document.getElementById('vend-count');

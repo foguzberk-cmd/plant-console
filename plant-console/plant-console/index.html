@@ -1330,7 +1330,19 @@ async function _pushToServerImpl(){
     // Snapshot is built HERE, right before sending — not earlier — so every
     // push (even one that was queued up behind another) always sends
     // whatever is currently true at the moment it actually runs.
-    var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates,cfScheduledDates:_cfScheduledDates});
+    // NOTE: cfScheduledDates is deliberately NOT included here anymore.
+    // Schedule/Approve/Edit/Split changes go exclusively through the
+    // dedicated /api/data/save-cf-schedule endpoint (see _cfSaveScheduled)
+    // instead. Reason: this full-snapshot push can be queued and still "in
+    // flight" for a while (it carries everything — items, transactions,
+    // all of it). If a change here (e.g. approving a payment) happened
+    // AFTER this push was already queued but the push's stale, pre-change
+    // copy of that bill's record landed on the server AFTER the fast
+    // endpoint's newer copy, the merge (which operates per-bill, not
+    // per-field) would let the older snapshot silently win — quietly
+    // reverting the approval a few seconds after it was made. Keeping this
+    // field out of this payload entirely removes that race outright.
+    var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates});
     if(snapshot===_lastPushedSnapshot){ _lastPushFailureDetail=''; return true; } // this exact state was already confirmed sent
     // 60s (not the 10s default) — every push sends the FULL app state,
     // including every transaction, and that array has grown into the tens

@@ -3433,26 +3433,44 @@ function editCFScheduledDate(billId,splitId){
   var split=rec&&rec.splits.find(function(s){return s.id===splitId;});
   if(!split) return;
   _cfEditingInProgress=true;
-  setTimeout(function(){ _cfEditingInProgress=false; },120000); // safety net — clears itself after 2 min even if blur/change never fires for some reason, so this can never get permanently stuck
-  cell.innerHTML='<input type="date" value="'+esc(split.date)+'" autofocus style="width:100%;border:1px solid #c9a227;border-radius:4px;padding:3px 5px;font-size:12px;font-family:inherit"/>';
-  var input=cell.querySelector('input');
-  input.focus();
-  function commit(){
-    _cfEditingInProgress=false;
-    var newVal=input.value||split.date;
-    if(newVal!==split.date){
-      split.date=newVal;
-      split.edited={by:(currentUser&&currentUser.name)||'Unknown user',at:new Date().toISOString()};
-      _cfSaveScheduled(billId);
-      renderCashFlowReport();
-    } else {
-      renderCashFlowReport(); // no change — just re-render to close the inline input
-    }
-  }
-  input.addEventListener('change',commit);
-  input.addEventListener('blur',commit);
+  setTimeout(function(){ _cfEditingInProgress=false; },120000); // safety net — clears itself after 2 min even if the edit is somehow abandoned, so this can never get permanently stuck
+  // Explicit Save/Cancel instead of auto-committing on blur/change — that
+  // relied on the browser firing those events at a reliable moment, which
+  // apparently wasn't happening consistently (picking a date wasn't
+  // sticking). This removes all ambiguity: nothing happens until you
+  // press Save, and it commits directly off the input's current value at
+  // that exact moment.
+  cell.innerHTML='<div style="display:flex;gap:3px;align-items:center">'
+    +'<input type="date" id="cf-editinput-'+billId+'-'+splitId+'" value="'+esc(split.date)+'" autofocus style="width:100%;min-width:0;border:1px solid #c9a227;border-radius:4px;padding:3px 4px;font-size:12px;font-family:inherit"/>'
+    +'<button onclick="_cfCommitDateEdit(\''+esc(billId)+'\',\''+esc(splitId)+'\')" class="btn btn-sm" style="padding:2px 6px;font-size:11px;flex-shrink:0" title="Save">✓</button>'
+    +'<button onclick="_cfCancelDateEdit()" class="btn btn-sm" style="padding:2px 6px;font-size:11px;flex-shrink:0" title="Cancel">✕</button>'
+  +'</div>';
+  var input=document.getElementById('cf-editinput-'+billId+'-'+splitId);
+  if(input) input.focus();
 }
 window.editCFScheduledDate=editCFScheduledDate;
+
+function _cfCommitDateEdit(billId,splitId){
+  var input=document.getElementById('cf-editinput-'+billId+'-'+splitId);
+  var rec=_cfScheduledDates[billId];
+  var split=rec&&rec.splits.find(function(s){return s.id===splitId;});
+  _cfEditingInProgress=false;
+  if(!input||!split){ renderCashFlowReport(); return; }
+  var newVal=input.value;
+  if(newVal && newVal!==split.date){
+    split.date=newVal;
+    split.edited={by:(currentUser&&currentUser.name)||'Unknown user',at:new Date().toISOString()};
+    _cfSaveScheduled(billId);
+  }
+  renderCashFlowReport();
+}
+window._cfCommitDateEdit=_cfCommitDateEdit;
+
+function _cfCancelDateEdit(){
+  _cfEditingInProgress=false;
+  renderCashFlowReport();
+}
+window._cfCancelDateEdit=_cfCancelDateEdit;
 
 function buildCashFlowTableShell(){
   var bodyEl=document.getElementById('cf-body');

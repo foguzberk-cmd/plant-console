@@ -3388,13 +3388,14 @@ function showCFRowMenu(btn,kind,billId,splitId){
       +'<button onclick="splitCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;'+btnBorder+'">Split payment</button>'
       +'<button onclick="removeCFSplit(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;color:#b8460b">Remove from schedule</button>';
   } else if(kind==='approved'){
+    // No "Edit date" here either — editing is only allowed at the
+    // Scheduled stage now, before it's been approved.
     html=(hasPerm('cfInitiatePayment')?'<button onclick="hideCFRowMenu();startCFPaymentProcess(\''+esc(billId)+'\',\''+esc(splitId)+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;'+btnBorder+';font-weight:600">Initiate payment (wire/check)</button>':'')
-      +'<button onclick="editCFScheduledDate(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;'+btnBorder+'">Edit date</button>'
       +(hasPerm('cfApprovePayment')?'<button onclick="initiateCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px">Send back to Scheduled</button>':'');
   } else {
     // No "Edit date" here — once a payment is initiated (wire/check
     // actually sent), its date is locked. Editing is only allowed at the
-    // Scheduled and Approved stages, before it's been sent.
+    // Scheduled stage, before it's been approved or sent.
     html=(hasPerm('cfInitiatePayment')?'<button onclick="revertCFPaymentProcess(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px">Send back to Approved</button>':'<span style="display:block;padding:8px 12px;font-size:12px;color:var(--muted)">No actions available</span>');
   }
   el.innerHTML=html;

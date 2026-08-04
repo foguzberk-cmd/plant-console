@@ -2362,8 +2362,9 @@ function renderReports(){
     +'</div>'
     +'<div id="rpt-panel-checks" style="display:none">'
       +'<p style="color:var(--muted);font-size:13px;margin-bottom:16px;max-width:640px">Every customer payment received by check that isn\'t yet marked deposited, grouped by the week received. Mark one as deposited once it\'s actually gone to the bank.</p>'
-      +'<div style="margin-bottom:18px">'
+      +'<div style="margin-bottom:18px;display:flex;gap:8px;align-items:center">'
         +'<button class="btn btn-primary" onclick="runChecksReport()">Pull from QuickBooks</button>'
+        +'<button class="btn btn-sm" onclick="undoAutoDetectedDeposits()" title="Fixes a one-time issue from an earlier version that could have wrongly auto-marked checks as deposited">Undo incorrect auto-deposits</button>'
       +'</div>'
       +'<div id="chk-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'<div id="chk-deposited-section" style="margin-bottom:24px"></div>'
@@ -4354,6 +4355,37 @@ function undepositCheck(paymentId){
   renderDepositedChecksSection();
 }
 window.undepositCheck=undepositCheck;
+
+// One-time cleanup for a since-fixed bug: an earlier version treated a
+// BLANK DepositToAccountRef as evidence a check had been deposited, which
+// could have wrongly auto-marked many (or all) checks as deposited on
+// that first pull. Fixing the detection logic doesn't undo entries it
+// already saved — this removes anything tagged as auto-detected so the
+// next "Pull from QuickBooks" re-evaluates them under the corrected
+// logic (any that are still genuinely undeposited will correctly land
+// back in Checks In Hand; ones with real bank-account evidence will
+// re-auto-detect as deposited again, unchanged).
+function undoAutoDetectedDeposits(){
+  var removed=0;
+  Object.keys(_checksDeposited).forEach(function(id){
+    var entry=_checksDeposited[id];
+    if(entry.by && entry.by.indexOf('QuickBooks (auto-detected')===0){
+      delete _checksDeposited[id];
+      removed++;
+    }
+  });
+  if(removed>0) _checksSaveDeposited();
+  renderChecksInHandSection();
+  renderDepositedChecksSection();
+  var statusEl=document.getElementById('chk-status');
+  if(statusEl){
+    statusEl.textContent=removed>0
+      ?('Removed '+removed+' incorrectly auto-detected deposit(s). Click "Pull from QuickBooks" to re-check them under the corrected logic.')
+      :'No auto-detected deposits found to remove — nothing to clean up.';
+    statusEl.style.color=removed>0?'#b8460b':'';
+  }
+}
+window.undoAutoDetectedDeposits=undoAutoDetectedDeposits;
 
 function switchReportTab(tab){
   var invPanel=document.getElementById('rpt-panel-inventory');

@@ -2361,12 +2361,12 @@ function renderReports(){
       +'<div id="cf-body"></div>'
     +'</div>'
     +'<div id="rpt-panel-checks" style="display:none">'
-      +'<p style="color:var(--muted);font-size:13px;margin-bottom:16px;max-width:640px">Every customer payment received by check that isn\'t yet marked deposited, grouped by the week received. Mark one as deposited once it\'s actually gone to the bank.</p>'
-      +'<div style="margin-bottom:18px;display:flex;gap:8px;align-items:center">'
+      +'<p style="color:var(--muted);font-size:13px;margin-bottom:16px;max-width:640px">Every customer payment received by check. Move a check through Checks In Hand → Deposited → Paid as it progresses — all tracked manually here.</p>'
+      +'<div style="margin-bottom:18px">'
         +'<button class="btn btn-primary" onclick="runChecksReport()">Pull from QuickBooks</button>'
-        +'<button class="btn btn-sm" onclick="undoAutoDetectedDeposits()" title="Fixes a one-time issue from an earlier version that could have wrongly auto-marked checks as deposited">Undo incorrect auto-deposits</button>'
       +'</div>'
       +'<div id="chk-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
+      +'<div id="chk-paid-section" style="margin-bottom:24px"></div>'
       +'<div id="chk-deposited-section" style="margin-bottom:24px"></div>'
       +'<div id="chk-inhand-section"></div>'
     +'</div>';
@@ -4130,46 +4130,12 @@ async function runChecksReport(){
   var allPaymentsInWindow=payments;
   payments=payments.filter(function(p){ return _looksLikeCheckRef(p.PaymentRefNum); });
 
-  // QuickBooks tells us the real deposit status directly: every Payment
-  // has a DepositToAccountRef. If it points to "Undeposited Funds", the
-  // check is genuinely still sitting there, undeposited. If it points to
-  // an actual bank account, QuickBooks already considers it deposited —
-  // so auto-mark those as deposited here instead of relying only on
-  // someone remembering to click "Mark deposited" by hand.
-  //
-  // IMPORTANT: if DepositToAccountRef is BLANK (not populated in this
-  // bulk pull — the same kind of gap PaymentMethodRef had), that means
-  // "unknown," not "deposited." Treating a blank field as evidence of
-  // deposit would have auto-marked every single check as deposited on the
-  // first pull, emptying Checks In Hand entirely regardless of reality —
-  // only a field that's actually populated with something other than
-  // Undeposited Funds counts as real evidence here.
-  var autoDepositedCount=0;
-  var blankDepositRefCount=0;
-  payments.forEach(function(p){
-    var acctName=(p.DepositToAccountRef&&p.DepositToAccountRef.name)||'';
-    if(!acctName){ blankDepositRefCount++; return; } // unknown — leave it in Checks In Hand
-    var stillUndeposited=acctName.toLowerCase().indexOf('undeposited')>=0;
-    if(!stillUndeposited && !_checksDeposited[p.Id]){
-      _checksDeposited[p.Id]={
-        id:p.Id,
-        customer:(p.CustomerRef&&p.CustomerRef.name)||'No customer on file',
-        ref:p.PaymentRefNum||'',
-        amount:Number(p.TotalAmt||0),
-        date:(p.TxnDate||'').slice(0,10),
-        depositedAt:new Date().toISOString(),
-        by:'QuickBooks (auto-detected — deposited to '+acctName+')'
-      };
-      autoDepositedCount++;
-    }
-  });
-  if(autoDepositedCount>0) _checksSaveDeposited();
-
   _checksPayments=payments;
   renderChecksInHandSection();
   renderDepositedChecksSection();
+  renderPaidChecksSection();
   if(statusEl){
-    var depositedCount=payments.filter(function(p){ return _checksDeposited[p.Id]; }).length;
+    var trackedCount=payments.filter(function(p){ return _checksDeposited[p.Id]; }).length;
     if(!payments.length && allPaymentsInWindow.length){
       // Nothing matched a check-like Ref #, but there WAS other payment
       // data in this window — show a sample of what Ref # values actually
@@ -4178,8 +4144,7 @@ async function runChecksReport(){
       statusEl.textContent='0 checks found, but '+allPaymentsInWindow.length+' other payment(s) exist since '+esc(from)+'. Sample Ref # values seen: '+esc(sample)+'. Tell me if checks are recorded differently and I\'ll adjust the match.';
       statusEl.style.color='#b8460b';
     } else {
-      statusEl.textContent=payments.length+' check(s) found (since '+esc(from)+')'+(depositedCount?', '+depositedCount+' already deposited per QuickBooks'+(autoDepositedCount?' ('+autoDepositedCount+' newly detected this pull)':'')+'':'')
-        +(blankDepositRefCount?' — '+blankDepositRefCount+' had no deposit-account info from QuickBooks, so they\'re left in Checks In Hand until confirmed (use "Mark deposited" if you know they\'ve cleared)':'');
+      statusEl.textContent=payments.length+' check(s) found (since '+esc(from)+')'+(trackedCount?', '+trackedCount+' already marked deposited/paid':'');
       statusEl.style.color='';
     }
   }
@@ -4187,6 +4152,7 @@ async function runChecksReport(){
 window.runChecksReport=runChecksReport;
 
 function buildChecksTableShell(){
+  renderPaidChecksSection();
   renderDepositedChecksSection();
   renderChecksInHandSection();
 }
@@ -4288,7 +4254,7 @@ window.renderChecksInHandSection=renderChecksInHandSection;
 function renderDepositedChecksSection(){
   var el=document.getElementById('chk-deposited-section');
   if(!el) return;
-  var ids=Object.keys(_checksDeposited);
+  var ids=Object.keys(_checksDeposited).filter(function(id){ return !_checksDeposited[id].paid; });
   if(!ids.length){ el.innerHTML=''; return; }
 
   var rows=ids.map(function(id){ return _checksDeposited[id]; });
@@ -4297,7 +4263,7 @@ function renderDepositedChecksSection(){
   var grandTotal=0;
   var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">🏦 Deposited Checks</div>'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#f3fbf4;color:#000;border:1px solid #8fcf9a">'
-    +'<colgroup><col style="width:110px"><col style="width:220px"><col style="width:120px"><col style="width:140px"><col style="width:130px"><col style="width:60px"></colgroup>'
+    +'<colgroup><col style="width:110px"><col style="width:220px"><col style="width:120px"><col style="width:140px"><col style="width:130px"><col style="width:150px"></colgroup>'
     +'<thead><tr>'
       +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px;text-align:left;font-weight:700">Date</th>'
       +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px;text-align:left;font-weight:700">Customer</th>'
@@ -4315,7 +4281,8 @@ function renderDepositedChecksSection(){
       +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.ref||'')+'</td>'
       +'<td style="border:1px solid #8fcf9a;padding:5px 10px;text-align:right;font-family:var(--mono)">'+_checksMoneyFmt(row.amount)+'</td>'
       +'<td style="border:1px solid #8fcf9a;padding:5px 10px" title="Marked by '+esc(row.by||'Unknown user')+'">'+esc(whenStr)+'</td>'
-      +'<td style="border:1px solid #8fcf9a;padding:5px 10px;text-align:center">'
+      +'<td style="border:1px solid #8fcf9a;padding:5px 10px;text-align:center;white-space:nowrap">'
+        +'<button onclick="markCheckPaid(\''+esc(row.id)+'\')" class="btn btn-sm" style="padding:2px 8px;font-size:11px;margin-right:4px">Mark paid</button>'
         +'<button onclick="undepositCheck(\''+esc(row.id)+'\')" class="btn btn-sm" title="Send back to Checks In Hand" style="padding:2px 8px;font-size:11px">Undo</button>'
       +'</td>'
     +'</tr>';
@@ -4329,6 +4296,71 @@ function renderDepositedChecksSection(){
   el.innerHTML=html;
 }
 window.renderDepositedChecksSection=renderDepositedChecksSection;
+
+// Paid — the final stage, pinned separately, with a delete button since
+// nothing clears this one automatically (no reliable QuickBooks signal
+// for it — see the Ref #/PaymentMethodRef history above).
+function renderPaidChecksSection(){
+  var el=document.getElementById('chk-paid-section');
+  if(!el) return;
+  var ids=Object.keys(_checksDeposited).filter(function(id){ return !!_checksDeposited[id].paid; });
+  if(!ids.length){ el.innerHTML=''; return; }
+
+  var rows=ids.map(function(id){ return _checksDeposited[id]; });
+  rows.sort(function(a,b){ return (b.paid.at||'')<(a.paid.at||'')?-1:1; });
+
+  var grandTotal=0;
+  var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">💰 Paid</div>'
+    +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#f5f5f5;color:#000;border:1px solid #bbb">'
+    +'<colgroup><col style="width:110px"><col style="width:220px"><col style="width:120px"><col style="width:140px"><col style="width:130px"><col style="width:60px"></colgroup>'
+    +'<thead><tr>'
+      +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:left;font-weight:700">Date</th>'
+      +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:left;font-weight:700">Customer</th>'
+      +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:left;font-weight:700">Ref #</th>'
+      +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:right;font-weight:700">Amount</th>'
+      +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:left;font-weight:700">Marked Paid On</th>'
+      +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px"></th>'
+    +'</tr></thead><tbody>';
+  rows.forEach(function(row){
+    grandTotal+=Number(row.amount||0);
+    var whenStr=row.paid.at?new Date(row.paid.at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
+    html+='<tr>'
+      +'<td style="border:1px solid #bbb;padding:5px 10px">'+esc(row.date||'')+'</td>'
+      +'<td style="border:1px solid #bbb;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(row.customer||'')+'</td>'
+      +'<td style="border:1px solid #bbb;padding:5px 10px">'+esc(row.ref||'')+'</td>'
+      +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:right;font-family:var(--mono)">'+_checksMoneyFmt(row.amount)+'</td>'
+      +'<td style="border:1px solid #bbb;padding:5px 10px" title="Marked by '+esc(row.paid.by||'Unknown user')+'">'+esc(whenStr)+'</td>'
+      +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:center">'
+        +'<button onclick="deleteCheckPaid(\''+esc(row.id)+'\')" class="btn btn-sm" title="Delete this entry" style="padding:2px 8px;font-size:12px;color:#b8460b">🗑</button>'
+      +'</td>'
+    +'</tr>';
+  });
+  html+='<tr>'
+    +'<td colspan="3" style="border:1px solid #999;padding:7px 10px;text-align:right;font-weight:700;background:#e8e8e8">TOTAL PAID</td>'
+    +'<td style="border:1px solid #999;padding:7px 10px;text-align:right;font-weight:700;background:#e8e8e8;font-family:var(--mono)">'+_checksMoneyFmt(grandTotal)+'</td>'
+    +'<td colspan="2" style="border:1px solid #999;background:#e8e8e8"></td>'
+  +'</tr>';
+  html+='</tbody></table>';
+  el.innerHTML=html;
+}
+window.renderPaidChecksSection=renderPaidChecksSection;
+
+function markCheckPaid(paymentId){
+  var entry=_checksDeposited[paymentId];
+  if(!entry) return;
+  entry.paid={at:new Date().toISOString(),by:(currentUser&&currentUser.name)||'Unknown user'};
+  _checksSaveDeposited();
+  renderDepositedChecksSection();
+  renderPaidChecksSection();
+}
+window.markCheckPaid=markCheckPaid;
+
+function deleteCheckPaid(paymentId){
+  delete _checksDeposited[paymentId];
+  _checksSaveDeposited();
+  renderPaidChecksSection();
+}
+window.deleteCheckPaid=deleteCheckPaid;
 
 function markCheckDeposited(paymentId){
   var p=(_checksPayments||[]).find(function(x){ return x.Id===paymentId; });
@@ -4355,37 +4387,6 @@ function undepositCheck(paymentId){
   renderDepositedChecksSection();
 }
 window.undepositCheck=undepositCheck;
-
-// One-time cleanup for a since-fixed bug: an earlier version treated a
-// BLANK DepositToAccountRef as evidence a check had been deposited, which
-// could have wrongly auto-marked many (or all) checks as deposited on
-// that first pull. Fixing the detection logic doesn't undo entries it
-// already saved — this removes anything tagged as auto-detected so the
-// next "Pull from QuickBooks" re-evaluates them under the corrected
-// logic (any that are still genuinely undeposited will correctly land
-// back in Checks In Hand; ones with real bank-account evidence will
-// re-auto-detect as deposited again, unchanged).
-function undoAutoDetectedDeposits(){
-  var removed=0;
-  Object.keys(_checksDeposited).forEach(function(id){
-    var entry=_checksDeposited[id];
-    if(entry.by && entry.by.indexOf('QuickBooks (auto-detected')===0){
-      delete _checksDeposited[id];
-      removed++;
-    }
-  });
-  if(removed>0) _checksSaveDeposited();
-  renderChecksInHandSection();
-  renderDepositedChecksSection();
-  var statusEl=document.getElementById('chk-status');
-  if(statusEl){
-    statusEl.textContent=removed>0
-      ?('Removed '+removed+' incorrectly auto-detected deposit(s). Click "Pull from QuickBooks" to re-check them under the corrected logic.')
-      :'No auto-detected deposits found to remove — nothing to clean up.';
-    statusEl.style.color=removed>0?'#b8460b':'';
-  }
-}
-window.undoAutoDetectedDeposits=undoAutoDetectedDeposits;
 
 function switchReportTab(tab){
   var invPanel=document.getElementById('rpt-panel-inventory');

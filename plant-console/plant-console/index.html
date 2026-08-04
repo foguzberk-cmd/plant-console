@@ -4135,9 +4135,19 @@ async function runChecksReport(){
   // an actual bank account, QuickBooks already considers it deposited —
   // so auto-mark those as deposited here instead of relying only on
   // someone remembering to click "Mark deposited" by hand.
+  //
+  // IMPORTANT: if DepositToAccountRef is BLANK (not populated in this
+  // bulk pull — the same kind of gap PaymentMethodRef had), that means
+  // "unknown," not "deposited." Treating a blank field as evidence of
+  // deposit would have auto-marked every single check as deposited on the
+  // first pull, emptying Checks In Hand entirely regardless of reality —
+  // only a field that's actually populated with something other than
+  // Undeposited Funds counts as real evidence here.
   var autoDepositedCount=0;
+  var blankDepositRefCount=0;
   payments.forEach(function(p){
     var acctName=(p.DepositToAccountRef&&p.DepositToAccountRef.name)||'';
+    if(!acctName){ blankDepositRefCount++; return; } // unknown — leave it in Checks In Hand
     var stillUndeposited=acctName.toLowerCase().indexOf('undeposited')>=0;
     if(!stillUndeposited && !_checksDeposited[p.Id]){
       _checksDeposited[p.Id]={
@@ -4147,7 +4157,7 @@ async function runChecksReport(){
         amount:Number(p.TotalAmt||0),
         date:(p.TxnDate||'').slice(0,10),
         depositedAt:new Date().toISOString(),
-        by:'QuickBooks (auto-detected — deposited to '+(acctName||'a bank account')+')'
+        by:'QuickBooks (auto-detected — deposited to '+acctName+')'
       };
       autoDepositedCount++;
     }
@@ -4167,7 +4177,8 @@ async function runChecksReport(){
       statusEl.textContent='0 checks found, but '+allPaymentsInWindow.length+' other payment(s) exist since '+esc(from)+'. Sample Ref # values seen: '+esc(sample)+'. Tell me if checks are recorded differently and I\'ll adjust the match.';
       statusEl.style.color='#b8460b';
     } else {
-      statusEl.textContent=payments.length+' check(s) found (since '+esc(from)+')'+(depositedCount?', '+depositedCount+' already deposited per QuickBooks'+(autoDepositedCount?' ('+autoDepositedCount+' newly detected this pull)':'')+'':'');
+      statusEl.textContent=payments.length+' check(s) found (since '+esc(from)+')'+(depositedCount?', '+depositedCount+' already deposited per QuickBooks'+(autoDepositedCount?' ('+autoDepositedCount+' newly detected this pull)':'')+'':'')
+        +(blankDepositRefCount?' — '+blankDepositRefCount+' had no deposit-account info from QuickBooks, so they\'re left in Checks In Hand until confirmed (use "Mark deposited" if you know they\'ve cleared)':'');
       statusEl.style.color='';
     }
   }

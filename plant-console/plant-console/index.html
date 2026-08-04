@@ -1083,6 +1083,7 @@ function rerenderCurrentSection(){
     // pickers and active sub-tab, so this stays targeted like the two
     // above.
     try{ renderApprovedPaymentsSection(); }catch(e){}
+    try{ renderInProcessPaymentsSection(); }catch(e){}
     try{ renderScheduledPaymentsSection(); }catch(e){}
   }
 }
@@ -2328,6 +2329,7 @@ function renderReports(){
       +'</div>'
       +'<div id="cf-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'<div id="cf-approved-section" style="margin-bottom:24px"></div>'
+      +'<div id="cf-inprocess-section" style="margin-bottom:24px"></div>'
       +'<div id="cf-scheduled-section" style="margin-bottom:24px"></div>'
       +'<div id="cf-body"></div>'
     +'</div>';
@@ -3317,9 +3319,13 @@ function showCFRowMenu(btn,kind,billId,splitId){
       +'<button onclick="editCFScheduledDate(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Edit date</button>'
       +'<button onclick="splitCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Split payment</button>'
       +'<button onclick="removeCFSplit(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;color:#b8460b">Remove from schedule</button>';
+  } else if(kind==='approved'){
+    html='<button onclick="hideCFRowMenu();startCFPaymentProcess(\''+esc(billId)+'\',\''+esc(splitId)+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee;font-weight:600">Initiate payment (wire/check)</button>'
+      +'<button onclick="editCFScheduledDate(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Edit date</button>'
+      +'<button onclick="initiateCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px">Send back to Scheduled</button>';
   } else {
     html='<button onclick="editCFScheduledDate(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Edit date</button>'
-      +'<button onclick="initiateCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px">Send back to Scheduled</button>';
+      +'<button onclick="revertCFPaymentProcess(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px">Send back to Approved</button>';
   }
   el.innerHTML=html;
   el.setAttribute('data-bill',billId);
@@ -3396,6 +3402,7 @@ function buildCashFlowTableShell(){
   bodyEl.innerHTML=html;
   _initCashFlowColumnResize();
   renderApprovedPaymentsSection();
+  renderInProcessPaymentsSection();
   renderScheduledPaymentsSection(); // shows locally-pinned payments right away — no "Pull from QuickBooks" needed for these, since they're a locked local snapshot, not live data
 }
 function _initCashFlowColumnResize(){
@@ -3548,7 +3555,7 @@ function renderApprovedPaymentsSection(){
   Object.keys(_cfScheduledDates).forEach(function(billId){
     var rec=_cfScheduledDates[billId];
     (rec.splits||[]).forEach(function(split){
-      if(!split.initiated) return;
+      if(!split.initiated || split.inProcess) return;
       if(!byDate[split.date]) byDate[split.date]=[];
       byDate[split.date].push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,split:split});
     });
@@ -3601,6 +3608,132 @@ function renderApprovedPaymentsSection(){
   el.innerHTML=html;
 }
 
+// In Process — a payment moves here once someone actually initiates the
+// wire/check for it (see startCFPaymentProcess). Same locked-snapshot
+// pattern as Approved/Scheduled, and cleared by the same reconciliation
+// pass once QuickBooks shows the bill is no longer open.
+function renderInProcessPaymentsSection(){
+  function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  var el=document.getElementById('cf-inprocess-section');
+  if(!el) return;
+
+  var byDate={};
+  Object.keys(_cfScheduledDates).forEach(function(billId){
+    var rec=_cfScheduledDates[billId];
+    (rec.splits||[]).forEach(function(split){
+      if(!split.inProcess) return;
+      if(!byDate[split.date]) byDate[split.date]=[];
+      byDate[split.date].push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,split:split});
+    });
+  });
+
+  var dateKeys=Object.keys(byDate).sort();
+  if(!dateKeys.length){ el.innerHTML=''; return; }
+
+  var grandTotal=0;
+  var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">🔄 In Process — payment sent, awaiting confirmation</div>'
+    +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#eef4fb;color:#000;border:1px solid #a9c6e8">'
+    +'<colgroup><col style="width:130px"><col style="width:190px"><col style="width:90px"><col style="width:130px"><col style="width:90px"><col style="width:150px"><col style="width:44px"></colgroup>'
+    +'<thead><tr>'
+      +'<th style="border:1px solid #a9c6e8;background:#d7e6f7;padding:6px 10px;text-align:left;font-weight:700">Scheduled Date</th>'
+      +'<th style="border:1px solid #a9c6e8;background:#d7e6f7;padding:6px 10px;text-align:left;font-weight:700">Vendor</th>'
+      +'<th style="border:1px solid #a9c6e8;background:#d7e6f7;padding:6px 10px;text-align:left;font-weight:700">Bill #</th>'
+      +'<th style="border:1px solid #a9c6e8;background:#d7e6f7;padding:6px 10px;text-align:left;font-weight:700">Payment Date (QB)</th>'
+      +'<th style="border:1px solid #a9c6e8;background:#d7e6f7;padding:6px 10px;text-align:left;font-weight:700">Method</th>'
+      +'<th style="border:1px solid #a9c6e8;background:#d7e6f7;padding:6px 10px;text-align:right;font-weight:700">Balance</th>'
+      +'<th style="border:1px solid #a9c6e8;background:#d7e6f7;padding:6px 10px"></th>'
+    +'</tr></thead><tbody>';
+
+  dateKeys.forEach(function(dateKey){
+    byDate[dateKey].forEach(function(row){
+      var billId=row.billId, split=row.split;
+      var vName=row.vendor||'No vendor on file';
+      var bal=Number(split.amount||0);
+      grandTotal+=bal;
+      var whenStr=split.inProcess.at?new Date(split.inProcess.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
+      var methodLabel=split.inProcess.method==='wire'?'🏦 Wire':'📝 Check';
+      html+='<tr>'
+        +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(dateKey)+'</td>'
+        +'<td style="border:1px solid #a9c6e8;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
+        +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(row.docNum||'')+'</td>'
+        +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(row.due||'—')+'</td>'
+        +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+methodLabel+'</td>'
+        +'<td style="border:1px solid #a9c6e8;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
+        +'<td style="border:1px solid #a9c6e8;padding:5px 10px;text-align:right">'
+          +'<span title="Initiated by '+esc(split.inProcess.by)+(whenStr?' — '+esc(whenStr):'')+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#90caf9;border:1px solid #1565c0;border-radius:2px;font-size:9px;margin-right:4px;cursor:help">🔄</span>'
+          +'<button onclick="showCFRowMenu(this,\'inprocess\',\''+esc(billId)+'\',\''+esc(split.id)+'\')" class="btn btn-sm cf-menu-trigger" style="padding:2px 7px;font-size:13px;line-height:1">⋮</button>'
+        +'</td>'
+      +'</tr>';
+    });
+  });
+
+  html+='<tr>'
+    +'<td colspan="5" style="border:1px solid #1565c0;padding:7px 10px;text-align:right;font-weight:700;background:#bbdefb">TOTAL IN PROCESS</td>'
+    +'<td style="border:1px solid #1565c0;padding:7px 10px;text-align:right;font-weight:700;background:#bbdefb;font-family:var(--mono)">'+money(grandTotal)+'</td>'
+    +'<td style="border:1px solid #1565c0;background:#bbdefb"></td>'
+  +'</tr>';
+  html+='</tbody></table>'
+    +'<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">Cleared automatically once QuickBooks shows the bill is no longer open — checked every time you "Pull from QuickBooks."</div>';
+  el.innerHTML=html;
+}
+
+// ===== Start Payment Process modal — choose Wire or Check, moves an
+// Approved payment into In Process. =====
+function startCFPaymentProcess(billId,splitId){
+  var rec=_cfScheduledDates[billId];
+  var split=rec&&rec.splits.find(function(s){return s.id===splitId;});
+  if(!split){ alert('Could not find that payment.'); return; }
+
+  var bg=document.createElement('div');
+  bg.className='modal-bg';
+  bg.id='cfProcessModalBg';
+  bg.setAttribute('role','dialog');
+  bg.setAttribute('aria-modal','true');
+  bg.onclick=function(e){ if(e.target===bg) closeCFProcessModal(); };
+  bg.innerHTML='<div class="modal" style="max-width:380px">'
+    +'<h3 style="margin:0 0 4px">Initiate Payment</h3>'
+    +'<p style="color:var(--muted);font-size:13px;margin:0 0 18px">'+esc(rec.vendor)+' · Bill #'+esc(rec.docNum)+' · '+_cfMoney(split.amount)+'<br>How is this being paid?</p>'
+    +'<div style="display:flex;gap:10px;margin-bottom:14px">'
+      +'<button class="btn" onclick="cfProcessConfirm(\''+esc(billId)+'\',\''+esc(splitId)+'\',\'check\')" style="flex:1;padding:16px 8px;font-size:14px">📝<br>Check</button>'
+      +'<button class="btn" onclick="cfProcessConfirm(\''+esc(billId)+'\',\''+esc(splitId)+'\',\'wire\')" style="flex:1;padding:16px 8px;font-size:14px">🏦<br>Wire</button>'
+    +'</div>'
+    +'<div class="modal-footer">'
+      +'<button class="btn" onclick="closeCFProcessModal()">Cancel</button>'
+    +'</div>'
+  +'</div>';
+  document.body.appendChild(bg);
+}
+window.startCFPaymentProcess=startCFPaymentProcess;
+
+function closeCFProcessModal(){
+  var bg=document.getElementById('cfProcessModalBg');
+  if(bg) bg.remove();
+}
+window.closeCFProcessModal=closeCFProcessModal;
+
+function cfProcessConfirm(billId,splitId,method){
+  var rec=_cfScheduledDates[billId];
+  var split=rec&&rec.splits.find(function(s){return s.id===splitId;});
+  if(split){
+    split.inProcess={method:method,by:(currentUser&&currentUser.name)||'Unknown user',at:new Date().toISOString()};
+    _cfSaveScheduled(billId);
+  }
+  closeCFProcessModal();
+  renderCashFlowReport();
+}
+window.cfProcessConfirm=cfProcessConfirm;
+
+// Undo — sends an In Process payment back to Approved.
+function revertCFPaymentProcess(billId,splitId){
+  var rec=_cfScheduledDates[billId];
+  var split=rec&&rec.splits.find(function(s){return s.id===splitId;});
+  if(!split) return;
+  split.inProcess=null;
+  _cfSaveScheduled(billId);
+  renderCashFlowReport();
+}
+window.revertCFPaymentProcess=revertCFPaymentProcess;
+
 // After every "Pull from QuickBooks," checks each Approved payment's
 // underlying bill against the fresh open-bills list. If that bill no
 // longer shows up as open, QuickBooks considers it fully paid — so the
@@ -3615,8 +3748,11 @@ function _cfReconcileApprovedPayments(freshBills){
   Object.keys(_cfScheduledDates).forEach(function(billId){
     if(openIds[billId]) return; // still open in QuickBooks — leave it alone
     var rec=_cfScheduledDates[billId];
+    // Covers both Approved and In Process splits — inProcess is a further
+    // sub-state that only applies once initiated is already true, so this
+    // single check naturally clears whichever tier a split is currently in.
     var approvedSplits=(rec.splits||[]).filter(function(s){ return s.initiated; });
-    if(!approvedSplits.length) return; // nothing approved for this bill — leave any plain scheduled entries as-is
+    if(!approvedSplits.length) return; // nothing approved/in-process for this bill — leave any plain scheduled entries as-is
     rec.splits=rec.splits.filter(function(s){ return !s.initiated; });
     clearedCount+=approvedSplits.length;
     if(!rec.splits.length){ delete _cfScheduledDates[billId]; _cfMarkDeleted(billId); }
@@ -3658,6 +3794,7 @@ function _renderCashFlowReportInner(){
   var allBills=_cashFlowBills||[];
 
   renderApprovedPaymentsSection();
+  renderInProcessPaymentsSection();
   renderScheduledPaymentsSection();
 
   // A bill only fully disappears from this list once its ENTIRE balance is

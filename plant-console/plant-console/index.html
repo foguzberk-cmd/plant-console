@@ -663,7 +663,19 @@ const PERMISSIONS=[
   {id:'manageStorage',label:'Manage storage',            desc:'Add, edit, or remove storage locations'},
   {id:'manageLegal',  label:'Manage legal docs',         desc:'Upload and manage compliance documents'},
   {id:'manageUsers',  label:'Manage users',              desc:'Add, edit, or remove user accounts (admin only)'},
+  {id:'cfSchedulePayment',label:'Schedule payments (Scheduled Payments)',desc:'Pick a date to schedule a vendor bill for payment, full or partial'},
+  {id:'cfApprovePayment', label:'Approve payments (Scheduled Payments)', desc:'Approve a scheduled payment as ready to pay'},
+  {id:'cfInitiatePayment',label:'Initiate payments (Scheduled Payments)',desc:'Mark an approved payment as sent by wire or check'},
 ];
+// Checks whether the currently logged-in user can perform a specific
+// permission-gated action. Admins always pass. Used to gate the three
+// Cash Flow payment actions (schedule/approve/initiate) below, and can be
+// reused for anything else that needs the same admin-bypass pattern.
+function hasPerm(permId){
+  if(!currentUser) return false;
+  if(currentUser.role==='admin') return true;
+  return !!(currentUser.perms && currentUser.perms[permId]);
+}
 const SECTIONS=[
   {id:'dashboard',label:'Dashboard',kicker:'Overview',title:'Dashboard',lede:'A live snapshot of your plant — inventory value, stock levels, recent movement, and production activity at a glance.'},
   {id:'items',label:'Items',kicker:'Inventory',title:'Items',lede:'Everything you stock — carcasses, primal and retail cuts, processed goods and by-products — counted in pieces, pounds, and boxes.',empty:['No items defined yet.','Tell me how you want items organized and I\'ll build the structure here.']},
@@ -2291,7 +2303,7 @@ function renderReports(){
     +'<div style="display:flex;gap:8px;margin:6px 0 18px;border-bottom:1px solid var(--line)">'
       +'<button id="rpt-tab-inventory" class="btn" onclick="switchReportTab(\'inventory\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:#fff;font-weight:700;color:var(--brand);border-top:3px solid var(--brand);border-left:1.5px solid var(--line);border-right:1.5px solid var(--line)">Inventory Statement</button>'
       +'<button id="rpt-tab-collection" class="btn" onclick="switchReportTab(\'collection\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Customer Payments</button>'
-      +'<button id="rpt-tab-cashflow" class="btn" onclick="switchReportTab(\'cashflow\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Cash Flow</button>'
+      +'<button id="rpt-tab-cashflow" class="btn" onclick="switchReportTab(\'cashflow\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Scheduled Payments</button>'
     +'</div>'
     +'<div id="rpt-panel-inventory">'
     +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
@@ -3079,6 +3091,7 @@ function _cfAddSplit(billId,date,amount){
 // partially scheduled before). For scheduling a SPECIFIC smaller amount,
 // use "Partial..." instead (see scheduleCFPartial).
 function setCashFlowScheduledDate(billId,value){
+  if(!hasPerm('cfSchedulePayment')){ alert('You don\'t have permission to schedule payments.'); renderCashFlowReport(); return; }
   if(!value) return; // nothing to clear here anymore — remove specific installments from the pinned section's ⋮ menu instead
   var bill=(_cashFlowBills||[]).find(function(b){ return b.Id===billId; });
   if(!bill) return;
@@ -3216,6 +3229,7 @@ window.closeCFSplitModal=closeCFSplitModal;
 var _cfPartialState=null; // {billId, remaining}
 
 function scheduleCFPartial(billId){
+  if(!hasPerm('cfSchedulePayment')){ alert('You don\'t have permission to schedule payments.'); return; }
   var bill=(_cashFlowBills||[]).find(function(b){ return b.Id===billId; });
   if(!bill){ alert('Bill not found — try re-pulling from QuickBooks.'); return; }
   var remaining=_cfRemainingFor(bill);
@@ -3297,6 +3311,7 @@ window.cfSplitSave=cfSplitSave;
 // integration, so this is a status flag only (who marked it, and when),
 // shown as a green check next to the row instead of the yellow pin.
 function initiateCFPayment(billId,splitId){
+  if(!hasPerm('cfApprovePayment')){ alert('You don\'t have permission to approve payments.'); return; }
   var rec=_cfScheduledDates[billId];
   if(!rec) return;
   var split=rec.splits.find(function(s){return s.id===splitId;});
@@ -3345,18 +3360,19 @@ function showCFRowMenu(btn,kind,billId,splitId){
   if(wasOpenForThis){ el.style.display='none'; return; }
 
   var html;
+  var btnBorder='border-bottom:1px solid #eee';
   if(kind==='scheduled'){
-    html='<button onclick="initiateCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Approve payment</button>'
-      +'<button onclick="editCFScheduledDate(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Edit date</button>'
-      +'<button onclick="splitCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Split payment</button>'
+    html=(hasPerm('cfApprovePayment')?'<button onclick="initiateCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;'+btnBorder+'">Approve payment</button>':'')
+      +'<button onclick="editCFScheduledDate(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;'+btnBorder+'">Edit date</button>'
+      +'<button onclick="splitCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;'+btnBorder+'">Split payment</button>'
       +'<button onclick="removeCFSplit(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;color:#b8460b">Remove from schedule</button>';
   } else if(kind==='approved'){
-    html='<button onclick="hideCFRowMenu();startCFPaymentProcess(\''+esc(billId)+'\',\''+esc(splitId)+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee;font-weight:600">Initiate payment (wire/check)</button>'
-      +'<button onclick="editCFScheduledDate(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Edit date</button>'
-      +'<button onclick="initiateCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px">Send back to Scheduled</button>';
+    html=(hasPerm('cfInitiatePayment')?'<button onclick="hideCFRowMenu();startCFPaymentProcess(\''+esc(billId)+'\',\''+esc(splitId)+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;'+btnBorder+';font-weight:600">Initiate payment (wire/check)</button>':'')
+      +'<button onclick="editCFScheduledDate(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;'+btnBorder+'">Edit date</button>'
+      +(hasPerm('cfApprovePayment')?'<button onclick="initiateCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px">Send back to Scheduled</button>':'');
   } else {
-    html='<button onclick="editCFScheduledDate(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;border-bottom:1px solid #eee">Edit date</button>'
-      +'<button onclick="revertCFPaymentProcess(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px">Send back to Approved</button>';
+    html='<button onclick="editCFScheduledDate(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;'+btnBorder+'">Edit date</button>'
+      +(hasPerm('cfInitiatePayment')?'<button onclick="revertCFPaymentProcess(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px">Send back to Approved</button>':'');
   }
   el.innerHTML=html;
   el.setAttribute('data-bill',billId);
@@ -3769,6 +3785,7 @@ function deleteCFPaidPayment(billId,splitId){
 window.deleteCFPaidPayment=deleteCFPaidPayment;
 
 function startCFPaymentProcess(billId,splitId){
+  if(!hasPerm('cfInitiatePayment')){ alert('You don\'t have permission to initiate payments.'); return; }
   var rec=_cfScheduledDates[billId];
   var split=rec&&rec.splits.find(function(s){return s.id===splitId;});
   if(!split){ alert('Could not find that payment.'); return; }
@@ -3814,6 +3831,7 @@ window.cfProcessConfirm=cfProcessConfirm;
 
 // Undo — sends an In Process payment back to Approved.
 function revertCFPaymentProcess(billId,splitId){
+  if(!hasPerm('cfInitiatePayment')){ alert('You don\'t have permission to initiate payments.'); return; }
   var rec=_cfScheduledDates[billId];
   var split=rec&&rec.splits.find(function(s){return s.id===splitId;});
   if(!split) return;
@@ -3918,7 +3936,7 @@ function renderCashFlowReport(){
     // silently blank while the status line above still shows whatever text
     // was set before the error — very confusing to debug from a
     // screenshot. Surface the actual error instead.
-    if(statusEl){ statusEl.textContent='Error displaying Cash Flow data: '+(err&&err.message?err.message:err); statusEl.style.color='#c0392b'; }
+    if(statusEl){ statusEl.textContent='Error displaying Scheduled Payments data: '+(err&&err.message?err.message:err); statusEl.style.color='#c0392b'; }
     var tbody=document.getElementById('cf-tbody');
     if(tbody) tbody.innerHTML='<tr><td colspan="'+CF_COLS.length+'" style="border:1px solid #ccc;padding:16px;text-align:center;color:#c0392b">Something went wrong rendering this table — see the message above. Try "Pull from QuickBooks" again, or a hard refresh (Ctrl/Cmd+Shift+R).</td></tr>';
   }
@@ -3999,15 +4017,18 @@ function _renderCashFlowReportInner(){
     +'</tr>';
     billsSorted.forEach(function(b){
       var partialNote=b.alreadyScheduled>0.004?'<div style="font-size:10px;color:#8a6d1a;margin-top:2px">'+money(b.alreadyScheduled)+' already scheduled</div>':'';
+      var scheduleControls=hasPerm('cfSchedulePayment')
+        ?('<div style="display:flex;align-items:center;gap:4px">'
+            +'<input type="date" value="" onchange="setCashFlowScheduledDate(\''+esc(b.id)+'\',this.value)" title="Schedule the full remaining balance for this date" style="flex:1;min-width:0;border:1px solid #ddd;border-radius:4px;padding:3px 5px;font-size:12px;font-family:inherit"/>'
+            +'<button onclick="scheduleCFPartial(\''+esc(b.id)+'\')" class="btn btn-sm" title="Schedule only part of this balance" style="padding:3px 7px;font-size:11px;white-space:nowrap">Partial…</button>'
+          +'</div>')
+        :'<span style="font-size:11px;color:var(--muted)">No permission to schedule</span>';
       rowsHtml+='<tr class="'+groupClass+'" style="display:none">'
         +'<td style="border:1px solid #ccc;padding:5px 10px 5px 28px"></td>'
         +'<td style="border:1px solid #ccc;padding:5px 10px">'+esc(b.docNum||'')+'</td>'
         +'<td style="border:1px solid #ccc;padding:5px 10px">'+esc(b.due||'—')+'</td>'
         +'<td style="border:1px solid #ccc;padding:2px 6px">'
-          +'<div style="display:flex;align-items:center;gap:4px">'
-            +'<input type="date" value="" onchange="setCashFlowScheduledDate(\''+esc(b.id)+'\',this.value)" title="Schedule the full remaining balance for this date" style="flex:1;min-width:0;border:1px solid #ddd;border-radius:4px;padding:3px 5px;font-size:12px;font-family:inherit"/>'
-            +'<button onclick="scheduleCFPartial(\''+esc(b.id)+'\')" class="btn btn-sm" title="Schedule only part of this balance" style="padding:3px 7px;font-size:11px;white-space:nowrap">Partial…</button>'
-          +'</div>'
+          +scheduleControls
           +partialNote
         +'</td>'
         +'<td style="border:1px solid #ccc;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(b.balance)+'</td>'

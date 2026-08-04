@@ -1094,10 +1094,19 @@ function rerenderCurrentSection(){
     // shows up here too — a full renderReports() would reset the date
     // pickers and active sub-tab, so this stays targeted like the two
     // above.
-    try{ renderPaidPaymentsSection(); }catch(e){}
-    try{ renderInProcessPaymentsSection(); }catch(e){}
-    try{ renderApprovedPaymentsSection(); }catch(e){}
-    try{ renderScheduledPaymentsSection(); }catch(e){}
+    //
+    // Skipped entirely while a date is actively being edited (see
+    // editCFScheduledDate / _cfEditingInProgress) — these render
+    // functions rebuild the WHOLE table from scratch, which would replace
+    // the temporary <input> mid-edit with this pull's stale HTML before
+    // the person has a chance to actually pick a date. At a 1.5s pull
+    // interval, that could wipe it out almost instantly every time.
+    if(!_cfEditingInProgress){
+      try{ renderPaidPaymentsSection(); }catch(e){}
+      try{ renderInProcessPaymentsSection(); }catch(e){}
+      try{ renderApprovedPaymentsSection(); }catch(e){}
+      try{ renderScheduledPaymentsSection(); }catch(e){}
+    }
   }
 }
 async function pullFromServer(){
@@ -3415,6 +3424,7 @@ document.addEventListener('click',function(e){
 
 // Swaps one split's date cell into an inline, editable date input — the
 // only thing Edit is allowed to change.
+var _cfEditingInProgress=false; // true while any Cash Flow date field is mid-edit — see rerenderCurrentSection's reports branch for why
 function editCFScheduledDate(billId,splitId){
   hideCFRowMenu(); // close the menu
   var cell=document.getElementById('cf-datecell-'+billId+'-'+splitId);
@@ -3422,10 +3432,13 @@ function editCFScheduledDate(billId,splitId){
   var rec=_cfScheduledDates[billId];
   var split=rec&&rec.splits.find(function(s){return s.id===splitId;});
   if(!split) return;
+  _cfEditingInProgress=true;
+  setTimeout(function(){ _cfEditingInProgress=false; },120000); // safety net — clears itself after 2 min even if blur/change never fires for some reason, so this can never get permanently stuck
   cell.innerHTML='<input type="date" value="'+esc(split.date)+'" autofocus style="width:100%;border:1px solid #c9a227;border-radius:4px;padding:3px 5px;font-size:12px;font-family:inherit"/>';
   var input=cell.querySelector('input');
   input.focus();
   function commit(){
+    _cfEditingInProgress=false;
     var newVal=input.value||split.date;
     if(newVal!==split.date){
       split.date=newVal;

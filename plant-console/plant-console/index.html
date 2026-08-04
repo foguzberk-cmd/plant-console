@@ -2304,6 +2304,7 @@ function renderReports(){
       +'<button id="rpt-tab-inventory" class="btn" onclick="switchReportTab(\'inventory\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:#fff;font-weight:700;color:var(--brand);border-top:3px solid var(--brand);border-left:1.5px solid var(--line);border-right:1.5px solid var(--line)">Inventory Statement</button>'
       +'<button id="rpt-tab-collection" class="btn" onclick="switchReportTab(\'collection\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Customer Payments</button>'
       +'<button id="rpt-tab-cashflow" class="btn" onclick="switchReportTab(\'cashflow\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Scheduled Payments</button>'
+      +'<button id="rpt-tab-checks" class="btn" onclick="switchReportTab(\'checks\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Checks</button>'
     +'</div>'
     +'<div id="rpt-panel-inventory">'
     +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
@@ -2358,9 +2359,23 @@ function renderReports(){
       +'<div id="cf-approved-section" style="margin-bottom:24px"></div>'
       +'<div id="cf-scheduled-section" style="margin-bottom:24px"></div>'
       +'<div id="cf-body"></div>'
+    +'</div>'
+    +'<div id="rpt-panel-checks" style="display:none">'
+      +'<p style="color:var(--muted);font-size:13px;margin-bottom:16px;max-width:640px">Customer payments received by check — grouped by the week received, so you can see what\'s still sitting undeposited. Mark one as deposited once it\'s actually gone to the bank.</p>'
+      +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:18px">'
+        +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">From</label>'
+        +'<input type="date" id="chk-from" value="'+firstOpen+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
+        +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">To</label>'
+        +'<input type="date" id="chk-to" value="'+today+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
+        +'<button class="btn btn-primary" onclick="runChecksReport()">Pull from QuickBooks</button>'
+      +'</div>'
+      +'<div id="chk-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
+      +'<div id="chk-deposited-section" style="margin-bottom:24px"></div>'
+      +'<div id="chk-inhand-section"></div>'
     +'</div>';
   buildBalanceReport();
   buildCashFlowTableShell();
+  buildChecksTableShell();
   renderSavedReportsList();
 }
 // Switches between the two Reports sub-tabs without re-rendering the whole
@@ -4052,18 +4067,258 @@ function toggleCFVendorGroup(vi){
 window.toggleCFVendorGroup=toggleCFVendorGroup;
 window.buildCashFlowTableShell=buildCashFlowTableShell;
 
+// ===== Checks — customer payments received by check, tracked through
+// "in hand" (received, not yet deposited) vs "deposited" (gone to the
+// bank). Deposited status is local-only for now (like Scheduled Payments
+// started out before server sync was added) — say the word if you want
+// this shared across users/devices the same way. =====
+var _checksPayments=null; // cached raw Payment records from the last pull
+var _checksDeposited=(function(){ try{ return JSON.parse(localStorage.getItem('pc_checks_deposited')||'{}'); }catch(e){ return {}; } })();
+function _checksSaveDeposited(){ localStorage.setItem('pc_checks_deposited',JSON.stringify(_checksDeposited)); }
+
+async function runChecksReport(){
+  var fromEl=document.getElementById('chk-from');
+  var toEl=document.getElementById('chk-to');
+  var statusEl=document.getElementById('chk-status');
+  var from=fromEl?fromEl.value:'';
+  var to=toEl?toEl.value:'';
+  if(!from||!to){ if(statusEl) statusEl.textContent='Pick both a From and To date first.'; return; }
+  var base=window.location.origin;
+  var payments=[];
+  var startPos=1;
+  var pageSize=100;
+  var safety=0;
+  if(statusEl){ statusEl.textContent='Fetching payments from QuickBooks…'; statusEl.style.color=''; }
+  while(true){
+    safety++;
+    if(safety>1000) break; // hard cap (~100k rows)
+    var ctrl=new AbortController();
+    var timer=setTimeout(function(){ctrl.abort();},60000);
+    var pageRows=null;
+    try{
+      var r=await fetch(base+'/api/qb/documents?entity=Payment&startposition='+startPos+'&from='+encodeURIComponent(from),{signal:ctrl.signal});
+      clearTimeout(timer);
+      if(r.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
+      var jd=await r.json();
+      if(jd && jd.error){ if(statusEl){ statusEl.textContent='Error: '+jd.error; statusEl.style.color='#c0392b'; } return; }
+      pageRows=(jd && jd.Payment) ? jd.Payment : [];
+    }catch(e){
+      clearTimeout(timer);
+      if(statusEl){ statusEl.textContent='Network error while fetching payments — try again.'; statusEl.style.color='#c0392b'; }
+      return;
+    }
+    payments=payments.concat(pageRows);
+    if(statusEl) statusEl.textContent='Fetched '+payments.length+' payment(s) so far…';
+    if(pageRows.length<pageSize) break;
+    startPos+=pageSize;
+  }
+
+  // Filter to the exact [from, to] range, and to payments actually made by
+  // check (PaymentMethodRef isn't always populated on every payment, so
+  // anything without a method name is left out rather than guessed at).
+  payments=payments.filter(function(p){
+    var d=(p.TxnDate||'').slice(0,10);
+    if(!d||d<from||d>to) return false;
+    var methodName=(p.PaymentMethodRef&&p.PaymentMethodRef.name)||'';
+    return methodName.toLowerCase().indexOf('check')>=0;
+  });
+
+  _checksPayments=payments;
+  renderChecksInHandSection();
+  renderDepositedChecksSection();
+  if(statusEl){
+    var depositedCount=payments.filter(function(p){ return _checksDeposited[p.Id]; }).length;
+    statusEl.textContent=payments.length+' check(s) found ('+esc(from)+' to '+esc(to)+')'+(depositedCount?', '+depositedCount+' already marked deposited':'');
+    statusEl.style.color='';
+  }
+}
+window.runChecksReport=runChecksReport;
+
+function buildChecksTableShell(){
+  renderDepositedChecksSection();
+  renderChecksInHandSection();
+}
+window.buildChecksTableShell=buildChecksTableShell;
+
+function _checksMoneyFmt(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function _checksMondayOf(dateStr){
+  var d=new Date(dateStr+'T00:00:00');
+  var day=d.getDay();
+  var diff=(day===0?-6:1-day);
+  d.setDate(d.getDate()+diff);
+  return d.toISOString().slice(0,10);
+}
+function _checksFmtShort(dateStr){
+  var d=new Date(dateStr+'T00:00:00');
+  return d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+}
+
+// Checks In Hand — received, not yet marked deposited. Grouped by the
+// week received, same visual format as Scheduled Payments.
+function renderChecksInHandSection(){
+  var el=document.getElementById('chk-inhand-section');
+  if(!el) return;
+  var payments=(_checksPayments||[]).filter(function(p){ return !_checksDeposited[p.Id]; });
+  if(!payments.length){
+    el.innerHTML='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">📄 Checks In Hand</div>'
+      +'<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px;background:var(--panel);border:1px solid var(--line);border-radius:14px">No checks yet — click "Pull from QuickBooks" above.</div>';
+    return;
+  }
+
+  var byDate={};
+  payments.forEach(function(p){
+    var d=(p.TxnDate||'').slice(0,10);
+    if(!byDate[d]) byDate[d]=[];
+    byDate[d].push(p);
+  });
+  var dateKeys=Object.keys(byDate).sort();
+  var byWeek={};
+  dateKeys.forEach(function(d){
+    var wk=_checksMondayOf(d);
+    if(!byWeek[wk]) byWeek[wk]=[];
+    byWeek[wk].push(d);
+  });
+  var weekKeys=Object.keys(byWeek).sort();
+
+  var grandTotal=0;
+  var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">📄 Checks In Hand</div>'
+    +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#fffdf5;color:#000;border:1px solid #e0c56b">'
+    +'<colgroup><col style="width:110px"><col style="width:240px"><col style="width:150px"><col style="width:150px"><col style="width:60px"></colgroup>'
+    +'<thead><tr>'
+      +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Date</th>'
+      +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Customer</th>'
+      +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Ref #</th>'
+      +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:right;font-weight:700">Amount</th>'
+      +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px"></th>'
+    +'</tr></thead><tbody>';
+
+  weekKeys.forEach(function(weekMonday){
+    var weekSunday=new Date(weekMonday+'T00:00:00'); weekSunday.setDate(weekSunday.getDate()+6);
+    var weekLabel='Week of '+_checksFmtShort(weekMonday)+' – '+_checksFmtShort(weekSunday.toISOString().slice(0,10));
+    var weekTotal=0;
+    byWeek[weekMonday].forEach(function(d){ byDate[d].forEach(function(p){ weekTotal+=Number(p.TotalAmt||0); }); });
+    grandTotal+=weekTotal;
+    html+='<tr>'
+      +'<td colspan="3" style="border:1px solid #c9a227;padding:7px 10px;font-weight:700;background:#ffe082">'+esc(weekLabel)+'</td>'
+      +'<td style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe082;font-family:var(--mono)">'+_checksMoneyFmt(weekTotal)+'</td>'
+      +'<td style="border:1px solid #c9a227;background:#ffe082"></td>'
+    +'</tr>';
+    byWeek[weekMonday].forEach(function(d){
+      byDate[d].forEach(function(p){
+        var custName=(p.CustomerRef&&p.CustomerRef.name)||'No customer on file';
+        var amt=Number(p.TotalAmt||0);
+        html+='<tr>'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(d)+'</td>'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(custName)+'</td>'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(p.PaymentRefNum||'')+'</td>'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-family:var(--mono)">'+_checksMoneyFmt(amt)+'</td>'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:center">'
+            +'<button onclick="markCheckDeposited(\''+esc(p.Id)+'\')" class="btn btn-sm" style="padding:2px 8px;font-size:11px">Mark deposited</button>'
+          +'</td>'
+        +'</tr>';
+      });
+    });
+  });
+
+  html+='<tr>'
+    +'<td colspan="3" style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe58a">TOTAL IN HAND</td>'
+    +'<td style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe58a;font-family:var(--mono)">'+_checksMoneyFmt(grandTotal)+'</td>'
+    +'<td style="border:1px solid #c9a227;background:#ffe58a"></td>'
+  +'</tr>';
+  html+='</tbody></table>';
+  el.innerHTML=html;
+}
+window.renderChecksInHandSection=renderChecksInHandSection;
+
+// Deposited Checks — pinned above, a locked local snapshot (like Cash
+// Flow's Paid section) so it doesn't depend on the check still being
+// inside whatever date range you last pulled.
+function renderDepositedChecksSection(){
+  var el=document.getElementById('chk-deposited-section');
+  if(!el) return;
+  var ids=Object.keys(_checksDeposited);
+  if(!ids.length){ el.innerHTML=''; return; }
+
+  var rows=ids.map(function(id){ return _checksDeposited[id]; });
+  rows.sort(function(a,b){ return (b.depositedAt||'')<(a.depositedAt||'')?-1:1; });
+
+  var grandTotal=0;
+  var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">🏦 Deposited Checks</div>'
+    +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#f3fbf4;color:#000;border:1px solid #8fcf9a">'
+    +'<colgroup><col style="width:110px"><col style="width:220px"><col style="width:120px"><col style="width:140px"><col style="width:130px"><col style="width:60px"></colgroup>'
+    +'<thead><tr>'
+      +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px;text-align:left;font-weight:700">Date</th>'
+      +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px;text-align:left;font-weight:700">Customer</th>'
+      +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px;text-align:left;font-weight:700">Ref #</th>'
+      +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px;text-align:right;font-weight:700">Amount</th>'
+      +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px;text-align:left;font-weight:700">Deposited On</th>'
+      +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px"></th>'
+    +'</tr></thead><tbody>';
+  rows.forEach(function(row){
+    grandTotal+=Number(row.amount||0);
+    var whenStr=row.depositedAt?new Date(row.depositedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
+    html+='<tr>'
+      +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.date||'')+'</td>'
+      +'<td style="border:1px solid #8fcf9a;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(row.customer||'')+'</td>'
+      +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.ref||'')+'</td>'
+      +'<td style="border:1px solid #8fcf9a;padding:5px 10px;text-align:right;font-family:var(--mono)">'+_checksMoneyFmt(row.amount)+'</td>'
+      +'<td style="border:1px solid #8fcf9a;padding:5px 10px" title="Marked by '+esc(row.by||'Unknown user')+'">'+esc(whenStr)+'</td>'
+      +'<td style="border:1px solid #8fcf9a;padding:5px 10px;text-align:center">'
+        +'<button onclick="undepositCheck(\''+esc(row.id)+'\')" class="btn btn-sm" title="Send back to Checks In Hand" style="padding:2px 8px;font-size:11px">Undo</button>'
+      +'</td>'
+    +'</tr>';
+  });
+  html+='<tr>'
+    +'<td colspan="3" style="border:1px solid #388e3c;padding:7px 10px;text-align:right;font-weight:700;background:#c8e6c9">TOTAL DEPOSITED</td>'
+    +'<td style="border:1px solid #388e3c;padding:7px 10px;text-align:right;font-weight:700;background:#c8e6c9;font-family:var(--mono)">'+_checksMoneyFmt(grandTotal)+'</td>'
+    +'<td colspan="2" style="border:1px solid #388e3c;background:#c8e6c9"></td>'
+  +'</tr>';
+  html+='</tbody></table>';
+  el.innerHTML=html;
+}
+window.renderDepositedChecksSection=renderDepositedChecksSection;
+
+function markCheckDeposited(paymentId){
+  var p=(_checksPayments||[]).find(function(x){ return x.Id===paymentId; });
+  if(!p){ alert('Could not find that check — try pulling from QuickBooks again.'); return; }
+  _checksDeposited[paymentId]={
+    id:paymentId,
+    customer:(p.CustomerRef&&p.CustomerRef.name)||'No customer on file',
+    ref:p.PaymentRefNum||'',
+    amount:Number(p.TotalAmt||0),
+    date:(p.TxnDate||'').slice(0,10),
+    depositedAt:new Date().toISOString(),
+    by:(currentUser&&currentUser.name)||'Unknown user'
+  };
+  _checksSaveDeposited();
+  renderChecksInHandSection();
+  renderDepositedChecksSection();
+}
+window.markCheckDeposited=markCheckDeposited;
+
+function undepositCheck(paymentId){
+  delete _checksDeposited[paymentId];
+  _checksSaveDeposited();
+  renderChecksInHandSection();
+  renderDepositedChecksSection();
+}
+window.undepositCheck=undepositCheck;
+
 function switchReportTab(tab){
   var invPanel=document.getElementById('rpt-panel-inventory');
   var collPanel=document.getElementById('rpt-panel-collection');
   var cfPanel=document.getElementById('rpt-panel-cashflow');
+  var chkPanel=document.getElementById('rpt-panel-checks');
   var invTab=document.getElementById('rpt-tab-inventory');
   var collTab=document.getElementById('rpt-tab-collection');
   var cfTab=document.getElementById('rpt-tab-cashflow');
-  if(!invPanel||!collPanel||!cfPanel) return;
+  var chkTab=document.getElementById('rpt-tab-checks');
+  if(!invPanel||!collPanel||!cfPanel||!chkPanel) return;
   invPanel.style.display=(tab==='inventory')?'block':'none';
   collPanel.style.display=(tab==='collection')?'block':'none';
   cfPanel.style.display=(tab==='cashflow')?'block':'none';
-  [[invTab,'inventory'],[collTab,'collection'],[cfTab,'cashflow']].forEach(function(pair){
+  chkPanel.style.display=(tab==='checks')?'block':'none';
+  [[invTab,'inventory'],[collTab,'collection'],[cfTab,'cashflow'],[chkTab,'checks']].forEach(function(pair){
     var active=(tab===pair[1]);
     pair[0].style.background=active?'#fff':'var(--bg)';
     pair[0].style.fontWeight=active?'700':'400';

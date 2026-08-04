@@ -4162,10 +4162,26 @@ function _renderCashFlowReportInner(){
   // a grouping layer on top.
   var deptOrder=DEPARTMENTS.concat(['Unassigned']);
 
+  // Looks up a vendor's assigned department, trying the bill-derived key
+  // first (VendorRef.value, normally the QuickBooks id) and falling back
+  // to a name-based match — Settings → Vendors keys its assignments by
+  // qbId when available, which should normally be the same value, but
+  // this fallback keeps department grouping working even if those two
+  // ever disagree for some vendor (e.g. a sync gap on one side).
+  function _deptForVendorKey(vKey){
+    if(_vendorDepartments[vKey]) return _vendorDepartments[vKey];
+    var vName=byVendor[vKey]&&byVendor[vKey].name;
+    if(vName && _vendorDepartments[vName]){
+      console.warn('Vendor department: had to fall back to name-based match for "'+vName+'" (bill key "'+vKey+'" didn\'t match Settings\' key directly) — this indicates a real id/name mismatch worth checking.');
+      return _vendorDepartments[vName];
+    }
+    return 'Unassigned';
+  }
+
   var rowsHtml='';
   var globalVi=0;
   deptOrder.forEach(function(dept){
-    var deptVendorKeys=vendorKeys.filter(function(vKey){ return (_vendorDepartments[vKey]||'Unassigned')===dept; });
+    var deptVendorKeys=vendorKeys.filter(function(vKey){ return _deptForVendorKey(vKey)===dept; });
     if(!deptVendorKeys.length) return; // skip empty departments entirely
     var deptTotal=deptVendorKeys.reduce(function(s,vKey){ return s+byVendor[vKey].total; },0);
     rowsHtml+='<tr>'

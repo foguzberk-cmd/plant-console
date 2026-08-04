@@ -4114,6 +4114,7 @@ async function runChecksReport(){
   // Filter to payments actually made by check (PaymentMethodRef isn't
   // always populated on every payment, so anything without a method name
   // is left out rather than guessed at).
+  var allPaymentsInWindow=payments;
   payments=payments.filter(function(p){
     var methodName=(p.PaymentMethodRef&&p.PaymentMethodRef.name)||'';
     return methodName.toLowerCase().indexOf('check')>=0;
@@ -4124,8 +4125,24 @@ async function runChecksReport(){
   renderDepositedChecksSection();
   if(statusEl){
     var depositedCount=payments.filter(function(p){ return _checksDeposited[p.Id]; }).length;
-    statusEl.textContent=payments.length+' check(s) found (since '+esc(from)+')'+(depositedCount?', '+depositedCount+' already marked deposited':'');
-    statusEl.style.color='';
+    if(!payments.length && allPaymentsInWindow.length){
+      // Nothing matched "check" specifically, but there WAS other payment
+      // data in this window — show what payment method names actually
+      // showed up, since QuickBooks may label it differently than
+      // expected (or leave it blank), rather than just reporting zero
+      // with no way to tell why.
+      var methodCounts={};
+      allPaymentsInWindow.forEach(function(p){
+        var m=(p.PaymentMethodRef&&p.PaymentMethodRef.name)||'(no payment method set)';
+        methodCounts[m]=(methodCounts[m]||0)+1;
+      });
+      var methodSummary=Object.keys(methodCounts).map(function(m){ return m+' ('+methodCounts[m]+')'; }).join(', ');
+      statusEl.textContent='0 checks found, but '+allPaymentsInWindow.length+' other payment(s) exist since '+esc(from)+'. Payment methods actually seen: '+esc(methodSummary)+'. If checks are labeled differently than "Check" in QuickBooks, tell me the exact name and I\'ll match on that instead.';
+      statusEl.style.color='#b8460b';
+    } else {
+      statusEl.textContent=payments.length+' check(s) found (since '+esc(from)+')'+(depositedCount?', '+depositedCount+' already marked deposited':'');
+      statusEl.style.color='';
+    }
   }
 }
 window.runChecksReport=runChecksReport;

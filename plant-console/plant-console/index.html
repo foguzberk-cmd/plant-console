@@ -3004,15 +3004,20 @@ function _cfSaveScheduled(billId){
   }
 }
 
-// How much of a bill's balance is already scheduled (sum of all its
-// splits' amounts, across possibly-partial schedules).
+// How much of a bill's balance is still ACTIVELY committed (Scheduled,
+// Approved, or In Process) — deliberately excludes Paid splits, since a
+// paid amount is already reflected in QuickBooks's current balance. Once
+// something moves to Paid, subtracting its face amount again here would
+// double-count it, making a bill look "over-scheduled" (a negative
+// remainder) and vanish from the main list even though real, uncommitted
+// balance is still sitting on it.
 function _cfScheduledAmountFor(billId){
   var rec=_cfScheduledDates[billId];
   if(!rec||!rec.splits) return 0;
-  return rec.splits.reduce(function(s,sp){ return s+Number(sp.amount||0); },0);
+  return rec.splits.reduce(function(s,sp){ return sp.paid?s:s+Number(sp.amount||0); },0);
 }
-// What's left of a bill's balance that ISN'T scheduled yet — this is what
-// still shows in the main vendor table.
+// What's left of a bill's balance that ISN'T actively committed yet — this
+// is what still shows in the main vendor table.
 function _cfRemainingFor(bill){
   return Math.round((Number(bill.Balance||0)-_cfScheduledAmountFor(bill.Id))*100)/100;
 }

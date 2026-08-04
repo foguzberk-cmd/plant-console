@@ -1814,18 +1814,27 @@ async function qbSyncVendorsCore(){
     if(rows.length<pageSize) break;
     startPos+=pageSize;
   }
+  var withCustomFieldCount=0;
   allVendors.forEach(function(qv){
     var existing=vendors.findIndex(function(x){return x.qbId===qv.Id});
+    var purchRep='';
+    (qv.CustomField||[]).forEach(function(f){
+      if(!purchRep && f.Name && (f.Name.toLowerCase().indexOf('purch')>=0||f.Name.toLowerCase().indexOf('rep')>=0) && f.StringValue){
+        purchRep=f.StringValue.trim();
+      }
+    });
+    if(purchRep) withCustomFieldCount++;
     var mapped={
       id: existing>=0 ? vendors[existing].id : 'vend_'+Date.now()+'_'+Math.random().toString(36).slice(2),
       qbId: qv.Id,
       name: qv.DisplayName||qv.CompanyName||'',
-      active: qv.Active!==false
+      active: qv.Active!==false,
+      purchRep: purchRep
     };
     if(existing>=0){ vendors[existing]=mapped; } else { vendors.push(mapped); }
   });
   saveVendors();
-  return {ok:true, count:allVendors.length};
+  return {ok:true, count:allVendors.length, withCustomFieldCount:withCustomFieldCount};
 }
 function saveVendors(){ localStorage.setItem('pc_vendors',JSON.stringify(vendors)); }
 
@@ -6874,7 +6883,13 @@ async function qbSyncVendors(){
     if(status) status.textContent='Sync failed: '+(result.needsReconnect?'QuickBooks connection expired — reconnect from the Items tab.':result.error);
     return;
   }
-  if(status) status.textContent=result.count+' vendor'+(result.count!==1?'s':'')+' synced.';
+  if(status){
+    status.textContent=result.count+' vendor'+(result.count!==1?'s':'')+' synced. '
+      +(result.withCustomFieldCount>0
+        ? result.withCustomFieldCount+' of '+result.count+' had a "Purch Rep"-like custom field come through from QuickBooks — that data is captured now, ask me to build a Purch Rep feature if you want it surfaced somewhere.'
+        : 'Purch Rep custom field data did NOT come through for any vendor (0 of '+result.count+') — same limitation as Sales Rep on the customer side. QuickBooks\'s per-record custom fields aren\'t accessible via this API, so this would need to be entered manually here too, same as Sales Rep and vendor departments.');
+    status.style.color=result.withCustomFieldCount>0?'#0f6e40':'#b8460b';
+  }
   renderVendorsPanel();
 }
 window.qbSyncVendors=qbSyncVendors;

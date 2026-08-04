@@ -3549,6 +3549,13 @@ function buildCashFlowTableShell(){
   renderInProcessPaymentsSection();
   renderApprovedPaymentsSection();
   renderScheduledPaymentsSection(); // shows locally-pinned payments right away — no "Pull from QuickBooks" needed for these, since they're a locked local snapshot, not live data
+  // The shell just got rebuilt from scratch (this happens every time you
+  // navigate away from Reports and back, since that rebuilds the whole
+  // section's HTML) — but the actual pulled bill data is still sitting in
+  // memory from your last "Pull from QuickBooks" this session. Without
+  // this, the table would show "No data yet" every time you switch tabs,
+  // even though nothing was actually lost — just not redisplayed.
+  if(_cashFlowBills) renderCashFlowReport();
 }
 function _initCashFlowColumnResize(){
   var handles=document.querySelectorAll('#cf-table .cf-resize-handle');
@@ -6942,6 +6949,16 @@ function renderVendorsPanel(){
         <input type="file" id="vend-csv-file" accept=".csv" style="display:none" onchange="importVendorDepartmentCSV(this.files[0]); this.value='';"/>
       </div>
       <div id="vend-csv-status" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>
+    </div>
+    <div style="margin-top:16px;border:1px dashed var(--line);border-radius:12px;padding:14px">
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Purch Rep — bulk edit via CSV</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Purch Rep isn't available from QuickBooks, so it's set here in Plant Console. To fill it in for many vendors at once: export the CSV, edit the "Purch Rep" column in Excel, then import it back — matches are made by vendor name.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-sm" onclick="exportVendorPurchRepCSV()">Export CSV</button>
+        <button class="btn btn-sm" onclick="document.getElementById('vend-purchrep-csv-file').click()">Import CSV</button>
+        <input type="file" id="vend-purchrep-csv-file" accept=".csv" style="display:none" onchange="importVendorPurchRepCSV(this.files[0]); this.value='';"/>
+      </div>
+      <div id="vend-purchrep-csv-status" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>
     </div>`;
   renderVendorsList();
 }
@@ -7118,6 +7135,80 @@ async function importVendorDepartmentCSV(file){
   if(statusEl){ statusEl.textContent=msg; statusEl.style.color=(unmatched.length||badDept.length)?'#b8460b':''; }
 }
 window.importVendorDepartmentCSV=importVendorDepartmentCSV;
+
+function exportVendorPurchRepCSV(){
+  function csvField(v){
+    v=String(v==null?'':v);
+    if(/[",\n]/.test(v)) return '"'+v.replace(/"/g,'""')+'"';
+    return v;
+  }
+  var rows=[['Vendor Name','Purch Rep']];
+  vendors.slice().sort(function(a,b){return (a.name||'').localeCompare(b.name||'');})
+    .forEach(function(v){ rows.push([v.name||'', v.purchRep||'']); });
+  var csv=rows.map(function(r){ return r.map(csvField).join(','); }).join('\r\n');
+  var blob=new Blob([csv],{type:'text/csv'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url; a.download='vendor-purch-rep-'+new Date().toISOString().slice(0,10)+'.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); },1000);
+}
+window.exportVendorPurchRepCSV=exportVendorPurchRepCSV;
+
+async function importVendorPurchRepCSV(file){
+  var statusEl=document.getElementById('vend-purchrep-csv-status');
+  if(!file) return;
+  if(statusEl){ statusEl.textContent='Reading file…'; statusEl.style.color=''; }
+  var text;
+  try{ text=await file.text(); }
+  catch(e){ if(statusEl){ statusEl.textContent='Could not read file.'; statusEl.style.color='#c0392b'; } return; }
+
+  function csvParse(t){
+    var rows=[]; var row=[]; var field=''; var inQuotes=false;
+    for(var i=0;i<t.length;i++){
+      var ch=t[i];
+      if(inQuotes){
+        if(ch==='"'){ if(t[i+1]==='"'){ field+='"'; i++; } else { inQuotes=false; } }
+        else field+=ch;
+      } else {
+        if(ch==='"') inQuotes=true;
+        else if(ch===','){ row.push(field); field=''; }
+        else if(ch==='\n'){ row.push(field); rows.push(row); row=[]; field=''; }
+        else if(ch==='\r'){ /* skip */ }
+        else field+=ch;
+      }
+    }
+    if(field.length||row.length){ row.push(field); rows.push(row); }
+    return rows;
+  }
+  var rows=csvParse(text).filter(function(r){ return r.length && r.some(function(f){return f.trim()!=='';}); });
+  if(!rows.length){ if(statusEl){ statusEl.textContent='File is empty.'; statusEl.style.color='#c0392b'; } return; }
+  var header=rows[0].map(function(h){return (h||'').trim().toLowerCase();});
+  var nameCol=header.indexOf('vendor name');
+  var repCol=header.indexOf('purch rep');
+  if(nameCol<0||repCol<0){
+    if(statusEl){ statusEl.textContent='Expected columns "Vendor Name" and "Purch Rep" — check the header row.'; statusEl.style.color='#c0392b'; }
+    return;
+  }
+  var byName={};
+  vendors.forEach(function(v){ byName[(v.name||'').trim().toLowerCase()]=v; });
+  var updated=0, unmatched=[];
+  for(var i=1;i<rows.length;i++){
+    var r=rows[i];
+    var name=(r[nameCol]||'').trim();
+    var rep=(r[repCol]||'').trim();
+    if(!name) continue;
+    var v=byName[name.toLowerCase()];
+    if(v){ v.purchRep=rep; updated++; }
+    else unmatched.push(name);
+  }
+  saveVendors();
+  renderVendorsList();
+  var msg=updated+' vendor(s) updated.';
+  if(unmatched.length) msg+=' '+unmatched.length+' name(s) in the file didn\'t match any synced vendor'+(unmatched.length<=5?' ('+unmatched.slice(0,5).join(', ')+')':'')+'.';
+  if(statusEl){ statusEl.textContent=msg; statusEl.style.color=unmatched.length?'#b8860b':''; }
+}
+window.importVendorPurchRepCSV=importVendorPurchRepCSV;
 
 var _ltPanelDept=''; // which department's template is currently being edited
 function renderLabelTemplatesPanel(){

@@ -1082,10 +1082,10 @@ function rerenderCurrentSection(){
     // shows up here too — a full renderReports() would reset the date
     // pickers and active sub-tab, so this stays targeted like the two
     // above.
+    try{ renderPaidPaymentsSection(); }catch(e){}
     try{ renderInProcessPaymentsSection(); }catch(e){}
     try{ renderApprovedPaymentsSection(); }catch(e){}
     try{ renderScheduledPaymentsSection(); }catch(e){}
-    try{ renderPaidPaymentsSection(); }catch(e){}
   }
 }
 async function pullFromServer(){
@@ -2329,10 +2329,10 @@ function renderReports(){
         +'<button class="btn btn-primary" onclick="runCashFlowReport()">Pull from QuickBooks</button>'
       +'</div>'
       +'<div id="cf-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
+      +'<div id="cf-paid-section" style="margin-bottom:24px"></div>'
       +'<div id="cf-inprocess-section" style="margin-bottom:24px"></div>'
       +'<div id="cf-approved-section" style="margin-bottom:24px"></div>'
       +'<div id="cf-scheduled-section" style="margin-bottom:24px"></div>'
-      +'<div id="cf-paid-section" style="margin-bottom:24px"></div>'
       +'<div id="cf-body"></div>'
     +'</div>';
   buildBalanceReport();
@@ -3403,10 +3403,10 @@ function buildCashFlowTableShell(){
   +'</table>';
   bodyEl.innerHTML=html;
   _initCashFlowColumnResize();
+  renderPaidPaymentsSection();
   renderInProcessPaymentsSection();
   renderApprovedPaymentsSection();
   renderScheduledPaymentsSection(); // shows locally-pinned payments right away — no "Pull from QuickBooks" needed for these, since they're a locked local snapshot, not live data
-  renderPaidPaymentsSection();
 }
 function _initCashFlowColumnResize(){
   var handles=document.querySelectorAll('#cf-table .cf-resize-handle');
@@ -3861,10 +3861,10 @@ function _renderCashFlowReportInner(){
   }
   var allBills=_cashFlowBills||[];
 
+  renderPaidPaymentsSection();
   renderInProcessPaymentsSection();
   renderApprovedPaymentsSection();
   renderScheduledPaymentsSection();
-  renderPaidPaymentsSection();
 
   // A bill only fully disappears from this list once its ENTIRE balance is
   // scheduled — a partially-scheduled bill still shows here, but for just

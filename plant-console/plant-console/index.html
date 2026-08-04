@@ -1082,8 +1082,8 @@ function rerenderCurrentSection(){
     // shows up here too — a full renderReports() would reset the date
     // pickers and active sub-tab, so this stays targeted like the two
     // above.
-    try{ renderApprovedPaymentsSection(); }catch(e){}
     try{ renderInProcessPaymentsSection(); }catch(e){}
+    try{ renderApprovedPaymentsSection(); }catch(e){}
     try{ renderScheduledPaymentsSection(); }catch(e){}
   }
 }
@@ -2328,8 +2328,8 @@ function renderReports(){
         +'<button class="btn btn-primary" onclick="runCashFlowReport()">Pull from QuickBooks</button>'
       +'</div>'
       +'<div id="cf-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
-      +'<div id="cf-approved-section" style="margin-bottom:24px"></div>'
       +'<div id="cf-inprocess-section" style="margin-bottom:24px"></div>'
+      +'<div id="cf-approved-section" style="margin-bottom:24px"></div>'
       +'<div id="cf-scheduled-section" style="margin-bottom:24px"></div>'
       +'<div id="cf-body"></div>'
     +'</div>';
@@ -3401,8 +3401,8 @@ function buildCashFlowTableShell(){
   +'</table>';
   bodyEl.innerHTML=html;
   _initCashFlowColumnResize();
-  renderApprovedPaymentsSection();
   renderInProcessPaymentsSection();
+  renderApprovedPaymentsSection();
   renderScheduledPaymentsSection(); // shows locally-pinned payments right away — no "Pull from QuickBooks" needed for these, since they're a locked local snapshot, not live data
 }
 function _initCashFlowColumnResize(){
@@ -3793,8 +3793,8 @@ function _renderCashFlowReportInner(){
   }
   var allBills=_cashFlowBills||[];
 
-  renderApprovedPaymentsSection();
   renderInProcessPaymentsSection();
+  renderApprovedPaymentsSection();
   renderScheduledPaymentsSection();
 
   // A bill only fully disappears from this list once its ENTIRE balance is

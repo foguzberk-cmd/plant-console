@@ -3725,6 +3725,26 @@ function renderInProcessPaymentsSection(){
   var dateKeys=Object.keys(byDate).sort();
   if(!dateKeys.length){ el.innerHTML=''; return; }
 
+  // Group dates into weeks (Monday–Sunday), same as Scheduled Payments.
+  function mondayOf(dateStr){
+    var d=new Date(dateStr+'T00:00:00');
+    var day=d.getDay();
+    var diff=(day===0?-6:1-day);
+    d.setDate(d.getDate()+diff);
+    return d.toISOString().slice(0,10);
+  }
+  function fmtShort(dateStr){
+    var d=new Date(dateStr+'T00:00:00');
+    return d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  }
+  var byWeek={};
+  dateKeys.forEach(function(dateKey){
+    var wk=mondayOf(dateKey);
+    if(!byWeek[wk]) byWeek[wk]=[];
+    byWeek[wk].push(dateKey);
+  });
+  var weekKeys=Object.keys(byWeek).sort();
+
   var grandTotal=0;
   var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">🔄 In Process — payment sent, awaiting confirmation</div>'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#eef4fb;color:#000;border:1px solid #a9c6e8">'
@@ -3739,28 +3759,40 @@ function renderInProcessPaymentsSection(){
       +'<th style="border:1px solid #a9c6e8;background:#d7e6f7;padding:6px 10px"></th>'
     +'</tr></thead><tbody>';
 
-  dateKeys.forEach(function(dateKey){
-    byDate[dateKey].forEach(function(row){
-      var billId=row.billId, split=row.split;
-      var vName=row.vendor||'No vendor on file';
-      var bal=Number(split.amount||0);
-      grandTotal+=bal;
-      var whenStr=split.inProcess.at?new Date(split.inProcess.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
-      var methodLabel=split.inProcess.method==='wire'?'🏦 Wire':'📝 Check';
-      html+='<tr>'
-        +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(dateKey)
-          +(split.edited?' <span title="Edited by '+esc(split.edited.by)+(split.edited.at?' — '+esc(new Date(split.edited.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})):'')+'" style="font-size:11px;color:#8a6d1a;font-style:italic;cursor:help">(edited)</span>':'')
-        +'</td>'
-        +'<td style="border:1px solid #a9c6e8;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
-        +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(row.docNum||'')+'</td>'
-        +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(row.due||'—')+'</td>'
-        +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+methodLabel+'</td>'
-        +'<td style="border:1px solid #a9c6e8;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
-        +'<td style="border:1px solid #a9c6e8;padding:5px 10px;text-align:right">'
-          +'<span title="Initiated by '+esc(split.inProcess.by)+(whenStr?' — '+esc(whenStr):'')+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#90caf9;border:1px solid #1565c0;border-radius:2px;font-size:9px;margin-right:4px;cursor:help">🔄</span>'
-          +'<button onclick="showCFRowMenu(this,\'inprocess\',\''+esc(billId)+'\',\''+esc(split.id)+'\')" class="btn btn-sm cf-menu-trigger" style="padding:2px 7px;font-size:13px;line-height:1">⋮</button>'
-        +'</td>'
-      +'</tr>';
+  weekKeys.forEach(function(weekMonday){
+    var weekSunday=new Date(weekMonday+'T00:00:00'); weekSunday.setDate(weekSunday.getDate()+6);
+    var weekLabel='Week of '+fmtShort(weekMonday)+' – '+fmtShort(weekSunday.toISOString().slice(0,10));
+    var weekTotal=0;
+    byWeek[weekMonday].forEach(function(dk){ byDate[dk].forEach(function(row){ weekTotal+=Number(row.split.amount||0); }); });
+    grandTotal+=weekTotal;
+    html+='<tr>'
+      +'<td colspan="5" style="border:1px solid #1565c0;padding:7px 10px;font-weight:700;background:#bbdefb">'+esc(weekLabel)+'</td>'
+      +'<td style="border:1px solid #1565c0;padding:7px 10px;text-align:right;font-weight:700;background:#bbdefb;font-family:var(--mono)">'+money(weekTotal)+'</td>'
+      +'<td style="border:1px solid #1565c0;background:#bbdefb"></td>'
+    +'</tr>';
+
+    byWeek[weekMonday].forEach(function(dateKey){
+      byDate[dateKey].forEach(function(row){
+        var billId=row.billId, split=row.split;
+        var vName=row.vendor||'No vendor on file';
+        var bal=Number(split.amount||0);
+        var whenStr=split.inProcess.at?new Date(split.inProcess.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
+        var methodLabel=split.inProcess.method==='wire'?'🏦 Wire':'📝 Check';
+        html+='<tr>'
+          +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(dateKey)
+            +(split.edited?' <span title="Edited by '+esc(split.edited.by)+(split.edited.at?' — '+esc(new Date(split.edited.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})):'')+'" style="font-size:11px;color:#8a6d1a;font-style:italic;cursor:help">(edited)</span>':'')
+          +'</td>'
+          +'<td style="border:1px solid #a9c6e8;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
+          +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(row.docNum||'')+'</td>'
+          +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(row.due||'—')+'</td>'
+          +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+methodLabel+'</td>'
+          +'<td style="border:1px solid #a9c6e8;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
+          +'<td style="border:1px solid #a9c6e8;padding:5px 10px;text-align:right">'
+            +'<span title="Initiated by '+esc(split.inProcess.by)+(whenStr?' — '+esc(whenStr):'')+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#90caf9;border:1px solid #1565c0;border-radius:2px;font-size:9px;margin-right:4px;cursor:help">🔄</span>'
+            +'<button onclick="showCFRowMenu(this,\'inprocess\',\''+esc(billId)+'\',\''+esc(split.id)+'\')" class="btn btn-sm cf-menu-trigger" style="padding:2px 7px;font-size:13px;line-height:1">⋮</button>'
+          +'</td>'
+        +'</tr>';
+      });
     });
   });
 

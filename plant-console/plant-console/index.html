@@ -3678,7 +3678,9 @@ function renderApprovedPaymentsSection(){
       grandTotal+=bal;
       var whenStr=split.initiated.at?new Date(split.initiated.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
       html+='<tr>'
-        +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(dateKey)+'</td>'
+        +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(dateKey)
+          +(split.edited?' <span title="Edited by '+esc(split.edited.by)+(split.edited.at?' — '+esc(new Date(split.edited.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})):'')+'" style="font-size:11px;color:#8a6d1a;font-style:italic;cursor:help">(edited)</span>':'')
+        +'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.docNum||'')+'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.due||'—')+'</td>'
@@ -3746,7 +3748,9 @@ function renderInProcessPaymentsSection(){
       var whenStr=split.inProcess.at?new Date(split.inProcess.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
       var methodLabel=split.inProcess.method==='wire'?'🏦 Wire':'📝 Check';
       html+='<tr>'
-        +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(dateKey)+'</td>'
+        +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(dateKey)
+          +(split.edited?' <span title="Edited by '+esc(split.edited.by)+(split.edited.at?' — '+esc(new Date(split.edited.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})):'')+'" style="font-size:11px;color:#8a6d1a;font-style:italic;cursor:help">(edited)</span>':'')
+        +'</td>'
         +'<td style="border:1px solid #a9c6e8;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
         +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(row.docNum||'')+'</td>'
         +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(row.due||'—')+'</td>'

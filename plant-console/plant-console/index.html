@@ -3683,11 +3683,12 @@ function renderScheduledPaymentsSection(){
 
   weekKeys.forEach(function(weekMonday){
     var weekSunday=new Date(weekMonday+'T00:00:00'); weekSunday.setDate(weekSunday.getDate()+6);
-    var weekLabel='Week of '+fmtShort(weekMonday)+' – '+fmtShort(weekSunday.toISOString().slice(0,10));
+    var weekCount=0;
     var weekTotal=0;
     byWeek[weekMonday].dateKeys.forEach(function(dk){
-      byDate[dk].forEach(function(row){ weekTotal+=Number(row.split.amount||0); });
+      byDate[dk].forEach(function(row){ weekTotal+=Number(row.split.amount||0); weekCount++; });
     });
+    var weekLabel='Week of '+fmtShort(weekMonday)+' – '+fmtShort(weekSunday.toISOString().slice(0,10))+' ('+weekCount+')';
     grandTotal+=weekTotal;
     var weekKey='cfScheduled_'+weekMonday;
     var rowClass='wk-cfScheduled-'+weekMonday;
@@ -3881,9 +3882,10 @@ function renderInProcessPaymentsSection(){
 
   weekKeys.forEach(function(weekMonday){
     var weekSunday=new Date(weekMonday+'T00:00:00'); weekSunday.setDate(weekSunday.getDate()+6);
-    var weekLabel='Week of '+fmtShort(weekMonday)+' – '+fmtShort(weekSunday.toISOString().slice(0,10));
+    var weekCount=0;
     var weekTotal=0;
-    byWeek[weekMonday].forEach(function(dk){ byDate[dk].forEach(function(row){ weekTotal+=Number(row.split.amount||0); }); });
+    byWeek[weekMonday].forEach(function(dk){ byDate[dk].forEach(function(row){ weekTotal+=Number(row.split.amount||0); weekCount++; }); });
+    var weekLabel='Week of '+fmtShort(weekMonday)+' – '+fmtShort(weekSunday.toISOString().slice(0,10))+' ('+weekCount+')';
     grandTotal+=weekTotal;
     var weekKey='cfInProcess_'+weekMonday;
     var rowClass='wk-cfInProcess-'+weekMonday;
@@ -4479,9 +4481,10 @@ function renderChecksInHandSection(){
 
   weekKeys.forEach(function(weekMonday){
     var weekSunday=new Date(weekMonday+'T00:00:00'); weekSunday.setDate(weekSunday.getDate()+6);
-    var weekLabel='Week of '+_checksFmtShort(weekMonday)+' – '+_checksFmtShort(weekSunday.toISOString().slice(0,10));
+    var weekCount=0;
     var weekTotal=0;
-    byWeek[weekMonday].forEach(function(d){ byDate[d].forEach(function(p){ weekTotal+=Number(p.TotalAmt||0); }); });
+    byWeek[weekMonday].forEach(function(d){ byDate[d].forEach(function(p){ weekTotal+=Number(p.TotalAmt||0); weekCount++; }); });
+    var weekLabel='Week of '+_checksFmtShort(weekMonday)+' – '+_checksFmtShort(weekSunday.toISOString().slice(0,10))+' ('+weekCount+')';
     grandTotal+=weekTotal;
     var weekKey='chkInHand_'+weekMonday;
     var rowClass='wk-chkInHand-'+weekMonday;

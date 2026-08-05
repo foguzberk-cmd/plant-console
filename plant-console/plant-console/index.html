@@ -3689,8 +3689,14 @@ function renderScheduledPaymentsSection(){
       byDate[dk].forEach(function(row){ weekTotal+=Number(row.split.amount||0); });
     });
     grandTotal+=weekTotal;
-    html+='<tr>'
-      +'<td colspan="4" style="border:1px solid #c9a227;padding:7px 10px;font-weight:700;background:#ffe082">'+esc(weekLabel)+'</td>'
+    var weekKey='cfScheduled_'+weekMonday;
+    var rowClass='wk-cfScheduled-'+weekMonday;
+    var weekIsCollapsed=!!_weekCollapsed[weekKey];
+    html+='<tr onclick="toggleCFWeekGroup(\''+weekKey+'\',\''+rowClass+'\')" style="cursor:pointer">'
+      +'<td colspan="4" style="border:1px solid #c9a227;padding:7px 10px;font-weight:700;background:#ffe082">'
+        +'<span id="wk-chev-'+rowClass+'" style="display:inline-block;transition:transform .12s;margin-right:6px;transform:rotate('+(weekIsCollapsed?'-90deg':'0deg')+')">▾</span>'
+        +esc(weekLabel)
+      +'</td>'
       +'<td style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe082;font-family:var(--mono)">'+money(weekTotal)+'</td>'
       +'<td style="border:1px solid #c9a227;background:#ffe082"></td>'
     +'</tr>';
@@ -3703,7 +3709,7 @@ function renderScheduledPaymentsSection(){
         var bal=Number(split.amount||0);
         var whenStr=split.at?new Date(split.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
         var pinTitle='Scheduled by '+esc(split.by)+(whenStr?' — '+esc(whenStr):'');
-        html+='<tr>'
+        html+='<tr class="'+rowClass+'" style="display:'+(weekIsCollapsed?'none':'table-row')+'">'
           +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #e0c56b;padding:5px 10px;font-weight:400">'+esc(dateKey)
             +(split.edited?' <span title="Edited by '+esc(split.edited.by)+(split.edited.at?' — '+esc(new Date(split.edited.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})):'')+'" style="font-size:11px;color:#8a6d1a;font-style:italic;cursor:help">(edited)</span>':'')
           +'</td>'
@@ -3713,7 +3719,7 @@ function renderScheduledPaymentsSection(){
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right">'
             +'<span title="'+pinTitle+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#ffd54f;border:1px solid #c9a227;border-radius:2px;font-size:9px;margin-right:4px;cursor:help;transform:rotate(-4deg)">📌</span>'
-            +'<button onclick="showCFRowMenu(this,\'scheduled\',\''+esc(billId)+'\',\''+esc(split.id)+'\')" class="btn btn-sm cf-menu-trigger" style="padding:2px 7px;font-size:13px;line-height:1">⋮</button>'
+            +'<button onclick="event.stopPropagation();showCFRowMenu(this,\'scheduled\',\''+esc(billId)+'\',\''+esc(split.id)+'\')" class="btn btn-sm cf-menu-trigger" style="padding:2px 7px;font-size:13px;line-height:1">⋮</button>'
           +'</td>'
         +'</tr>';
       });
@@ -3879,8 +3885,14 @@ function renderInProcessPaymentsSection(){
     var weekTotal=0;
     byWeek[weekMonday].forEach(function(dk){ byDate[dk].forEach(function(row){ weekTotal+=Number(row.split.amount||0); }); });
     grandTotal+=weekTotal;
-    html+='<tr>'
-      +'<td colspan="5" style="border:1px solid #1565c0;padding:7px 10px;font-weight:700;background:#bbdefb">'+esc(weekLabel)+'</td>'
+    var weekKey='cfInProcess_'+weekMonday;
+    var rowClass='wk-cfInProcess-'+weekMonday;
+    var weekIsCollapsed=!!_weekCollapsed[weekKey];
+    html+='<tr onclick="toggleCFWeekGroup(\''+weekKey+'\',\''+rowClass+'\')" style="cursor:pointer">'
+      +'<td colspan="5" style="border:1px solid #1565c0;padding:7px 10px;font-weight:700;background:#bbdefb">'
+        +'<span id="wk-chev-'+rowClass+'" style="display:inline-block;transition:transform .12s;margin-right:6px;transform:rotate('+(weekIsCollapsed?'-90deg':'0deg')+')">▾</span>'
+        +esc(weekLabel)
+      +'</td>'
       +'<td style="border:1px solid #1565c0;padding:7px 10px;text-align:right;font-weight:700;background:#bbdefb;font-family:var(--mono)">'+money(weekTotal)+'</td>'
       +'<td style="border:1px solid #1565c0;background:#bbdefb"></td>'
     +'</tr>';
@@ -3892,7 +3904,7 @@ function renderInProcessPaymentsSection(){
         var bal=Number(split.amount||0);
         var whenStr=split.inProcess.at?new Date(split.inProcess.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
         var methodLabel=split.inProcess.method==='wire'?'🏦 Wire':'📝 Check';
-        html+='<tr>'
+        html+='<tr class="'+rowClass+'" style="display:'+(weekIsCollapsed?'none':'table-row')+'">'
           +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(dateKey)
             +(split.edited?' <span title="Edited by '+esc(split.edited.by)+(split.edited.at?' — '+esc(new Date(split.edited.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})):'')+'" style="font-size:11px;color:#8a6d1a;font-style:italic;cursor:help">(edited)</span>':'')
           +'</td>'
@@ -3903,7 +3915,7 @@ function renderInProcessPaymentsSection(){
           +'<td style="border:1px solid #a9c6e8;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
           +'<td style="border:1px solid #a9c6e8;padding:5px 10px;text-align:right">'
             +'<span title="Initiated by '+esc(split.inProcess.by)+(whenStr?' — '+esc(whenStr):'')+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#90caf9;border:1px solid #1565c0;border-radius:2px;font-size:9px;margin-right:4px;cursor:help">🔄</span>'
-            +'<button onclick="showCFRowMenu(this,\'inprocess\',\''+esc(billId)+'\',\''+esc(split.id)+'\')" class="btn btn-sm cf-menu-trigger" style="padding:2px 7px;font-size:13px;line-height:1">⋮</button>'
+            +'<button onclick="event.stopPropagation();showCFRowMenu(this,\'inprocess\',\''+esc(billId)+'\',\''+esc(split.id)+'\')" class="btn btn-sm cf-menu-trigger" style="padding:2px 7px;font-size:13px;line-height:1">⋮</button>'
           +'</td>'
         +'</tr>';
       });
@@ -4301,6 +4313,22 @@ function toggleCFVendorGroup(vi){
 window.toggleCFVendorGroup=toggleCFVendorGroup;
 window.buildCashFlowTableShell=buildCashFlowTableShell;
 
+// Per-week collapse (Scheduled Payments, In Process, Checks In Hand all
+// group their rows by week) — separate from the whole-section collapse
+// above, so a specific week can be rolled up to save space while leaving
+// the rest of the section visible. Persisted the same way, keyed by
+// section + that week's Monday date so it stays stable across re-renders.
+var _weekCollapsed=(function(){ try{ return JSON.parse(localStorage.getItem('pc_week_collapsed')||'{}'); }catch(e){ return {}; } })();
+function toggleCFWeekGroup(weekKey,rowClass){
+  _weekCollapsed[weekKey]=!_weekCollapsed[weekKey];
+  localStorage.setItem('pc_week_collapsed',JSON.stringify(_weekCollapsed));
+  var collapsed=!!_weekCollapsed[weekKey];
+  document.querySelectorAll('.'+rowClass).forEach(function(r){ r.style.display=collapsed?'none':'table-row'; });
+  var chev=document.getElementById('wk-chev-'+rowClass);
+  if(chev) chev.style.transform=collapsed?'rotate(-90deg)':'rotate(0deg)';
+}
+window.toggleCFWeekGroup=toggleCFWeekGroup;
+
 // ===== Checks — customer payments received by check, tracked through
 // "in hand" (received, not yet deposited) vs "deposited" (gone to the
 // bank). Deposited status is local-only for now (like Scheduled Payments
@@ -4455,8 +4483,14 @@ function renderChecksInHandSection(){
     var weekTotal=0;
     byWeek[weekMonday].forEach(function(d){ byDate[d].forEach(function(p){ weekTotal+=Number(p.TotalAmt||0); }); });
     grandTotal+=weekTotal;
-    html+='<tr>'
-      +'<td colspan="3" style="border:1px solid #c9a227;padding:7px 10px;font-weight:700;background:#ffe082">'+esc(weekLabel)+'</td>'
+    var weekKey='chkInHand_'+weekMonday;
+    var rowClass='wk-chkInHand-'+weekMonday;
+    var weekIsCollapsed=!!_weekCollapsed[weekKey];
+    html+='<tr onclick="toggleCFWeekGroup(\''+weekKey+'\',\''+rowClass+'\')" style="cursor:pointer">'
+      +'<td colspan="3" style="border:1px solid #c9a227;padding:7px 10px;font-weight:700;background:#ffe082">'
+        +'<span id="wk-chev-'+rowClass+'" style="display:inline-block;transition:transform .12s;margin-right:6px;transform:rotate('+(weekIsCollapsed?'-90deg':'0deg')+')">▾</span>'
+        +esc(weekLabel)
+      +'</td>'
       +'<td style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe082;font-family:var(--mono)">'+_checksMoneyFmt(weekTotal)+'</td>'
       +'<td style="border:1px solid #c9a227;background:#ffe082"></td>'
     +'</tr>';
@@ -4464,13 +4498,13 @@ function renderChecksInHandSection(){
       byDate[d].forEach(function(p){
         var custName=(p.CustomerRef&&p.CustomerRef.name)||'No customer on file';
         var amt=Number(p.TotalAmt||0);
-        html+='<tr>'
+        html+='<tr class="'+rowClass+'" style="display:'+(weekIsCollapsed?'none':'table-row')+'">'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(d)+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(custName)+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(p.PaymentRefNum||'')+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-family:var(--mono)">'+_checksMoneyFmt(amt)+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:center">'
-            +'<button onclick="markCheckDeposited(\''+esc(p.Id)+'\')" class="btn btn-sm" style="padding:2px 8px;font-size:11px">Mark deposited</button>'
+            +'<button onclick="event.stopPropagation();markCheckDeposited(\''+esc(p.Id)+'\')" class="btn btn-sm" style="padding:2px 8px;font-size:11px">Mark deposited</button>'
           +'</td>'
         +'</tr>';
       });

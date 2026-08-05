@@ -3478,6 +3478,36 @@ document.addEventListener('click',function(e){
 
 // Swaps one split's date cell into an inline, editable date input — the
 // only thing Edit is allowed to change.
+// Shared collapse/expand state for the header sections (Scheduled,
+// Approved, In Process, Paid on Cash Flow; Deposited, Paid on Checks) —
+// persisted so a section stays collapsed/expanded across re-renders
+// (which happen often, e.g. every background sync tick) and across visits.
+var _sectionCollapsed=(function(){ try{ return JSON.parse(localStorage.getItem('pc_section_collapsed')||'{}'); }catch(e){ return {}; } })();
+function toggleSectionCollapse(key){
+  _sectionCollapsed[key]=!_sectionCollapsed[key];
+  localStorage.setItem('pc_section_collapsed',JSON.stringify(_sectionCollapsed));
+  var fns={
+    cfScheduled: function(){ if(typeof renderScheduledPaymentsSection==='function') renderScheduledPaymentsSection(); },
+    cfApproved: function(){ if(typeof renderApprovedPaymentsSection==='function') renderApprovedPaymentsSection(); },
+    cfInProcess: function(){ if(typeof renderInProcessPaymentsSection==='function') renderInProcessPaymentsSection(); },
+    cfPaid: function(){ if(typeof renderPaidPaymentsSection==='function') renderPaidPaymentsSection(); },
+    chkDeposited: function(){ if(typeof renderDepositedChecksSection==='function') renderDepositedChecksSection(); },
+    chkPaid: function(){ if(typeof renderPaidChecksSection==='function') renderPaidChecksSection(); },
+    chkInHand: function(){ if(typeof renderChecksInHandSection==='function') renderChecksInHandSection(); }
+  };
+  if(fns[key]) fns[key]();
+}
+window.toggleSectionCollapse=toggleSectionCollapse;
+// Builds a clickable header line with a count and a collapse/expand
+// chevron, shared across all six sections above.
+function _collapsibleHeader(key,label,count){
+  var collapsed=!!_sectionCollapsed[key];
+  return '<div onclick="toggleSectionCollapse(\''+key+'\')" style="cursor:pointer;display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;user-select:none">'
+    +'<span style="display:inline-block;transition:transform .12s;transform:rotate('+(collapsed?'-90deg':'0deg')+')">▾</span>'
+    +label+' ('+count+')'
+  +'</div>';
+}
+
 var _cfEditingInProgress=false; // true while any Cash Flow date field is mid-edit — see rerenderCurrentSection's reports branch for why
 function editCFScheduledDate(billId,splitId){
   hideCFRowMenu(); // close the menu
@@ -3628,9 +3658,12 @@ function renderScheduledPaymentsSection(){
     byWeek[wk].dateKeys.push(dateKey);
   });
   var weekKeys=Object.keys(byWeek).sort();
+  var totalCount=dateKeys.reduce(function(s,dk){ return s+byDate[dk].length; },0);
+  var collapsed=!!_sectionCollapsed.cfScheduled;
 
   var grandTotal=0;
-  var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">📌 Scheduled Payments</div>'
+  var html=_collapsibleHeader('cfScheduled','📌 Scheduled Payments',totalCount)
+    +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#fffdf5;color:#000;border:1px solid #e0c56b">'
     +'<colgroup><col style="width:130px"><col style="width:220px"><col style="width:100px"><col style="width:140px"><col style="width:150px"><col style="width:44px"></colgroup>'
     +'<thead><tr>'
@@ -3643,7 +3676,7 @@ function renderScheduledPaymentsSection(){
     +'</tr></thead><tbody>';
 
   if(!dateKeys.length){
-    html+='<tr><td colspan="6" style="border:1px solid #e0c56b;padding:14px;text-align:center;color:#888">Nothing scheduled right now.</td></tr></tbody></table>';
+    html+='<tr><td colspan="6" style="border:1px solid #e0c56b;padding:14px;text-align:center;color:#888">Nothing scheduled right now.</td></tr></tbody></table></div>';
     el.innerHTML=html;
     return;
   }
@@ -3692,7 +3725,7 @@ function renderScheduledPaymentsSection(){
     +'<td style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe58a;font-family:var(--mono)">'+money(grandTotal)+'</td>'
     +'<td style="border:1px solid #c9a227;background:#ffe58a"></td>'
   +'</tr>';
-  html+='</tbody></table>';
+  html+='</tbody></table></div>';
   el.innerHTML=html;
 }
 
@@ -3719,9 +3752,12 @@ function renderApprovedPaymentsSection(){
   });
 
   var dateKeys=Object.keys(byDate).sort();
+  var totalCount=dateKeys.reduce(function(s,dk){ return s+byDate[dk].length; },0);
+  var collapsed=!!_sectionCollapsed.cfApproved;
 
   var grandTotal=0;
-  var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">✅ Approved Payments — ready to pay</div>'
+  var html=_collapsibleHeader('cfApproved','✅ Approved Payments — ready to pay',totalCount)
+    +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#f3fbf4;color:#000;border:1px solid #8fcf9a">'
     +'<colgroup><col style="width:130px"><col style="width:220px"><col style="width:100px"><col style="width:140px"><col style="width:150px"><col style="width:44px"></colgroup>'
     +'<thead><tr>'
@@ -3734,7 +3770,7 @@ function renderApprovedPaymentsSection(){
     +'</tr></thead><tbody>';
 
   if(!dateKeys.length){
-    html+='<tr><td colspan="6" style="border:1px solid #8fcf9a;padding:14px;text-align:center;color:#888">Nothing approved right now.</td></tr></tbody></table>';
+    html+='<tr><td colspan="6" style="border:1px solid #8fcf9a;padding:14px;text-align:center;color:#888">Nothing approved right now.</td></tr></tbody></table></div>';
     el.innerHTML=html;
     return;
   }
@@ -3768,7 +3804,8 @@ function renderApprovedPaymentsSection(){
     +'<td style="border:1px solid #388e3c;background:#c8e6c9"></td>'
   +'</tr>';
   html+='</tbody></table>'
-    +'<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">Cleared automatically once QuickBooks shows the bill is no longer open (i.e. paid) — checked every time you "Pull from QuickBooks." Only catches a bill being paid off entirely; a partial payment in QuickBooks that doesn\'t fully close the bill won\'t clear a specific approved installment on its own.</div>';
+    +'<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">Cleared automatically once QuickBooks shows the bill is no longer open (i.e. paid) — checked every time you "Pull from QuickBooks." Only catches a bill being paid off entirely; a partial payment in QuickBooks that doesn\'t fully close the bill won\'t clear a specific approved installment on its own.</div>'
+    +'</div>';
   el.innerHTML=html;
 }
 
@@ -3812,9 +3849,12 @@ function renderInProcessPaymentsSection(){
     byWeek[wk].push(dateKey);
   });
   var weekKeys=Object.keys(byWeek).sort();
+  var totalCount=dateKeys.reduce(function(s,dk){ return s+byDate[dk].length; },0);
+  var collapsed=!!_sectionCollapsed.cfInProcess;
 
   var grandTotal=0;
-  var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">🔄 In Process — payment sent, awaiting confirmation</div>'
+  var html=_collapsibleHeader('cfInProcess','🔄 In Process — payment sent, awaiting confirmation',totalCount)
+    +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#eef4fb;color:#000;border:1px solid #a9c6e8">'
     +'<colgroup><col style="width:130px"><col style="width:190px"><col style="width:90px"><col style="width:130px"><col style="width:90px"><col style="width:150px"><col style="width:44px"></colgroup>'
     +'<thead><tr>'
@@ -3828,7 +3868,7 @@ function renderInProcessPaymentsSection(){
     +'</tr></thead><tbody>';
 
   if(!dateKeys.length){
-    html+='<tr><td colspan="7" style="border:1px solid #a9c6e8;padding:14px;text-align:center;color:#888">Nothing in process right now.</td></tr></tbody></table>';
+    html+='<tr><td colspan="7" style="border:1px solid #a9c6e8;padding:14px;text-align:center;color:#888">Nothing in process right now.</td></tr></tbody></table></div>';
     el.innerHTML=html;
     return;
   }
@@ -3876,7 +3916,8 @@ function renderInProcessPaymentsSection(){
     +'<td style="border:1px solid #1565c0;background:#bbdefb"></td>'
   +'</tr>';
   html+='</tbody></table>'
-    +'<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">Cleared automatically once QuickBooks shows the bill is no longer open — checked every time you "Pull from QuickBooks."</div>';
+    +'<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">Cleared automatically once QuickBooks shows the bill is no longer open — checked every time you "Pull from QuickBooks."</div>'
+    +'</div>';
   el.innerHTML=html;
 }
 
@@ -3901,8 +3942,10 @@ function renderPaidPaymentsSection(){
     });
   });
   rows.sort(function(a,b){ return (b.split.paid.at||'')<(a.split.paid.at||'')?-1:1; }); // most recently confirmed paid first
+  var collapsed=!!_sectionCollapsed.cfPaid;
 
-  var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">💰 Paid — confirmed by QuickBooks, review and clear</div>'
+  var html=_collapsibleHeader('cfPaid','💰 Paid — confirmed by QuickBooks, review and clear',rows.length)
+    +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#f5f5f5;color:#000;border:1px solid #bbb">'
     +'<colgroup><col style="width:220px"><col style="width:100px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:60px"></colgroup>'
     +'<thead><tr>'
@@ -3915,7 +3958,7 @@ function renderPaidPaymentsSection(){
     +'</tr></thead><tbody>';
 
   if(!rows.length){
-    html+='<tr><td colspan="6" style="border:1px solid #bbb;padding:14px;text-align:center;color:#888">Nothing marked paid yet.</td></tr></tbody></table>';
+    html+='<tr><td colspan="6" style="border:1px solid #bbb;padding:14px;text-align:center;color:#888">Nothing marked paid yet.</td></tr></tbody></table></div>';
     el.innerHTML=html;
     return;
   }
@@ -3935,7 +3978,7 @@ function renderPaidPaymentsSection(){
       +'</td>'
     +'</tr>';
   });
-  html+='</tbody></table>';
+  html+='</tbody></table></div>';
   el.innerHTML=html;
 }
 function deleteCFPaidPayment(billId,splitId){
@@ -4372,7 +4415,7 @@ function renderChecksInHandSection(){
   if(!el) return;
   var payments=(_checksPayments||[]).filter(function(p){ return !_checksDeposited[p.Id]; });
   if(!payments.length){
-    el.innerHTML='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">📄 Checks In Hand</div>'
+    el.innerHTML=_collapsibleHeader('chkInHand','📄 Checks In Hand',0)
       +'<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px;background:var(--panel);border:1px solid var(--line);border-radius:14px">No checks yet — click "Pull from QuickBooks" above.</div>';
     return;
   }
@@ -4391,9 +4434,11 @@ function renderChecksInHandSection(){
     byWeek[wk].push(d);
   });
   var weekKeys=Object.keys(byWeek).sort();
+  var collapsed=!!_sectionCollapsed.chkInHand;
 
   var grandTotal=0;
-  var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">📄 Checks In Hand</div>'
+  var html=_collapsibleHeader('chkInHand','📄 Checks In Hand',payments.length)
+    +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#fffdf5;color:#000;border:1px solid #e0c56b">'
     +'<colgroup><col style="width:110px"><col style="width:240px"><col style="width:150px"><col style="width:150px"><col style="width:60px"></colgroup>'
     +'<thead><tr>'
@@ -4437,7 +4482,7 @@ function renderChecksInHandSection(){
     +'<td style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe58a;font-family:var(--mono)">'+_checksMoneyFmt(grandTotal)+'</td>'
     +'<td style="border:1px solid #c9a227;background:#ffe58a"></td>'
   +'</tr>';
-  html+='</tbody></table>';
+  html+='</tbody></table></div>';
   el.innerHTML=html;
 }
 window.renderChecksInHandSection=renderChecksInHandSection;
@@ -4451,9 +4496,11 @@ function renderDepositedChecksSection(){
   var ids=Object.keys(_checksDeposited).filter(function(id){ return !_checksDeposited[id].paid; });
   var rows=ids.map(function(id){ return _checksDeposited[id]; });
   rows.sort(function(a,b){ return (b.depositedAt||'')<(a.depositedAt||'')?-1:1; });
-
+  var collapsed=!!_sectionCollapsed.chkDeposited;
   var grandTotal=0;
-  var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">🏦 Deposited Checks</div>'
+
+  var html=_collapsibleHeader('chkDeposited','🏦 Deposited Checks',rows.length)
+    +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#f3fbf4;color:#000;border:1px solid #8fcf9a">'
     +'<colgroup><col style="width:110px"><col style="width:220px"><col style="width:120px"><col style="width:140px"><col style="width:130px"><col style="width:150px"></colgroup>'
     +'<thead><tr>'
@@ -4466,7 +4513,7 @@ function renderDepositedChecksSection(){
     +'</tr></thead><tbody>';
 
   if(!rows.length){
-    html+='<tr><td colspan="6" style="border:1px solid #8fcf9a;padding:14px;text-align:center;color:#888">Nothing deposited yet.</td></tr></tbody></table>';
+    html+='<tr><td colspan="6" style="border:1px solid #8fcf9a;padding:14px;text-align:center;color:#888">Nothing deposited yet.</td></tr></tbody></table></div>';
     el.innerHTML=html;
     return;
   }
@@ -4490,7 +4537,7 @@ function renderDepositedChecksSection(){
     +'<td style="border:1px solid #388e3c;padding:7px 10px;text-align:right;font-weight:700;background:#c8e6c9;font-family:var(--mono)">'+_checksMoneyFmt(grandTotal)+'</td>'
     +'<td colspan="2" style="border:1px solid #388e3c;background:#c8e6c9"></td>'
   +'</tr>';
-  html+='</tbody></table>';
+  html+='</tbody></table></div>';
   el.innerHTML=html;
 }
 window.renderDepositedChecksSection=renderDepositedChecksSection;
@@ -4504,9 +4551,11 @@ function renderPaidChecksSection(){
   var ids=Object.keys(_checksDeposited).filter(function(id){ return !!_checksDeposited[id].paid; });
   var rows=ids.map(function(id){ return _checksDeposited[id]; });
   rows.sort(function(a,b){ return (b.paid.at||'')<(a.paid.at||'')?-1:1; });
+  var collapsed=!!_sectionCollapsed.chkPaid;
 
   var grandTotal=0;
-  var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">💰 Paid</div>'
+  var html=_collapsibleHeader('chkPaid','💰 Paid',rows.length)
+    +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#f5f5f5;color:#000;border:1px solid #bbb">'
     +'<colgroup><col style="width:110px"><col style="width:220px"><col style="width:120px"><col style="width:140px"><col style="width:130px"><col style="width:60px"></colgroup>'
     +'<thead><tr>'
@@ -4519,7 +4568,7 @@ function renderPaidChecksSection(){
     +'</tr></thead><tbody>';
 
   if(!rows.length){
-    html+='<tr><td colspan="6" style="border:1px solid #bbb;padding:14px;text-align:center;color:#888">Nothing marked paid yet.</td></tr></tbody></table>';
+    html+='<tr><td colspan="6" style="border:1px solid #bbb;padding:14px;text-align:center;color:#888">Nothing marked paid yet.</td></tr></tbody></table></div>';
     el.innerHTML=html;
     return;
   }
@@ -4542,7 +4591,7 @@ function renderPaidChecksSection(){
     +'<td style="border:1px solid #999;padding:7px 10px;text-align:right;font-weight:700;background:#e8e8e8;font-family:var(--mono)">'+_checksMoneyFmt(grandTotal)+'</td>'
     +'<td colspan="2" style="border:1px solid #999;background:#e8e8e8"></td>'
   +'</tr>';
-  html+='</tbody></table>';
+  html+='</tbody></table></div>';
   el.innerHTML=html;
 }
 window.renderPaidChecksSection=renderPaidChecksSection;

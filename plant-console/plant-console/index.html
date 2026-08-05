@@ -3607,7 +3607,6 @@ function renderScheduledPaymentsSection(){
   });
 
   var dateKeys=Object.keys(byDate).sort();
-  if(!dateKeys.length){ el.innerHTML=''; return; }
 
   // Group dates into weeks (Monday–Sunday). weekKey = that week's Monday,
   // used both for sorting and as the header label.
@@ -3642,6 +3641,12 @@ function renderScheduledPaymentsSection(){
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:right;font-weight:700">Balance</th>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px"></th>'
     +'</tr></thead><tbody>';
+
+  if(!dateKeys.length){
+    html+='<tr><td colspan="6" style="border:1px solid #e0c56b;padding:14px;text-align:center;color:#888">Nothing scheduled right now.</td></tr></tbody></table>';
+    el.innerHTML=html;
+    return;
+  }
 
   weekKeys.forEach(function(weekMonday){
     var weekSunday=new Date(weekMonday+'T00:00:00'); weekSunday.setDate(weekSunday.getDate()+6);
@@ -3714,7 +3719,6 @@ function renderApprovedPaymentsSection(){
   });
 
   var dateKeys=Object.keys(byDate).sort();
-  if(!dateKeys.length){ el.innerHTML=''; return; }
 
   var grandTotal=0;
   var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">✅ Approved Payments — ready to pay</div>'
@@ -3728,6 +3732,12 @@ function renderApprovedPaymentsSection(){
       +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px;text-align:right;font-weight:700">Balance</th>'
       +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px"></th>'
     +'</tr></thead><tbody>';
+
+  if(!dateKeys.length){
+    html+='<tr><td colspan="6" style="border:1px solid #8fcf9a;padding:14px;text-align:center;color:#888">Nothing approved right now.</td></tr></tbody></table>';
+    el.innerHTML=html;
+    return;
+  }
 
   dateKeys.forEach(function(dateKey){
     byDate[dateKey].forEach(function(row){
@@ -3782,7 +3792,6 @@ function renderInProcessPaymentsSection(){
   });
 
   var dateKeys=Object.keys(byDate).sort();
-  if(!dateKeys.length){ el.innerHTML=''; return; }
 
   // Group dates into weeks (Monday–Sunday), same as Scheduled Payments.
   function mondayOf(dateStr){
@@ -3817,6 +3826,12 @@ function renderInProcessPaymentsSection(){
       +'<th style="border:1px solid #a9c6e8;background:#d7e6f7;padding:6px 10px;text-align:right;font-weight:700">Balance</th>'
       +'<th style="border:1px solid #a9c6e8;background:#d7e6f7;padding:6px 10px"></th>'
     +'</tr></thead><tbody>';
+
+  if(!dateKeys.length){
+    html+='<tr><td colspan="7" style="border:1px solid #a9c6e8;padding:14px;text-align:center;color:#888">Nothing in process right now.</td></tr></tbody></table>';
+    el.innerHTML=html;
+    return;
+  }
 
   weekKeys.forEach(function(weekMonday){
     var weekSunday=new Date(weekMonday+'T00:00:00'); weekSunday.setDate(weekSunday.getDate()+6);
@@ -3885,8 +3900,6 @@ function renderPaidPaymentsSection(){
       rows.push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,split:split});
     });
   });
-  if(!rows.length){ el.innerHTML=''; return; }
-
   rows.sort(function(a,b){ return (b.split.paid.at||'')<(a.split.paid.at||'')?-1:1; }); // most recently confirmed paid first
 
   var html='<div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">💰 Paid — confirmed by QuickBooks, review and clear</div>'
@@ -3900,6 +3913,12 @@ function renderPaidPaymentsSection(){
       +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:left;font-weight:700">Confirmed On</th>'
       +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px"></th>'
     +'</tr></thead><tbody>';
+
+  if(!rows.length){
+    html+='<tr><td colspan="6" style="border:1px solid #bbb;padding:14px;text-align:center;color:#888">Nothing marked paid yet.</td></tr></tbody></table>';
+    el.innerHTML=html;
+    return;
+  }
   rows.forEach(function(row){
     var billId=row.billId, split=row.split;
     var vName=row.vendor||'No vendor on file';
@@ -4430,8 +4449,6 @@ function renderDepositedChecksSection(){
   var el=document.getElementById('chk-deposited-section');
   if(!el) return;
   var ids=Object.keys(_checksDeposited).filter(function(id){ return !_checksDeposited[id].paid; });
-  if(!ids.length){ el.innerHTML=''; return; }
-
   var rows=ids.map(function(id){ return _checksDeposited[id]; });
   rows.sort(function(a,b){ return (b.depositedAt||'')<(a.depositedAt||'')?-1:1; });
 
@@ -4447,6 +4464,12 @@ function renderDepositedChecksSection(){
       +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px;text-align:left;font-weight:700">Deposited On</th>'
       +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px"></th>'
     +'</tr></thead><tbody>';
+
+  if(!rows.length){
+    html+='<tr><td colspan="6" style="border:1px solid #8fcf9a;padding:14px;text-align:center;color:#888">Nothing deposited yet.</td></tr></tbody></table>';
+    el.innerHTML=html;
+    return;
+  }
   rows.forEach(function(row){
     grandTotal+=Number(row.amount||0);
     var whenStr=row.depositedAt?new Date(row.depositedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
@@ -4479,8 +4502,6 @@ function renderPaidChecksSection(){
   var el=document.getElementById('chk-paid-section');
   if(!el) return;
   var ids=Object.keys(_checksDeposited).filter(function(id){ return !!_checksDeposited[id].paid; });
-  if(!ids.length){ el.innerHTML=''; return; }
-
   var rows=ids.map(function(id){ return _checksDeposited[id]; });
   rows.sort(function(a,b){ return (b.paid.at||'')<(a.paid.at||'')?-1:1; });
 
@@ -4496,6 +4517,12 @@ function renderPaidChecksSection(){
       +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:left;font-weight:700">Marked Paid On</th>'
       +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px"></th>'
     +'</tr></thead><tbody>';
+
+  if(!rows.length){
+    html+='<tr><td colspan="6" style="border:1px solid #bbb;padding:14px;text-align:center;color:#888">Nothing marked paid yet.</td></tr></tbody></table>';
+    el.innerHTML=html;
+    return;
+  }
   rows.forEach(function(row){
     grandTotal+=Number(row.amount||0);
     var whenStr=row.paid.at?new Date(row.paid.at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';

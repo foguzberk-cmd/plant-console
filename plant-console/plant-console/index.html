@@ -1021,6 +1021,8 @@ var _recentlySavedCustomerAllowed={};
 // customers right back to their pre-edit state, on the very device that
 // just imported them.
 var _recentlySavedCustomers={};
+var _recentlySavedVendors={}; // same idea, for vendor edits (department/Purch Rep) — protects against a pull already in flight before a save reaches the server
+var _recentlySavedVendorDepartments={};
 // Same idea, for Cash Flow's scheduled/approved payment plan — keyed by
 // bill id, protects against a pull already in flight before a schedule
 // change (approve, split, edit, remove) has a chance to reach the server.
@@ -1203,6 +1205,20 @@ async function pullFromServer(){
         labelTemplates[d]=_recentlySavedLabelTemplates[d];
       });
     }
+    if(Array.isArray(data.vendors)&&data.vendors.length){
+      vendors=data.vendors;
+      Object.keys(_recentlySavedVendors).forEach(function(id){
+        var i=vendors.findIndex(function(v){return v.id===id;});
+        if(i>=0) vendors[i]=_recentlySavedVendors[id];
+        else vendors.push(_recentlySavedVendors[id]);
+      });
+    }
+    if(data.vendorDepartments && typeof data.vendorDepartments==='object' && !Array.isArray(data.vendorDepartments) && Object.keys(data.vendorDepartments).length){
+      _vendorDepartments=data.vendorDepartments;
+      Object.keys(_recentlySavedVendorDepartments).forEach(function(k){
+        _vendorDepartments[k]=_recentlySavedVendorDepartments[k];
+      });
+    }
     if(data.cfScheduledDates && typeof data.cfScheduledDates==='object' && !Array.isArray(data.cfScheduledDates) && Object.keys(data.cfScheduledDates).length){
       _cfScheduledDates=data.cfScheduledDates;
       // Same timing-gap protection as the others above, plus the
@@ -1229,6 +1245,8 @@ async function pullFromServer(){
     safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed));
     safeSetLocal('pc_labeltemplates',JSON.stringify(labelTemplates));
     safeSetLocal('pc_customers',JSON.stringify(customers));
+    safeSetLocal('pc_vendors',JSON.stringify(vendors));
+    safeSetLocal('pc_vendor_departments',JSON.stringify(_vendorDepartments));
     safeSetLocal('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates));
     safeSetLocal('pc_storages',JSON.stringify(storages));
     safeSetLocal('pc_items',JSON.stringify(items));
@@ -1251,7 +1269,9 @@ async function pullFromServer(){
       (Array.isArray(data.scaleLogs)&&!data.scaleLogs.length&&scaleLogs.length) ||
       (data.labelAllowed && typeof data.labelAllowed==='object' && !Array.isArray(data.labelAllowed) && !Object.keys(data.labelAllowed).length && Object.keys(labelAllowed).length) ||
       (Array.isArray(data.customers)&&!data.customers.length&&customers.length) ||
-      (data.customerAllowed && typeof data.customerAllowed==='object' && !Array.isArray(data.customerAllowed) && !Object.keys(data.customerAllowed).length && Object.keys(customerAllowed).length);
+      (data.customerAllowed && typeof data.customerAllowed==='object' && !Array.isArray(data.customerAllowed) && !Object.keys(data.customerAllowed).length && Object.keys(customerAllowed).length) ||
+      (Array.isArray(data.vendors)&&!data.vendors.length&&vendors.length) ||
+      (data.vendorDepartments && typeof data.vendorDepartments==='object' && !Array.isArray(data.vendorDepartments) && !Object.keys(data.vendorDepartments).length && Object.keys(_vendorDepartments).length);
     if(serverIsMissingData){
       _lastPushedSnapshot=''; // force the next push through even if nothing local changed
       pushToServer();
@@ -1364,7 +1384,7 @@ async function _pushToServerImpl(){
     // per-field) would let the older snapshot silently win — quietly
     // reverting the approval a few seconds after it was made. Keeping this
     // field out of this payload entirely removes that race outright.
-    var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates});
+    var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates,vendors:vendors,vendorDepartments:_vendorDepartments});
     if(snapshot===_lastPushedSnapshot){ _lastPushFailureDetail=''; return true; } // this exact state was already confirmed sent
     // 60s (not the 10s default) — every push sends the FULL app state,
     // including every transaction, and that array has grown into the tens
@@ -1836,7 +1856,30 @@ async function qbSyncVendorsCore(){
   saveVendors();
   return {ok:true, count:allVendors.length, withCustomFieldCount:withCustomFieldCount};
 }
-function saveVendors(){ localStorage.setItem('pc_vendors',JSON.stringify(vendors)); }
+function saveVendors(){
+  safeSetLocal('pc_vendors',JSON.stringify(vendors));
+  // Snapshot every vendor as-of this save, protected for a grace window —
+  // same reasoning as _recentlySavedCustomers: a pull already in flight
+  // before this save reaches the server shouldn't be able to revert it.
+  vendors.forEach(function(v){ _recentlySavedVendors[v.id]=JSON.parse(JSON.stringify(v)); });
+  (function(ids){
+    setTimeout(function(){ ids.forEach(function(id){ delete _recentlySavedVendors[id]; }); },8000);
+  })(vendors.map(function(v){return v.id;}));
+  pushToServer();
+}
+// Shared save for vendor department assignments (used by the checklist
+// Save button and the CSV bulk import) — persists locally AND pushes to
+// the server, so this actually syncs across users/devices instead of
+// only ever living in whichever browser made the change.
+function _saveVendorDepartments(){
+  localStorage.setItem('pc_vendor_departments',JSON.stringify(_vendorDepartments));
+  var keys=Object.keys(_vendorDepartments);
+  keys.forEach(function(k){ _recentlySavedVendorDepartments[k]=_vendorDepartments[k]; });
+  (function(ks){
+    setTimeout(function(){ ks.forEach(function(k){ delete _recentlySavedVendorDepartments[k]; }); },8000);
+  })(keys);
+  pushToServer();
+}
 
 async function qbFetchItems(retry){
   // kept for compatibility — now routes through unified sync
@@ -4166,7 +4209,7 @@ var _vendorDepartments=(function(){ try{ return JSON.parse(localStorage.getItem(
 function setVendorDepartment(vendorKey,dept){
   if(dept) _vendorDepartments[vendorKey]=dept;
   else delete _vendorDepartments[vendorKey];
-  localStorage.setItem('pc_vendor_departments',JSON.stringify(_vendorDepartments));
+  _saveVendorDepartments();
   renderCashFlowReport();
 }
 window.setVendorDepartment=setVendorDepartment;
@@ -7189,7 +7232,7 @@ function saveVendorDeptForDept(){
     else if(!isChecked && currentlyThisDept) delete _vendorDepartments[vKey];
     // Vendors assigned to a DIFFERENT department and left unchecked here are untouched.
   });
-  localStorage.setItem('pc_vendor_departments',JSON.stringify(_vendorDepartments));
+  _saveVendorDepartments();
   var statusEl=document.getElementById('vend-save-status');
   if(statusEl){ statusEl.textContent='Saved.'; statusEl.style.color='#0f6e40'; }
   renderCashFlowReport(); // reflect the change in Scheduled Payments' vendor grouping too, if it's built
@@ -7265,7 +7308,7 @@ async function importVendorDepartmentCSV(file){
     if(dept) _vendorDepartments[vKey]=dept; else delete _vendorDepartments[vKey];
     updated++;
   }
-  localStorage.setItem('pc_vendor_departments',JSON.stringify(_vendorDepartments));
+  _saveVendorDepartments();
   renderVendorsList();
   var msg=updated+' vendor(s) updated.';
   if(unmatched.length) msg+=' '+unmatched.length+' name(s) didn\'t match any synced vendor'+(unmatched.length<=5?' ('+unmatched.slice(0,5).join(', ')+')':'')+'.';

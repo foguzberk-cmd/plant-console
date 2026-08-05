@@ -4231,41 +4231,50 @@ function _renderCashFlowReportInner(){
     statusEl.style.color='';
   }
 
-  // Group vendors into departments — DEPARTMENTS in order, then an
-  // "Unassigned" bucket at the end for anything not yet tagged. Vendor
-  // order within each department stays sorted by total (already-sorted
-  // vendorKeys, just filtered), so this doesn't change ranking, only adds
-  // a grouping layer on top.
-  var deptOrder=DEPARTMENTS.concat(['Unassigned']);
+  // Group vendors by Purch Rep instead of Department — Purch Rep names
+  // aren't a fixed list like DEPARTMENTS, so the group list is built
+  // dynamically from whatever names are actually assigned right now,
+  // sorted alphabetically with "Unassigned" always pushed to the end.
+  var vendorByKeyForPurchRep={};
+  vendors.forEach(function(v){
+    var val=v.purchRep&&v.purchRep.trim();
+    if(!val) return;
+    if(v.qbId) vendorByKeyForPurchRep[v.qbId]=val;
+    if(v.name) vendorByKeyForPurchRep[v.name]=val;
+  });
 
-  // Looks up a vendor's assigned department, trying the bill-derived key
-  // first (VendorRef.value, normally the QuickBooks id) and falling back
-  // to a name-based match — Settings → Vendors keys its assignments by
-  // qbId when available, which should normally be the same value, but
-  // this fallback keeps department grouping working even if those two
-  // ever disagree for some vendor (e.g. a sync gap on one side).
-  function _deptForVendorKey(vKey){
-    if(_vendorDepartments[vKey]) return _vendorDepartments[vKey];
+  // Looks up a vendor's Purch Rep, trying the bill-derived key first
+  // (VendorRef.value, normally the QuickBooks id) and falling back to a
+  // name-based match — same reasoning as the department lookup this
+  // replaces: Settings → Vendors keys by qbId when available, but this
+  // fallback keeps grouping working even if those two ever disagree.
+  function _purchRepForVendorKey(vKey){
+    if(vendorByKeyForPurchRep[vKey]) return vendorByKeyForPurchRep[vKey];
     var vName=byVendor[vKey]&&byVendor[vKey].name;
-    if(vName && _vendorDepartments[vName]){
-      console.warn('Vendor department: had to fall back to name-based match for "'+vName+'" (bill key "'+vKey+'" didn\'t match Settings\' key directly) — this indicates a real id/name mismatch worth checking.');
-      return _vendorDepartments[vName];
-    }
+    if(vName && vendorByKeyForPurchRep[vName]) return vendorByKeyForPurchRep[vName];
     return 'Unassigned';
   }
 
+  var repSet={};
+  vendorKeys.forEach(function(vKey){ repSet[_purchRepForVendorKey(vKey)]=true; });
+  var repOrder=Object.keys(repSet).sort(function(a,b){
+    if(a==='Unassigned') return 1;
+    if(b==='Unassigned') return -1;
+    return a.localeCompare(b);
+  });
+
   var rowsHtml='';
   var globalVi=0;
-  deptOrder.forEach(function(dept){
-    var deptVendorKeys=vendorKeys.filter(function(vKey){ return _deptForVendorKey(vKey)===dept; });
-    if(!deptVendorKeys.length) return; // skip empty departments entirely
-    var deptTotal=deptVendorKeys.reduce(function(s,vKey){ return s+byVendor[vKey].total; },0);
+  repOrder.forEach(function(rep){
+    var repVendorKeys=vendorKeys.filter(function(vKey){ return _purchRepForVendorKey(vKey)===rep; });
+    if(!repVendorKeys.length) return; // skip empty groups entirely
+    var repTotal=repVendorKeys.reduce(function(s,vKey){ return s+byVendor[vKey].total; },0);
     rowsHtml+='<tr>'
-      +'<td colspan="4" style="border:1px solid #999;padding:6px 10px;font-weight:700;background:#ececec;letter-spacing:.03em">'+esc(dept.toUpperCase())+'</td>'
-      +'<td style="border:1px solid #999;padding:6px 10px;text-align:right;font-weight:700;background:#ececec;font-family:var(--mono)">'+money(deptTotal)+'</td>'
+      +'<td colspan="4" style="border:1px solid #999;padding:6px 10px;font-weight:700;background:#ececec;letter-spacing:.03em">'+esc(rep.toUpperCase())+'</td>'
+      +'<td style="border:1px solid #999;padding:6px 10px;text-align:right;font-weight:700;background:#ececec;font-family:var(--mono)">'+money(repTotal)+'</td>'
     +'</tr>';
 
-    deptVendorKeys.forEach(function(vKey){
+    repVendorKeys.forEach(function(vKey){
       var vi=globalVi++;
       var entry=byVendor[vKey];
       var groupClass='cf-vgroup-'+vi;

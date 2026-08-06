@@ -2502,17 +2502,18 @@ var _collAllInvoicesCache=(function(){ try{ return JSON.parse(localStorage.getIt
 var _collAllPaymentsCache=(function(){ try{ return JSON.parse(localStorage.getItem('pc_coll_all_payments')||'{}'); }catch(e){ return {}; } })(); // keyed by Payment Id
 var _collOpeningByQbId=null; // {customer QB id: open-invoice balance as of the report's "From" date} — precomputed once per pull (see computeAsOfBalances), not recomputed on every render
 var _collEndingByQbId=null;  // {customer QB id: open-invoice balance as of the report's "To" date}
+var _collEndingDetailByQbId=null; // {customer QB id: [{docNumber, txnDate, totalAmt, balance, contribution}, ...]} — the exact invoices behind each customer's Ending Balance, for direct invoice-by-invoice comparison against QuickBooks
 // MIGRATION: these two full-history caches are new, and their shape has
-// already changed twice since (invoices now carry Balance; payments now
-// carry TotalAmt + DepositToAccountRef — see computeAsOfBalances and the
-// "Undeposited" column for why). Anyone with an EMPTY cache, or one whose
-// entries predate a field being added, would otherwise get a stale/
-// incomplete backfill from an INCREMENTAL-only ("since last sync") fetch —
-// silently wrong "as of date" balances or a wrong Undeposited figure.
-// Force exactly one full fetch to properly (re)populate them, transparent
-// to the person using the app.
+// already changed a few times since (invoices now carry Balance and
+// DocNumber; payments now carry TotalAmt + DepositToAccountRef — see
+// computeAsOfBalances and the "Undeposited" column for why). Anyone with
+// an EMPTY cache, or one whose entries predate a field being added, would
+// otherwise get a stale/incomplete backfill from an INCREMENTAL-only
+// ("since last sync") fetch — silently wrong "as of date" balances or a
+// wrong Undeposited figure. Force exactly one full fetch to properly
+// (re)populate them, transparent to the person using the app.
 var _collInvoicesNeedBackfill=!Object.keys(_collAllInvoicesCache).length
-  || Object.values(_collAllInvoicesCache).some(function(inv){ return inv.Balance===undefined; });
+  || Object.values(_collAllInvoicesCache).some(function(inv){ return inv.Balance===undefined || inv.DocNumber===undefined; });
 if(_collInvoicesNeedBackfill && _collOpenInvoicesLastSync) _collOpenInvoicesLastSync=null;
 var _collPaymentsNeedBackfill=!Object.keys(_collAllPaymentsCache).length
   || Object.values(_collAllPaymentsCache).some(function(p){ return p.TotalAmt===undefined; });
@@ -2702,7 +2703,7 @@ async function runCollectionReport(){
     // from, since it already correctly reflects EVERY reduction QuickBooks
     // ever made, including ones with no traceable Payment record at all
     // (e.g. a credit auto-applied at invoice creation).
-    _collAllInvoicesCache[inv.Id]={Id:inv.Id,CustomerRef:inv.CustomerRef,TotalAmt:Number(inv.TotalAmt||0),Balance:Number(inv.Balance||0),TxnDate:(inv.TxnDate||'').slice(0,10)};
+    _collAllInvoicesCache[inv.Id]={Id:inv.Id,DocNumber:inv.DocNumber||'',CustomerRef:inv.CustomerRef,TotalAmt:Number(inv.TotalAmt||0),Balance:Number(inv.Balance||0),TxnDate:(inv.TxnDate||'').slice(0,10)};
   });
   safeSetLocal('pc_coll_open_invoices',JSON.stringify(_collOpenInvoicesCache)); // save whatever we DID get either way — partial data is still better than none
   safeSetLocal('pc_coll_all_invoices',JSON.stringify(_collAllInvoicesCache));
@@ -2784,6 +2785,7 @@ async function runCollectionReport(){
   var asOf=computeAsOfBalances(from,to);
   _collOpeningByQbId=asOf.opening;
   _collEndingByQbId=asOf.ending;
+  _collEndingDetailByQbId=asOf.endingDetail;
   renderCollectionReport();
 }
 
@@ -2831,6 +2833,7 @@ function computeAsOfBalances(fromDate,toDate){
   });
 
   var opening={}, ending={}; // customer QB id -> total open balance as of that date
+  var endingDetail={}; // customer QB id -> [{docNumber, txnDate, totalAmt, balance, appliedAfterTo}, ...] — the exact invoices behind the Ending Balance number, for matching invoice-by-invoice against QuickBooks
   invoices.forEach(function(inv){
     var custId=inv.CustomerRef&&inv.CustomerRef.value;
     if(!custId) return;
@@ -2848,11 +2851,16 @@ function computeAsOfBalances(fromDate,toDate){
       if(openAtFrom>0.004) opening[custId]=(opening[custId]||0)+openAtFrom;
     }
     if(invDate<=toDate){
-      var openAtTo=currentBalance+appliedAfter(toDate);
-      if(openAtTo>0.004) ending[custId]=(ending[custId]||0)+openAtTo;
+      var afterTo=appliedAfter(toDate);
+      var openAtTo=currentBalance+afterTo;
+      if(openAtTo>0.004){
+        ending[custId]=(ending[custId]||0)+openAtTo;
+        if(!endingDetail[custId]) endingDetail[custId]=[];
+        endingDetail[custId].push({docNumber:inv.DocNumber||'(no #)',txnDate:invDate,totalAmt:inv.TotalAmt,balance:currentBalance,appliedAfterTo:afterTo,contribution:openAtTo});
+      }
     }
   });
-  return {opening:opening,ending:ending};
+  return {opening:opening,ending:ending,endingDetail:endingDetail};
 }
 
 // Computes the customer/sales-person groupings from the cached
@@ -3143,6 +3151,17 @@ function renderCollectionReport(){
         +'</span>'
       +'</div>'
       +'<div id="'+rowId+'" style="display:none;padding-bottom:6px">'
+        +(_collGroupMode==='customer' && _collEndingDetailByQbId && _collEndingDetailByQbId[key] && _collEndingDetailByQbId[key].length
+          ? ('<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Invoices behind Ending Balance ('+_collEndingDetailByQbId[key].length+') — match these directly against QuickBooks</div>'
+            +'<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 16px 4px 40px;font-size:11px;font-weight:600;color:var(--muted)">'
+              +'<span>Invoice # / Date</span><span>Total → Current bal. → Contributes</span></div>'
+            +_collEndingDetailByQbId[key].slice().sort(function(a,b){ return b.contribution-a.contribution; }).map(function(d){
+              return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 16px 4px 40px;font-size:12px;border-bottom:1px dashed var(--line)">'
+                +'<span>#'+esc(d.docNumber)+' · '+esc(d.txnDate)+'</span>'
+                +'<span style="font-family:var(--mono);white-space:nowrap">'+money(d.totalAmt)+' → '+money(d.balance)+(d.appliedAfterTo>0.004?' + '+money(d.appliedAfterTo)+' paid-after-"To"':'')+' = <b>'+money(d.contribution)+'</b></span></div>';
+            }).join('')
+            +'<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Payments this period</div>')
+          : '')
         +(_collGroupMode==='salesperson' && entry.custBalances && entry.custBalances.length
           ? ('<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Customer balances ('+entry.custBalances.length+') — compare directly against a QuickBooks report for this rep</div>'
             +entry.custBalances.slice().sort(function(a,b){ return b.balance-a.balance; }).map(function(cb){

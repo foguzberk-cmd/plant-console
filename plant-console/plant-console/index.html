@@ -2660,11 +2660,12 @@ function computeCollectionGroups(){
     byCust[custKey].payments.push({date:date,amount:amt,ref:ref});
 
     var rep=salesPersonOf(p)||'Unassigned';
-    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,payments:[],_custKeysSeen:{}};
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,payments:[],_custKeysSeen:{},custBalances:[]};
     bySalesPerson[rep].total+=amt;
     if(!bySalesPerson[rep]._custKeysSeen[custKey]){
       bySalesPerson[rep]._custKeysSeen[custKey]=true;
       bySalesPerson[rep].balance+=bal;
+      bySalesPerson[rep].custBalances.push({name:custName,balance:bal});
     }
     bySalesPerson[rep].payments.push({date:date,amount:amt,ref:ref,customer:custName});
 
@@ -2686,10 +2687,11 @@ function computeCollectionGroups(){
     byCust[custKey].sales+=amt;
 
     var rep=salesPersonOf(d)||'Unassigned';
-    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,payments:[],_custKeysSeen:{}};
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,payments:[],_custKeysSeen:{},custBalances:[]};
     if(!bySalesPerson[rep]._custKeysSeen[custKey]){
       bySalesPerson[rep]._custKeysSeen[custKey]=true;
       bySalesPerson[rep].balance+=bal;
+      bySalesPerson[rep].custBalances.push({name:custName,balance:bal});
     }
     bySalesPerson[rep].sales+=amt;
 
@@ -2714,10 +2716,11 @@ function computeCollectionGroups(){
       grandBalance+=bal;
     }
     var rep=(c.salesRep&&c.salesRep.trim())||'Unassigned';
-    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,payments:[],_custKeysSeen:{}};
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,payments:[],_custKeysSeen:{},custBalances:[]};
     if(!bySalesPerson[rep]._custKeysSeen[custKey]){
       bySalesPerson[rep]._custKeysSeen[custKey]=true;
       bySalesPerson[rep].balance+=bal;
+      bySalesPerson[rep].custBalances.push({name:c.name||'No customer on file',balance:bal});
     }
   });
 
@@ -2818,6 +2821,15 @@ function renderCollectionReport(){
         +'</span>'
       +'</div>'
       +'<div id="'+rowId+'" style="display:none;padding-bottom:6px">'
+        +(_collGroupMode==='salesperson' && entry.custBalances && entry.custBalances.length
+          ? ('<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Customer balances ('+entry.custBalances.length+') — compare directly against a QuickBooks report for this rep</div>'
+            +entry.custBalances.slice().sort(function(a,b){ return b.balance-a.balance; }).map(function(cb){
+              return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 16px 4px 40px;font-size:12px;border-bottom:1px dashed var(--line)">'
+                +'<span>'+esc(cb.name)+'</span>'
+                +'<span style="font-family:var(--mono);white-space:nowrap;color:'+(cb.balance>0?'#b8460b':'var(--muted)')+'">'+money(cb.balance)+'</span></div>';
+            }).join('')
+            +'<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Payments this period</div>')
+          : '')
         +rows.map(function(row){
           var custPart=(_collGroupMode==='salesperson')?(' · '+esc(row.customer)):'';
           return '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 16px 7px 40px;font-size:12px;color:var(--muted);border-bottom:1px dashed var(--line)">'

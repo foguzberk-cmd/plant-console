@@ -2656,10 +2656,11 @@ async function runCollectionReport(){
   var oiSyncStartedAt=new Date().toISOString(); // recorded BEFORE fetching, so nothing modified mid-fetch gets missed next time
   var openInvoicesChanged=[];
   var oiStart=1, oiSafety=0;
+  var oiCompleted=false; // only true if the loop actually ran to completion, not cut short by an error
   if(statusEl) statusEl.textContent=(_collOpenInvoicesLastSync?'Checking for invoice changes since last sync…':'Fetching open invoices (first time — this one\'s slower)…');
   while(true){
     oiSafety++;
-    if(oiSafety>1000) break; // hard cap (~100k rows)
+    if(oiSafety>1000) break; // hard cap (~100k rows) — treated as incomplete below, same as any other early exit
     var oiCtrl=new AbortController();
     var oiTimer=setTimeout(function(){oiCtrl.abort();},60000);
     var oiRows=null;
@@ -2673,20 +2674,25 @@ async function runCollectionReport(){
       oiRows=(oijd && oijd.Invoice) ? oijd.Invoice : [];
     }catch(e){
       clearTimeout(oiTimer);
-      break; // don't fail the whole pull — cached open-invoice data (if any) is used as-is this time
+      break; // incomplete this time — oiCompleted stays false, so the sync timestamp won't advance (see below)
     }
     openInvoicesChanged=openInvoicesChanged.concat(oiRows);
     if(statusEl) statusEl.textContent='Fetched '+payments.length+' payment(s), '+salesDocs.length+' sales document(s), '+openInvoicesChanged.length+' invoice change(s) so far…';
-    if(oiRows.length<pageSize) break;
+    if(oiRows.length<pageSize){ oiCompleted=true; break; }
     oiStart+=pageSize;
   }
   openInvoicesChanged.forEach(function(inv){
     if(Number(inv.Balance||0)>0.004) _collOpenInvoicesCache[inv.Id]=inv;
     else delete _collOpenInvoicesCache[inv.Id]; // no longer open (paid off) — or was never actually open, either way it shouldn't be counted
   });
-  _collOpenInvoicesLastSync=oiSyncStartedAt;
-  safeSetLocal('pc_coll_open_invoices',JSON.stringify(_collOpenInvoicesCache));
-  safeSetLocal('pc_coll_open_invoices_synctime',oiSyncStartedAt);
+  safeSetLocal('pc_coll_open_invoices',JSON.stringify(_collOpenInvoicesCache)); // save whatever we DID get either way — partial data is still better than none
+  if(oiCompleted){
+    _collOpenInvoicesLastSync=oiSyncStartedAt;
+    safeSetLocal('pc_coll_open_invoices_synctime',oiSyncStartedAt);
+  } else if(statusEl){
+    statusEl.textContent='Warning: the open-invoices fetch was interrupted partway through — some balances may be incomplete this pull. Try "Pull from QuickBooks" again.';
+    statusEl.style.color='#b8460b';
+  }
   var openInvoices=Object.values(_collOpenInvoicesCache);
 
   // Unapplied payments — same incremental approach. A payment can sit
@@ -2696,10 +2702,11 @@ async function runCollectionReport(){
   var upSyncStartedAt=new Date().toISOString();
   var unappliedChanged=[];
   var upStart=1, upSafety=0;
+  var upCompleted=false; // only true if the loop actually ran to completion, not cut short by an error
   if(statusEl) statusEl.textContent=(_collUnappliedLastSync?'Checking for payment changes since last sync…':'Checking for unapplied payments (first time — this one\'s slower)…');
   while(true){
     upSafety++;
-    if(upSafety>1000) break; // hard cap (~100k rows)
+    if(upSafety>1000) break; // hard cap (~100k rows) — treated as incomplete below, same as any other early exit
     var upCtrl=new AbortController();
     var upTimer=setTimeout(function(){upCtrl.abort();},60000);
     var upRows=null;
@@ -2709,24 +2716,29 @@ async function runCollectionReport(){
       clearTimeout(upTimer);
       if(upr.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
       var upjd=await upr.json();
-      if(upjd && upjd.error) break; // don't fail the whole pull over this
+      if(upjd && upjd.error) break; // incomplete this time — upCompleted stays false
       upRows=(upjd && upjd.Payment) ? upjd.Payment : [];
     }catch(e){
       clearTimeout(upTimer);
-      break; // network hiccup — cached unapplied data (if any) is used as-is this time
+      break; // incomplete this time — upCompleted stays false
     }
     unappliedChanged=unappliedChanged.concat(upRows);
     if(statusEl) statusEl.textContent='Fetched '+payments.length+' payment(s), '+salesDocs.length+' sales document(s), '+openInvoices.length+' open invoice(s), checked '+unappliedChanged.length+' payment change(s) for unapplied amounts…';
-    if(upRows.length<pageSize) break;
+    if(upRows.length<pageSize){ upCompleted=true; break; }
     upStart+=pageSize;
   }
   unappliedChanged.forEach(function(p){
     if(Number(p.UnappliedAmt||0)>0.004) _collUnappliedCache[p.Id]=p;
     else delete _collUnappliedCache[p.Id]; // fully applied now (or genuinely $0) — no longer counts
   });
-  _collUnappliedLastSync=upSyncStartedAt;
-  safeSetLocal('pc_coll_unapplied',JSON.stringify(_collUnappliedCache));
-  safeSetLocal('pc_coll_unapplied_synctime',upSyncStartedAt);
+  safeSetLocal('pc_coll_unapplied',JSON.stringify(_collUnappliedCache)); // save whatever we DID get either way
+  if(upCompleted){
+    _collUnappliedLastSync=upSyncStartedAt;
+    safeSetLocal('pc_coll_unapplied_synctime',upSyncStartedAt);
+  } else if(statusEl && statusEl.style.color!=='#b8460b'){
+    statusEl.textContent='Warning: the unapplied-payments fetch was interrupted partway through — some amounts may be incomplete this pull. Try "Pull from QuickBooks" again.';
+    statusEl.style.color='#b8460b';
+  }
   var unappliedPayments=Object.values(_collUnappliedCache);
 
   _collPayments=payments;

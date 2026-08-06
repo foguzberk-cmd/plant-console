@@ -2604,12 +2604,14 @@ async function runCollectionReport(){
     return d && d>=from && d<=to;
   });
 
-  // "Sales" — Invoices + Sales Receipts issued during this same period
-  // (gross sales; does not net out CreditMemo returns). Fetched the same
+  // "Sales" — Invoices + Sales Receipts issued during this same period,
+  // net of Credit Memos issued in the same window — matching how
+  // QuickBooks's own Sales by Product/Service report nets returns out,
+  // instead of the gross figure this used to show. Fetched the same
   // page-at-a-time way as Payments above.
   var salesDocs=[];
-  for(var si=0;si<2;si++){
-    var entName=si===0?'Invoice':'SalesReceipt';
+  for(var si=0;si<3;si++){
+    var entName=si===0?'Invoice':(si===1?'SalesReceipt':'CreditMemo');
     var sStart=1;
     var sSafety=0;
     while(true){
@@ -2630,6 +2632,9 @@ async function runCollectionReport(){
         if(statusEl){ statusEl.textContent='Network error while fetching sales documents — try again.'; statusEl.style.color='#c0392b'; }
         return;
       }
+      // Tag each row with its source so the second pass knows whether to
+      // add it (Invoice/SalesReceipt) or subtract it (CreditMemo).
+      sRows.forEach(function(r){ r._pcDocType=entName; });
       salesDocs=salesDocs.concat(sRows);
       if(statusEl) statusEl.textContent='Fetched '+payments.length+' payment(s), '+salesDocs.length+' sales document(s) so far…';
       if(sRows.length<pageSize) break;
@@ -2820,12 +2825,14 @@ function computeCollectionGroups(){
   });
 
   // Second pass: Sales (Invoices + Sales Receipts issued during the same
-  // period). Uses the same customer keying as above, and creates a group
-  // entry if a customer had sales but no payments in range (so they still
-  // show up, with $0 Collected).
+  // period, net of Credit Memos issued in that same window). Uses the
+  // same customer keying as above, and creates a group entry if a
+  // customer had sales but no payments in range (so they still show up,
+  // with $0 Collected).
   var salesDocs=_collSalesDocs||[];
   salesDocs.forEach(function(d){
-    var amt=Number(d.TotalAmt||0);
+    var rawAmt=Number(d.TotalAmt||0);
+    var amt=(d._pcDocType==='CreditMemo')?-rawAmt:rawAmt; // Credit Memos subtract from Sales instead of adding
     var custName=(d.CustomerRef&&d.CustomerRef.name)||'No customer on file';
     var qbCustId=d.CustomerRef&&d.CustomerRef.value;
     var custKey=qbCustId||custName;
@@ -3010,7 +3017,7 @@ function renderCollectionReport(){
     +'</span>'
   +'</div>';
   html+='</div>';
-  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is gross Invoices + Sales Receipts issued during this period — it does not subtract Credit Memo returns. "Balance owed" is the opening position, calculated as Ending balance + Collected − Sales (exact, as long as no Credit Memos were issued during this period — those would still make it look slightly higher than it actually was, since they reduce a balance but aren\'t netted out of "Sales"). "Ending balance" is the sum of currently open invoices for each customer, fetched fresh from QuickBooks. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice — it\'s part of what QuickBooks\'s own Customer.Balance counts, but isn\'t part of "open invoices," which is why the two can differ.</div>';
+  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is Invoices + Sales Receipts issued during this period, net of any Credit Memos issued in the same window — matching how QuickBooks\'s own Sales by Product/Service report nets returns out. "Balance owed" is the opening position, calculated as Ending balance + Collected − Sales (exact, since Sales already accounts for Credit Memos the same way it accounts for new charges). "Ending balance" is the sum of currently open invoices for each customer, fetched fresh from QuickBooks. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice — it\'s part of what QuickBooks\'s own Customer.Balance counts, but isn\'t part of "open invoices," which is why the two can differ.</div>';
   if(bodyEl) bodyEl.innerHTML=html;
 }
 

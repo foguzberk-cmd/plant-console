@@ -2943,10 +2943,16 @@ function renderCollectionReport(){
 
   // "Balance Owed" (opening, for this period) is derived — QuickBooks only
   // gives us the CURRENT balance (Ending Balance), so Opening is estimated
-  // as Ending + Collected. That's exact as long as no new invoices/charges
-  // were added during the period; if new charges did come in, this will
-  // overstate Balance Owed by that amount. Called out below the report so
-  // it's not mistaken for an exact opening-balance figure.
+  // as Ending + Collected − Sales. That's only reliable when "To" is
+  // TODAY'S date — otherwise "Ending Balance" reflects everything that's
+  // happened up to right now, not up to the selected end date, and
+  // anything that happened in between (more payments, invoices, credit
+  // memos) throws the derived opening figure off, sometimes wildly (even
+  // going negative for a busy customer/rep). There's no reliable fix for
+  // this without QuickBooks offering a way to ask for a balance as of a
+  // specific past date, which it doesn't.
+  var todayStr=new Date().toISOString().slice(0,10);
+  var toMatchesToday=(to===todayStr);
   function valBlock(lbl,val,colorPositive,bold){
     return '<span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.25;min-width:88px">'
       +'<span style="font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">'+lbl+'</span>'
@@ -2962,7 +2968,12 @@ function renderCollectionReport(){
     +'</span>';
   }
 
-  var html='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden">';
+  var html=(!toMatchesToday
+    ? ('<div style="background:#fff3cd;border:1px solid #e0c56b;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#5c4a06;line-height:1.4">'
+      +'<strong>Heads up:</strong> your "To" date ('+esc(to)+') isn\'t today, so "Balance Owed" (opening) can be unreliable — "Ending Balance" always reflects right now, not the end of your selected range. Any activity between '+esc(to)+' and today (more payments, invoices, or credit memos) can throw this off, sometimes by a lot. For a trustworthy opening figure, set "To" to today\'s date.'
+      +'</div>')
+    : '')
+    +'<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden">';
   _collRowKeys=groupKeys;
   groupKeys.forEach(function(key,ri){
     var entry=byMode[key];
@@ -2979,7 +2990,7 @@ function renderCollectionReport(){
         +'<button onclick="event.stopPropagation();exportCollectionReportGroupCSV(_collRowKeys['+ri+'])" class="btn btn-sm" title="Export this row to CSV/Excel" style="padding:4px 9px">⬇</button>'
         +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
           +valBlock('Sales',entry.sales,false,false)
-          +valBlock('Balance owed',opening,true,false)
+          +valBlock('Balance owed'+(toMatchesToday?'':' ⚠'),opening,true,false)
           +valBlock('Collected',entry.total,false,true)
           +valBlock('Ending balance',entry.balance,true,false)
           +valBlock('Unapplied',entry.unapplied||0,false,false)
@@ -3009,7 +3020,7 @@ function renderCollectionReport(){
     +'<span style="flex:1;min-width:120px;font-weight:700">Total</span>'
     +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
       +valBlock('Sales',grandSales,false,false)
-      +valBlock('Balance owed',grandOpening,true,false)
+      +valBlock('Balance owed'+(toMatchesToday?'':' ⚠'),grandOpening,true,false)
       +valBlock('Collected',grandTotal,false,true)
       +valBlock('Ending balance',grandBalance,true,false)
       +valBlock('Unapplied',grandUnapplied||0,false,false)

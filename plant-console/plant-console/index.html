@@ -4229,13 +4229,13 @@ function renderPaidPaymentsSection(){
     var vName=row.vendor||'No vendor on file';
     var whenStr=split.paid.at?new Date(split.paid.at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
     var isPartial=split.paid.amount<Number(split.amount||0)-0.004;
-    html+='<tr>'
-      +'<td style="border:1px solid #bbb;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:line-through;text-decoration-color:#999;color:#555">'+esc(vName)+'</td>'
-      +'<td style="border:1px solid #bbb;padding:5px 10px;text-decoration:line-through;text-decoration-color:#999;color:#555">'+esc(row.docNum||'')+'</td>'
-      +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(split.amount)+'</td>'
-      +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:right;font-family:var(--mono);font-weight:700">'+money(split.paid.amount)+(isPartial?' <span style="font-size:10px;font-weight:400;color:#b8460b">(partial)</span>':'')+'</td>'
-      +'<td style="border:1px solid #bbb;padding:5px 10px">'+esc(whenStr)+'</td>'
-      +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:center">'
+    html+='<tr style="text-decoration:line-through;text-decoration-color:#999;text-decoration-thickness:1.5px">'
+      +'<td style="border:1px solid #bbb;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#555">'+esc(vName)+'</td>'
+      +'<td style="border:1px solid #bbb;padding:5px 10px;color:#555">'+esc(row.docNum||'')+'</td>'
+      +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:right;font-family:var(--mono);color:#555">'+money(split.amount)+'</td>'
+      +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:#555">'+money(split.paid.amount)+(isPartial?' <span style="font-size:10px;font-weight:400;color:#b8460b">(partial)</span>':'')+'</td>'
+      +'<td style="border:1px solid #bbb;padding:5px 10px;color:#555">'+esc(whenStr)+'</td>'
+      +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:center;text-decoration:none">'
         +'<button onclick="deleteCFPaidPayment(\''+esc(billId)+'\',\''+esc(split.id)+'\')" class="btn btn-sm" title="Delete this entry" style="padding:2px 8px;font-size:12px;color:#b8460b">🗑</button>'
       +'</td>'
     +'</tr>';

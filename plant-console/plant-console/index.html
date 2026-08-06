@@ -2495,6 +2495,7 @@ function renderReports(){
 // with thousands of payments.
 var _collPayments=null;   // cached raw payments from the last successful fetch
 var _collSalesDocs=null;  // cached raw Invoice+SalesReceipt docs for the "Sales" column
+var _collOpenInvoices=null; // cached currently-open (Balance>0) Invoices, used to compute true open-invoice totals per customer
 var _collRange=null;      // {from,to} for the cached fetch
 var _collGroupMode='customer'; // 'customer' | 'salesperson'
 var _collRowKeys=[]; // groupKeys from the last render, indexed the same as each row — lets per-row buttons (like Print) reference a rep name safely without embedding raw text (which could contain apostrophes) into an onclick attribute
@@ -2604,8 +2605,43 @@ async function runCollectionReport(){
     return dt && dt>=from && dt<=to;
   });
 
+  // Open invoices — ALL currently unpaid invoices (no date filter, since
+  // an invoice from any time in the past can still be open today), used
+  // to compute each customer's actual open-invoice total directly rather
+  // than relying on QuickBooks's Customer.Balance field. Those two numbers
+  // can disagree — Balance can include other AR-affecting transaction
+  // types beyond just open invoices — and this report wants specifically
+  // the sum of open invoices.
+  var openInvoices=[];
+  var oiStart=1, oiSafety=0;
+  if(statusEl) statusEl.textContent='Fetching open invoices…';
+  while(true){
+    oiSafety++;
+    if(oiSafety>1000) break; // hard cap (~100k rows)
+    var oiCtrl=new AbortController();
+    var oiTimer=setTimeout(function(){oiCtrl.abort();},60000);
+    var oiRows=null;
+    try{
+      var oir=await fetch(base+'/api/qb/documents?entity=Invoice&startposition='+oiStart,{signal:oiCtrl.signal});
+      clearTimeout(oiTimer);
+      if(oir.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
+      var oijd=await oir.json();
+      if(oijd && oijd.error){ if(statusEl){ statusEl.textContent='Error: '+oijd.error; statusEl.style.color='#c0392b'; } return; }
+      oiRows=(oijd && oijd.Invoice) ? oijd.Invoice : [];
+    }catch(e){
+      clearTimeout(oiTimer);
+      break; // don't fail the whole pull — Ending Balance will just show as $0 for everyone this time
+    }
+    openInvoices=openInvoices.concat(oiRows);
+    if(statusEl) statusEl.textContent='Fetched '+payments.length+' payment(s), '+salesDocs.length+' sales document(s), '+openInvoices.length+' invoice(s) checked so far…';
+    if(oiRows.length<pageSize) break;
+    oiStart+=pageSize;
+  }
+  openInvoices=openInvoices.filter(function(inv){ return Number(inv.Balance||0)>0; });
+
   _collPayments=payments;
   _collSalesDocs=salesDocs;
+  _collOpenInvoices=openInvoices;
   _collRange={from:from,to:to};
   renderCollectionReport();
 }
@@ -2629,11 +2665,22 @@ function computeCollectionGroups(){
     var c=qbCustId?custByQbId[qbCustId]:null;
     return (c&&c.salesRep)?c.salesRep.trim():'';
   }
+  // "Balance" here means the true sum of currently-open invoices for a
+  // customer — computed directly from fetched Invoice data (see
+  // _collOpenInvoices in runCollectionReport), not QuickBooks's
+  // Customer.Balance field. Those two can disagree, since Balance can
+  // reflect other AR-affecting transactions beyond just open invoices.
+  var openInvBalanceByQbId={};
+  (_collOpenInvoices||[]).forEach(function(inv){
+    var qbCustId=inv.CustomerRef&&inv.CustomerRef.value;
+    if(!qbCustId) return;
+    openInvBalanceByQbId[qbCustId]=(openInvBalanceByQbId[qbCustId]||0)+Number(inv.Balance||0);
+  });
   function balanceOfCust(qbCustId){
-    var c=qbCustId?custByQbId[qbCustId]:null;
-    return c?Number(c.balance||0):0;
+    if(!qbCustId) return 0;
+    return openInvBalanceByQbId[qbCustId]||0;
   }
-  var anyBalanceSynced=customers.some(function(c){ return c.balance!==undefined; });
+  var anyBalanceSynced=!!(_collOpenInvoices && _collOpenInvoices.length);
 
   // Group by customer, keyed by QuickBooks customer id where available
   // (falling back to the name) so the same customer never gets split into
@@ -2710,7 +2757,7 @@ function computeCollectionGroups(){
   customers.forEach(function(c){
     if(!c.qbId) return;
     var custKey=c.qbId;
-    var bal=Number(c.balance||0);
+    var bal=balanceOfCust(c.qbId);
     if(!byCust[custKey]){
       byCust[custKey]={name:c.name||'No customer on file',total:0,balance:bal,sales:0,payments:[]};
       grandBalance+=bal;
@@ -2767,7 +2814,7 @@ function renderCollectionReport(){
     statusEl.textContent=shownCount+' payment(s) found across '+groupKeys.length+' '+unit+', '+esc(from)+' to '+esc(to)
       +(zeroCount>0?' ('+zeroCount+' $0 record(s) excluded)':'')
       +(_collGroupMode==='salesperson'&&bySalesPerson['Unassigned']?' — some customers have no Sales Person set in QuickBooks.':'')
-      +(!anyBalanceSynced?' — balances show as $0: run "Sync customers" in Settings to pull current balances.':'');
+      +(!anyBalanceSynced?' — balances show as $0: click "Pull from QuickBooks" above to fetch open invoice data.':'');
     statusEl.style.color='';
   }
 

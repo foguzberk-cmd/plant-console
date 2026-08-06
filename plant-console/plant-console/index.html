@@ -2534,6 +2534,18 @@ if(_collInvoicesNeedBackfill && _collOpenInvoicesLastSync) _collOpenInvoicesLast
 var _collPaymentsNeedBackfill=!Object.keys(_collAllPaymentsCache).length
   || Object.values(_collAllPaymentsCache).some(function(p){ return p.TotalAmt===undefined; });
 if(_collPaymentsNeedBackfill && _collUnappliedLastSync) _collUnappliedLastSync=null;
+// Journal Entry filtering logic changed (now requires the line to hit an
+// actual Accounts Receivable account, not just any line tagged with a
+// Customer — the initial version was too broad and swept in unrelated
+// job-costing/billable-expense entries, producing a wildly wrong number).
+// Same cache SHAPE as before, so the field-based checks above can't catch
+// this — force exactly one full re-fetch via a version marker instead.
+var JE_FILTER_VERSION='2';
+if(localStorage.getItem('pc_coll_je_filter_version')!==JE_FILTER_VERSION){
+  _collJournalEntryCache={};
+  _collJournalEntryLastSync=null;
+  localStorage.setItem('pc_coll_je_filter_version',JE_FILTER_VERSION);
+}
 var _collRange=null;      // {from,to} for the cached fetch
 var _collGroupMode='customer'; // 'customer' | 'salesperson'
 var _collRowKeys=[]; // groupKeys from the last render, indexed the same as each row — lets per-row buttons (like Print) reference a rep name safely without embedding raw text (which could contain apostrophes) into an onclick attribute
@@ -2845,12 +2857,42 @@ async function runCollectionReport(){
     statusEl.style.color='#b8460b';
   }
 
-  // Journal Entries — same pattern again. Only lines that post directly
-  // against a specific customer (Line.JournalEntryLineDetail.Entity with
-  // Type='Customer') are kept; everything else on the entry is irrelevant
-  // here. Debit increases what the customer owes, Credit decreases it —
-  // the standard convention for an asset account like Accounts
-  // Receivable, and the same sign convention QuickBooks's own reports use.
+  // Journal Entries — same pattern again. Only lines that (a) post
+  // directly against a specific customer (Line.JournalEntryLineDetail
+  // .Entity with Type='Customer') AND (b) hit an actual Accounts
+  // Receivable account are kept. That second check matters: QuickBooks
+  // also lets a Journal Entry tag a Customer/Job on an expense or COGS
+  // line purely for job-costing/billable-expense reporting — that has
+  // NOTHING to do with what the customer owes, and counting it here would
+  // (and initially did) pull in a large, wrong-signed, unrelated number.
+  // Fetching the Chart of Accounts first and keeping only entries whose
+  // AccountRef is an "Accounts Receivable" type account rules that out.
+  var arAccountIds={};
+  if(statusEl) statusEl.textContent='Checking Chart of Accounts for Accounts Receivable account(s)…';
+  var acctStart=1, acctSafety=0;
+  while(true){
+    acctSafety++;
+    if(acctSafety>200) break; // an account list is always small — this is just a generous ceiling, not a real limit
+    var acctCtrl=new AbortController();
+    var acctTimer=setTimeout(function(){acctCtrl.abort();},60000);
+    var acctRows=null;
+    try{
+      var acctUrl=base+'/api/qb/documents?entity=Account&startposition='+acctStart;
+      var acctr=await fetch(acctUrl,{signal:acctCtrl.signal});
+      clearTimeout(acctTimer);
+      if(acctr.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
+      var acctjd=await acctr.json();
+      if(acctjd && acctjd.error) break;
+      acctRows=(acctjd && acctjd.Account) ? acctjd.Account : [];
+    }catch(e){
+      clearTimeout(acctTimer);
+      break;
+    }
+    acctRows.forEach(function(a){ if(a.AccountType==='Accounts Receivable') arAccountIds[a.Id]=true; });
+    if(acctRows.length<pageSize) break;
+    acctStart+=pageSize;
+  }
+
   var jeSyncStartedAt=new Date().toISOString();
   var jeChanged=[];
   var jeStart=1, jeSafety=0;
@@ -2886,12 +2928,14 @@ async function runCollectionReport(){
       if(!detail) return;
       var entity=detail.Entity;
       if(!entity || entity.Type!=='Customer' || !entity.EntityRef || !entity.EntityRef.value) return;
+      var acctRef=detail.AccountRef;
+      if(!acctRef || !arAccountIds[acctRef.value]) return; // not an Accounts Receivable line — e.g. job-costing/billable-expense tagging, not an AR adjustment
       var amt=Number(line.Amount||0);
       var signedAmt=(detail.PostingType==='Debit')?amt:-amt;
       impacts.push({custId:entity.EntityRef.value,amount:signedAmt});
     });
     if(impacts.length) _collJournalEntryCache[je.Id]={Id:je.Id,impacts:impacts};
-    else delete _collJournalEntryCache[je.Id]; // no customer-linked lines (anymore) — nothing to track
+    else delete _collJournalEntryCache[je.Id]; // no AR-affecting customer-linked lines (anymore) — nothing to track
   });
   safeSetLocal('pc_coll_journal_entries',JSON.stringify(_collJournalEntryCache));
   if(jeCompleted){

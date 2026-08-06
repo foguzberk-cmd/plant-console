@@ -2519,6 +2519,7 @@ var _collUnappliedCreditMemoLastSync=localStorage.getItem('pc_coll_unapplied_cm_
 // the entry is irrelevant here and discarded to keep this small.
 var _collJournalEntryCache=(function(){ try{ return JSON.parse(localStorage.getItem('pc_coll_journal_entries')||'{}'); }catch(e){ return {}; } })(); // keyed by JournalEntry Id -> {impacts:[{custId,amount}]}
 var _collJournalEntryLastSync=localStorage.getItem('pc_coll_journal_entries_synctime')||null;
+var _collJeDiagnostics=null; // {arAccountCount, jeTotalFetched, jeCustomerLinesSeen, jeKeptCount} from the last pull — surfaced in the report footer so it's obvious whether the Accounts Receivable filter actually ran, instead of only being able to guess from the final dollar figure
 // MIGRATION: these two full-history caches are new, and their shape has
 // already changed a few times since (invoices now carry Balance and
 // DocNumber; payments now carry TotalAmt + DepositToAccountRef — see
@@ -2892,6 +2893,8 @@ async function runCollectionReport(){
     if(acctRows.length<pageSize) break;
     acctStart+=pageSize;
   }
+  var arAccountCount=Object.keys(arAccountIds).length;
+  if(statusEl) statusEl.textContent='Found '+arAccountCount+' Accounts Receivable account(s) in the Chart of Accounts…';
 
   var jeSyncStartedAt=new Date().toISOString();
   var jeChanged=[];
@@ -2921,6 +2924,7 @@ async function runCollectionReport(){
     if(jeRows.length<pageSize){ jeCompleted=true; break; }
     jeStart+=pageSize;
   }
+  var jeKeptCount=0, jeCustomerLinesSeen=0;
   jeChanged.forEach(function(je){
     var impacts=[];
     (je.Line||[]).forEach(function(line){
@@ -2928,15 +2932,22 @@ async function runCollectionReport(){
       if(!detail) return;
       var entity=detail.Entity;
       if(!entity || entity.Type!=='Customer' || !entity.EntityRef || !entity.EntityRef.value) return;
+      jeCustomerLinesSeen++;
       var acctRef=detail.AccountRef;
       if(!acctRef || !arAccountIds[acctRef.value]) return; // not an Accounts Receivable line — e.g. job-costing/billable-expense tagging, not an AR adjustment
       var amt=Number(line.Amount||0);
       var signedAmt=(detail.PostingType==='Debit')?amt:-amt;
       impacts.push({custId:entity.EntityRef.value,amount:signedAmt});
     });
-    if(impacts.length) _collJournalEntryCache[je.Id]={Id:je.Id,impacts:impacts};
+    if(impacts.length){ _collJournalEntryCache[je.Id]={Id:je.Id,impacts:impacts}; jeKeptCount++; }
     else delete _collJournalEntryCache[je.Id]; // no AR-affecting customer-linked lines (anymore) — nothing to track
   });
+  // Stored (not just a transient status message, which gets overwritten
+  // before render finishes) so it's visible in the report footer AFTER
+  // the pull completes — lets you confirm at a glance whether the
+  // Accounts Receivable filter actually ran, instead of guessing from the
+  // final dollar figure alone.
+  _collJeDiagnostics={arAccountCount:arAccountCount,jeTotalFetched:jeChanged.length,jeCustomerLinesSeen:jeCustomerLinesSeen,jeKeptCount:jeKeptCount};
   safeSetLocal('pc_coll_journal_entries',JSON.stringify(_collJournalEntryCache));
   if(jeCompleted){
     _collJournalEntryLastSync=jeSyncStartedAt;
@@ -3449,6 +3460,12 @@ function renderCollectionReport(){
   +'</div>';
   html+='</div>';
   html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is Invoices + Sales Receipts issued during this period, net of any Credit Memos issued in the same window — matching how QuickBooks\'s own Sales by Product/Service report nets returns out. "Balance owed" is the true sum of open invoices for each customer as of the report\'s "From" date, and "Ending balance" is the same thing as of the "To" date — both reconstructed directly from invoice/payment history (not derived from Sales/Collected, and not QuickBooks\'s live "right now" balance), so they stay accurate for whatever date range you pick. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice. "Undeposited" is money that HAS been applied to an invoice (so it\'s already out of "Ending balance") but hasn\'t been physically deposited to the bank yet in QuickBooks, or comes from a payment dated after today — an independent, separate thing from whether an invoice is open, and not part of QuickBooks\'s own Open Invoices Report total at all. "Credit memo" is the unapplied portion of a credit memo — a credit sitting against a customer, not yet used against any invoice. "Journal entry" is the net effect of any Journal Entry posted directly against this customer\'s Accounts Receivable (Debit adds to what they owe, Credit subtracts) — a standing ledger adjustment outside the normal Invoice/Payment flow. To match QuickBooks\'s own Open Invoices Report total exactly: Ending balance − Unapplied − Credit memo + Journal entry.</div>';
+  if(_collJeDiagnostics){
+    var jd=_collJeDiagnostics;
+    html+='<div style="font-size:11px;color:var(--muted);margin-top:6px;font-family:var(--mono)">Journal Entry diagnostics (last pull): '+jd.arAccountCount+' Accounts Receivable account(s) found in Chart of Accounts · '+jd.jeTotalFetched+' journal entr'+(jd.jeTotalFetched!==1?'ies':'y')+' checked · '+jd.jeCustomerLinesSeen+' customer-tagged line(s) seen · '+jd.jeKeptCount+' kept as AR-affecting.'
+      +(jd.arAccountCount===0?' ⚠ Zero AR accounts found — the Chart of Accounts lookup likely failed (check server.js is redeployed with the "Account" entity whitelisted), so every Journal Entry line is being excluded right now.':'')
+      +'</div>';
+  }
   if(bodyEl) bodyEl.innerHTML=html;
 }
 

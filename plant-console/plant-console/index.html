@@ -2502,14 +2502,16 @@ var _collAllInvoicesCache=(function(){ try{ return JSON.parse(localStorage.getIt
 var _collAllPaymentsCache=(function(){ try{ return JSON.parse(localStorage.getItem('pc_coll_all_payments')||'{}'); }catch(e){ return {}; } })(); // keyed by Payment Id
 var _collOpeningByQbId=null; // {customer QB id: open-invoice balance as of the report's "From" date} — precomputed once per pull (see computeAsOfBalances), not recomputed on every render
 var _collEndingByQbId=null;  // {customer QB id: open-invoice balance as of the report's "To" date}
-// MIGRATION: these two full-history caches are new. Anyone who already used
-// this report before has a non-null _collOpenInvoicesLastSync/
-// _collUnappliedLastSync, which would make the invoice/payment fetch loops
-// below run INCREMENTAL-only ("since last sync") — filling the new caches
-// with just a small recent slice instead of full history, which would
-// silently understate every "as of date" balance. Force exactly one full
-// fetch to properly backfill them, transparent to the person using the app.
-if(!Object.keys(_collAllInvoicesCache).length && _collOpenInvoicesLastSync) _collOpenInvoicesLastSync=null;
+// MIGRATION: these two full-history caches are new, and their shape has
+// already changed once since (invoices now also carry a Balance field —
+// see computeAsOfBalances for why). Anyone with an EMPTY cache, or one
+// whose entries predate the Balance field being added, would otherwise get
+// a stale/incomplete backfill from an INCREMENTAL-only ("since last sync")
+// fetch — silently wrong "as of date" balances. Force exactly one full
+// fetch to properly (re)populate them, transparent to the person using the app.
+var _collInvoicesNeedBackfill=!Object.keys(_collAllInvoicesCache).length
+  || Object.values(_collAllInvoicesCache).some(function(inv){ return inv.Balance===undefined; });
+if(_collInvoicesNeedBackfill && _collOpenInvoicesLastSync) _collOpenInvoicesLastSync=null;
 if(!Object.keys(_collAllPaymentsCache).length && _collUnappliedLastSync) _collUnappliedLastSync=null;
 var _collRange=null;      // {from,to} for the cached fetch
 var _collGroupMode='customer'; // 'customer' | 'salesperson'
@@ -2691,7 +2693,12 @@ async function runCollectionReport(){
     else delete _collOpenInvoicesCache[inv.Id]; // no longer open (paid off) — or was never actually open, either way it shouldn't be counted
     // Kept regardless of current Balance — a now-closed invoice may still
     // have been open as of an earlier "as of" date (see computeAsOfBalances).
-    _collAllInvoicesCache[inv.Id]={Id:inv.Id,CustomerRef:inv.CustomerRef,TotalAmt:Number(inv.TotalAmt||0),TxnDate:(inv.TxnDate||'').slice(0,10)};
+    // Balance (QuickBooks's own live "right now" figure) is stored too —
+    // it's the authoritative anchor computeAsOfBalances works backward
+    // from, since it already correctly reflects EVERY reduction QuickBooks
+    // ever made, including ones with no traceable Payment record at all
+    // (e.g. a credit auto-applied at invoice creation).
+    _collAllInvoicesCache[inv.Id]={Id:inv.Id,CustomerRef:inv.CustomerRef,TotalAmt:Number(inv.TotalAmt||0),Balance:Number(inv.Balance||0),TxnDate:(inv.TxnDate||'').slice(0,10)};
   });
   safeSetLocal('pc_coll_open_invoices',JSON.stringify(_collOpenInvoicesCache)); // save whatever we DID get either way — partial data is still better than none
   safeSetLocal('pc_coll_all_invoices',JSON.stringify(_collAllInvoicesCache));
@@ -2773,16 +2780,23 @@ async function runCollectionReport(){
 // Reconstructs each customer's TRUE open-invoice balance as of two specific
 // dates (the report's "From" and "To") directly from full invoice+payment
 // history, instead of relying on QuickBooks's live "right now" Balance
-// field (which only reflects today, not a chosen past date). For every
-// invoice, "still open as of date D" = TotalAmt minus every dollar ever
-// applied against it (by any Payment) dated on/before D. Applying a Credit
-// Memo to an invoice in QuickBooks always creates a $0 Payment record
-// linking the invoice and the credit, so walking Payment.Line[].LinkedTxn
-// history covers real cash payments AND credit-memo applications in one
-// pass — no separate Credit Memo handling needed. (One known gap: a
-// balance write-off done directly through a Journal Entry, bypassing
-// Payment entirely, wouldn't be caught here — an edge case, but worth
-// knowing about if a number here ever looks stubbornly too high.)
+// field (which only reflects today, not a chosen past date).
+//
+// Works BACKWARD from each invoice's current live Balance rather than
+// forward from TotalAmt: open-as-of-D = CurrentBalance + (any payments
+// applied to it AFTER date D, added back). CurrentBalance is QuickBooks's
+// own authoritative "right now" number, so it already correctly reflects
+// EVERY reduction QuickBooks ever made — including ones with no traceable
+// Payment record at all, like a credit memo QuickBooks auto-applies to a
+// new invoice the moment it's created (a common setting, and one that a
+// "forward from TotalAmt, subtract only traceable Payments" approach can't
+// see, which caused this to overstate every such invoice's historical
+// balance). Working backward sidesteps that blind spot entirely: we only
+// need to know what changed AFTER D, and every payment applied via
+// Receive Payment (including a credit memo applied through it) does
+// create a traceable Payment.Line[].LinkedTxn record, so "what changed
+// after D" is reliably known even though "everything that reduced it,
+// ever" isn't.
 // Runs ONCE per "Pull from QuickBooks" (not on every render/search
 // keystroke) since it's the one part of this report doing real work
 // proportional to the size of the full invoice/payment history.
@@ -2791,7 +2805,8 @@ function computeAsOfBalances(fromDate,toDate){
   var payments=Object.values(_collAllPaymentsCache);
 
   // invoiceId -> [{amount, date}, ...] — every dollar ever applied against
-  // that invoice, by any payment (cash receipt or credit-memo application).
+  // that invoice via a traceable Payment (cash receipt or credit-memo
+  // application made through Receive Payment).
   var appliedByInvoice={};
   payments.forEach(function(p){
     var d=p.TxnDate||'';
@@ -2811,18 +2826,19 @@ function computeAsOfBalances(fromDate,toDate){
     if(!custId) return;
     var invDate=inv.TxnDate||'';
     if(!invDate) return;
+    var currentBalance=Number(inv.Balance||0);
     var applications=appliedByInvoice[inv.Id]||[];
-    function appliedAsOf(d){
+    function appliedAfter(d){
       var sum=0;
-      applications.forEach(function(a){ if(a.date && a.date<=d) sum+=a.amount; });
+      applications.forEach(function(a){ if(a.date && a.date>d) sum+=a.amount; });
       return sum;
     }
     if(invDate<=fromDate){
-      var openAtFrom=inv.TotalAmt-appliedAsOf(fromDate);
+      var openAtFrom=currentBalance+appliedAfter(fromDate);
       if(openAtFrom>0.004) opening[custId]=(opening[custId]||0)+openAtFrom;
     }
     if(invDate<=toDate){
-      var openAtTo=inv.TotalAmt-appliedAsOf(toDate);
+      var openAtTo=currentBalance+appliedAfter(toDate);
       if(openAtTo>0.004) ending[custId]=(ending[custId]||0)+openAtTo;
     }
   });

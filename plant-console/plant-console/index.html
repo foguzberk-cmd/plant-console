@@ -2503,6 +2503,7 @@ var _collAllPaymentsCache=(function(){ try{ return JSON.parse(localStorage.getIt
 var _collOpeningByQbId=null; // {customer QB id: open-invoice balance as of the report's "From" date} — precomputed once per pull (see computeAsOfBalances), not recomputed on every render
 var _collEndingByQbId=null;  // {customer QB id: open-invoice balance as of the report's "To" date}
 var _collEndingDetailByQbId=null; // {customer QB id: [{docNumber, txnDate, totalAmt, balance, contribution}, ...]} — the exact invoices behind each customer's Ending Balance, for direct invoice-by-invoice comparison against QuickBooks
+var _collFutureByQbId=null; // {customer QB id: total $ from payments dated AFTER today} — a payment applied to an invoice with a date in the future is a data anomaly (typo'd year, pre-recorded check, etc.), and would otherwise make the reconstruction "un-pay" that invoice back open for any "as of" date before it. That money is folded into the Undeposited column instead of inflating Ending/Opening balance — see computeAsOfBalances.
 // MIGRATION: these two full-history caches are new, and their shape has
 // already changed a few times since (invoices now carry Balance and
 // DocNumber; payments now carry TotalAmt + DepositToAccountRef — see
@@ -2786,6 +2787,7 @@ async function runCollectionReport(){
   _collOpeningByQbId=asOf.opening;
   _collEndingByQbId=asOf.ending;
   _collEndingDetailByQbId=asOf.endingDetail;
+  _collFutureByQbId=asOf.future;
   renderCollectionReport();
 }
 
@@ -2809,30 +2811,51 @@ async function runCollectionReport(){
 // create a traceable Payment.Line[].LinkedTxn record, so "what changed
 // after D" is reliably known even though "everything that reduced it,
 // ever" isn't.
+//
+// One real-world wrinkle this has to guard against: a payment can be
+// recorded in QuickBooks with a TxnDate that's actually in the FUTURE
+// relative to today (a typo'd year, a pre-recorded check, etc.). Left
+// alone, that payment would count as "applied after" every single date —
+// including today — which "un-pays" the invoice back open no matter what
+// "To" date is picked, even though QuickBooks itself already shows the
+// invoice as paid. Since a payment genuinely can't have happened yet if
+// its date hasn't arrived, any such payment is excluded from the
+// reconstruction entirely and its amount is instead folded into
+// "Undeposited" for that customer — visible and traceable, without
+// silently reopening a real, already-paid invoice.
 // Runs ONCE per "Pull from QuickBooks" (not on every render/search
 // keystroke) since it's the one part of this report doing real work
 // proportional to the size of the full invoice/payment history.
 function computeAsOfBalances(fromDate,toDate){
   var invoices=Object.values(_collAllInvoicesCache);
   var payments=Object.values(_collAllPaymentsCache);
+  var todayStr=new Date().toISOString().slice(0,10);
 
   // invoiceId -> [{amount, date}, ...] — every dollar ever applied against
   // that invoice via a traceable Payment (cash receipt or credit-memo
-  // application made through Receive Payment).
+  // application made through Receive Payment), EXCLUDING any payment dated
+  // after today (see comment above — those go to futureAppliedByInvoice
+  // instead and get folded into Undeposited).
   var appliedByInvoice={};
+  var futureAppliedByInvoice={}; // invoiceId -> $ from payments dated after today
   payments.forEach(function(p){
     var d=p.TxnDate||'';
+    var isFuture=d && d>todayStr;
     (p.Line||[]).forEach(function(line){
       (line.LinkedTxn||[]).forEach(function(lt){
         if(lt.TxnType==='Invoice' && lt.TxnId){
-          if(!appliedByInvoice[lt.TxnId]) appliedByInvoice[lt.TxnId]=[];
-          appliedByInvoice[lt.TxnId].push({amount:Number(line.Amount||0),date:d});
+          if(isFuture){
+            futureAppliedByInvoice[lt.TxnId]=(futureAppliedByInvoice[lt.TxnId]||0)+Number(line.Amount||0);
+          } else {
+            if(!appliedByInvoice[lt.TxnId]) appliedByInvoice[lt.TxnId]=[];
+            appliedByInvoice[lt.TxnId].push({amount:Number(line.Amount||0),date:d});
+          }
         }
       });
     });
   });
 
-  var opening={}, ending={}; // customer QB id -> total open balance as of that date
+  var opening={}, ending={}, future={}; // customer QB id -> total (opening/ending balance, or future-dated-payment $ folded into Undeposited)
   var endingDetail={}; // customer QB id -> [{docNumber, txnDate, totalAmt, balance, appliedAfterTo}, ...] — the exact invoices behind the Ending Balance number, for matching invoice-by-invoice against QuickBooks
   invoices.forEach(function(inv){
     var custId=inv.CustomerRef&&inv.CustomerRef.value;
@@ -2845,6 +2868,10 @@ function computeAsOfBalances(fromDate,toDate){
       var sum=0;
       applications.forEach(function(a){ if(a.date && a.date>d) sum+=a.amount; });
       return sum;
+    }
+    var futureAmt=futureAppliedByInvoice[inv.Id]||0;
+    if(futureAmt>0.004){
+      future[custId]=(future[custId]||0)+futureAmt;
     }
     if(invDate<=fromDate){
       var openAtFrom=currentBalance+appliedAfter(fromDate);
@@ -2860,7 +2887,7 @@ function computeAsOfBalances(fromDate,toDate){
       }
     }
   });
-  return {opening:opening,ending:ending,endingDetail:endingDetail};
+  return {opening:opening,ending:ending,endingDetail:endingDetail,future:future};
 }
 
 // Computes the customer/sales-person groupings from the cached
@@ -2923,6 +2950,15 @@ function computeCollectionGroups(){
     if(!qbCustId) return;
     if(!_looksLikeUndepositedAccount(p.DepositToAccountRef)) return;
     undepositedByQbId[qbCustId]=(undepositedByQbId[qbCustId]||0)+Number(p.TotalAmt||0);
+  });
+  // Folded in here too: money from a payment dated AFTER today, applied to
+  // an invoice — excluded from the Ending/Opening reconstruction (since a
+  // future-dated payment can't legitimately count as "already happened"
+  // for any real-world date), and surfaced here instead so it's still
+  // visible and traceable rather than silently dropped. See
+  // computeAsOfBalances / _collFutureByQbId.
+  Object.keys(_collFutureByQbId||{}).forEach(function(qbCustId){
+    undepositedByQbId[qbCustId]=(undepositedByQbId[qbCustId]||0)+_collFutureByQbId[qbCustId];
   });
   function undepositedOfCust(qbCustId){
     if(!qbCustId) return 0;
@@ -3192,7 +3228,7 @@ function renderCollectionReport(){
     +'</span>'
   +'</div>';
   html+='</div>';
-  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is Invoices + Sales Receipts issued during this period, net of any Credit Memos issued in the same window — matching how QuickBooks\'s own Sales by Product/Service report nets returns out. "Balance owed" is the true sum of open invoices for each customer as of the report\'s "From" date, and "Ending balance" is the same thing as of the "To" date — both reconstructed directly from invoice/payment history (not derived from Sales/Collected, and not QuickBooks\'s live "right now" balance), so they stay accurate for whatever date range you pick. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice — it\'s part of what QuickBooks\'s own Customer.Balance counts, but isn\'t part of "open invoices," which is why the two can differ. "Undeposited" is money that HAS been applied to an invoice (so it\'s already out of "Ending balance") but hasn\'t been physically deposited to the bank yet in QuickBooks — a check received and recorded, just still sitting in the Undeposited Funds account.</div>';
+  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is Invoices + Sales Receipts issued during this period, net of any Credit Memos issued in the same window — matching how QuickBooks\'s own Sales by Product/Service report nets returns out. "Balance owed" is the true sum of open invoices for each customer as of the report\'s "From" date, and "Ending balance" is the same thing as of the "To" date — both reconstructed directly from invoice/payment history (not derived from Sales/Collected, and not QuickBooks\'s live "right now" balance), so they stay accurate for whatever date range you pick. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice — it\'s part of what QuickBooks\'s own Customer.Balance counts, but isn\'t part of "open invoices," which is why the two can differ. "Undeposited" is money that HAS been applied to an invoice (so it\'s already out of "Ending balance") but hasn\'t been physically deposited to the bank yet in QuickBooks — either sitting in the Undeposited Funds account, or from a payment dated after today (which can\'t legitimately count as collected yet for any real-world date, so it\'s kept out of the balance math and surfaced here instead).</div>';
   if(bodyEl) bodyEl.innerHTML=html;
 }
 
@@ -3345,13 +3381,22 @@ function _buildCollectionCSVRows(onlyKey){
     });
   }
 
-  var rows=[[groupLabel,'Sales','Balance Owed','Collected','Ending Balance','Unapplied','Undeposited','% Collected','Row Type','Date','Customer','Ref','Amount']];
+  var rows=[[groupLabel,'Sales','Balance Owed','Collected','Ending Balance','Unapplied','Undeposited','% Collected','Row Type','Date','Customer / Detail','Ref / Invoice #','Amount']];
   keys.forEach(function(k){
     var entry=byMode[k];
     var label=(_collGroupMode==='salesperson')?k:entry.name;
     var opening=entry.opening||0;
     var pct=opening>0?Math.round((entry.total/opening)*100)+'%':'';
     rows.push([label,entry.sales.toFixed(2),opening.toFixed(2),entry.total.toFixed(2),entry.balance.toFixed(2),(entry.unapplied||0).toFixed(2),(entry.undeposited||0).toFixed(2),pct,'SUMMARY','','','','']);
+    // Customer-mode only: the exact invoices behind this customer's Ending
+    // Balance, for direct invoice-by-invoice matching against QuickBooks —
+    // same data as the "Invoices behind Ending Balance" panel on screen,
+    // just here in the CSV since that's the workflow actually being used.
+    if(_collGroupMode==='customer' && _collEndingDetailByQbId && _collEndingDetailByQbId[k]){
+      _collEndingDetailByQbId[k].slice().sort(function(a,b){ return b.contribution-a.contribution; }).forEach(function(d){
+        rows.push(['','','','','','','','','INVOICE',d.txnDate,'Total '+d.totalAmt.toFixed(2)+' -> Current bal. '+d.balance.toFixed(2)+(d.appliedAfterTo>0.004?' + '+d.appliedAfterTo.toFixed(2)+' paid after "To"':''),'#'+d.docNumber,d.contribution.toFixed(2)]);
+      });
+    }
     entry.payments.slice().sort(function(a,b){ return a.date<b.date?1:-1; }).forEach(function(row){
       rows.push(['','','','','','','','','PAYMENT',row.date,row.customer||label,row.ref||'',row.amount.toFixed(2)]);
     });

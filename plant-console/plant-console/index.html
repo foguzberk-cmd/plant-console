@@ -2543,7 +2543,7 @@ if(_collPaymentsNeedBackfill && _collUnappliedLastSync) _collUnappliedLastSync=n
 // job-costing/billable-expense entries, producing a wildly wrong number).
 // Same cache SHAPE as before, so the field-based checks above can't catch
 // this — force exactly one full re-fetch via a version marker instead.
-var JE_FILTER_VERSION='6'; // v6: journal entry lines now also carry the raw line Amount, PostingType, and Account name — to diagnose a confirmed real discrepancy where our fetched line.Amount for one specific entry (#27) doesn't match what QuickBooks's own reports/UI consistently show for that same line ($22,182.12 fetched vs $16,144.22 shown everywhere in QuickBooks).
+var JE_FILTER_VERSION='8'; // v8: re-enabled netting a JournalEntry's AR impact by any Payment linked to it (Line.LinkedTxn.TxnType='JournalEntry') — CONFIRMED correct against QuickBooks's own "Outstanding Transactions" view (Original Amount vs Open Balance for a JE-based charge, same concept as an Invoice). Unlike the first attempt at this, netting is now capped: only applied when the paid amount is <=1.5x the entry's own size, so a mismatched/disproportionate link gets flagged as suspicious and left alone instead of silently blowing up the total again.
 if(localStorage.getItem('pc_coll_je_filter_version')!==JE_FILTER_VERSION){
   _collJournalEntryCache={};
   _collJournalEntryLastSync=null;
@@ -2947,17 +2947,32 @@ async function runCollectionReport(){
     jeStart+=pageSize;
   }
   var jeKeptCount=0, jeCustomerLinesSeen=0;
-  // NOTE: an earlier version of this also tried to net out Payments linked
-  // to a JournalEntry (assuming that meant "this payment settled that AR
-  // charge," the same way a Payment settles an Invoice). That assumption
-  // was wrong for this data — it made the total measurably WORSE (further
-  // from QuickBooks's own reported figure), not better, so it's been
-  // removed rather than kept as a guess. What a Payment.Line.LinkedTxn
-  // pointing at a JournalEntry actually represents in this business's
-  // QuickBooks usage isn't something this app can currently determine
-  // reliably — treat this column as informational, and cross-check the
-  // exact figure against QuickBooks's own Open Invoices Report directly
-  // for anything beyond a rough gut-check.
+  // A Journal Entry's AR line can later be partially or fully paid down —
+  // CONFIRMED directly against QuickBooks's own "Outstanding Transactions"
+  // screen (Receive Payment view), which shows both an Original Amount
+  // and a remaining Open Balance for a JE-based AR charge, exactly like
+  // an Invoice. A normal Payment settles it via the same Line.LinkedTxn
+  // mechanism used for Invoices, just with TxnType='JournalEntry' instead
+  // of 'Invoice'.
+  //
+  // An earlier version of this net-out logic made the total measurably
+  // WORSE, not better, for reasons never fully isolated — so this time,
+  // netting only applies when the amount being subtracted is sane
+  // relative to the entry's own size (capped at 1.5x). Anything beyond
+  // that is left un-netted and flagged in the diagnostics instead of
+  // silently applied, so a bad match can't blow up the total again
+  // unnoticed.
+  var paidByJE={};
+  Object.values(_collAllPaymentsCache||{}).forEach(function(p){
+    (p.Line||[]).forEach(function(line){
+      (line.LinkedTxn||[]).forEach(function(lt){
+        if(lt.TxnType==='JournalEntry' && lt.TxnId){
+          paidByJE[lt.TxnId]=(paidByJE[lt.TxnId]||0)+Number(line.Amount||0);
+        }
+      });
+    });
+  });
+  var jeNettedCount=0, jeNettedTotal=0, jeSkippedSuspiciousCount=0, jeSkippedSuspiciousTotal=0;
   jeChanged.forEach(function(je){
     var impacts=[];
     (je.Line||[]).forEach(function(line){
@@ -2970,8 +2985,30 @@ async function runCollectionReport(){
       if(!acctRef || !arAccountIds[acctRef.value]) return; // not an Accounts Receivable line — e.g. job-costing/billable-expense tagging, not an AR adjustment
       var amt=Number(line.Amount||0);
       var signedAmt=(detail.PostingType==='Debit')?amt:-amt;
-      impacts.push({custId:entity.EntityRef.value,amount:signedAmt,rawAmt:amt,postingType:detail.PostingType||'',acctName:(acctRef&&acctRef.name)||''});
+      impacts.push({custId:entity.EntityRef.value,amount:signedAmt,rawAmt:amt,postingType:detail.PostingType||'',acctName:(acctRef&&acctRef.name)||'',lastUpdated:(je.MetaData&&je.MetaData.LastUpdatedTime)||''});
     });
+    var paidAmt=paidByJE[je.Id]||0;
+    if(paidAmt>0.004 && impacts.length){
+      var totalAbs=impacts.reduce(function(s,i){ return s+Math.abs(i.amount); },0);
+      if(totalAbs>0.004 && paidAmt<=totalAbs*1.5){
+        // Usually a JE only has ONE AR-customer line, so this is a plain
+        // subtraction; on the rare entry touching multiple customers,
+        // split the paid amount proportionally across them.
+        impacts=impacts.map(function(i){
+          var share=paidAmt*(Math.abs(i.amount)/totalAbs);
+          var netAmount=i.amount-(i.amount>=0?share:-share);
+          return {custId:i.custId, amount:netAmount, rawAmt:i.rawAmt, postingType:i.postingType, acctName:i.acctName, lastUpdated:i.lastUpdated, paidAgainst:share};
+        });
+        jeNettedCount++; jeNettedTotal+=paidAmt;
+      } else if(totalAbs>0.004){
+        // paidAmt is disproportionately large next to what this entry
+        // actually posted — almost certainly a mismatched/unrelated
+        // Payment link, not a real paydown of THIS charge. Left
+        // un-netted on purpose rather than risk another wild swing.
+        jeSkippedSuspiciousCount++; jeSkippedSuspiciousTotal+=paidAmt;
+      }
+    }
+    impacts=impacts.filter(function(i){ return Math.abs(i.amount)>0.004; }); // fully paid off since — nothing left to track
     if(impacts.length){ _collJournalEntryCache[je.Id]={Id:je.Id,DocNumber:je.DocNumber||'',TxnDate:(je.TxnDate||'').slice(0,10),impacts:impacts}; jeKeptCount++; }
     else delete _collJournalEntryCache[je.Id]; // no AR-affecting customer-linked lines (anymore) — nothing to track
   });
@@ -2980,7 +3017,7 @@ async function runCollectionReport(){
   // the pull completes — lets you confirm at a glance whether the
   // Accounts Receivable filter actually ran, instead of guessing from the
   // final dollar figure alone.
-  _collJeDiagnostics={arAccountCount:arAccountCount,jeTotalFetched:jeChanged.length,jeCustomerLinesSeen:jeCustomerLinesSeen,jeKeptCount:jeKeptCount};
+  _collJeDiagnostics={arAccountCount:arAccountCount,jeTotalFetched:jeChanged.length,jeCustomerLinesSeen:jeCustomerLinesSeen,jeKeptCount:jeKeptCount,jeNettedCount:jeNettedCount,jeNettedTotal:jeNettedTotal,jeSkippedSuspiciousCount:jeSkippedSuspiciousCount,jeSkippedSuspiciousTotal:jeSkippedSuspiciousTotal};
   safeSetLocal('pc_coll_journal_entries',JSON.stringify(_collJournalEntryCache));
   if(jeCompleted){
     _collJournalEntryLastSync=jeSyncStartedAt;
@@ -3203,7 +3240,7 @@ function computeCollectionGroups(){
     (je.impacts||[]).forEach(function(imp){
       journalByQbId[imp.custId]=(journalByQbId[imp.custId]||0)+imp.amount;
       if(!journalDetailByQbId[imp.custId]) journalDetailByQbId[imp.custId]=[];
-      journalDetailByQbId[imp.custId].push({docNumber:je.DocNumber||'(no #)',txnDate:je.TxnDate||'',amount:imp.amount,rawAmt:imp.rawAmt,postingType:imp.postingType,acctName:imp.acctName});
+      journalDetailByQbId[imp.custId].push({docNumber:je.DocNumber||'(no #)',txnDate:je.TxnDate||'',amount:imp.amount,rawAmt:imp.rawAmt,postingType:imp.postingType,acctName:imp.acctName,lastUpdated:imp.lastUpdated,paidAgainst:imp.paidAgainst||0});
     });
   });
   function journalOfCust(qbCustId){
@@ -3471,8 +3508,8 @@ function renderCollectionReport(){
           ? ('<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Journal entries tagged to this customer\'s A/R ('+entry.journalDetail.length+') — check each one in QuickBooks; some may already be resolved elsewhere and shouldn\'t count</div>'
             +entry.journalDetail.slice().sort(function(a,b){ return b.txnDate<a.txnDate?-1:1; }).map(function(jd){
               return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 16px 4px 40px;font-size:12px;border-bottom:1px dashed var(--line)">'
-                +'<span>#'+esc(jd.docNumber)+' · '+esc(jd.txnDate)+' · '+esc(jd.postingType||'?')+' · acct: '+esc(jd.acctName||'(unnamed)')+'</span>'
-                +'<span style="font-family:var(--mono);white-space:nowrap">raw line amt '+money(jd.rawAmt!==undefined?jd.rawAmt:jd.amount)+' → <b>'+money(jd.amount)+'</b></span></div>';
+                +'<span>#'+esc(jd.docNumber)+' · '+esc(jd.txnDate)+' · '+esc(jd.postingType||'?')+' · acct: '+esc(jd.acctName||'(unnamed)')+(jd.lastUpdated?' · last edited '+esc(jd.lastUpdated.slice(0,19).replace('T',' ')):'')+'</span>'
+                +'<span style="font-family:var(--mono);white-space:nowrap">raw line amt '+money(jd.rawAmt!==undefined?jd.rawAmt:jd.amount)+(jd.paidAgainst>0.004?' − '+money(jd.paidAgainst)+' paid':'')+' → <b>'+money(jd.amount)+'</b></span></div>';
             }).join(''))
           : '')
         +(_collGroupMode==='salesperson' && entry.custBalances && entry.custBalances.length
@@ -3514,11 +3551,11 @@ function renderCollectionReport(){
     +'</div>';
   }
   html+='</div>';
-  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is Invoices + Sales Receipts issued during this period, net of any Credit Memos issued in the same window — matching how QuickBooks\'s own Sales by Product/Service report nets returns out. "Balance owed" is the true sum of open invoices for each customer as of the report\'s "From" date, and "Ending balance" is the same thing as of the "To" date — both reconstructed directly from invoice/payment history (not derived from Sales/Collected, and not QuickBooks\'s live "right now" balance), so they stay accurate for whatever date range you pick — proven to match QuickBooks exactly, customer by customer. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice — also an exact match to QuickBooks. "Undeposited" is money that HAS been applied to an invoice (so it\'s already out of "Ending balance") but hasn\'t been physically deposited to the bank yet in QuickBooks, or comes from a payment dated after today. "Credit memo" is the unapplied portion of a credit memo — a credit sitting against a customer, not yet used against any invoice — also an exact match. "Journal entry" is every Journal Entry ever posted directly against this customer\'s Accounts Receivable, but with no reliable way yet to detect when one has since been paid off or reversed — this column is informational only (see the detail list under each customer), NOT used in the reconciled total below. Instead, look up the true net Journal Entry figure from QuickBooks\'s own Open Invoices Report and enter it in the "JE adjustment" box above — the green "Total (matches QuickBooks)" row is computed from that trusted number, so it lines up with QuickBooks exactly.</div>';
+  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is Invoices + Sales Receipts issued during this period, net of any Credit Memos issued in the same window — matching how QuickBooks\'s own Sales by Product/Service report nets returns out. "Balance owed" is the true sum of open invoices for each customer as of the report\'s "From" date, and "Ending balance" is the same thing as of the "To" date — both reconstructed directly from invoice/payment history (not derived from Sales/Collected, and not QuickBooks\'s live "right now" balance), so they stay accurate for whatever date range you pick — proven to match QuickBooks exactly, customer by customer. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice — also an exact match to QuickBooks. "Undeposited" is money that HAS been applied to an invoice (so it\'s already out of "Ending balance") but hasn\'t been physically deposited to the bank yet in QuickBooks, or comes from a payment dated after today. "Credit memo" is the unapplied portion of a credit memo — a credit sitting against a customer, not yet used against any invoice — also an exact match. "Journal entry" is every Journal Entry posted directly against this customer\'s Accounts Receivable, netted down by any Payment that\'s since paid part of it off (confirmed against QuickBooks\'s own "Outstanding Transactions" view, which shows an Original Amount and a separate Open Balance for a JE-based charge, same as an Invoice) — still worth spot-checking against QuickBooks for anything critical, but should now track much closer than before. The "JE adjustment" box above and green "Total (matches QuickBooks)" row are still there as a manual override if you ever want to force an exact match using a number looked up directly from QuickBooks.</div>';
   if(_collJeDiagnostics){
     var jd=_collJeDiagnostics;
     function money2(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
-    html+='<div style="font-size:11px;color:var(--muted);margin-top:6px;font-family:var(--mono)">Journal Entry diagnostics (last pull): '+jd.arAccountCount+' Accounts Receivable account(s) found in Chart of Accounts · '+jd.jeTotalFetched+' journal entr'+(jd.jeTotalFetched!==1?'ies':'y')+' checked · '+jd.jeCustomerLinesSeen+' customer-tagged line(s) seen · '+jd.jeKeptCount+' kept as AR-affecting.'
+    html+='<div style="font-size:11px;color:var(--muted);margin-top:6px;font-family:var(--mono)">Journal Entry diagnostics (last pull): '+jd.arAccountCount+' Accounts Receivable account(s) found in Chart of Accounts · '+jd.jeTotalFetched+' journal entr'+(jd.jeTotalFetched!==1?'ies':'y')+' checked · '+jd.jeCustomerLinesSeen+' customer-tagged line(s) seen · '+jd.jeKeptCount+' kept as AR-affecting · '+jd.jeNettedCount+' netted down by a linked payment ('+money2(jd.jeNettedTotal||0)+' total) · '+jd.jeSkippedSuspiciousCount+' skipped as suspicious/disproportionate ('+money2(jd.jeSkippedSuspiciousTotal||0)+' left un-netted, on purpose, to avoid another wild swing).'
       +(jd.arAccountCount===0?' ⚠ Zero AR accounts found — the Chart of Accounts lookup likely failed (check server.js is redeployed with the "Account" entity whitelisted), so every Journal Entry line is being excluded right now.':'')
       +'</div>';
   }
@@ -3701,7 +3738,7 @@ function _buildCollectionCSVRows(onlyKey){
     // report (which DOES correctly know which are still open).
     if(_collGroupMode==='customer' && entry.journalDetail && entry.journalDetail.length){
       entry.journalDetail.slice().sort(function(a,b){ return b.txnDate<a.txnDate?-1:1; }).forEach(function(jd){
-        rows.push(['','','','','','','','','','','JOURNAL',jd.txnDate,jd.postingType+' -> '+(jd.acctName||'(unnamed account)')+' -> raw line amt '+(jd.rawAmt!==undefined?jd.rawAmt:jd.amount).toFixed(2),'#'+jd.docNumber,jd.amount.toFixed(2)]);
+        rows.push(['','','','','','','','','','','JOURNAL',jd.txnDate,jd.postingType+' -> '+(jd.acctName||'(unnamed account)')+' -> raw line amt '+(jd.rawAmt!==undefined?jd.rawAmt:jd.amount).toFixed(2)+(jd.lastUpdated?' -> last edited '+jd.lastUpdated.slice(0,19).replace('T',' '):''),'#'+jd.docNumber,jd.amount.toFixed(2)]);
       });
     }
     entry.payments.slice().sort(function(a,b){ return a.date<b.date?1:-1; }).forEach(function(row){

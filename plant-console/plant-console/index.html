@@ -2412,6 +2412,8 @@ function renderReports(){
         +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">To</label>'
         +'<input type="date" id="coll-to" value="'+today+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
         +'<button class="btn btn-primary" onclick="runCollectionReport()">Pull from QuickBooks</button>'
+        +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px" title="Journal Entries can\'t be reliably auto-tracked yet (see the Journal entry detail list below for why) — look up the current net figure from QuickBooks\'s own Open Invoices Report (sum the Journal Entry-type rows) and enter it here so the Total below matches QuickBooks exactly">JE adjustment (from QB report)</label>'
+        +'<input type="number" id="coll-je-adjustment" step="0.01" placeholder="0.00" value="'+(_collJournalAdjustment!==null?_collJournalAdjustment:'')+'" oninput="setCollJournalAdjustment(this.value)" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);width:140px"/></div>'
       +'</div>'
       +'<div style="display:flex;gap:8px;margin-bottom:14px;align-items:center">'
         +'<button id="coll-grp-customer" class="btn btn-sm btn-primary" onclick="setCollGroupMode(\'customer\')">Group by Customer</button>'
@@ -2541,7 +2543,7 @@ if(_collPaymentsNeedBackfill && _collUnappliedLastSync) _collUnappliedLastSync=n
 // job-costing/billable-expense entries, producing a wildly wrong number).
 // Same cache SHAPE as before, so the field-based checks above can't catch
 // this — force exactly one full re-fetch via a version marker instead.
-var JE_FILTER_VERSION='5'; // v5: journal entries now also carry DocNumber/TxnDate so the exact list can be shown per customer (for manual matching against QuickBooks's own report) instead of only a lump-sum total.
+var JE_FILTER_VERSION='6'; // v6: journal entry lines now also carry the raw line Amount, PostingType, and Account name — to diagnose a confirmed real discrepancy where our fetched line.Amount for one specific entry (#27) doesn't match what QuickBooks's own reports/UI consistently show for that same line ($22,182.12 fetched vs $16,144.22 shown everywhere in QuickBooks).
 if(localStorage.getItem('pc_coll_je_filter_version')!==JE_FILTER_VERSION){
   _collJournalEntryCache={};
   _collJournalEntryLastSync=null;
@@ -2561,6 +2563,26 @@ function setCashFlowStartBalance(v){
   if(_cashFlowInvoices||_cashFlowBills) renderCashFlowReport();
 }
 window.setCashFlowStartBalance=setCashFlowStartBalance;
+
+// Journal Entry auto-tracking has proven unreliable (see the "Journal
+// entry" detail list in the Customer Payments Report) — a Journal-Entry
+// -based AR charge can get partially resolved after posting in ways this
+// app currently can't detect from the API alone. Rather than keep
+// guessing at that mechanism (an earlier attempt made the total measurably
+// WORSE, not better), this is a manual override instead: look up the true
+// net Journal Entry figure directly from QuickBooks's own Open Invoices
+// Report (sum its "Journal Entry" type rows) and enter it here. The
+// report's "Total (matches QuickBooks)" figure is then computed from
+// this trusted number instead of the app's own unreliable calculation.
+var _collJournalAdjustment=(function(){ var v=localStorage.getItem('pc_coll_je_adjustment'); return v!==null?Number(v):null; })();
+function setCollJournalAdjustment(v){
+  var n=Number(v);
+  _collJournalAdjustment=isNaN(n)?null:n;
+  if(_collJournalAdjustment===null) localStorage.removeItem('pc_coll_je_adjustment');
+  else localStorage.setItem('pc_coll_je_adjustment',String(_collJournalAdjustment));
+  if(_collPayments) renderCollectionReport();
+}
+window.setCollJournalAdjustment=setCollJournalAdjustment;
 
 function setCollGroupMode(mode){
   _collGroupMode=mode;
@@ -2948,7 +2970,7 @@ async function runCollectionReport(){
       if(!acctRef || !arAccountIds[acctRef.value]) return; // not an Accounts Receivable line — e.g. job-costing/billable-expense tagging, not an AR adjustment
       var amt=Number(line.Amount||0);
       var signedAmt=(detail.PostingType==='Debit')?amt:-amt;
-      impacts.push({custId:entity.EntityRef.value,amount:signedAmt});
+      impacts.push({custId:entity.EntityRef.value,amount:signedAmt,rawAmt:amt,postingType:detail.PostingType||'',acctName:(acctRef&&acctRef.name)||''});
     });
     if(impacts.length){ _collJournalEntryCache[je.Id]={Id:je.Id,DocNumber:je.DocNumber||'',TxnDate:(je.TxnDate||'').slice(0,10),impacts:impacts}; jeKeptCount++; }
     else delete _collJournalEntryCache[je.Id]; // no AR-affecting customer-linked lines (anymore) — nothing to track
@@ -3181,7 +3203,7 @@ function computeCollectionGroups(){
     (je.impacts||[]).forEach(function(imp){
       journalByQbId[imp.custId]=(journalByQbId[imp.custId]||0)+imp.amount;
       if(!journalDetailByQbId[imp.custId]) journalDetailByQbId[imp.custId]=[];
-      journalDetailByQbId[imp.custId].push({docNumber:je.DocNumber||'(no #)',txnDate:je.TxnDate||'',amount:imp.amount});
+      journalDetailByQbId[imp.custId].push({docNumber:je.DocNumber||'(no #)',txnDate:je.TxnDate||'',amount:imp.amount,rawAmt:imp.rawAmt,postingType:imp.postingType,acctName:imp.acctName});
     });
   });
   function journalOfCust(qbCustId){
@@ -3449,8 +3471,8 @@ function renderCollectionReport(){
           ? ('<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Journal entries tagged to this customer\'s A/R ('+entry.journalDetail.length+') — check each one in QuickBooks; some may already be resolved elsewhere and shouldn\'t count</div>'
             +entry.journalDetail.slice().sort(function(a,b){ return b.txnDate<a.txnDate?-1:1; }).map(function(jd){
               return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 16px 4px 40px;font-size:12px;border-bottom:1px dashed var(--line)">'
-                +'<span>#'+esc(jd.docNumber)+' · '+esc(jd.txnDate)+'</span>'
-                +'<span style="font-family:var(--mono);white-space:nowrap">'+money(jd.amount)+'</span></div>';
+                +'<span>#'+esc(jd.docNumber)+' · '+esc(jd.txnDate)+' · '+esc(jd.postingType||'?')+' · acct: '+esc(jd.acctName||'(unnamed)')+'</span>'
+                +'<span style="font-family:var(--mono);white-space:nowrap">raw line amt '+money(jd.rawAmt!==undefined?jd.rawAmt:jd.amount)+' → <b>'+money(jd.amount)+'</b></span></div>';
             }).join(''))
           : '')
         +(_collGroupMode==='salesperson' && entry.custBalances && entry.custBalances.length
@@ -3484,8 +3506,15 @@ function renderCollectionReport(){
       +pctBlock('% collected',grandTotal,grandOpening)
     +'</span>'
   +'</div>';
+  if(_collJournalAdjustment!==null){
+    var qbMatchTotal=grandBalance-(grandUnapplied||0)-(grandCreditMemo||0)+_collJournalAdjustment;
+    html+='<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 16px;padding:12px 16px;background:#e8f5e9;border-top:2px solid #2e7d32">'
+      +'<span style="font-weight:700;color:#1b5e20">Total (matches QuickBooks) <span style="font-weight:400;font-size:11px;color:var(--muted)">= Ending balance − Unapplied − Credit memo + JE adjustment ('+money(_collJournalAdjustment)+', entered above)</span></span>'
+      +'<span style="font-family:var(--mono);font-size:16px;font-weight:700;color:#1b5e20">'+money(qbMatchTotal)+'</span>'
+    +'</div>';
+  }
   html+='</div>';
-  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is Invoices + Sales Receipts issued during this period, net of any Credit Memos issued in the same window — matching how QuickBooks\'s own Sales by Product/Service report nets returns out. "Balance owed" is the true sum of open invoices for each customer as of the report\'s "From" date, and "Ending balance" is the same thing as of the "To" date — both reconstructed directly from invoice/payment history (not derived from Sales/Collected, and not QuickBooks\'s live "right now" balance), so they stay accurate for whatever date range you pick — proven to match QuickBooks exactly, customer by customer. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice — also an exact match to QuickBooks. "Undeposited" is money that HAS been applied to an invoice (so it\'s already out of "Ending balance") but hasn\'t been physically deposited to the bank yet in QuickBooks, or comes from a payment dated after today. "Credit memo" is the unapplied portion of a credit memo — a credit sitting against a customer, not yet used against any invoice — also an exact match. "Journal entry" is every Journal Entry ever posted directly against this customer\'s Accounts Receivable (Debit adds to what they owe, Credit subtracts), but with no reliable way yet to detect when one has since been paid off or reversed — treat this one column as a rough indicator only, and check QuickBooks\'s own Open Invoices Report directly for the exact figure if you need it precisely. Ending balance, Unapplied, and Credit memo are all independently verified to match QuickBooks exactly — Journal entry is the one remaining approximate piece.</div>';
+  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is Invoices + Sales Receipts issued during this period, net of any Credit Memos issued in the same window — matching how QuickBooks\'s own Sales by Product/Service report nets returns out. "Balance owed" is the true sum of open invoices for each customer as of the report\'s "From" date, and "Ending balance" is the same thing as of the "To" date — both reconstructed directly from invoice/payment history (not derived from Sales/Collected, and not QuickBooks\'s live "right now" balance), so they stay accurate for whatever date range you pick — proven to match QuickBooks exactly, customer by customer. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice — also an exact match to QuickBooks. "Undeposited" is money that HAS been applied to an invoice (so it\'s already out of "Ending balance") but hasn\'t been physically deposited to the bank yet in QuickBooks, or comes from a payment dated after today. "Credit memo" is the unapplied portion of a credit memo — a credit sitting against a customer, not yet used against any invoice — also an exact match. "Journal entry" is every Journal Entry ever posted directly against this customer\'s Accounts Receivable, but with no reliable way yet to detect when one has since been paid off or reversed — this column is informational only (see the detail list under each customer), NOT used in the reconciled total below. Instead, look up the true net Journal Entry figure from QuickBooks\'s own Open Invoices Report and enter it in the "JE adjustment" box above — the green "Total (matches QuickBooks)" row is computed from that trusted number, so it lines up with QuickBooks exactly.</div>';
   if(_collJeDiagnostics){
     var jd=_collJeDiagnostics;
     function money2(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
@@ -3672,7 +3701,7 @@ function _buildCollectionCSVRows(onlyKey){
     // report (which DOES correctly know which are still open).
     if(_collGroupMode==='customer' && entry.journalDetail && entry.journalDetail.length){
       entry.journalDetail.slice().sort(function(a,b){ return b.txnDate<a.txnDate?-1:1; }).forEach(function(jd){
-        rows.push(['','','','','','','','','','','JOURNAL',jd.txnDate,'Journal Entry','#'+jd.docNumber,jd.amount.toFixed(2)]);
+        rows.push(['','','','','','','','','','','JOURNAL',jd.txnDate,jd.postingType+' -> '+(jd.acctName||'(unnamed account)')+' -> raw line amt '+(jd.rawAmt!==undefined?jd.rawAmt:jd.amount).toFixed(2),'#'+jd.docNumber,jd.amount.toFixed(2)]);
       });
     }
     entry.payments.slice().sort(function(a,b){ return a.date<b.date?1:-1; }).forEach(function(row){

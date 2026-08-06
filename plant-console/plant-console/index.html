@@ -2477,6 +2477,12 @@ function renderReports(){
   buildCashFlowTableShell();
   buildChecksTableShell();
   renderSavedReportsList();
+  // Same fix as Cash Flow's shell: navigating away from Reports and back
+  // rebuilds this whole section's HTML from scratch, which would show
+  // "no data" here even though a fetch already happened this session —
+  // the data itself was never lost, just not redisplayed. Reapply it if
+  // it's already sitting in memory.
+  if(_collPayments) renderCollectionReport();
 }
 // Switches between the two Reports sub-tabs without re-rendering the whole
 // page (so neither report's inputs/state get reset when switching back).

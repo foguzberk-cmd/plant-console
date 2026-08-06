@@ -2541,7 +2541,7 @@ if(_collPaymentsNeedBackfill && _collUnappliedLastSync) _collUnappliedLastSync=n
 // job-costing/billable-expense entries, producing a wildly wrong number).
 // Same cache SHAPE as before, so the field-based checks above can't catch
 // this — force exactly one full re-fetch via a version marker instead.
-var JE_FILTER_VERSION='4'; // v4: reverted the v3 payment-to-JournalEntry netting attempt — it assumed a Payment.Line.LinkedTxn pointing at a JournalEntry meant "this payment settled that AR charge," which turned out to be wrong for real data and made the total measurably worse, not better. Back to v2's AR-account-filtered-only logic.
+var JE_FILTER_VERSION='5'; // v5: journal entries now also carry DocNumber/TxnDate so the exact list can be shown per customer (for manual matching against QuickBooks's own report) instead of only a lump-sum total.
 if(localStorage.getItem('pc_coll_je_filter_version')!==JE_FILTER_VERSION){
   _collJournalEntryCache={};
   _collJournalEntryLastSync=null;
@@ -2950,7 +2950,7 @@ async function runCollectionReport(){
       var signedAmt=(detail.PostingType==='Debit')?amt:-amt;
       impacts.push({custId:entity.EntityRef.value,amount:signedAmt});
     });
-    if(impacts.length){ _collJournalEntryCache[je.Id]={Id:je.Id,impacts:impacts}; jeKeptCount++; }
+    if(impacts.length){ _collJournalEntryCache[je.Id]={Id:je.Id,DocNumber:je.DocNumber||'',TxnDate:(je.TxnDate||'').slice(0,10),impacts:impacts}; jeKeptCount++; }
     else delete _collJournalEntryCache[je.Id]; // no AR-affecting customer-linked lines (anymore) — nothing to track
   });
   // Stored (not just a transient status message, which gets overwritten
@@ -3176,14 +3176,21 @@ function computeCollectionGroups(){
   // Invoice/Payment flow — the one category this report still can't fully
   // explain away if a number doesn't match QuickBooks's own reports.
   var journalByQbId={};
+  var journalDetailByQbId={}; // customer QB id -> [{docNumber, txnDate, amount}, ...] — the exact journal entries behind that customer's total, for direct matching against QuickBooks's own report (auto-detecting "already resolved" wasn't reliable, so this makes the raw list visible instead)
   Object.values(_collJournalEntryCache||{}).forEach(function(je){
     (je.impacts||[]).forEach(function(imp){
       journalByQbId[imp.custId]=(journalByQbId[imp.custId]||0)+imp.amount;
+      if(!journalDetailByQbId[imp.custId]) journalDetailByQbId[imp.custId]=[];
+      journalDetailByQbId[imp.custId].push({docNumber:je.DocNumber||'(no #)',txnDate:je.TxnDate||'',amount:imp.amount});
     });
   });
   function journalOfCust(qbCustId){
     if(!qbCustId) return 0;
     return journalByQbId[qbCustId]||0;
+  }
+  function journalDetailOfCust(qbCustId){
+    if(!qbCustId) return [];
+    return journalDetailByQbId[qbCustId]||[];
   }
 
   // Group by customer, keyed by QuickBooks customer id where available
@@ -3216,7 +3223,7 @@ function computeCollectionGroups(){
     var undep=undepositedOfCust(qbCustId);
     var cm=creditMemoOfCust(qbCustId);
     var jrn=journalOfCust(qbCustId);
-    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,creditMemo:cm,journal:jrn,payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndeposited+=undep; grandCreditMemo+=cm; grandJournal+=jrn; }
+    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,creditMemo:cm,journal:jrn,journalDetail:journalDetailOfCust(qbCustId),payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndeposited+=undep; grandCreditMemo+=cm; grandJournal+=jrn; }
     byCust[custKey].total+=amt;
     byCust[custKey].payments.push({date:date,amount:amt,ref:ref});
 
@@ -3256,7 +3263,7 @@ function computeCollectionGroups(){
     var undep=undepositedOfCust(qbCustId);
     var cm=creditMemoOfCust(qbCustId);
     var jrn=journalOfCust(qbCustId);
-    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,creditMemo:cm,journal:jrn,payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndeposited+=undep; grandCreditMemo+=cm; grandJournal+=jrn; }
+    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,creditMemo:cm,journal:jrn,journalDetail:journalDetailOfCust(qbCustId),payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndeposited+=undep; grandCreditMemo+=cm; grandJournal+=jrn; }
     byCust[custKey].sales+=amt;
 
     var rep=salesPersonOf(d)||'Unassigned';
@@ -3305,7 +3312,7 @@ function computeCollectionGroups(){
     var known=custByQbId[qbCustId]; // may be undefined if not yet synced locally
     var custName=(known&&known.name)||'Unknown customer (not yet synced — id '+qbCustId+')';
     if(!byCust[custKey]){
-      byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,creditMemo:cm,journal:jrn,payments:[]};
+      byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,creditMemo:cm,journal:jrn,journalDetail:journalDetailOfCust(qbCustId),payments:[]};
       grandBalance+=bal;
       grandOpening+=open;
       grandUnapplied+=unapp;
@@ -3437,6 +3444,14 @@ function renderCollectionReport(){
                 +'<span style="font-family:var(--mono);white-space:nowrap">'+money(d.totalAmt)+' → '+money(d.balance)+(d.appliedAfterTo>0.004?' + '+money(d.appliedAfterTo)+' paid-after-"To"':'')+' = <b>'+money(d.contribution)+'</b></span></div>';
             }).join('')
             +'<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Payments this period</div>')
+          : '')
+        +(_collGroupMode==='customer' && entry.journalDetail && entry.journalDetail.length
+          ? ('<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Journal entries tagged to this customer\'s A/R ('+entry.journalDetail.length+') — check each one in QuickBooks; some may already be resolved elsewhere and shouldn\'t count</div>'
+            +entry.journalDetail.slice().sort(function(a,b){ return b.txnDate<a.txnDate?-1:1; }).map(function(jd){
+              return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 16px 4px 40px;font-size:12px;border-bottom:1px dashed var(--line)">'
+                +'<span>#'+esc(jd.docNumber)+' · '+esc(jd.txnDate)+'</span>'
+                +'<span style="font-family:var(--mono);white-space:nowrap">'+money(jd.amount)+'</span></div>';
+            }).join(''))
           : '')
         +(_collGroupMode==='salesperson' && entry.custBalances && entry.custBalances.length
           ? ('<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Customer balances ('+entry.custBalances.length+') — compare directly against a QuickBooks report for this rep</div>'
@@ -3648,6 +3663,16 @@ function _buildCollectionCSVRows(onlyKey){
     if(_collGroupMode==='customer' && _collEndingDetailByQbId && _collEndingDetailByQbId[k]){
       _collEndingDetailByQbId[k].slice().sort(function(a,b){ return b.contribution-a.contribution; }).forEach(function(d){
         rows.push(['','','','','','','','','','','INVOICE',d.txnDate,'Total '+d.totalAmt.toFixed(2)+' -> Current bal. '+d.balance.toFixed(2)+(d.appliedAfterTo>0.004?' + '+d.appliedAfterTo.toFixed(2)+' paid after "To"':''),'#'+d.docNumber,d.contribution.toFixed(2)]);
+      });
+    }
+    // Customer-mode only: every Journal Entry currently tagged to this
+    // customer's Accounts Receivable — auto-detecting which ones are
+    // already resolved elsewhere wasn't reliable, so the raw list is
+    // shown instead for direct, manual matching against QuickBooks's own
+    // report (which DOES correctly know which are still open).
+    if(_collGroupMode==='customer' && entry.journalDetail && entry.journalDetail.length){
+      entry.journalDetail.slice().sort(function(a,b){ return b.txnDate<a.txnDate?-1:1; }).forEach(function(jd){
+        rows.push(['','','','','','','','','','','JOURNAL',jd.txnDate,'Journal Entry','#'+jd.docNumber,jd.amount.toFixed(2)]);
       });
     }
     entry.payments.slice().sort(function(a,b){ return a.date<b.date?1:-1; }).forEach(function(row){

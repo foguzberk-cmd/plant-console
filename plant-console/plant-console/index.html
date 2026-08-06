@@ -2496,6 +2496,7 @@ function renderReports(){
 var _collPayments=null;   // cached raw payments from the last successful fetch
 var _collSalesDocs=null;  // cached raw Invoice+SalesReceipt docs for the "Sales" column
 var _collOpenInvoices=null; // cached currently-open (Balance>0) Invoices, used to compute true open-invoice totals per customer
+var _collUnappliedPayments=null; // cached payments with a nonzero UnappliedAmt — money sitting against a customer that isn't tied to any invoice
 var _collRange=null;      // {from,to} for the cached fetch
 var _collGroupMode='customer'; // 'customer' | 'salesperson'
 var _collRowKeys=[]; // groupKeys from the last render, indexed the same as each row — lets per-row buttons (like Print) reference a rep name safely without embedding raw text (which could contain apostrophes) into an onclick attribute
@@ -2639,9 +2640,44 @@ async function runCollectionReport(){
   }
   openInvoices=openInvoices.filter(function(inv){ return Number(inv.Balance||0)>0; });
 
+  // Unapplied payments — a payment can sit against a customer without
+  // being applied to any invoice at all (QuickBooks tracks this directly
+  // via Payment.UnappliedAmt). This is exactly the gap between "sum of
+  // open invoices" and Customer.Balance: an unapplied payment reduces
+  // Balance but isn't attached to any invoice, so it wouldn't show up in
+  // the open-invoices total above. Fetched with no date restriction (an
+  // old unapplied payment is just as real today as a recent one).
+  var unappliedPayments=[];
+  var upStart=1, upSafety=0;
+  if(statusEl) statusEl.textContent='Checking for unapplied payments…';
+  while(true){
+    upSafety++;
+    if(upSafety>1000) break; // hard cap (~100k rows)
+    var upCtrl=new AbortController();
+    var upTimer=setTimeout(function(){upCtrl.abort();},60000);
+    var upRows=null;
+    try{
+      var upr=await fetch(base+'/api/qb/documents?entity=Payment&startposition='+upStart,{signal:upCtrl.signal});
+      clearTimeout(upTimer);
+      if(upr.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
+      var upjd=await upr.json();
+      if(upjd && upjd.error) break; // don't fail the whole pull over this
+      upRows=(upjd && upjd.Payment) ? upjd.Payment : [];
+    }catch(e){
+      clearTimeout(upTimer);
+      break; // network hiccup — unapplied breakdown just won't show this pull
+    }
+    unappliedPayments=unappliedPayments.concat(upRows);
+    if(statusEl) statusEl.textContent='Fetched '+payments.length+' payment(s), '+salesDocs.length+' sales document(s), '+openInvoices.length+' open invoice(s), checked '+unappliedPayments.length+' payment(s) for unapplied amounts…';
+    if(upRows.length<pageSize) break;
+    upStart+=pageSize;
+  }
+  unappliedPayments=unappliedPayments.filter(function(p){ return Number(p.UnappliedAmt||0)>0.004; });
+
   _collPayments=payments;
   _collSalesDocs=salesDocs;
   _collOpenInvoices=openInvoices;
+  _collUnappliedPayments=unappliedPayments;
   _collRange={from:from,to:to};
   renderCollectionReport();
 }
@@ -2682,17 +2718,29 @@ function computeCollectionGroups(){
   }
   var anyBalanceSynced=!!(_collOpenInvoices && _collOpenInvoices.length);
 
+  var unappliedByQbId={};
+  (_collUnappliedPayments||[]).forEach(function(p){
+    var qbCustId=p.CustomerRef&&p.CustomerRef.value;
+    if(!qbCustId) return;
+    unappliedByQbId[qbCustId]=(unappliedByQbId[qbCustId]||0)+Number(p.UnappliedAmt||0);
+  });
+  function unappliedOfCust(qbCustId){
+    if(!qbCustId) return 0;
+    return unappliedByQbId[qbCustId]||0;
+  }
+
   // Group by customer, keyed by QuickBooks customer id where available
   // (falling back to the name) so the same customer never gets split into
   // two buckets due to a name/whitespace quirk. $0 records are excluded —
   // QuickBooks can generate zero-dollar "Payment" entities (e.g. fully
   // applied against a credit, or used purely to link documents) that
   // aren't an actual collection and shouldn't show up here.
-  var byCust={}; // key -> {name, total, balance, sales, payments:[]}
-  var bySalesPerson={}; // name -> {total, balance, sales, payments:[], _custKeysSeen:Set}
+  var byCust={}; // key -> {name, total, balance, sales, unapplied, payments:[]}
+  var bySalesPerson={}; // name -> {total, balance, sales, unapplied, payments:[], _custKeysSeen:Set}
   var grandTotal=0;
   var grandBalance=0;
   var grandSales=0;
+  var grandUnapplied=0;
   payments.forEach(function(p){
     var amt=Number(p.TotalAmt||0);
     if(!amt) return;
@@ -2702,17 +2750,19 @@ function computeCollectionGroups(){
     var ref=p.PaymentRefNum||'';
     var date=(p.TxnDate||'').slice(0,10);
     var bal=balanceOfCust(qbCustId);
-    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,sales:0,payments:[]}; grandBalance+=bal; }
+    var unapp=unappliedOfCust(qbCustId);
+    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,sales:0,unapplied:unapp,payments:[]}; grandBalance+=bal; grandUnapplied+=unapp; }
     byCust[custKey].total+=amt;
     byCust[custKey].payments.push({date:date,amount:amt,ref:ref});
 
     var rep=salesPersonOf(p)||'Unassigned';
-    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,payments:[],_custKeysSeen:{},custBalances:[]};
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,unapplied:0,payments:[],_custKeysSeen:{},custBalances:[]};
     bySalesPerson[rep].total+=amt;
     if(!bySalesPerson[rep]._custKeysSeen[custKey]){
       bySalesPerson[rep]._custKeysSeen[custKey]=true;
       bySalesPerson[rep].balance+=bal;
-      bySalesPerson[rep].custBalances.push({name:custName,balance:bal});
+      bySalesPerson[rep].unapplied+=unapp;
+      bySalesPerson[rep].custBalances.push({name:custName,balance:bal,unapplied:unapp});
     }
     bySalesPerson[rep].payments.push({date:date,amount:amt,ref:ref,customer:custName});
 
@@ -2730,15 +2780,17 @@ function computeCollectionGroups(){
     var qbCustId=d.CustomerRef&&d.CustomerRef.value;
     var custKey=qbCustId||custName;
     var bal=balanceOfCust(qbCustId);
-    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,sales:0,payments:[]}; grandBalance+=bal; }
+    var unapp=unappliedOfCust(qbCustId);
+    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,sales:0,unapplied:unapp,payments:[]}; grandBalance+=bal; grandUnapplied+=unapp; }
     byCust[custKey].sales+=amt;
 
     var rep=salesPersonOf(d)||'Unassigned';
-    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,payments:[],_custKeysSeen:{},custBalances:[]};
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,unapplied:0,payments:[],_custKeysSeen:{},custBalances:[]};
     if(!bySalesPerson[rep]._custKeysSeen[custKey]){
       bySalesPerson[rep]._custKeysSeen[custKey]=true;
       bySalesPerson[rep].balance+=bal;
-      bySalesPerson[rep].custBalances.push({name:custName,balance:bal});
+      bySalesPerson[rep].unapplied+=unapp;
+      bySalesPerson[rep].custBalances.push({name:custName,balance:bal,unapplied:unapp});
     }
     bySalesPerson[rep].sales+=amt;
 
@@ -2758,22 +2810,25 @@ function computeCollectionGroups(){
     if(!c.qbId) return;
     var custKey=c.qbId;
     var bal=balanceOfCust(c.qbId);
+    var unapp=unappliedOfCust(c.qbId);
     if(!byCust[custKey]){
-      byCust[custKey]={name:c.name||'No customer on file',total:0,balance:bal,sales:0,payments:[]};
+      byCust[custKey]={name:c.name||'No customer on file',total:0,balance:bal,sales:0,unapplied:unapp,payments:[]};
       grandBalance+=bal;
+      grandUnapplied+=unapp;
     }
     var rep=(c.salesRep&&c.salesRep.trim())||'Unassigned';
-    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,payments:[],_custKeysSeen:{},custBalances:[]};
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,unapplied:0,payments:[],_custKeysSeen:{},custBalances:[]};
     if(!bySalesPerson[rep]._custKeysSeen[custKey]){
       bySalesPerson[rep]._custKeysSeen[custKey]=true;
       bySalesPerson[rep].balance+=bal;
-      bySalesPerson[rep].custBalances.push({name:c.name||'No customer on file',balance:bal});
+      bySalesPerson[rep].unapplied+=unapp;
+      bySalesPerson[rep].custBalances.push({name:c.name||'No customer on file',balance:bal,unapplied:unapp});
     }
   });
 
   return {
     payments:payments, byCust:byCust, bySalesPerson:bySalesPerson,
-    grandTotal:grandTotal, grandBalance:grandBalance, grandSales:grandSales,
+    grandTotal:grandTotal, grandBalance:grandBalance, grandSales:grandSales, grandUnapplied:grandUnapplied,
     anyBalanceSynced:anyBalanceSynced
   };
 }
@@ -2787,7 +2842,7 @@ function renderCollectionReport(){
 
   var g=computeCollectionGroups();
   var payments=g.payments, byCust=g.byCust, bySalesPerson=g.bySalesPerson;
-  var grandTotal=g.grandTotal, grandBalance=g.grandBalance, grandSales=g.grandSales;
+  var grandTotal=g.grandTotal, grandBalance=g.grandBalance, grandSales=g.grandSales, grandUnapplied=g.grandUnapplied;
   var anyBalanceSynced=g.anyBalanceSynced;
 
   var byMode = (_collGroupMode==='salesperson') ? bySalesPerson : byCust;
@@ -2864,6 +2919,7 @@ function renderCollectionReport(){
           +valBlock('Balance owed',opening,true,false)
           +valBlock('Collected',entry.total,false,true)
           +valBlock('Ending balance',entry.balance,true,false)
+          +valBlock('Unapplied',entry.unapplied||0,false,false)
           +pctBlock('% collected',entry.total,opening)
         +'</span>'
       +'</div>'
@@ -2872,7 +2928,7 @@ function renderCollectionReport(){
           ? ('<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Customer balances ('+entry.custBalances.length+') — compare directly against a QuickBooks report for this rep</div>'
             +entry.custBalances.slice().sort(function(a,b){ return b.balance-a.balance; }).map(function(cb){
               return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 16px 4px 40px;font-size:12px;border-bottom:1px dashed var(--line)">'
-                +'<span>'+esc(cb.name)+'</span>'
+                +'<span>'+esc(cb.name)+(cb.unapplied>0?' <span style="color:#1565c0;font-size:11px">(+'+money(cb.unapplied)+' unapplied)</span>':'')+'</span>'
                 +'<span style="font-family:var(--mono);white-space:nowrap;color:'+(cb.balance>0?'#b8460b':'var(--muted)')+'">'+money(cb.balance)+'</span></div>';
             }).join('')
             +'<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Payments this period</div>')
@@ -2893,11 +2949,12 @@ function renderCollectionReport(){
       +valBlock('Balance owed',grandOpening,true,false)
       +valBlock('Collected',grandTotal,false,true)
       +valBlock('Ending balance',grandBalance,true,false)
+      +valBlock('Unapplied',grandUnapplied||0,false,false)
       +pctBlock('% collected',grandTotal,grandOpening)
     +'</span>'
   +'</div>';
   html+='</div>';
-  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is gross Invoices + Sales Receipts issued during this period — it does not subtract Credit Memo returns. "Balance owed" is estimated as Ending balance + Collected — exact as long as no new invoices were issued during this period; new charges during the period will make it look higher than it actually was. "Ending balance" is live from QuickBooks as of your last customer sync.</div>';
+  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is gross Invoices + Sales Receipts issued during this period — it does not subtract Credit Memo returns. "Balance owed" is estimated as Ending balance + Collected — exact as long as no new invoices were issued during this period; new charges during the period will make it look higher than it actually was. "Ending balance" is the sum of currently open invoices for each customer, fetched fresh from QuickBooks. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice — it\'s part of what QuickBooks\'s own Customer.Balance counts, but isn\'t part of "open invoices," which is why the two can differ.</div>';
   if(bodyEl) bodyEl.innerHTML=html;
 }
 
@@ -2971,6 +3028,7 @@ function doPrintReportGroup(key){
           +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">Balance Owed</td>'
           +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">Collected</td>'
           +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">Ending Balance</td>'
+          +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">Unapplied</td>'
           +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">% Collected</td>'
         +'</tr>'
         +'<tr>'
@@ -2978,6 +3036,7 @@ function doPrintReportGroup(key){
           +'<td style="padding:6px 10px;border:1px solid #999">'+money(opening)+'</td>'
           +'<td style="padding:6px 10px;border:1px solid #999">'+money(entry.total)+'</td>'
           +'<td style="padding:6px 10px;border:1px solid #999">'+money(entry.balance)+'</td>'
+          +'<td style="padding:6px 10px;border:1px solid #999">'+money(entry.unapplied||0)+'</td>'
           +'<td style="padding:6px 10px;border:1px solid #999">'+(opening>0?Math.round((entry.total/opening)*100)+'%':'—')+'</td>'
         +'</tr>'
       +'</table>'
@@ -3046,15 +3105,15 @@ function _buildCollectionCSVRows(onlyKey){
     });
   }
 
-  var rows=[[groupLabel,'Sales','Balance Owed','Collected','Ending Balance','% Collected','Row Type','Date','Customer','Ref','Amount']];
+  var rows=[[groupLabel,'Sales','Balance Owed','Collected','Ending Balance','Unapplied','% Collected','Row Type','Date','Customer','Ref','Amount']];
   keys.forEach(function(k){
     var entry=byMode[k];
     var label=(_collGroupMode==='salesperson')?k:entry.name;
     var opening=entry.balance+entry.total;
     var pct=opening>0?Math.round((entry.total/opening)*100)+'%':'';
-    rows.push([label,entry.sales.toFixed(2),opening.toFixed(2),entry.total.toFixed(2),entry.balance.toFixed(2),pct,'SUMMARY','','','','']);
+    rows.push([label,entry.sales.toFixed(2),opening.toFixed(2),entry.total.toFixed(2),entry.balance.toFixed(2),(entry.unapplied||0).toFixed(2),pct,'SUMMARY','','','','']);
     entry.payments.slice().sort(function(a,b){ return a.date<b.date?1:-1; }).forEach(function(row){
-      rows.push(['','','','','','','PAYMENT',row.date,row.customer||label,row.ref||'',row.amount.toFixed(2)]);
+      rows.push(['','','','','','','','PAYMENT',row.date,row.customer||label,row.ref||'',row.amount.toFixed(2)]);
     });
   });
   return rows;

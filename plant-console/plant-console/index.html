@@ -2541,7 +2541,7 @@ if(_collPaymentsNeedBackfill && _collUnappliedLastSync) _collUnappliedLastSync=n
 // job-costing/billable-expense entries, producing a wildly wrong number).
 // Same cache SHAPE as before, so the field-based checks above can't catch
 // this — force exactly one full re-fetch via a version marker instead.
-var JE_FILTER_VERSION='2';
+var JE_FILTER_VERSION='3'; // v3: also nets out Payments applied directly to a JournalEntry (see paidByJE in runCollectionReport) — a JE-based AR charge that's since been paid off was previously counted forever, since JournalEntry has no Balance field to signal it's resolved
 if(localStorage.getItem('pc_coll_je_filter_version')!==JE_FILTER_VERSION){
   _collJournalEntryCache={};
   _collJournalEntryLastSync=null;
@@ -2924,7 +2924,23 @@ async function runCollectionReport(){
     if(jeRows.length<pageSize){ jeCompleted=true; break; }
     jeStart+=pageSize;
   }
-  var jeKeptCount=0, jeCustomerLinesSeen=0;
+  var jeKeptCount=0, jeCustomerLinesSeen=0, jeTotalNetted=0;
+  // A Journal Entry's AR impact can later be paid off via a normal
+  // Payment whose Line.LinkedTxn references that JournalEntry — the same
+  // mechanism used to pay off an Invoice. Unlike Invoices, a JournalEntry
+  // has no "Balance" field to signal it's been resolved, so without this,
+  // a long-since-cleared JE-based charge would keep counting as owed
+  // forever, no matter how much was actually paid against it since.
+  var paidByJE={};
+  Object.values(_collAllPaymentsCache||{}).forEach(function(p){
+    (p.Line||[]).forEach(function(line){
+      (line.LinkedTxn||[]).forEach(function(lt){
+        if(lt.TxnType==='JournalEntry' && lt.TxnId){
+          paidByJE[lt.TxnId]=(paidByJE[lt.TxnId]||0)+Number(line.Amount||0);
+        }
+      });
+    });
+  });
   jeChanged.forEach(function(je){
     var impacts=[];
     (je.Line||[]).forEach(function(line){
@@ -2939,6 +2955,21 @@ async function runCollectionReport(){
       var signedAmt=(detail.PostingType==='Debit')?amt:-amt;
       impacts.push({custId:entity.EntityRef.value,amount:signedAmt});
     });
+    var paidAmt=paidByJE[je.Id]||0;
+    if(paidAmt>0.004 && impacts.length){
+      var totalAbs=impacts.reduce(function(s,i){ return s+Math.abs(i.amount); },0);
+      if(totalAbs>0.004){
+        // Usually a JE only has ONE AR-customer line, so this is a plain
+        // subtraction; on the rare entry touching multiple customers,
+        // split the paid amount proportionally across them.
+        impacts=impacts.map(function(i){
+          var share=paidAmt*(Math.abs(i.amount)/totalAbs);
+          return {custId:i.custId, amount:i.amount-share};
+        });
+        jeTotalNetted+=paidAmt;
+      }
+    }
+    impacts=impacts.filter(function(i){ return Math.abs(i.amount)>0.004; }); // fully paid off since — nothing left to track
     if(impacts.length){ _collJournalEntryCache[je.Id]={Id:je.Id,impacts:impacts}; jeKeptCount++; }
     else delete _collJournalEntryCache[je.Id]; // no AR-affecting customer-linked lines (anymore) — nothing to track
   });
@@ -2947,7 +2978,7 @@ async function runCollectionReport(){
   // the pull completes — lets you confirm at a glance whether the
   // Accounts Receivable filter actually ran, instead of guessing from the
   // final dollar figure alone.
-  _collJeDiagnostics={arAccountCount:arAccountCount,jeTotalFetched:jeChanged.length,jeCustomerLinesSeen:jeCustomerLinesSeen,jeKeptCount:jeKeptCount};
+  _collJeDiagnostics={arAccountCount:arAccountCount,jeTotalFetched:jeChanged.length,jeCustomerLinesSeen:jeCustomerLinesSeen,jeKeptCount:jeKeptCount,jeTotalNetted:jeTotalNetted};
   safeSetLocal('pc_coll_journal_entries',JSON.stringify(_collJournalEntryCache));
   if(jeCompleted){
     _collJournalEntryLastSync=jeSyncStartedAt;
@@ -3462,7 +3493,8 @@ function renderCollectionReport(){
   html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is Invoices + Sales Receipts issued during this period, net of any Credit Memos issued in the same window — matching how QuickBooks\'s own Sales by Product/Service report nets returns out. "Balance owed" is the true sum of open invoices for each customer as of the report\'s "From" date, and "Ending balance" is the same thing as of the "To" date — both reconstructed directly from invoice/payment history (not derived from Sales/Collected, and not QuickBooks\'s live "right now" balance), so they stay accurate for whatever date range you pick. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice. "Undeposited" is money that HAS been applied to an invoice (so it\'s already out of "Ending balance") but hasn\'t been physically deposited to the bank yet in QuickBooks, or comes from a payment dated after today — an independent, separate thing from whether an invoice is open, and not part of QuickBooks\'s own Open Invoices Report total at all. "Credit memo" is the unapplied portion of a credit memo — a credit sitting against a customer, not yet used against any invoice. "Journal entry" is the net effect of any Journal Entry posted directly against this customer\'s Accounts Receivable (Debit adds to what they owe, Credit subtracts) — a standing ledger adjustment outside the normal Invoice/Payment flow. To match QuickBooks\'s own Open Invoices Report total exactly: Ending balance − Unapplied − Credit memo + Journal entry.</div>';
   if(_collJeDiagnostics){
     var jd=_collJeDiagnostics;
-    html+='<div style="font-size:11px;color:var(--muted);margin-top:6px;font-family:var(--mono)">Journal Entry diagnostics (last pull): '+jd.arAccountCount+' Accounts Receivable account(s) found in Chart of Accounts · '+jd.jeTotalFetched+' journal entr'+(jd.jeTotalFetched!==1?'ies':'y')+' checked · '+jd.jeCustomerLinesSeen+' customer-tagged line(s) seen · '+jd.jeKeptCount+' kept as AR-affecting.'
+    function money2(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+    html+='<div style="font-size:11px;color:var(--muted);margin-top:6px;font-family:var(--mono)">Journal Entry diagnostics (last pull): '+jd.arAccountCount+' Accounts Receivable account(s) found in Chart of Accounts · '+jd.jeTotalFetched+' journal entr'+(jd.jeTotalFetched!==1?'ies':'y')+' checked · '+jd.jeCustomerLinesSeen+' customer-tagged line(s) seen · '+jd.jeKeptCount+' kept as AR-affecting · '+money2(jd.jeTotalNetted||0)+' already paid off and netted out.'
       +(jd.arAccountCount===0?' ⚠ Zero AR accounts found — the Chart of Accounts lookup likely failed (check server.js is redeployed with the "Account" entity whitelisted), so every Journal Entry line is being excluded right now.':'')
       +'</div>';
   }

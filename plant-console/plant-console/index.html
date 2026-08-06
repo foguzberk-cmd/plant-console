@@ -2504,6 +2504,21 @@ var _collOpeningByQbId=null; // {customer QB id: open-invoice balance as of the 
 var _collEndingByQbId=null;  // {customer QB id: open-invoice balance as of the report's "To" date}
 var _collEndingDetailByQbId=null; // {customer QB id: [{docNumber, txnDate, totalAmt, balance, contribution}, ...]} — the exact invoices behind each customer's Ending Balance, for direct invoice-by-invoice comparison against QuickBooks
 var _collFutureByQbId=null; // {customer QB id: total $ from payments dated AFTER today} — a payment applied to an invoice with a date in the future is a data anomaly (typo'd year, pre-recorded check, etc.), and would otherwise make the reconstruction "un-pay" that invoice back open for any "as of" date before it. That money is folded into the Undeposited column instead of inflating Ending/Opening balance — see computeAsOfBalances.
+// Unapplied Credit Memos — a Credit Memo's own Balance field is the
+// remaining amount of that credit NOT yet applied to any invoice (same
+// concept as a Payment's UnappliedAmt, just for credits instead of cash).
+// Lean cache like _collUnappliedCache: only entries with Balance>0 are
+// kept, so it stays small and always reflects "currently outstanding."
+var _collUnappliedCreditMemoCache=(function(){ try{ return JSON.parse(localStorage.getItem('pc_coll_unapplied_cm')||'{}'); }catch(e){ return {}; } })(); // keyed by CreditMemo Id
+var _collUnappliedCreditMemoLastSync=localStorage.getItem('pc_coll_unapplied_cm_synctime')||null;
+// Journal Entries — QuickBooks lets a Journal Entry line post directly
+// against a customer's Accounts Receivable via Line.JournalEntryLineDetail
+// .Entity (Type='Customer'). Only those customer-linked lines are kept per
+// entry (Debit increases what the customer owes, Credit decreases it —
+// standard convention for an asset account like A/R), everything else on
+// the entry is irrelevant here and discarded to keep this small.
+var _collJournalEntryCache=(function(){ try{ return JSON.parse(localStorage.getItem('pc_coll_journal_entries')||'{}'); }catch(e){ return {}; } })(); // keyed by JournalEntry Id -> {impacts:[{custId,amount}]}
+var _collJournalEntryLastSync=localStorage.getItem('pc_coll_journal_entries_synctime')||null;
 // MIGRATION: these two full-history caches are new, and their shape has
 // already changed a few times since (invoices now carry Balance and
 // DocNumber; payments now carry TotalAmt + DepositToAccountRef — see
@@ -2559,12 +2574,20 @@ function forceFullCollectionResync(){
   _collAllPaymentsCache={};
   _collOpeningByQbId=null;
   _collEndingByQbId=null;
+  _collUnappliedCreditMemoCache={};
+  _collUnappliedCreditMemoLastSync=null;
+  _collJournalEntryCache={};
+  _collJournalEntryLastSync=null;
   localStorage.removeItem('pc_coll_open_invoices');
   localStorage.removeItem('pc_coll_open_invoices_synctime');
   localStorage.removeItem('pc_coll_unapplied');
   localStorage.removeItem('pc_coll_unapplied_synctime');
   localStorage.removeItem('pc_coll_all_invoices');
   localStorage.removeItem('pc_coll_all_payments');
+  localStorage.removeItem('pc_coll_unapplied_cm');
+  localStorage.removeItem('pc_coll_unapplied_cm_synctime');
+  localStorage.removeItem('pc_coll_journal_entries');
+  localStorage.removeItem('pc_coll_journal_entries_synctime');
   var statusEl=document.getElementById('coll-status');
   if(statusEl){ statusEl.textContent='Cache cleared — click "Pull from QuickBooks" to do a full resync.'; statusEl.style.color='#b8460b'; }
 }
@@ -2777,6 +2800,108 @@ async function runCollectionReport(){
   }
   var unappliedPayments=Object.values(_collUnappliedCache);
 
+  // Unapplied Credit Memos — same incremental page-at-a-time pattern as
+  // above. A CreditMemo's own Balance field is exactly analogous to a
+  // Payment's UnappliedAmt: the portion of that credit not yet applied to
+  // any invoice.
+  var cmSyncStartedAt=new Date().toISOString();
+  var cmChanged=[];
+  var cmStart=1, cmSafety=0;
+  var cmCompleted=false;
+  if(statusEl) statusEl.textContent=(_collUnappliedCreditMemoLastSync?'Checking for credit memo changes since last sync…':'Fetching unapplied credit memos (first time — this one\'s slower)…');
+  while(true){
+    cmSafety++;
+    if(cmSafety>1000) break; // hard cap (~100k rows)
+    var cmCtrl=new AbortController();
+    var cmTimer=setTimeout(function(){cmCtrl.abort();},60000);
+    var cmRows=null;
+    try{
+      var cmUrl=base+'/api/qb/documents?entity=CreditMemo&startposition='+cmStart+(_collUnappliedCreditMemoLastSync?'&since='+encodeURIComponent(_collUnappliedCreditMemoLastSync):'');
+      var cmr=await fetch(cmUrl,{signal:cmCtrl.signal});
+      clearTimeout(cmTimer);
+      if(cmr.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
+      var cmjd=await cmr.json();
+      if(cmjd && cmjd.error) break; // incomplete this time — cmCompleted stays false
+      cmRows=(cmjd && cmjd.CreditMemo) ? cmjd.CreditMemo : [];
+    }catch(e){
+      clearTimeout(cmTimer);
+      break; // incomplete this time — cmCompleted stays false
+    }
+    cmChanged=cmChanged.concat(cmRows);
+    if(statusEl) statusEl.textContent='Checking credit memos… '+cmChanged.length+' change(s) so far…';
+    if(cmRows.length<pageSize){ cmCompleted=true; break; }
+    cmStart+=pageSize;
+  }
+  cmChanged.forEach(function(cm){
+    if(Number(cm.Balance||0)>0.004) _collUnappliedCreditMemoCache[cm.Id]={Id:cm.Id,CustomerRef:cm.CustomerRef,Balance:Number(cm.Balance||0)};
+    else delete _collUnappliedCreditMemoCache[cm.Id]; // fully applied now (or genuinely $0) — no longer counts
+  });
+  safeSetLocal('pc_coll_unapplied_cm',JSON.stringify(_collUnappliedCreditMemoCache));
+  if(cmCompleted){
+    _collUnappliedCreditMemoLastSync=cmSyncStartedAt;
+    safeSetLocal('pc_coll_unapplied_cm_synctime',cmSyncStartedAt);
+  } else if(statusEl && statusEl.style.color!=='#b8460b'){
+    statusEl.textContent='Warning: the credit-memo fetch was interrupted partway through — some amounts may be incomplete this pull. Try "Pull from QuickBooks" again.';
+    statusEl.style.color='#b8460b';
+  }
+
+  // Journal Entries — same pattern again. Only lines that post directly
+  // against a specific customer (Line.JournalEntryLineDetail.Entity with
+  // Type='Customer') are kept; everything else on the entry is irrelevant
+  // here. Debit increases what the customer owes, Credit decreases it —
+  // the standard convention for an asset account like Accounts
+  // Receivable, and the same sign convention QuickBooks's own reports use.
+  var jeSyncStartedAt=new Date().toISOString();
+  var jeChanged=[];
+  var jeStart=1, jeSafety=0;
+  var jeCompleted=false;
+  if(statusEl) statusEl.textContent=(_collJournalEntryLastSync?'Checking for journal entry changes since last sync…':'Fetching journal entries (first time — this one\'s slower)…');
+  while(true){
+    jeSafety++;
+    if(jeSafety>1000) break; // hard cap (~100k rows)
+    var jeCtrl=new AbortController();
+    var jeTimer=setTimeout(function(){jeCtrl.abort();},60000);
+    var jeRows=null;
+    try{
+      var jeUrl=base+'/api/qb/documents?entity=JournalEntry&startposition='+jeStart+(_collJournalEntryLastSync?'&since='+encodeURIComponent(_collJournalEntryLastSync):'');
+      var jer=await fetch(jeUrl,{signal:jeCtrl.signal});
+      clearTimeout(jeTimer);
+      if(jer.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
+      var jejd=await jer.json();
+      if(jejd && jejd.error) break; // incomplete this time — jeCompleted stays false
+      jeRows=(jejd && jejd.JournalEntry) ? jejd.JournalEntry : [];
+    }catch(e){
+      clearTimeout(jeTimer);
+      break; // incomplete this time — jeCompleted stays false
+    }
+    jeChanged=jeChanged.concat(jeRows);
+    if(statusEl) statusEl.textContent='Checking journal entries… '+jeChanged.length+' change(s) so far…';
+    if(jeRows.length<pageSize){ jeCompleted=true; break; }
+    jeStart+=pageSize;
+  }
+  jeChanged.forEach(function(je){
+    var impacts=[];
+    (je.Line||[]).forEach(function(line){
+      var detail=line.JournalEntryLineDetail;
+      if(!detail) return;
+      var entity=detail.Entity;
+      if(!entity || entity.Type!=='Customer' || !entity.EntityRef || !entity.EntityRef.value) return;
+      var amt=Number(line.Amount||0);
+      var signedAmt=(detail.PostingType==='Debit')?amt:-amt;
+      impacts.push({custId:entity.EntityRef.value,amount:signedAmt});
+    });
+    if(impacts.length) _collJournalEntryCache[je.Id]={Id:je.Id,impacts:impacts};
+    else delete _collJournalEntryCache[je.Id]; // no customer-linked lines (anymore) — nothing to track
+  });
+  safeSetLocal('pc_coll_journal_entries',JSON.stringify(_collJournalEntryCache));
+  if(jeCompleted){
+    _collJournalEntryLastSync=jeSyncStartedAt;
+    safeSetLocal('pc_coll_journal_entries_synctime',jeSyncStartedAt);
+  } else if(statusEl && statusEl.style.color!=='#b8460b'){
+    statusEl.textContent='Warning: the journal-entry fetch was interrupted partway through — some amounts may be incomplete this pull. Try "Pull from QuickBooks" again.';
+    statusEl.style.color='#b8460b';
+  }
+
   _collPayments=payments;
   _collSalesDocs=salesDocs;
   _collOpenInvoices=openInvoices;
@@ -2965,20 +3090,52 @@ function computeCollectionGroups(){
     return undepositedByQbId[qbCustId]||0;
   }
 
+  // "Credit Memo (unapplied)" — a credit sitting against a customer that
+  // hasn't been used against any invoice yet. Same concept as Unapplied
+  // above, just for credits instead of cash.
+  var creditMemoByQbId={};
+  Object.values(_collUnappliedCreditMemoCache||{}).forEach(function(cm){
+    var qbCustId=cm.CustomerRef&&cm.CustomerRef.value;
+    if(!qbCustId) return;
+    creditMemoByQbId[qbCustId]=(creditMemoByQbId[qbCustId]||0)+Number(cm.Balance||0);
+  });
+  function creditMemoOfCust(qbCustId){
+    if(!qbCustId) return 0;
+    return creditMemoByQbId[qbCustId]||0;
+  }
+
+  // "Journal Entry" — the net AR effect of every Journal Entry line ever
+  // posted directly against this customer (Debit adds to what they owe,
+  // Credit subtracts). A standing ledger adjustment outside the normal
+  // Invoice/Payment flow — the one category this report still can't fully
+  // explain away if a number doesn't match QuickBooks's own reports.
+  var journalByQbId={};
+  Object.values(_collJournalEntryCache||{}).forEach(function(je){
+    (je.impacts||[]).forEach(function(imp){
+      journalByQbId[imp.custId]=(journalByQbId[imp.custId]||0)+imp.amount;
+    });
+  });
+  function journalOfCust(qbCustId){
+    if(!qbCustId) return 0;
+    return journalByQbId[qbCustId]||0;
+  }
+
   // Group by customer, keyed by QuickBooks customer id where available
   // (falling back to the name) so the same customer never gets split into
   // two buckets due to a name/whitespace quirk. $0 records are excluded —
   // QuickBooks can generate zero-dollar "Payment" entities (e.g. fully
   // applied against a credit, or used purely to link documents) that
   // aren't an actual collection and shouldn't show up here.
-  var byCust={}; // key -> {name, total, balance(ending), opening, sales, unapplied, undeposited, payments:[]}
-  var bySalesPerson={}; // name -> {total, balance, opening, sales, unapplied, undeposited, payments:[], _custKeysSeen:Set}
+  var byCust={}; // key -> {name, total, balance(ending), opening, sales, unapplied, undeposited, creditMemo, journal, payments:[]}
+  var bySalesPerson={}; // name -> {total, balance, opening, sales, unapplied, undeposited, creditMemo, journal, payments:[], _custKeysSeen:Set}
   var grandTotal=0;
   var grandBalance=0;
   var grandOpening=0;
   var grandSales=0;
   var grandUnapplied=0;
   var grandUndeposited=0;
+  var grandCreditMemo=0;
+  var grandJournal=0;
   payments.forEach(function(p){
     var amt=Number(p.TotalAmt||0);
     if(!amt) return;
@@ -2991,12 +3148,14 @@ function computeCollectionGroups(){
     var open=openingOfCust(qbCustId);
     var unapp=unappliedOfCust(qbCustId);
     var undep=undepositedOfCust(qbCustId);
-    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndeposited+=undep; }
+    var cm=creditMemoOfCust(qbCustId);
+    var jrn=journalOfCust(qbCustId);
+    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,creditMemo:cm,journal:jrn,payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndeposited+=undep; grandCreditMemo+=cm; grandJournal+=jrn; }
     byCust[custKey].total+=amt;
     byCust[custKey].payments.push({date:date,amount:amt,ref:ref});
 
     var rep=salesPersonOf(p)||'Unassigned';
-    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,opening:0,sales:0,unapplied:0,undeposited:0,payments:[],_custKeysSeen:{},custBalances:[]};
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,opening:0,sales:0,unapplied:0,undeposited:0,creditMemo:0,journal:0,payments:[],_custKeysSeen:{},custBalances:[]};
     bySalesPerson[rep].total+=amt;
     if(!bySalesPerson[rep]._custKeysSeen[custKey]){
       bySalesPerson[rep]._custKeysSeen[custKey]=true;
@@ -3004,6 +3163,8 @@ function computeCollectionGroups(){
       bySalesPerson[rep].opening+=open;
       bySalesPerson[rep].unapplied+=unapp;
       bySalesPerson[rep].undeposited+=undep;
+      bySalesPerson[rep].creditMemo+=cm;
+      bySalesPerson[rep].journal+=jrn;
       bySalesPerson[rep].custBalances.push({name:custName,balance:bal,unapplied:unapp,undeposited:undep});
     }
     bySalesPerson[rep].payments.push({date:date,amount:amt,ref:ref,customer:custName});
@@ -3027,17 +3188,21 @@ function computeCollectionGroups(){
     var open=openingOfCust(qbCustId);
     var unapp=unappliedOfCust(qbCustId);
     var undep=undepositedOfCust(qbCustId);
-    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndeposited+=undep; }
+    var cm=creditMemoOfCust(qbCustId);
+    var jrn=journalOfCust(qbCustId);
+    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,creditMemo:cm,journal:jrn,payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndeposited+=undep; grandCreditMemo+=cm; grandJournal+=jrn; }
     byCust[custKey].sales+=amt;
 
     var rep=salesPersonOf(d)||'Unassigned';
-    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,opening:0,sales:0,unapplied:0,undeposited:0,payments:[],_custKeysSeen:{},custBalances:[]};
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,opening:0,sales:0,unapplied:0,undeposited:0,creditMemo:0,journal:0,payments:[],_custKeysSeen:{},custBalances:[]};
     if(!bySalesPerson[rep]._custKeysSeen[custKey]){
       bySalesPerson[rep]._custKeysSeen[custKey]=true;
       bySalesPerson[rep].balance+=bal;
       bySalesPerson[rep].opening+=open;
       bySalesPerson[rep].unapplied+=unapp;
       bySalesPerson[rep].undeposited+=undep;
+      bySalesPerson[rep].creditMemo+=cm;
+      bySalesPerson[rep].journal+=jrn;
       bySalesPerson[rep].custBalances.push({name:custName,balance:bal,unapplied:unapp,undeposited:undep});
     }
     bySalesPerson[rep].sales+=amt;
@@ -3046,52 +3211,59 @@ function computeCollectionGroups(){
   });
 
   // Third pass: every customer with a real opening balance, ending
-  // balance, unapplied amount, or undeposited amount gets counted, even if
-  // they had zero payments AND zero sales during this specific date range.
-  // Driven directly by the invoice/payment data itself (_collOpeningByQbId
-  // / _collEndingByQbId / unappliedByQbId / undepositedByQbId) — NOT by
-  // the local synced customers list — because a customer can have a very
-  // real balance in QuickBooks without ever having been synced into Plant
-  // Console yet (a brand-new customer, or one nobody's gotten to in
-  // Settings → Customers). Driving this off the customer list instead of
-  // the invoice data would silently miss exactly those customers, which
-  // especially matters for a short date range where passes 1 and 2 above
-  // catch almost nothing.
+  // balance, unapplied amount, undeposited amount, unapplied credit memo,
+  // or journal entry impact gets counted, even if they had zero payments
+  // AND zero sales during this specific date range. Driven directly by
+  // the invoice/payment data itself — NOT by the local synced customers
+  // list — because a customer can have a very real balance in QuickBooks
+  // without ever having been synced into Plant Console yet (a brand-new
+  // customer, or one nobody's gotten to in Settings → Customers). Driving
+  // this off the customer list instead of the invoice data would silently
+  // miss exactly those customers, which especially matters for a short
+  // date range where passes 1 and 2 above catch almost nothing.
   var allQbIdsWithBalance={};
   Object.keys(_collOpeningByQbId||{}).forEach(function(id){ allQbIdsWithBalance[id]=true; });
   Object.keys(_collEndingByQbId||{}).forEach(function(id){ allQbIdsWithBalance[id]=true; });
   Object.keys(unappliedByQbId).forEach(function(id){ allQbIdsWithBalance[id]=true; });
   Object.keys(undepositedByQbId).forEach(function(id){ allQbIdsWithBalance[id]=true; });
+  Object.keys(creditMemoByQbId).forEach(function(id){ allQbIdsWithBalance[id]=true; });
+  Object.keys(journalByQbId).forEach(function(id){ allQbIdsWithBalance[id]=true; });
   Object.keys(allQbIdsWithBalance).forEach(function(qbCustId){
     var custKey=qbCustId;
     var bal=endingOfCust(qbCustId);
     var open=openingOfCust(qbCustId);
     var unapp=unappliedOfCust(qbCustId);
     var undep=undepositedOfCust(qbCustId);
+    var cm=creditMemoOfCust(qbCustId);
+    var jrn=journalOfCust(qbCustId);
     var known=custByQbId[qbCustId]; // may be undefined if not yet synced locally
     var custName=(known&&known.name)||'Unknown customer (not yet synced — id '+qbCustId+')';
     if(!byCust[custKey]){
-      byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,payments:[]};
+      byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,creditMemo:cm,journal:jrn,payments:[]};
       grandBalance+=bal;
       grandOpening+=open;
       grandUnapplied+=unapp;
       grandUndeposited+=undep;
+      grandCreditMemo+=cm;
+      grandJournal+=jrn;
     }
     var rep=(known&&known.salesRep&&known.salesRep.trim())||'Unassigned';
-    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,opening:0,sales:0,unapplied:0,undeposited:0,payments:[],_custKeysSeen:{},custBalances:[]};
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,opening:0,sales:0,unapplied:0,undeposited:0,creditMemo:0,journal:0,payments:[],_custKeysSeen:{},custBalances:[]};
     if(!bySalesPerson[rep]._custKeysSeen[custKey]){
       bySalesPerson[rep]._custKeysSeen[custKey]=true;
       bySalesPerson[rep].balance+=bal;
       bySalesPerson[rep].opening+=open;
       bySalesPerson[rep].unapplied+=unapp;
       bySalesPerson[rep].undeposited+=undep;
+      bySalesPerson[rep].creditMemo+=cm;
+      bySalesPerson[rep].journal+=jrn;
       bySalesPerson[rep].custBalances.push({name:custName,balance:bal,unapplied:unapp,undeposited:undep});
     }
   });
 
   return {
     payments:payments, byCust:byCust, bySalesPerson:bySalesPerson,
-    grandTotal:grandTotal, grandBalance:grandBalance, grandOpening:grandOpening, grandSales:grandSales, grandUnapplied:grandUnapplied, grandUndeposited:grandUndeposited,
+    grandTotal:grandTotal, grandBalance:grandBalance, grandOpening:grandOpening, grandSales:grandSales, grandUnapplied:grandUnapplied, grandUndeposited:grandUndeposited, grandCreditMemo:grandCreditMemo, grandJournal:grandJournal,
     anyBalanceSynced:anyBalanceSynced
   };
 }
@@ -3105,7 +3277,7 @@ function renderCollectionReport(){
 
   var g=computeCollectionGroups();
   var payments=g.payments, byCust=g.byCust, bySalesPerson=g.bySalesPerson;
-  var grandTotal=g.grandTotal, grandBalance=g.grandBalance, grandOpening=g.grandOpening, grandSales=g.grandSales, grandUnapplied=g.grandUnapplied, grandUndeposited=g.grandUndeposited;
+  var grandTotal=g.grandTotal, grandBalance=g.grandBalance, grandOpening=g.grandOpening, grandSales=g.grandSales, grandUnapplied=g.grandUnapplied, grandUndeposited=g.grandUndeposited, grandCreditMemo=g.grandCreditMemo, grandJournal=g.grandJournal;
   var anyBalanceSynced=g.anyBalanceSynced;
 
   var byMode = (_collGroupMode==='salesperson') ? bySalesPerson : byCust;
@@ -3183,6 +3355,8 @@ function renderCollectionReport(){
           +valBlock('Ending balance',entry.balance,true,false)
           +valBlock('Unapplied',entry.unapplied||0,false,false)
           +valBlock('Undeposited',entry.undeposited||0,false,false)
+          +valBlock('Credit memo',entry.creditMemo||0,false,false)
+          +valBlock('Journal entry',entry.journal||0,false,false)
           +pctBlock('% collected',entry.total,opening)
         +'</span>'
       +'</div>'
@@ -3224,11 +3398,13 @@ function renderCollectionReport(){
       +valBlock('Ending balance',grandBalance,true,false)
       +valBlock('Unapplied',grandUnapplied||0,false,false)
       +valBlock('Undeposited',grandUndeposited||0,false,false)
+      +valBlock('Credit memo',grandCreditMemo||0,false,false)
+      +valBlock('Journal entry',grandJournal||0,false,false)
       +pctBlock('% collected',grandTotal,grandOpening)
     +'</span>'
   +'</div>';
   html+='</div>';
-  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is Invoices + Sales Receipts issued during this period, net of any Credit Memos issued in the same window — matching how QuickBooks\'s own Sales by Product/Service report nets returns out. "Balance owed" is the true sum of open invoices for each customer as of the report\'s "From" date, and "Ending balance" is the same thing as of the "To" date — both reconstructed directly from invoice/payment history (not derived from Sales/Collected, and not QuickBooks\'s live "right now" balance), so they stay accurate for whatever date range you pick. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice — it\'s part of what QuickBooks\'s own Customer.Balance counts, but isn\'t part of "open invoices," which is why the two can differ. "Undeposited" is money that HAS been applied to an invoice (so it\'s already out of "Ending balance") but hasn\'t been physically deposited to the bank yet in QuickBooks — either sitting in the Undeposited Funds account, or from a payment dated after today (which can\'t legitimately count as collected yet for any real-world date, so it\'s kept out of the balance math and surfaced here instead).</div>';
+  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is Invoices + Sales Receipts issued during this period, net of any Credit Memos issued in the same window — matching how QuickBooks\'s own Sales by Product/Service report nets returns out. "Balance owed" is the true sum of open invoices for each customer as of the report\'s "From" date, and "Ending balance" is the same thing as of the "To" date — both reconstructed directly from invoice/payment history (not derived from Sales/Collected, and not QuickBooks\'s live "right now" balance), so they stay accurate for whatever date range you pick. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice. "Undeposited" is money that HAS been applied to an invoice (so it\'s already out of "Ending balance") but hasn\'t been physically deposited to the bank yet in QuickBooks, or comes from a payment dated after today — an independent, separate thing from whether an invoice is open, and not part of QuickBooks\'s own Open Invoices Report total at all. "Credit memo" is the unapplied portion of a credit memo — a credit sitting against a customer, not yet used against any invoice. "Journal entry" is the net effect of any Journal Entry posted directly against this customer\'s Accounts Receivable (Debit adds to what they owe, Credit subtracts) — a standing ledger adjustment outside the normal Invoice/Payment flow. To match QuickBooks\'s own Open Invoices Report total exactly: Ending balance − Unapplied − Credit memo + Journal entry.</div>';
   if(bodyEl) bodyEl.innerHTML=html;
 }
 
@@ -3304,6 +3480,8 @@ function doPrintReportGroup(key){
           +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">Ending Balance</td>'
           +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">Unapplied</td>'
           +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">Undeposited</td>'
+          +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">Credit Memo</td>'
+          +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">Journal Entry</td>'
           +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">% Collected</td>'
         +'</tr>'
         +'<tr>'
@@ -3313,6 +3491,8 @@ function doPrintReportGroup(key){
           +'<td style="padding:6px 10px;border:1px solid #999">'+money(entry.balance)+'</td>'
           +'<td style="padding:6px 10px;border:1px solid #999">'+money(entry.unapplied||0)+'</td>'
           +'<td style="padding:6px 10px;border:1px solid #999">'+money(entry.undeposited||0)+'</td>'
+          +'<td style="padding:6px 10px;border:1px solid #999">'+money(entry.creditMemo||0)+'</td>'
+          +'<td style="padding:6px 10px;border:1px solid #999">'+money(entry.journal||0)+'</td>'
           +'<td style="padding:6px 10px;border:1px solid #999">'+(opening>0?Math.round((entry.total/opening)*100)+'%':'—')+'</td>'
         +'</tr>'
       +'</table>'
@@ -3381,24 +3561,24 @@ function _buildCollectionCSVRows(onlyKey){
     });
   }
 
-  var rows=[[groupLabel,'Sales','Balance Owed','Collected','Ending Balance','Unapplied','Undeposited','% Collected','Row Type','Date','Customer / Detail','Ref / Invoice #','Amount']];
+  var rows=[[groupLabel,'Sales','Balance Owed','Collected','Ending Balance','Unapplied','Undeposited','Credit Memo','Journal Entry','% Collected','Row Type','Date','Customer / Detail','Ref / Invoice #','Amount']];
   keys.forEach(function(k){
     var entry=byMode[k];
     var label=(_collGroupMode==='salesperson')?k:entry.name;
     var opening=entry.opening||0;
     var pct=opening>0?Math.round((entry.total/opening)*100)+'%':'';
-    rows.push([label,entry.sales.toFixed(2),opening.toFixed(2),entry.total.toFixed(2),entry.balance.toFixed(2),(entry.unapplied||0).toFixed(2),(entry.undeposited||0).toFixed(2),pct,'SUMMARY','','','','']);
+    rows.push([label,entry.sales.toFixed(2),opening.toFixed(2),entry.total.toFixed(2),entry.balance.toFixed(2),(entry.unapplied||0).toFixed(2),(entry.undeposited||0).toFixed(2),(entry.creditMemo||0).toFixed(2),(entry.journal||0).toFixed(2),pct,'SUMMARY','','','','']);
     // Customer-mode only: the exact invoices behind this customer's Ending
     // Balance, for direct invoice-by-invoice matching against QuickBooks —
     // same data as the "Invoices behind Ending Balance" panel on screen,
     // just here in the CSV since that's the workflow actually being used.
     if(_collGroupMode==='customer' && _collEndingDetailByQbId && _collEndingDetailByQbId[k]){
       _collEndingDetailByQbId[k].slice().sort(function(a,b){ return b.contribution-a.contribution; }).forEach(function(d){
-        rows.push(['','','','','','','','','INVOICE',d.txnDate,'Total '+d.totalAmt.toFixed(2)+' -> Current bal. '+d.balance.toFixed(2)+(d.appliedAfterTo>0.004?' + '+d.appliedAfterTo.toFixed(2)+' paid after "To"':''),'#'+d.docNumber,d.contribution.toFixed(2)]);
+        rows.push(['','','','','','','','','','','INVOICE',d.txnDate,'Total '+d.totalAmt.toFixed(2)+' -> Current bal. '+d.balance.toFixed(2)+(d.appliedAfterTo>0.004?' + '+d.appliedAfterTo.toFixed(2)+' paid after "To"':''),'#'+d.docNumber,d.contribution.toFixed(2)]);
       });
     }
     entry.payments.slice().sort(function(a,b){ return a.date<b.date?1:-1; }).forEach(function(row){
-      rows.push(['','','','','','','','','PAYMENT',row.date,row.customer||label,row.ref||'',row.amount.toFixed(2)]);
+      rows.push(['','','','','','','','','','','PAYMENT',row.date,row.customer||label,row.ref||'',row.amount.toFixed(2)]);
     });
   });
   return rows;

@@ -2847,32 +2847,38 @@ function computeCollectionGroups(){
     grandSales+=amt;
   });
 
-  // Third pass: every customer's CURRENT balance gets counted, even if
-  // they had zero payments AND zero sales during this specific date
-  // range. Without this, a sales rep's "Ending Balance" only reflected
-  // customers who happened to be active in this window — someone with a
-  // large outstanding balance but no activity this period would be
-  // silently missing from the total entirely, understating what's
-  // actually still owed. This adds a $0-activity row for anyone not
-  // already counted above (so the balance total is always complete),
-  // without touching what Collected/Sales show for them.
-  customers.forEach(function(c){
-    if(!c.qbId) return;
-    var custKey=c.qbId;
-    var bal=balanceOfCust(c.qbId);
-    var unapp=unappliedOfCust(c.qbId);
+  // Third pass: every customer with a real open-invoice or unapplied
+  // balance gets counted, even if they had zero payments AND zero sales
+  // during this specific date range. Driven directly by the invoice/
+  // payment data itself (openInvBalanceByQbId / unappliedByQbId) — NOT by
+  // the local synced customers list — because a customer can have a very
+  // real open invoice in QuickBooks without ever having been synced into
+  // Plant Console yet (a brand-new customer, or one nobody's gotten to in
+  // Settings → Customers). Driving this off the customer list instead of
+  // the invoice data would silently miss exactly those customers, which
+  // especially matters for a short date range where passes 1 and 2 above
+  // catch almost nothing.
+  var allQbIdsWithBalance={};
+  Object.keys(openInvBalanceByQbId).forEach(function(id){ allQbIdsWithBalance[id]=true; });
+  Object.keys(unappliedByQbId).forEach(function(id){ allQbIdsWithBalance[id]=true; });
+  Object.keys(allQbIdsWithBalance).forEach(function(qbCustId){
+    var custKey=qbCustId;
+    var bal=balanceOfCust(qbCustId);
+    var unapp=unappliedOfCust(qbCustId);
+    var known=custByQbId[qbCustId]; // may be undefined if not yet synced locally
+    var custName=(known&&known.name)||'Unknown customer (not yet synced — id '+qbCustId+')';
     if(!byCust[custKey]){
-      byCust[custKey]={name:c.name||'No customer on file',total:0,balance:bal,sales:0,unapplied:unapp,payments:[]};
+      byCust[custKey]={name:custName,total:0,balance:bal,sales:0,unapplied:unapp,payments:[]};
       grandBalance+=bal;
       grandUnapplied+=unapp;
     }
-    var rep=(c.salesRep&&c.salesRep.trim())||'Unassigned';
+    var rep=(known&&known.salesRep&&known.salesRep.trim())||'Unassigned';
     if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,unapplied:0,payments:[],_custKeysSeen:{},custBalances:[]};
     if(!bySalesPerson[rep]._custKeysSeen[custKey]){
       bySalesPerson[rep]._custKeysSeen[custKey]=true;
       bySalesPerson[rep].balance+=bal;
       bySalesPerson[rep].unapplied+=unapp;
-      bySalesPerson[rep].custBalances.push({name:c.name||'No customer on file',balance:bal,unapplied:unapp});
+      bySalesPerson[rep].custBalances.push({name:custName,balance:bal,unapplied:unapp});
     }
   });
 

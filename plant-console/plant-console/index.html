@@ -2486,6 +2486,31 @@ var _collUnappliedCache=(function(){ try{ return JSON.parse(localStorage.getItem
 var _collUnappliedLastSync=localStorage.getItem('pc_coll_unapplied_synctime')||null;
 var _collOpenInvoices=Object.keys(_collOpenInvoicesCache).length?Object.values(_collOpenInvoicesCache):null; // cached currently-open (Balance>0) Invoices, used to compute true open-invoice totals per customer
 var _collUnappliedPayments=Object.keys(_collUnappliedCache).length?Object.values(_collUnappliedCache):null; // cached payments with a nonzero UnappliedAmt — money sitting against a customer that isn't tied to any invoice
+// Full (open OR closed) invoice + payment history, kept purely to
+// reconstruct what a customer's open-invoice balance actually was AS OF a
+// specific past date — the "Balance owed" (report-beginning) and "Ending
+// balance" (report-end) columns need this, since QuickBooks only exposes a
+// live "right now" Balance/Customer.Balance, not "balance as of date X".
+// Minimal fields only (Id/CustomerRef/TotalAmt/TxnDate for invoices;
+// Id/CustomerRef/TxnDate/Line[Amount,LinkedTxn] for payments) to keep this
+// company-wide cache as small as possible. Populated for free from the
+// SAME "Open Invoices" and "Unapplied Payments" fetch loops below (those
+// already pull every invoice/payment in the company on a first sync, with
+// no date floor — this just also keeps a minimal copy of everything
+// instead of discarding the closed/fully-applied ones).
+var _collAllInvoicesCache=(function(){ try{ return JSON.parse(localStorage.getItem('pc_coll_all_invoices')||'{}'); }catch(e){ return {}; } })(); // keyed by Invoice Id
+var _collAllPaymentsCache=(function(){ try{ return JSON.parse(localStorage.getItem('pc_coll_all_payments')||'{}'); }catch(e){ return {}; } })(); // keyed by Payment Id
+var _collOpeningByQbId=null; // {customer QB id: open-invoice balance as of the report's "From" date} — precomputed once per pull (see computeAsOfBalances), not recomputed on every render
+var _collEndingByQbId=null;  // {customer QB id: open-invoice balance as of the report's "To" date}
+// MIGRATION: these two full-history caches are new. Anyone who already used
+// this report before has a non-null _collOpenInvoicesLastSync/
+// _collUnappliedLastSync, which would make the invoice/payment fetch loops
+// below run INCREMENTAL-only ("since last sync") — filling the new caches
+// with just a small recent slice instead of full history, which would
+// silently understate every "as of date" balance. Force exactly one full
+// fetch to properly backfill them, transparent to the person using the app.
+if(!Object.keys(_collAllInvoicesCache).length && _collOpenInvoicesLastSync) _collOpenInvoicesLastSync=null;
+if(!Object.keys(_collAllPaymentsCache).length && _collUnappliedLastSync) _collUnappliedLastSync=null;
 var _collRange=null;      // {from,to} for the cached fetch
 var _collGroupMode='customer'; // 'customer' | 'salesperson'
 var _collRowKeys=[]; // groupKeys from the last render, indexed the same as each row — lets per-row buttons (like Print) reference a rep name safely without embedding raw text (which could contain apostrophes) into an onclick attribute
@@ -2522,10 +2547,16 @@ function forceFullCollectionResync(){
   _collOpenInvoicesLastSync=null;
   _collUnappliedCache={};
   _collUnappliedLastSync=null;
+  _collAllInvoicesCache={};
+  _collAllPaymentsCache={};
+  _collOpeningByQbId=null;
+  _collEndingByQbId=null;
   localStorage.removeItem('pc_coll_open_invoices');
   localStorage.removeItem('pc_coll_open_invoices_synctime');
   localStorage.removeItem('pc_coll_unapplied');
   localStorage.removeItem('pc_coll_unapplied_synctime');
+  localStorage.removeItem('pc_coll_all_invoices');
+  localStorage.removeItem('pc_coll_all_payments');
   var statusEl=document.getElementById('coll-status');
   if(statusEl){ statusEl.textContent='Cache cleared — click "Pull from QuickBooks" to do a full resync.'; statusEl.style.color='#b8460b'; }
 }
@@ -2658,8 +2689,12 @@ async function runCollectionReport(){
   openInvoicesChanged.forEach(function(inv){
     if(Number(inv.Balance||0)>0.004) _collOpenInvoicesCache[inv.Id]=inv;
     else delete _collOpenInvoicesCache[inv.Id]; // no longer open (paid off) — or was never actually open, either way it shouldn't be counted
+    // Kept regardless of current Balance — a now-closed invoice may still
+    // have been open as of an earlier "as of" date (see computeAsOfBalances).
+    _collAllInvoicesCache[inv.Id]={Id:inv.Id,CustomerRef:inv.CustomerRef,TotalAmt:Number(inv.TotalAmt||0),TxnDate:(inv.TxnDate||'').slice(0,10)};
   });
   safeSetLocal('pc_coll_open_invoices',JSON.stringify(_collOpenInvoicesCache)); // save whatever we DID get either way — partial data is still better than none
+  safeSetLocal('pc_coll_all_invoices',JSON.stringify(_collAllInvoicesCache));
   if(oiCompleted){
     _collOpenInvoicesLastSync=oiSyncStartedAt;
     safeSetLocal('pc_coll_open_invoices_synctime',oiSyncStartedAt);
@@ -2704,8 +2739,16 @@ async function runCollectionReport(){
   unappliedChanged.forEach(function(p){
     if(Number(p.UnappliedAmt||0)>0.004) _collUnappliedCache[p.Id]=p;
     else delete _collUnappliedCache[p.Id]; // fully applied now (or genuinely $0) — no longer counts
+    // Kept regardless of unapplied status — even a FULLY applied payment
+    // still reduces an invoice's balance and is needed to reconstruct what
+    // a customer owed as of a specific past date. Applying a Credit Memo to
+    // an invoice in QuickBooks always creates a $0 Payment record linking
+    // the invoice and the credit, so this same walk covers credit-memo
+    // applications too, with no separate handling needed.
+    _collAllPaymentsCache[p.Id]={Id:p.Id,CustomerRef:p.CustomerRef,TxnDate:(p.TxnDate||'').slice(0,10),Line:(p.Line||[]).map(function(l){ return {Amount:Number(l.Amount||0),LinkedTxn:l.LinkedTxn||[]}; })};
   });
   safeSetLocal('pc_coll_unapplied',JSON.stringify(_collUnappliedCache)); // save whatever we DID get either way
+  safeSetLocal('pc_coll_all_payments',JSON.stringify(_collAllPaymentsCache));
   if(upCompleted){
     _collUnappliedLastSync=upSyncStartedAt;
     safeSetLocal('pc_coll_unapplied_synctime',upSyncStartedAt);
@@ -2720,7 +2763,70 @@ async function runCollectionReport(){
   _collOpenInvoices=openInvoices;
   _collUnappliedPayments=unappliedPayments;
   _collRange={from:from,to:to};
+  if(statusEl) statusEl.textContent='Reconstructing beginning/ending balances for '+from+' – '+to+'…';
+  var asOf=computeAsOfBalances(from,to);
+  _collOpeningByQbId=asOf.opening;
+  _collEndingByQbId=asOf.ending;
   renderCollectionReport();
+}
+
+// Reconstructs each customer's TRUE open-invoice balance as of two specific
+// dates (the report's "From" and "To") directly from full invoice+payment
+// history, instead of relying on QuickBooks's live "right now" Balance
+// field (which only reflects today, not a chosen past date). For every
+// invoice, "still open as of date D" = TotalAmt minus every dollar ever
+// applied against it (by any Payment) dated on/before D. Applying a Credit
+// Memo to an invoice in QuickBooks always creates a $0 Payment record
+// linking the invoice and the credit, so walking Payment.Line[].LinkedTxn
+// history covers real cash payments AND credit-memo applications in one
+// pass — no separate Credit Memo handling needed. (One known gap: a
+// balance write-off done directly through a Journal Entry, bypassing
+// Payment entirely, wouldn't be caught here — an edge case, but worth
+// knowing about if a number here ever looks stubbornly too high.)
+// Runs ONCE per "Pull from QuickBooks" (not on every render/search
+// keystroke) since it's the one part of this report doing real work
+// proportional to the size of the full invoice/payment history.
+function computeAsOfBalances(fromDate,toDate){
+  var invoices=Object.values(_collAllInvoicesCache);
+  var payments=Object.values(_collAllPaymentsCache);
+
+  // invoiceId -> [{amount, date}, ...] — every dollar ever applied against
+  // that invoice, by any payment (cash receipt or credit-memo application).
+  var appliedByInvoice={};
+  payments.forEach(function(p){
+    var d=p.TxnDate||'';
+    (p.Line||[]).forEach(function(line){
+      (line.LinkedTxn||[]).forEach(function(lt){
+        if(lt.TxnType==='Invoice' && lt.TxnId){
+          if(!appliedByInvoice[lt.TxnId]) appliedByInvoice[lt.TxnId]=[];
+          appliedByInvoice[lt.TxnId].push({amount:Number(line.Amount||0),date:d});
+        }
+      });
+    });
+  });
+
+  var opening={}, ending={}; // customer QB id -> total open balance as of that date
+  invoices.forEach(function(inv){
+    var custId=inv.CustomerRef&&inv.CustomerRef.value;
+    if(!custId) return;
+    var invDate=inv.TxnDate||'';
+    if(!invDate) return;
+    var applications=appliedByInvoice[inv.Id]||[];
+    function appliedAsOf(d){
+      var sum=0;
+      applications.forEach(function(a){ if(a.date && a.date<=d) sum+=a.amount; });
+      return sum;
+    }
+    if(invDate<=fromDate){
+      var openAtFrom=inv.TotalAmt-appliedAsOf(fromDate);
+      if(openAtFrom>0.004) opening[custId]=(opening[custId]||0)+openAtFrom;
+    }
+    if(invDate<=toDate){
+      var openAtTo=inv.TotalAmt-appliedAsOf(toDate);
+      if(openAtTo>0.004) ending[custId]=(ending[custId]||0)+openAtTo;
+    }
+  });
+  return {opening:opening,ending:ending};
 }
 
 // Computes the customer/sales-person groupings from the cached
@@ -2729,12 +2835,7 @@ async function runCollectionReport(){
 function computeCollectionGroups(){
   var payments=_collPayments||[];
 
-  // Look up each payment's customer (by QuickBooks id) to read Sales
-  // Person and current outstanding balance. Balance is a live snapshot
-  // from QuickBooks's Customer.Balance field (captured at the last
-  // "Sync customers" run in Settings), not tied to the report's date
-  // range — it's "what's still owed right now," so you can compare it
-  // against what came in during the period.
+  // Look up each payment's customer (by QuickBooks id) to read Sales Person.
   var custByQbId={};
   customers.forEach(function(c){ if(c.qbId) custByQbId[c.qbId]=c; });
   function salesPersonOf(p){
@@ -2742,22 +2843,22 @@ function computeCollectionGroups(){
     var c=qbCustId?custByQbId[qbCustId]:null;
     return (c&&c.salesRep)?c.salesRep.trim():'';
   }
-  // "Balance" here means the true sum of currently-open invoices for a
-  // customer — computed directly from fetched Invoice data (see
-  // _collOpenInvoices in runCollectionReport), not QuickBooks's
-  // Customer.Balance field. Those two can disagree, since Balance can
-  // reflect other AR-affecting transactions beyond just open invoices.
-  var openInvBalanceByQbId={};
-  (_collOpenInvoices||[]).forEach(function(inv){
-    var qbCustId=inv.CustomerRef&&inv.CustomerRef.value;
-    if(!qbCustId) return;
-    openInvBalanceByQbId[qbCustId]=(openInvBalanceByQbId[qbCustId]||0)+Number(inv.Balance||0);
-  });
-  function balanceOfCust(qbCustId){
-    if(!qbCustId) return 0;
-    return openInvBalanceByQbId[qbCustId]||0;
+  // "Ending balance" (as of the report's "To" date) and "Opening balance"
+  // (as of the report's "From" date) are both read from _collEndingByQbId /
+  // _collOpeningByQbId — precomputed ONCE per pull by computeAsOfBalances,
+  // directly from historical invoice+payment data, NOT derived via
+  // arithmetic and NOT QuickBooks's live Customer.Balance field (those can
+  // disagree, since Balance can reflect other AR-affecting transaction
+  // types beyond just open invoices).
+  function endingOfCust(qbCustId){
+    if(!qbCustId || !_collEndingByQbId) return 0;
+    return _collEndingByQbId[qbCustId]||0;
   }
-  var anyBalanceSynced=!!(_collOpenInvoices && _collOpenInvoices.length);
+  function openingOfCust(qbCustId){
+    if(!qbCustId || !_collOpeningByQbId) return 0;
+    return _collOpeningByQbId[qbCustId]||0;
+  }
+  var anyBalanceSynced=!!(_collEndingByQbId && Object.keys(_collEndingByQbId).length);
 
   var unappliedByQbId={};
   (_collUnappliedPayments||[]).forEach(function(p){
@@ -2776,10 +2877,11 @@ function computeCollectionGroups(){
   // QuickBooks can generate zero-dollar "Payment" entities (e.g. fully
   // applied against a credit, or used purely to link documents) that
   // aren't an actual collection and shouldn't show up here.
-  var byCust={}; // key -> {name, total, balance, sales, unapplied, payments:[]}
-  var bySalesPerson={}; // name -> {total, balance, sales, unapplied, payments:[], _custKeysSeen:Set}
+  var byCust={}; // key -> {name, total, balance(ending), opening, sales, unapplied, payments:[]}
+  var bySalesPerson={}; // name -> {total, balance, opening, sales, unapplied, payments:[], _custKeysSeen:Set}
   var grandTotal=0;
   var grandBalance=0;
+  var grandOpening=0;
   var grandSales=0;
   var grandUnapplied=0;
   payments.forEach(function(p){
@@ -2790,18 +2892,20 @@ function computeCollectionGroups(){
     var custKey=qbCustId||custName;
     var ref=p.PaymentRefNum||'';
     var date=(p.TxnDate||'').slice(0,10);
-    var bal=balanceOfCust(qbCustId);
+    var bal=endingOfCust(qbCustId);
+    var open=openingOfCust(qbCustId);
     var unapp=unappliedOfCust(qbCustId);
-    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,sales:0,unapplied:unapp,payments:[]}; grandBalance+=bal; grandUnapplied+=unapp; }
+    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; }
     byCust[custKey].total+=amt;
     byCust[custKey].payments.push({date:date,amount:amt,ref:ref});
 
     var rep=salesPersonOf(p)||'Unassigned';
-    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,unapplied:0,payments:[],_custKeysSeen:{},custBalances:[]};
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,opening:0,sales:0,unapplied:0,payments:[],_custKeysSeen:{},custBalances:[]};
     bySalesPerson[rep].total+=amt;
     if(!bySalesPerson[rep]._custKeysSeen[custKey]){
       bySalesPerson[rep]._custKeysSeen[custKey]=true;
       bySalesPerson[rep].balance+=bal;
+      bySalesPerson[rep].opening+=open;
       bySalesPerson[rep].unapplied+=unapp;
       bySalesPerson[rep].custBalances.push({name:custName,balance:bal,unapplied:unapp});
     }
@@ -2822,16 +2926,18 @@ function computeCollectionGroups(){
     var custName=(d.CustomerRef&&d.CustomerRef.name)||'No customer on file';
     var qbCustId=d.CustomerRef&&d.CustomerRef.value;
     var custKey=qbCustId||custName;
-    var bal=balanceOfCust(qbCustId);
+    var bal=endingOfCust(qbCustId);
+    var open=openingOfCust(qbCustId);
     var unapp=unappliedOfCust(qbCustId);
-    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,sales:0,unapplied:unapp,payments:[]}; grandBalance+=bal; grandUnapplied+=unapp; }
+    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; }
     byCust[custKey].sales+=amt;
 
     var rep=salesPersonOf(d)||'Unassigned';
-    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,unapplied:0,payments:[],_custKeysSeen:{},custBalances:[]};
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,opening:0,sales:0,unapplied:0,payments:[],_custKeysSeen:{},custBalances:[]};
     if(!bySalesPerson[rep]._custKeysSeen[custKey]){
       bySalesPerson[rep]._custKeysSeen[custKey]=true;
       bySalesPerson[rep].balance+=bal;
+      bySalesPerson[rep].opening+=open;
       bySalesPerson[rep].unapplied+=unapp;
       bySalesPerson[rep].custBalances.push({name:custName,balance:bal,unapplied:unapp});
     }
@@ -2840,36 +2946,41 @@ function computeCollectionGroups(){
     grandSales+=amt;
   });
 
-  // Third pass: every customer with a real open-invoice or unapplied
-  // balance gets counted, even if they had zero payments AND zero sales
-  // during this specific date range. Driven directly by the invoice/
-  // payment data itself (openInvBalanceByQbId / unappliedByQbId) — NOT by
-  // the local synced customers list — because a customer can have a very
-  // real open invoice in QuickBooks without ever having been synced into
-  // Plant Console yet (a brand-new customer, or one nobody's gotten to in
-  // Settings → Customers). Driving this off the customer list instead of
-  // the invoice data would silently miss exactly those customers, which
+  // Third pass: every customer with a real opening balance, ending
+  // balance, or unapplied amount gets counted, even if they had zero
+  // payments AND zero sales during this specific date range. Driven
+  // directly by the invoice/payment data itself (_collOpeningByQbId /
+  // _collEndingByQbId / unappliedByQbId) — NOT by the local synced
+  // customers list — because a customer can have a very real balance in
+  // QuickBooks without ever having been synced into Plant Console yet (a
+  // brand-new customer, or one nobody's gotten to in Settings →
+  // Customers). Driving this off the customer list instead of the
+  // invoice data would silently miss exactly those customers, which
   // especially matters for a short date range where passes 1 and 2 above
   // catch almost nothing.
   var allQbIdsWithBalance={};
-  Object.keys(openInvBalanceByQbId).forEach(function(id){ allQbIdsWithBalance[id]=true; });
+  Object.keys(_collOpeningByQbId||{}).forEach(function(id){ allQbIdsWithBalance[id]=true; });
+  Object.keys(_collEndingByQbId||{}).forEach(function(id){ allQbIdsWithBalance[id]=true; });
   Object.keys(unappliedByQbId).forEach(function(id){ allQbIdsWithBalance[id]=true; });
   Object.keys(allQbIdsWithBalance).forEach(function(qbCustId){
     var custKey=qbCustId;
-    var bal=balanceOfCust(qbCustId);
+    var bal=endingOfCust(qbCustId);
+    var open=openingOfCust(qbCustId);
     var unapp=unappliedOfCust(qbCustId);
     var known=custByQbId[qbCustId]; // may be undefined if not yet synced locally
     var custName=(known&&known.name)||'Unknown customer (not yet synced — id '+qbCustId+')';
     if(!byCust[custKey]){
-      byCust[custKey]={name:custName,total:0,balance:bal,sales:0,unapplied:unapp,payments:[]};
+      byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,payments:[]};
       grandBalance+=bal;
+      grandOpening+=open;
       grandUnapplied+=unapp;
     }
     var rep=(known&&known.salesRep&&known.salesRep.trim())||'Unassigned';
-    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,unapplied:0,payments:[],_custKeysSeen:{},custBalances:[]};
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,opening:0,sales:0,unapplied:0,payments:[],_custKeysSeen:{},custBalances:[]};
     if(!bySalesPerson[rep]._custKeysSeen[custKey]){
       bySalesPerson[rep]._custKeysSeen[custKey]=true;
       bySalesPerson[rep].balance+=bal;
+      bySalesPerson[rep].opening+=open;
       bySalesPerson[rep].unapplied+=unapp;
       bySalesPerson[rep].custBalances.push({name:custName,balance:bal,unapplied:unapp});
     }
@@ -2877,7 +2988,7 @@ function computeCollectionGroups(){
 
   return {
     payments:payments, byCust:byCust, bySalesPerson:bySalesPerson,
-    grandTotal:grandTotal, grandBalance:grandBalance, grandSales:grandSales, grandUnapplied:grandUnapplied,
+    grandTotal:grandTotal, grandBalance:grandBalance, grandOpening:grandOpening, grandSales:grandSales, grandUnapplied:grandUnapplied,
     anyBalanceSynced:anyBalanceSynced
   };
 }
@@ -2891,7 +3002,7 @@ function renderCollectionReport(){
 
   var g=computeCollectionGroups();
   var payments=g.payments, byCust=g.byCust, bySalesPerson=g.bySalesPerson;
-  var grandTotal=g.grandTotal, grandBalance=g.grandBalance, grandSales=g.grandSales, grandUnapplied=g.grandUnapplied;
+  var grandTotal=g.grandTotal, grandBalance=g.grandBalance, grandOpening=g.grandOpening, grandSales=g.grandSales, grandUnapplied=g.grandUnapplied;
   var anyBalanceSynced=g.anyBalanceSynced;
 
   var byMode = (_collGroupMode==='salesperson') ? bySalesPerson : byCust;
@@ -2927,18 +3038,11 @@ function renderCollectionReport(){
     return;
   }
 
-  // "Balance Owed" (opening, for this period) is derived — QuickBooks only
-  // gives us the CURRENT balance (Ending Balance), so Opening is estimated
-  // as Ending + Collected − Sales. That's only reliable when "To" is
-  // TODAY'S date — otherwise "Ending Balance" reflects everything that's
-  // happened up to right now, not up to the selected end date, and
-  // anything that happened in between (more payments, invoices, credit
-  // memos) throws the derived opening figure off, sometimes wildly (even
-  // going negative for a busy customer/rep). There's no reliable fix for
-  // this without QuickBooks offering a way to ask for a balance as of a
-  // specific past date, which it doesn't.
-  var todayStr=new Date().toISOString().slice(0,10);
-  var toMatchesToday=(to===todayStr);
+  // "Balance owed" (opening) and "Ending balance" are both reconstructed
+  // directly from historical invoice+payment data as of the report's
+  // actual "From" and "To" dates (see computeAsOfBalances) — not derived
+  // via arithmetic, and not QuickBooks's live "right now" balance. So these
+  // stay accurate no matter what "To" date is picked, past or present.
   function valBlock(lbl,val,colorPositive,bold){
     return '<span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.25;min-width:88px">'
       +'<span style="font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">'+lbl+'</span>'
@@ -2954,19 +3058,14 @@ function renderCollectionReport(){
     +'</span>';
   }
 
-  var html=(!toMatchesToday
-    ? ('<div style="background:#fff3cd;border:1px solid #e0c56b;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#5c4a06;line-height:1.4">'
-      +'<strong>Heads up:</strong> your "To" date ('+esc(to)+') isn\'t today, so "Balance Owed" (opening) can be unreliable — "Ending Balance" always reflects right now, not the end of your selected range. Any activity between '+esc(to)+' and today (more payments, invoices, or credit memos) can throw this off, sometimes by a lot. For a trustworthy opening figure, set "To" to today\'s date.'
-      +'</div>')
-    : '')
-    +'<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden">';
+  var html='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden">';
   _collRowKeys=groupKeys;
   groupKeys.forEach(function(key,ri){
     var entry=byMode[key];
     var label=(_collGroupMode==='salesperson')?key:entry.name;
     var rows=entry.payments.slice().sort(function(a,b){ return a.date<b.date?1:-1; });
     var rowId='coll-row-'+ri;
-    var opening=entry.balance+entry.total-(entry.sales||0);
+    var opening=entry.opening||0;
     html+='<div style="border-bottom:1px solid var(--line)">'
       +'<div onclick="toggleReportRow(\''+rowId+'\')" style="cursor:pointer;display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:12px 16px">'
         +'<span style="flex:1;min-width:160px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px">'
@@ -2976,7 +3075,7 @@ function renderCollectionReport(){
         +'<button onclick="event.stopPropagation();exportCollectionReportGroupCSV(_collRowKeys['+ri+'])" class="btn btn-sm" title="Export this row to CSV/Excel" style="padding:4px 9px">⬇</button>'
         +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
           +valBlock('Sales',entry.sales,false,false)
-          +valBlock('Balance owed'+(toMatchesToday?'':' ⚠'),opening,true,false)
+          +valBlock('Balance owed',opening,true,false)
           +valBlock('Collected',entry.total,false,true)
           +valBlock('Ending balance',entry.balance,true,false)
           +valBlock('Unapplied',entry.unapplied||0,false,false)
@@ -3001,12 +3100,11 @@ function renderCollectionReport(){
         }).join('')
       +'</div></div>';
   });
-  var grandOpening=grandBalance+grandTotal-grandSales;
   html+='<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:14px 16px;background:var(--bg)">'
     +'<span style="flex:1;min-width:120px;font-weight:700">Total</span>'
     +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
       +valBlock('Sales',grandSales,false,false)
-      +valBlock('Balance owed'+(toMatchesToday?'':' ⚠'),grandOpening,true,false)
+      +valBlock('Balance owed',grandOpening,true,false)
       +valBlock('Collected',grandTotal,false,true)
       +valBlock('Ending balance',grandBalance,true,false)
       +valBlock('Unapplied',grandUnapplied||0,false,false)
@@ -3014,7 +3112,7 @@ function renderCollectionReport(){
     +'</span>'
   +'</div>';
   html+='</div>';
-  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is Invoices + Sales Receipts issued during this period, net of any Credit Memos issued in the same window — matching how QuickBooks\'s own Sales by Product/Service report nets returns out. "Balance owed" is the opening position, calculated as Ending balance + Collected − Sales (exact, since Sales already accounts for Credit Memos the same way it accounts for new charges). "Ending balance" is the sum of currently open invoices for each customer, fetched fresh from QuickBooks. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice — it\'s part of what QuickBooks\'s own Customer.Balance counts, but isn\'t part of "open invoices," which is why the two can differ.</div>';
+  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is Invoices + Sales Receipts issued during this period, net of any Credit Memos issued in the same window — matching how QuickBooks\'s own Sales by Product/Service report nets returns out. "Balance owed" is the true sum of open invoices for each customer as of the report\'s "From" date, and "Ending balance" is the same thing as of the "To" date — both reconstructed directly from invoice/payment history (not derived from Sales/Collected, and not QuickBooks\'s live "right now" balance), so they stay accurate for whatever date range you pick. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice — it\'s part of what QuickBooks\'s own Customer.Balance counts, but isn\'t part of "open invoices," which is why the two can differ.</div>';
   if(bodyEl) bodyEl.innerHTML=html;
 }
 
@@ -3073,7 +3171,7 @@ function doPrintReportGroup(key){
   keys.forEach(function(k){
     var entry=byMode[k];
     var label=(_collGroupMode==='salesperson')?k:entry.name;
-    var opening=entry.balance+entry.total-(entry.sales||0);
+    var opening=entry.opening||0;
     var rows=entry.payments.slice().sort(function(a,b){ return a.date<b.date?1:-1; });
     html+='<div class="pc-rep-page" style="padding:20px 4px">'
       +'<div style="text-align:center;border-bottom:2px solid #000;padding-bottom:10px;margin-bottom:16px">'
@@ -3169,7 +3267,7 @@ function _buildCollectionCSVRows(onlyKey){
   keys.forEach(function(k){
     var entry=byMode[k];
     var label=(_collGroupMode==='salesperson')?k:entry.name;
-    var opening=entry.balance+entry.total-(entry.sales||0);
+    var opening=entry.opening||0;
     var pct=opening>0?Math.round((entry.total/opening)*100)+'%':'';
     rows.push([label,entry.sales.toFixed(2),opening.toFixed(2),entry.total.toFixed(2),entry.balance.toFixed(2),(entry.unapplied||0).toFixed(2),pct,'SUMMARY','','','','']);
     entry.payments.slice().sort(function(a,b){ return a.date<b.date?1:-1; }).forEach(function(row){

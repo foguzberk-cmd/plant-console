@@ -2503,16 +2503,20 @@ var _collAllPaymentsCache=(function(){ try{ return JSON.parse(localStorage.getIt
 var _collOpeningByQbId=null; // {customer QB id: open-invoice balance as of the report's "From" date} — precomputed once per pull (see computeAsOfBalances), not recomputed on every render
 var _collEndingByQbId=null;  // {customer QB id: open-invoice balance as of the report's "To" date}
 // MIGRATION: these two full-history caches are new, and their shape has
-// already changed once since (invoices now also carry a Balance field —
-// see computeAsOfBalances for why). Anyone with an EMPTY cache, or one
-// whose entries predate the Balance field being added, would otherwise get
-// a stale/incomplete backfill from an INCREMENTAL-only ("since last sync")
-// fetch — silently wrong "as of date" balances. Force exactly one full
-// fetch to properly (re)populate them, transparent to the person using the app.
+// already changed twice since (invoices now carry Balance; payments now
+// carry TotalAmt + DepositToAccountRef — see computeAsOfBalances and the
+// "Undeposited" column for why). Anyone with an EMPTY cache, or one whose
+// entries predate a field being added, would otherwise get a stale/
+// incomplete backfill from an INCREMENTAL-only ("since last sync") fetch —
+// silently wrong "as of date" balances or a wrong Undeposited figure.
+// Force exactly one full fetch to properly (re)populate them, transparent
+// to the person using the app.
 var _collInvoicesNeedBackfill=!Object.keys(_collAllInvoicesCache).length
   || Object.values(_collAllInvoicesCache).some(function(inv){ return inv.Balance===undefined; });
 if(_collInvoicesNeedBackfill && _collOpenInvoicesLastSync) _collOpenInvoicesLastSync=null;
-if(!Object.keys(_collAllPaymentsCache).length && _collUnappliedLastSync) _collUnappliedLastSync=null;
+var _collPaymentsNeedBackfill=!Object.keys(_collAllPaymentsCache).length
+  || Object.values(_collAllPaymentsCache).some(function(p){ return p.TotalAmt===undefined; });
+if(_collPaymentsNeedBackfill && _collUnappliedLastSync) _collUnappliedLastSync=null;
 var _collRange=null;      // {from,to} for the cached fetch
 var _collGroupMode='customer'; // 'customer' | 'salesperson'
 var _collRowKeys=[]; // groupKeys from the last render, indexed the same as each row — lets per-row buttons (like Print) reference a rep name safely without embedding raw text (which could contain apostrophes) into an onclick attribute
@@ -2752,7 +2756,13 @@ async function runCollectionReport(){
     // an invoice in QuickBooks always creates a $0 Payment record linking
     // the invoice and the credit, so this same walk covers credit-memo
     // applications too, with no separate handling needed.
-    _collAllPaymentsCache[p.Id]={Id:p.Id,CustomerRef:p.CustomerRef,TxnDate:(p.TxnDate||'').slice(0,10),Line:(p.Line||[]).map(function(l){ return {Amount:Number(l.Amount||0),LinkedTxn:l.LinkedTxn||[]}; })};
+    // DepositToAccountRef is captured too — it tells us which real account
+    // this payment's money is sitting in RIGHT NOW. When it's the
+    // "Undeposited Funds" account (QuickBooks's default holding account for
+    // money not yet swept into an actual bank deposit), the check has been
+    // received and applied to the invoice, but hasn't physically hit the
+    // bank yet — a distinct thing from the invoice being open or closed.
+    _collAllPaymentsCache[p.Id]={Id:p.Id,CustomerRef:p.CustomerRef,TxnDate:(p.TxnDate||'').slice(0,10),TotalAmt:Number(p.TotalAmt||0),DepositToAccountRef:p.DepositToAccountRef||null,Line:(p.Line||[]).map(function(l){ return {Amount:Number(l.Amount||0),LinkedTxn:l.LinkedTxn||[]}; })};
   });
   safeSetLocal('pc_coll_unapplied',JSON.stringify(_collUnappliedCache)); // save whatever we DID get either way
   safeSetLocal('pc_coll_all_payments',JSON.stringify(_collAllPaymentsCache));
@@ -2887,19 +2897,44 @@ function computeCollectionGroups(){
     return unappliedByQbId[qbCustId]||0;
   }
 
+  // "Undeposited" — money that's been received and applied to an invoice
+  // (so it's already OUT of the open-invoice balance above) but hasn't
+  // actually been swept into the bank yet in QuickBooks. A payment sits
+  // here if its DepositToAccountRef points at the "Undeposited Funds"
+  // account (QuickBooks's default holding account for exactly this — see
+  // DepositToAccountRef in the QuickBooks API docs). This is a live "right
+  // now" figure (not date-scoped), same as Unapplied above, since "still
+  // sitting there, undeposited" is itself a present-tense fact.
+  function _looksLikeUndepositedAccount(ref){
+    var name=(ref&&ref.name)||'';
+    return name.toLowerCase().indexOf('undeposited')>=0;
+  }
+  var undepositedByQbId={};
+  Object.values(_collAllPaymentsCache||{}).forEach(function(p){
+    var qbCustId=p.CustomerRef&&p.CustomerRef.value;
+    if(!qbCustId) return;
+    if(!_looksLikeUndepositedAccount(p.DepositToAccountRef)) return;
+    undepositedByQbId[qbCustId]=(undepositedByQbId[qbCustId]||0)+Number(p.TotalAmt||0);
+  });
+  function undepositedOfCust(qbCustId){
+    if(!qbCustId) return 0;
+    return undepositedByQbId[qbCustId]||0;
+  }
+
   // Group by customer, keyed by QuickBooks customer id where available
   // (falling back to the name) so the same customer never gets split into
   // two buckets due to a name/whitespace quirk. $0 records are excluded —
   // QuickBooks can generate zero-dollar "Payment" entities (e.g. fully
   // applied against a credit, or used purely to link documents) that
   // aren't an actual collection and shouldn't show up here.
-  var byCust={}; // key -> {name, total, balance(ending), opening, sales, unapplied, payments:[]}
-  var bySalesPerson={}; // name -> {total, balance, opening, sales, unapplied, payments:[], _custKeysSeen:Set}
+  var byCust={}; // key -> {name, total, balance(ending), opening, sales, unapplied, undeposited, payments:[]}
+  var bySalesPerson={}; // name -> {total, balance, opening, sales, unapplied, undeposited, payments:[], _custKeysSeen:Set}
   var grandTotal=0;
   var grandBalance=0;
   var grandOpening=0;
   var grandSales=0;
   var grandUnapplied=0;
+  var grandUndeposited=0;
   payments.forEach(function(p){
     var amt=Number(p.TotalAmt||0);
     if(!amt) return;
@@ -2911,19 +2946,21 @@ function computeCollectionGroups(){
     var bal=endingOfCust(qbCustId);
     var open=openingOfCust(qbCustId);
     var unapp=unappliedOfCust(qbCustId);
-    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; }
+    var undep=undepositedOfCust(qbCustId);
+    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndeposited+=undep; }
     byCust[custKey].total+=amt;
     byCust[custKey].payments.push({date:date,amount:amt,ref:ref});
 
     var rep=salesPersonOf(p)||'Unassigned';
-    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,opening:0,sales:0,unapplied:0,payments:[],_custKeysSeen:{},custBalances:[]};
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,opening:0,sales:0,unapplied:0,undeposited:0,payments:[],_custKeysSeen:{},custBalances:[]};
     bySalesPerson[rep].total+=amt;
     if(!bySalesPerson[rep]._custKeysSeen[custKey]){
       bySalesPerson[rep]._custKeysSeen[custKey]=true;
       bySalesPerson[rep].balance+=bal;
       bySalesPerson[rep].opening+=open;
       bySalesPerson[rep].unapplied+=unapp;
-      bySalesPerson[rep].custBalances.push({name:custName,balance:bal,unapplied:unapp});
+      bySalesPerson[rep].undeposited+=undep;
+      bySalesPerson[rep].custBalances.push({name:custName,balance:bal,unapplied:unapp,undeposited:undep});
     }
     bySalesPerson[rep].payments.push({date:date,amount:amt,ref:ref,customer:custName});
 
@@ -2945,17 +2982,19 @@ function computeCollectionGroups(){
     var bal=endingOfCust(qbCustId);
     var open=openingOfCust(qbCustId);
     var unapp=unappliedOfCust(qbCustId);
-    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; }
+    var undep=undepositedOfCust(qbCustId);
+    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndeposited+=undep; }
     byCust[custKey].sales+=amt;
 
     var rep=salesPersonOf(d)||'Unassigned';
-    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,opening:0,sales:0,unapplied:0,payments:[],_custKeysSeen:{},custBalances:[]};
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,opening:0,sales:0,unapplied:0,undeposited:0,payments:[],_custKeysSeen:{},custBalances:[]};
     if(!bySalesPerson[rep]._custKeysSeen[custKey]){
       bySalesPerson[rep]._custKeysSeen[custKey]=true;
       bySalesPerson[rep].balance+=bal;
       bySalesPerson[rep].opening+=open;
       bySalesPerson[rep].unapplied+=unapp;
-      bySalesPerson[rep].custBalances.push({name:custName,balance:bal,unapplied:unapp});
+      bySalesPerson[rep].undeposited+=undep;
+      bySalesPerson[rep].custBalances.push({name:custName,balance:bal,unapplied:unapp,undeposited:undep});
     }
     bySalesPerson[rep].sales+=amt;
 
@@ -2963,48 +3002,52 @@ function computeCollectionGroups(){
   });
 
   // Third pass: every customer with a real opening balance, ending
-  // balance, or unapplied amount gets counted, even if they had zero
-  // payments AND zero sales during this specific date range. Driven
-  // directly by the invoice/payment data itself (_collOpeningByQbId /
-  // _collEndingByQbId / unappliedByQbId) — NOT by the local synced
-  // customers list — because a customer can have a very real balance in
-  // QuickBooks without ever having been synced into Plant Console yet (a
-  // brand-new customer, or one nobody's gotten to in Settings →
-  // Customers). Driving this off the customer list instead of the
-  // invoice data would silently miss exactly those customers, which
+  // balance, unapplied amount, or undeposited amount gets counted, even if
+  // they had zero payments AND zero sales during this specific date range.
+  // Driven directly by the invoice/payment data itself (_collOpeningByQbId
+  // / _collEndingByQbId / unappliedByQbId / undepositedByQbId) — NOT by
+  // the local synced customers list — because a customer can have a very
+  // real balance in QuickBooks without ever having been synced into Plant
+  // Console yet (a brand-new customer, or one nobody's gotten to in
+  // Settings → Customers). Driving this off the customer list instead of
+  // the invoice data would silently miss exactly those customers, which
   // especially matters for a short date range where passes 1 and 2 above
   // catch almost nothing.
   var allQbIdsWithBalance={};
   Object.keys(_collOpeningByQbId||{}).forEach(function(id){ allQbIdsWithBalance[id]=true; });
   Object.keys(_collEndingByQbId||{}).forEach(function(id){ allQbIdsWithBalance[id]=true; });
   Object.keys(unappliedByQbId).forEach(function(id){ allQbIdsWithBalance[id]=true; });
+  Object.keys(undepositedByQbId).forEach(function(id){ allQbIdsWithBalance[id]=true; });
   Object.keys(allQbIdsWithBalance).forEach(function(qbCustId){
     var custKey=qbCustId;
     var bal=endingOfCust(qbCustId);
     var open=openingOfCust(qbCustId);
     var unapp=unappliedOfCust(qbCustId);
+    var undep=undepositedOfCust(qbCustId);
     var known=custByQbId[qbCustId]; // may be undefined if not yet synced locally
     var custName=(known&&known.name)||'Unknown customer (not yet synced — id '+qbCustId+')';
     if(!byCust[custKey]){
-      byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,payments:[]};
+      byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,payments:[]};
       grandBalance+=bal;
       grandOpening+=open;
       grandUnapplied+=unapp;
+      grandUndeposited+=undep;
     }
     var rep=(known&&known.salesRep&&known.salesRep.trim())||'Unassigned';
-    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,opening:0,sales:0,unapplied:0,payments:[],_custKeysSeen:{},custBalances:[]};
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,opening:0,sales:0,unapplied:0,undeposited:0,payments:[],_custKeysSeen:{},custBalances:[]};
     if(!bySalesPerson[rep]._custKeysSeen[custKey]){
       bySalesPerson[rep]._custKeysSeen[custKey]=true;
       bySalesPerson[rep].balance+=bal;
       bySalesPerson[rep].opening+=open;
       bySalesPerson[rep].unapplied+=unapp;
-      bySalesPerson[rep].custBalances.push({name:custName,balance:bal,unapplied:unapp});
+      bySalesPerson[rep].undeposited+=undep;
+      bySalesPerson[rep].custBalances.push({name:custName,balance:bal,unapplied:unapp,undeposited:undep});
     }
   });
 
   return {
     payments:payments, byCust:byCust, bySalesPerson:bySalesPerson,
-    grandTotal:grandTotal, grandBalance:grandBalance, grandOpening:grandOpening, grandSales:grandSales, grandUnapplied:grandUnapplied,
+    grandTotal:grandTotal, grandBalance:grandBalance, grandOpening:grandOpening, grandSales:grandSales, grandUnapplied:grandUnapplied, grandUndeposited:grandUndeposited,
     anyBalanceSynced:anyBalanceSynced
   };
 }
@@ -3018,7 +3061,7 @@ function renderCollectionReport(){
 
   var g=computeCollectionGroups();
   var payments=g.payments, byCust=g.byCust, bySalesPerson=g.bySalesPerson;
-  var grandTotal=g.grandTotal, grandBalance=g.grandBalance, grandOpening=g.grandOpening, grandSales=g.grandSales, grandUnapplied=g.grandUnapplied;
+  var grandTotal=g.grandTotal, grandBalance=g.grandBalance, grandOpening=g.grandOpening, grandSales=g.grandSales, grandUnapplied=g.grandUnapplied, grandUndeposited=g.grandUndeposited;
   var anyBalanceSynced=g.anyBalanceSynced;
 
   var byMode = (_collGroupMode==='salesperson') ? bySalesPerson : byCust;
@@ -3095,6 +3138,7 @@ function renderCollectionReport(){
           +valBlock('Collected',entry.total,false,true)
           +valBlock('Ending balance',entry.balance,true,false)
           +valBlock('Unapplied',entry.unapplied||0,false,false)
+          +valBlock('Undeposited',entry.undeposited||0,false,false)
           +pctBlock('% collected',entry.total,opening)
         +'</span>'
       +'</div>'
@@ -3103,7 +3147,7 @@ function renderCollectionReport(){
           ? ('<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Customer balances ('+entry.custBalances.length+') — compare directly against a QuickBooks report for this rep</div>'
             +entry.custBalances.slice().sort(function(a,b){ return b.balance-a.balance; }).map(function(cb){
               return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 16px 4px 40px;font-size:12px;border-bottom:1px dashed var(--line)">'
-                +'<span>'+esc(cb.name)+(cb.unapplied>0?' <span style="color:#1565c0;font-size:11px">(+'+money(cb.unapplied)+' unapplied)</span>':'')+'</span>'
+                +'<span>'+esc(cb.name)+(cb.unapplied>0?' <span style="color:#1565c0;font-size:11px">(+'+money(cb.unapplied)+' unapplied)</span>':'')+(cb.undeposited>0?' <span style="color:#6a4c93;font-size:11px">(+'+money(cb.undeposited)+' undeposited)</span>':'')+'</span>'
                 +'<span style="font-family:var(--mono);white-space:nowrap;color:'+(cb.balance>0?'#b8460b':'var(--muted)')+'">'+money(cb.balance)+'</span></div>';
             }).join('')
             +'<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Payments this period</div>')
@@ -3124,11 +3168,12 @@ function renderCollectionReport(){
       +valBlock('Collected',grandTotal,false,true)
       +valBlock('Ending balance',grandBalance,true,false)
       +valBlock('Unapplied',grandUnapplied||0,false,false)
+      +valBlock('Undeposited',grandUndeposited||0,false,false)
       +pctBlock('% collected',grandTotal,grandOpening)
     +'</span>'
   +'</div>';
   html+='</div>';
-  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is Invoices + Sales Receipts issued during this period, net of any Credit Memos issued in the same window — matching how QuickBooks\'s own Sales by Product/Service report nets returns out. "Balance owed" is the true sum of open invoices for each customer as of the report\'s "From" date, and "Ending balance" is the same thing as of the "To" date — both reconstructed directly from invoice/payment history (not derived from Sales/Collected, and not QuickBooks\'s live "right now" balance), so they stay accurate for whatever date range you pick. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice — it\'s part of what QuickBooks\'s own Customer.Balance counts, but isn\'t part of "open invoices," which is why the two can differ.</div>';
+  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is Invoices + Sales Receipts issued during this period, net of any Credit Memos issued in the same window — matching how QuickBooks\'s own Sales by Product/Service report nets returns out. "Balance owed" is the true sum of open invoices for each customer as of the report\'s "From" date, and "Ending balance" is the same thing as of the "To" date — both reconstructed directly from invoice/payment history (not derived from Sales/Collected, and not QuickBooks\'s live "right now" balance), so they stay accurate for whatever date range you pick. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice — it\'s part of what QuickBooks\'s own Customer.Balance counts, but isn\'t part of "open invoices," which is why the two can differ. "Undeposited" is money that HAS been applied to an invoice (so it\'s already out of "Ending balance") but hasn\'t been physically deposited to the bank yet in QuickBooks — a check received and recorded, just still sitting in the Undeposited Funds account.</div>';
   if(bodyEl) bodyEl.innerHTML=html;
 }
 
@@ -3203,6 +3248,7 @@ function doPrintReportGroup(key){
           +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">Collected</td>'
           +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">Ending Balance</td>'
           +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">Unapplied</td>'
+          +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">Undeposited</td>'
           +'<td style="padding:6px 10px;border:1px solid #999;font-weight:bold;background:#f2f2f2">% Collected</td>'
         +'</tr>'
         +'<tr>'
@@ -3211,6 +3257,7 @@ function doPrintReportGroup(key){
           +'<td style="padding:6px 10px;border:1px solid #999">'+money(entry.total)+'</td>'
           +'<td style="padding:6px 10px;border:1px solid #999">'+money(entry.balance)+'</td>'
           +'<td style="padding:6px 10px;border:1px solid #999">'+money(entry.unapplied||0)+'</td>'
+          +'<td style="padding:6px 10px;border:1px solid #999">'+money(entry.undeposited||0)+'</td>'
           +'<td style="padding:6px 10px;border:1px solid #999">'+(opening>0?Math.round((entry.total/opening)*100)+'%':'—')+'</td>'
         +'</tr>'
       +'</table>'
@@ -3279,15 +3326,15 @@ function _buildCollectionCSVRows(onlyKey){
     });
   }
 
-  var rows=[[groupLabel,'Sales','Balance Owed','Collected','Ending Balance','Unapplied','% Collected','Row Type','Date','Customer','Ref','Amount']];
+  var rows=[[groupLabel,'Sales','Balance Owed','Collected','Ending Balance','Unapplied','Undeposited','% Collected','Row Type','Date','Customer','Ref','Amount']];
   keys.forEach(function(k){
     var entry=byMode[k];
     var label=(_collGroupMode==='salesperson')?k:entry.name;
     var opening=entry.opening||0;
     var pct=opening>0?Math.round((entry.total/opening)*100)+'%':'';
-    rows.push([label,entry.sales.toFixed(2),opening.toFixed(2),entry.total.toFixed(2),entry.balance.toFixed(2),(entry.unapplied||0).toFixed(2),pct,'SUMMARY','','','','']);
+    rows.push([label,entry.sales.toFixed(2),opening.toFixed(2),entry.total.toFixed(2),entry.balance.toFixed(2),(entry.unapplied||0).toFixed(2),(entry.undeposited||0).toFixed(2),pct,'SUMMARY','','','','']);
     entry.payments.slice().sort(function(a,b){ return a.date<b.date?1:-1; }).forEach(function(row){
-      rows.push(['','','','','','','','PAYMENT',row.date,row.customer||label,row.ref||'',row.amount.toFixed(2)]);
+      rows.push(['','','','','','','','','PAYMENT',row.date,row.customer||label,row.ref||'',row.amount.toFixed(2)]);
     });
   });
   return rows;

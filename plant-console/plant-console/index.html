@@ -2444,6 +2444,7 @@ function renderReports(){
         +'<button id="coll-grp-salesperson" class="btn btn-sm" onclick="setCollGroupMode(\'salesperson\')">Group by Sales Person</button>'
         +'<button id="coll-print-all" class="btn btn-sm" style="margin-left:auto" onclick="doPrintReportGroup(null)">🖨 Print all</button>'
         +'<button class="btn btn-sm" onclick="exportCollectionReportCSV()">⬇ Export CSV</button>'
+        +'<button class="btn btn-sm" title="Balance/Unapplied data syncs incrementally for speed — use this if you suspect it\'s drifted (e.g. a deleted/voided record)" onclick="forceFullCollectionResync()">Force full resync</button>'
       +'</div>'
       +'<input type="text" id="coll-search" placeholder="Search customer or sales person..." oninput="renderCollectionReport()" style="width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);margin-bottom:14px;outline:none"/>'
       +'<div id="coll-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
@@ -2495,8 +2496,22 @@ function renderReports(){
 // with thousands of payments.
 var _collPayments=null;   // cached raw payments from the last successful fetch
 var _collSalesDocs=null;  // cached raw Invoice+SalesReceipt docs for the "Sales" column
-var _collOpenInvoices=null; // cached currently-open (Balance>0) Invoices, used to compute true open-invoice totals per customer
-var _collUnappliedPayments=null; // cached payments with a nonzero UnappliedAmt — money sitting against a customer that isn't tied to any invoice
+// Open Invoices and Unapplied Payments used to be refetched in full (every
+// invoice/payment ever) on every single pull — correct, but slow once a
+// business has years of QuickBooks history. These are now incrementally
+// synced instead: the first pull is still a full fetch, but every pull
+// after that only asks QuickBooks for records changed since the last
+// sync (via MetaData.LastUpdatedTime, which the server already supports),
+// and merges just those changes into a persisted local cache. A record
+// that comes back with Balance/UnappliedAmt now at $0 gets removed from
+// the cache (it was open/unapplied before, isn't anymore); anything
+// unchanged since last time is never re-fetched at all.
+var _collOpenInvoicesCache=(function(){ try{ return JSON.parse(localStorage.getItem('pc_coll_open_invoices')||'{}'); }catch(e){ return {}; } })(); // keyed by Invoice Id
+var _collOpenInvoicesLastSync=localStorage.getItem('pc_coll_open_invoices_synctime')||null;
+var _collUnappliedCache=(function(){ try{ return JSON.parse(localStorage.getItem('pc_coll_unapplied')||'{}'); }catch(e){ return {}; } })(); // keyed by Payment Id
+var _collUnappliedLastSync=localStorage.getItem('pc_coll_unapplied_synctime')||null;
+var _collOpenInvoices=Object.keys(_collOpenInvoicesCache).length?Object.values(_collOpenInvoicesCache):null; // cached currently-open (Balance>0) Invoices, used to compute true open-invoice totals per customer
+var _collUnappliedPayments=Object.keys(_collUnappliedCache).length?Object.values(_collUnappliedCache):null; // cached payments with a nonzero UnappliedAmt — money sitting against a customer that isn't tied to any invoice
 var _collRange=null;      // {from,to} for the cached fetch
 var _collGroupMode='customer'; // 'customer' | 'salesperson'
 var _collRowKeys=[]; // groupKeys from the last render, indexed the same as each row — lets per-row buttons (like Print) reference a rep name safely without embedding raw text (which could contain apostrophes) into an onclick attribute
@@ -2521,6 +2536,26 @@ function setCollGroupMode(mode){
   if(_collPayments) renderCollectionReport();
 }
 window.setCollGroupMode=setCollGroupMode;
+
+// Clears the incremental sync caches for Open Invoices and Unapplied
+// Payments, so the next "Pull from QuickBooks" does a full fetch instead
+// of an incremental one — a manual reset in case the cache ever drifts
+// (e.g. a deleted/voided record that an incremental sync can't reliably
+// detect the removal of).
+function forceFullCollectionResync(){
+  if(!confirm('This will re-fetch your ENTIRE invoice and payment history from QuickBooks on the next pull, which can take a while for a business with years of data. Continue?')) return;
+  _collOpenInvoicesCache={};
+  _collOpenInvoicesLastSync=null;
+  _collUnappliedCache={};
+  _collUnappliedLastSync=null;
+  localStorage.removeItem('pc_coll_open_invoices');
+  localStorage.removeItem('pc_coll_open_invoices_synctime');
+  localStorage.removeItem('pc_coll_unapplied');
+  localStorage.removeItem('pc_coll_unapplied_synctime');
+  var statusEl=document.getElementById('coll-status');
+  if(statusEl){ statusEl.textContent='Cache cleared — click "Pull from QuickBooks" to do a full resync.'; statusEl.style.color='#b8460b'; }
+}
+window.forceFullCollectionResync=forceFullCollectionResync;
 
 async function runCollectionReport(){
   var fromEl=document.getElementById('coll-from');
@@ -2606,16 +2641,17 @@ async function runCollectionReport(){
     return dt && dt>=from && dt<=to;
   });
 
-  // Open invoices — ALL currently unpaid invoices (no date filter, since
-  // an invoice from any time in the past can still be open today), used
-  // to compute each customer's actual open-invoice total directly rather
-  // than relying on QuickBooks's Customer.Balance field. Those two numbers
-  // can disagree — Balance can include other AR-affecting transaction
-  // types beyond just open invoices — and this report wants specifically
-  // the sum of open invoices.
-  var openInvoices=[];
+  // Open invoices — used to compute each customer's actual open-invoice
+  // total directly rather than relying on QuickBooks's Customer.Balance
+  // field (those two can disagree — Balance can include other
+  // AR-affecting transaction types beyond just open invoices). Synced
+  // incrementally: only invoices changed since the last successful sync
+  // are fetched; the first-ever pull is still a full fetch (no "since"
+  // to work from yet), but every pull after that should be much faster.
+  var oiSyncStartedAt=new Date().toISOString(); // recorded BEFORE fetching, so nothing modified mid-fetch gets missed next time
+  var openInvoicesChanged=[];
   var oiStart=1, oiSafety=0;
-  if(statusEl) statusEl.textContent='Fetching open invoices…';
+  if(statusEl) statusEl.textContent=(_collOpenInvoicesLastSync?'Checking for invoice changes since last sync…':'Fetching open invoices (first time — this one\'s slower)…');
   while(true){
     oiSafety++;
     if(oiSafety>1000) break; // hard cap (~100k rows)
@@ -2623,7 +2659,8 @@ async function runCollectionReport(){
     var oiTimer=setTimeout(function(){oiCtrl.abort();},60000);
     var oiRows=null;
     try{
-      var oir=await fetch(base+'/api/qb/documents?entity=Invoice&startposition='+oiStart,{signal:oiCtrl.signal});
+      var oiUrl=base+'/api/qb/documents?entity=Invoice&startposition='+oiStart+(_collOpenInvoicesLastSync?'&since='+encodeURIComponent(_collOpenInvoicesLastSync):'');
+      var oir=await fetch(oiUrl,{signal:oiCtrl.signal});
       clearTimeout(oiTimer);
       if(oir.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
       var oijd=await oir.json();
@@ -2631,25 +2668,30 @@ async function runCollectionReport(){
       oiRows=(oijd && oijd.Invoice) ? oijd.Invoice : [];
     }catch(e){
       clearTimeout(oiTimer);
-      break; // don't fail the whole pull — Ending Balance will just show as $0 for everyone this time
+      break; // don't fail the whole pull — cached open-invoice data (if any) is used as-is this time
     }
-    openInvoices=openInvoices.concat(oiRows);
-    if(statusEl) statusEl.textContent='Fetched '+payments.length+' payment(s), '+salesDocs.length+' sales document(s), '+openInvoices.length+' invoice(s) checked so far…';
+    openInvoicesChanged=openInvoicesChanged.concat(oiRows);
+    if(statusEl) statusEl.textContent='Fetched '+payments.length+' payment(s), '+salesDocs.length+' sales document(s), '+openInvoicesChanged.length+' invoice change(s) so far…';
     if(oiRows.length<pageSize) break;
     oiStart+=pageSize;
   }
-  openInvoices=openInvoices.filter(function(inv){ return Number(inv.Balance||0)>0; });
+  openInvoicesChanged.forEach(function(inv){
+    if(Number(inv.Balance||0)>0.004) _collOpenInvoicesCache[inv.Id]=inv;
+    else delete _collOpenInvoicesCache[inv.Id]; // no longer open (paid off) — or was never actually open, either way it shouldn't be counted
+  });
+  _collOpenInvoicesLastSync=oiSyncStartedAt;
+  safeSetLocal('pc_coll_open_invoices',JSON.stringify(_collOpenInvoicesCache));
+  safeSetLocal('pc_coll_open_invoices_synctime',oiSyncStartedAt);
+  var openInvoices=Object.values(_collOpenInvoicesCache);
 
-  // Unapplied payments — a payment can sit against a customer without
-  // being applied to any invoice at all (QuickBooks tracks this directly
-  // via Payment.UnappliedAmt). This is exactly the gap between "sum of
-  // open invoices" and Customer.Balance: an unapplied payment reduces
-  // Balance but isn't attached to any invoice, so it wouldn't show up in
-  // the open-invoices total above. Fetched with no date restriction (an
-  // old unapplied payment is just as real today as a recent one).
-  var unappliedPayments=[];
+  // Unapplied payments — same incremental approach. A payment can sit
+  // against a customer without being applied to any invoice at all
+  // (QuickBooks tracks this directly via Payment.UnappliedAmt) — this is
+  // exactly the gap between "sum of open invoices" and Customer.Balance.
+  var upSyncStartedAt=new Date().toISOString();
+  var unappliedChanged=[];
   var upStart=1, upSafety=0;
-  if(statusEl) statusEl.textContent='Checking for unapplied payments…';
+  if(statusEl) statusEl.textContent=(_collUnappliedLastSync?'Checking for payment changes since last sync…':'Checking for unapplied payments (first time — this one\'s slower)…');
   while(true){
     upSafety++;
     if(upSafety>1000) break; // hard cap (~100k rows)
@@ -2657,7 +2699,8 @@ async function runCollectionReport(){
     var upTimer=setTimeout(function(){upCtrl.abort();},60000);
     var upRows=null;
     try{
-      var upr=await fetch(base+'/api/qb/documents?entity=Payment&startposition='+upStart,{signal:upCtrl.signal});
+      var upUrl=base+'/api/qb/documents?entity=Payment&startposition='+upStart+(_collUnappliedLastSync?'&since='+encodeURIComponent(_collUnappliedLastSync):'');
+      var upr=await fetch(upUrl,{signal:upCtrl.signal});
       clearTimeout(upTimer);
       if(upr.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
       var upjd=await upr.json();
@@ -2665,14 +2708,21 @@ async function runCollectionReport(){
       upRows=(upjd && upjd.Payment) ? upjd.Payment : [];
     }catch(e){
       clearTimeout(upTimer);
-      break; // network hiccup — unapplied breakdown just won't show this pull
+      break; // network hiccup — cached unapplied data (if any) is used as-is this time
     }
-    unappliedPayments=unappliedPayments.concat(upRows);
-    if(statusEl) statusEl.textContent='Fetched '+payments.length+' payment(s), '+salesDocs.length+' sales document(s), '+openInvoices.length+' open invoice(s), checked '+unappliedPayments.length+' payment(s) for unapplied amounts…';
+    unappliedChanged=unappliedChanged.concat(upRows);
+    if(statusEl) statusEl.textContent='Fetched '+payments.length+' payment(s), '+salesDocs.length+' sales document(s), '+openInvoices.length+' open invoice(s), checked '+unappliedChanged.length+' payment change(s) for unapplied amounts…';
     if(upRows.length<pageSize) break;
     upStart+=pageSize;
   }
-  unappliedPayments=unappliedPayments.filter(function(p){ return Number(p.UnappliedAmt||0)>0.004; });
+  unappliedChanged.forEach(function(p){
+    if(Number(p.UnappliedAmt||0)>0.004) _collUnappliedCache[p.Id]=p;
+    else delete _collUnappliedCache[p.Id]; // fully applied now (or genuinely $0) — no longer counts
+  });
+  _collUnappliedLastSync=upSyncStartedAt;
+  safeSetLocal('pc_coll_unapplied',JSON.stringify(_collUnappliedCache));
+  safeSetLocal('pc_coll_unapplied_synctime',upSyncStartedAt);
+  var unappliedPayments=Object.values(_collUnappliedCache);
 
   _collPayments=payments;
   _collSalesDocs=salesDocs;

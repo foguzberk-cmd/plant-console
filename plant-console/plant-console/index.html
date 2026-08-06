@@ -2696,6 +2696,31 @@ function computeCollectionGroups(){
     grandSales+=amt;
   });
 
+  // Third pass: every customer's CURRENT balance gets counted, even if
+  // they had zero payments AND zero sales during this specific date
+  // range. Without this, a sales rep's "Ending Balance" only reflected
+  // customers who happened to be active in this window — someone with a
+  // large outstanding balance but no activity this period would be
+  // silently missing from the total entirely, understating what's
+  // actually still owed. This adds a $0-activity row for anyone not
+  // already counted above (so the balance total is always complete),
+  // without touching what Collected/Sales show for them.
+  customers.forEach(function(c){
+    if(!c.qbId) return;
+    var custKey=c.qbId;
+    var bal=Number(c.balance||0);
+    if(!byCust[custKey]){
+      byCust[custKey]={name:c.name||'No customer on file',total:0,balance:bal,sales:0,payments:[]};
+      grandBalance+=bal;
+    }
+    var rep=(c.salesRep&&c.salesRep.trim())||'Unassigned';
+    if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,sales:0,payments:[],_custKeysSeen:{}};
+    if(!bySalesPerson[rep]._custKeysSeen[custKey]){
+      bySalesPerson[rep]._custKeysSeen[custKey]=true;
+      bySalesPerson[rep].balance+=bal;
+    }
+  });
+
   return {
     payments:payments, byCust:byCust, bySalesPerson:bySalesPerson,
     grandTotal:grandTotal, grandBalance:grandBalance, grandSales:grandSales,

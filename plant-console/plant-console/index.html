@@ -3433,8 +3433,7 @@ function renderCollectionReport(){
   // via arithmetic, and not QuickBooks's live "right now" balance. So these
   // stay accurate no matter what "To" date is picked, past or present.
   function valBlock(lbl,val,colorPositive,bold,tooltip){
-    return '<span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.25;min-width:88px">'
-      +'<span'+(tooltip?' title="'+esc(tooltip)+'"':'')+' style="font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)'+(tooltip?';border-bottom:1px dotted var(--muted);cursor:help':'')+'">'+lbl+'</span>'
+    return '<span'+(tooltip?' title="'+esc(tooltip)+'"':'')+' style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.25;min-width:88px">'
       +'<span style="font-family:var(--mono);font-size:'+(bold?'14px':'13px')+';font-weight:'+(bold?'700':'600')+';color:'+(colorPositive&&val>0?'#b8460b':(bold?'#0f6e40':'var(--ink)'))+'">'+money(val)+'</span>'
     +'</span>';
   }
@@ -3447,11 +3446,16 @@ function renderCollectionReport(){
   // numerically separate makes that distinction obvious at a glance
   // instead of either merging them (wrong) or scattering them far apart
   // among unrelated columns (easy to miss the connection).
-  function comboValBlock(groupLabel,items,tooltip){
-    return '<span'+(tooltip?' title="'+esc(tooltip)+'"':'')+' style="display:flex;align-items:center;gap:14px;border:1px solid var(--line);border-radius:9px;padding:6px 12px'+(tooltip?';cursor:help':'')+'">'
+  // The value cells for Collected/Future Payments — borders come from the
+  // border-left/border-right below, deliberately with no radius and no
+  // top/bottom of their own. Stacked row after row with the header bar
+  // (which DOES have the top/rounded edges), the vertical lines line up
+  // continuously down the page, so it reads as ONE bordered column
+  // spanning the whole table rather than a separate box per customer.
+  function comboValCell(items){
+    return '<span style="display:flex;align-items:center;gap:14px;border-left:1px solid var(--line);border-right:1px solid var(--line);padding:0 12px">'
       +items.map(function(it){
         return '<span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.25;min-width:76px">'
-          +'<span style="font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">'+it.label+'</span>'
           +'<span style="font-family:var(--mono);font-size:'+(it.bold?'14px':'13px')+';font-weight:'+(it.bold?'700':'600')+';color:'+(it.color||(it.bold?'#0f6e40':'var(--ink)'))+'">'+money(it.val)+'</span>'
         +'</span>';
       }).join('')
@@ -3461,12 +3465,39 @@ function renderCollectionReport(){
     var pct=opening>0?(collected/opening)*100:null;
     var label=pct===null?'—':Math.round(pct)+'%';
     return '<span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.25;min-width:60px">'
-      +'<span style="font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">'+lbl+'</span>'
       +'<span style="font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ink)">'+label+'</span>'
     +'</span>';
   }
+  // One header row, built to mirror the EXACT structure of a data row
+  // below (same spacer widths, same gaps) so its labels land directly
+  // above the right values — plain text headers align fine on their own,
+  // but the bordered Collected/Future Payments box needs this to sit in
+  // the true column position rather than floating at the row's far edge.
+  function headerLabel(lbl,minWidth){
+    return '<span style="min-width:'+minWidth+'px;text-align:right;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">'+lbl+'</span>';
+  }
+  var headerRow='<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:8px 16px 6px;border-bottom:1px dashed var(--line)">'
+    +'<span style="flex:1;min-width:160px"></span>'
+    +'<button class="btn btn-sm" style="padding:4px 9px;visibility:hidden">🖨</button>'
+    +'<button class="btn btn-sm" style="padding:4px 9px;visibility:hidden">⬇</button>'
+    +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
+      +headerLabel('Sales',88)
+      +headerLabel('Balance owed',88)
+      +'<span style="display:flex;align-items:center;gap:14px;border-left:1px solid var(--line);border-right:1px solid var(--line);border-top:1px solid var(--line);border-radius:9px 9px 0 0;padding:4px 12px 3px">'
+        +'<span style="min-width:76px;text-align:right;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Collected</span>'
+        +'<span style="min-width:76px;text-align:right;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);cursor:help;border-bottom:1px dotted var(--muted)" title="Both are money from a payment — the difference is timing. Collected is realized: the payment has actually cleared. Future Payments exists but is dated after today, so it hasn\'t actually happened yet by any real-world clock.">Future Pmts</span>'
+      +'</span>'
+      +headerLabel('Ending balance',88)
+      +headerLabel('Unapplied',88)
+      +headerLabel('Undeposited Funds',88)
+      +headerLabel('Credit memo',88)
+      +headerLabel('Journal entry',88)
+      +headerLabel('% collected',60)
+    +'</span>'
+  +'</div>';
 
   var html='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden">';
+  html+=headerRow;
   _collRowKeys=groupKeys;
   groupKeys.forEach(function(key,ri){
     var entry=byMode[key];
@@ -3484,7 +3515,7 @@ function renderCollectionReport(){
         +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
           +valBlock('Sales',entry.sales,false,false)
           +valBlock('Balance owed',opening,true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before.")
-          +comboValBlock('Collection — realized vs. not yet',[{label:'Collected',val:entry.total,bold:true},{label:'Future Pmts',val:entry.futurePayments||0}],"Both are money from a payment, grouped together here since they're the same underlying concept — the difference is timing. Collected is realized: the payment has actually cleared. Future Payments exists but is dated after today, so it hasn't actually happened yet by any real-world clock.")
+          +comboValCell([{val:entry.total,bold:true},{val:entry.futurePayments||0}])
           +valBlock('Ending balance',entry.balance,true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before.")
           +valBlock('Unapplied',entry.unapplied||0,false,false)
           +valBlock('Undeposited Funds',entry.undepositedFunds||0,false,false)
@@ -3551,7 +3582,7 @@ function renderCollectionReport(){
     +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
       +valBlock('Sales',grandSales,false,false)
       +valBlock('Balance owed',grandOpening,true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before.")
-      +comboValBlock('Collection — realized vs. not yet',[{label:'Collected',val:grandTotal,bold:true},{label:'Future Pmts',val:grandFuturePayments||0}],"Both are money from a payment, grouped together here since they're the same underlying concept — the difference is timing. Collected is realized: the payment has actually cleared. Future Payments exists but is dated after today, so it hasn't actually happened yet by any real-world clock.")
+      +comboValCell([{val:grandTotal,bold:true},{val:grandFuturePayments||0}])
       +valBlock('Ending balance',grandBalance,true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before.")
       +valBlock('Unapplied',grandUnapplied||0,false,false)
       +valBlock('Undeposited Funds',grandUndepositedFunds||0,false,false)

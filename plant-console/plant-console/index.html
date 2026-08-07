@@ -3515,32 +3515,37 @@ function renderCollectionReport(){
     var label=pct===null?'—':Math.round(pct)+'%';
     return '<span style="text-align:center;font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ink)">'+label+'</span>';
   }
-  // A thin drag handle at the right edge of a header cell — mousedown
-  // starts tracking horizontal mouse movement (see collColResizeStart)
-  // and grows/shrinks that one column via its --cw-* custom property.
+  // A drag handle at the right edge of a header cell — now visibly
+  // rendered (a small vertical bar), not just an invisible hit-area, so
+  // it's actually discoverable instead of something you have to already
+  // know is there. Mousedown starts tracking horizontal mouse movement
+  // (see collColResizeStart) and grows/shrinks that one column via its
+  // --cw-* custom property.
   function resizeHandle(colKey){
-    return '<span onmousedown="collColResizeStart(event,\''+colKey+'\')" style="position:absolute;right:-8px;top:2px;bottom:2px;width:16px;cursor:col-resize;z-index:2" title="Drag to resize"></span>';
+    return '<span onmousedown="collColResizeStart(event,\''+colKey+'\')" title="Drag to resize" style="position:absolute;right:-10px;top:0;bottom:0;width:18px;cursor:col-resize;z-index:2;display:flex;align-items:center;justify-content:center">'
+      +'<span style="width:3px;height:60%;background:var(--muted);border-radius:2px;opacity:.5"></span>'
+    +'</span>';
   }
   function headerCell(lbl,colKey,tooltip){
-    return '<span'+(tooltip?' title="'+esc(tooltip)+'"':'')+' style="position:relative;text-align:center;font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)'+(tooltip?';cursor:help':'')+'">'+lbl+resizeHandle(colKey)+'</span>';
+    return '<span'+(tooltip?' title="'+esc(tooltip)+'"':'')+' style="position:relative;text-align:center;font-family:var(--mono);font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink)'+(tooltip?';cursor:help':'')+'">'+lbl+resizeHandle(colKey)+'</span>';
   }
   // The header row — sticky so it stays visible while scrolling a long
   // customer list, and built with the SAME grid + spacer structure as a
   // data row below so its labels land directly above the right values.
-  var headerRow='<div style="position:sticky;top:0;z-index:5;display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:10px 16px 8px;background:var(--panel);border-bottom:1px dashed var(--line)">'
+  var headerRow='<div style="position:sticky;top:0;z-index:5;display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:12px 16px 10px;background:var(--panel);border-bottom:2px solid var(--line);border-radius:14px 14px 0 0;box-shadow:0 2px 4px rgba(0,0,0,.06)">'
     +'<span style="flex:1;min-width:160px"></span>'
     +'<button class="btn btn-sm" style="padding:4px 9px;visibility:hidden">🖨</button>'
     +'<button class="btn btn-sm" style="padding:4px 9px;visibility:hidden">⬇</button>'
     +'<span style="display:grid;'+gridCols+'gap:16px;align-items:end">'
       +headerCell('Sales','sales')
-      +'<span style="position:relative;text-align:center;font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-left:1px solid var(--line);border-top:1px solid var(--line);border-radius:9px 0 0 0;padding:5px 0 4px">Collected'+resizeHandle('collected')+'</span>'
-      +'<span style="position:relative;text-align:center;font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-right:1px solid var(--line);border-top:1px solid var(--line);border-radius:0 9px 0 0;padding:5px 0 4px;cursor:help" title="Both are money from a payment — the difference is timing. Collected is realized: the payment has actually cleared. Future Payments exists but is dated after today, so it hasn\'t actually happened yet by any real-world clock.">Future Pmts'+resizeHandle('future')+'</span>'
+      +'<span style="position:relative;text-align:center;font-family:var(--mono);font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);border-left:1px solid var(--line);border-top:1px solid var(--line);border-radius:9px 0 0 0;padding:5px 0 4px">Collected'+resizeHandle('collected')+'</span>'
+      +'<span style="position:relative;text-align:center;font-family:var(--mono);font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);border-right:1px solid var(--line);border-top:1px solid var(--line);border-radius:0 9px 0 0;padding:5px 0 4px;cursor:help" title="Both are money from a payment — the difference is timing. Collected is realized: the payment has actually cleared. Future Payments exists but is dated after today, so it hasn\'t actually happened yet by any real-world clock.">Future Pmts'+resizeHandle('future')+'</span>'
       +headerCell('Ending balance','ending')
       +headerCell('% collected','pct')
     +'</span>'
   +'</div>';
 
-  var html='<div id="coll-table-wrap" style="'+_collColVarStyle()+'background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden">';
+  var html='<div id="coll-table-wrap" style="'+_collColVarStyle()+'background:var(--panel);border:1px solid var(--line);border-radius:14px">';
   html+=headerRow;
   _collRowKeys=groupKeys;
   groupKeys.forEach(function(key,ri){
@@ -3617,7 +3622,7 @@ function renderCollectionReport(){
         }).join('')
       +'</div></div>';
   });
-  html+='<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:14px 16px;background:var(--bg)">'
+  html+='<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:14px 16px;background:var(--bg);border-radius:0 0 14px 14px">'
     +'<span style="flex:1;min-width:120px;font-weight:700">Total</span>'
     +'<span style="display:grid;'+gridCols+'gap:16px;align-items:center">'
       +valCell(grandSales,false,false)

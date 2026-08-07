@@ -2550,7 +2550,7 @@ if(_collPaymentsNeedBackfill && _collUnappliedLastSync) _collUnappliedLastSync=n
 // job-costing/billable-expense entries, producing a wildly wrong number).
 // Same cache SHAPE as before, so the field-based checks above can't catch
 // this — force exactly one full re-fetch via a version marker instead.
-var JE_FILTER_VERSION='9'; // v9: reverted the v8 netting attempt too — it over-subtracted on the one entry we could directly verify against QuickBooks ($14,110.01 subtracted vs the correct $6,037.90). Two different netting attempts have now failed in two different ways; Payment.Line.LinkedTxn.TxnType='JournalEntry' is not a reliable "this paid down this charge" signal for this data. Back to a raw, un-netted, informational-only total — use the manual "JE adjustment" box for exact reconciliation.
+var JE_FILTER_VERSION='10'; // v10: entries not touched in QuickBooks since the v8/v9 transition (no reason for an incremental "since" pull to ever re-fetch them) were still showing leftover netted values from the old, already-removed v8 logic — confirmed directly against a real customer (#27, #17 stale; #29, edited today, was correctly raw). Forcing one more full re-fetch so every entry gets reprocessed under the current, un-netted code, not just ones QuickBooks happened to touch recently.
 if(localStorage.getItem('pc_coll_je_filter_version')!==JE_FILTER_VERSION){
   _collJournalEntryCache={};
   _collJournalEntryLastSync=null;

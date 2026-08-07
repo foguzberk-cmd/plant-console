@@ -2550,7 +2550,7 @@ if(_collPaymentsNeedBackfill && _collUnappliedLastSync) _collUnappliedLastSync=n
 // job-costing/billable-expense entries, producing a wildly wrong number).
 // Same cache SHAPE as before, so the field-based checks above can't catch
 // this — force exactly one full re-fetch via a version marker instead.
-var JE_FILTER_VERSION='10'; // v10: entries not touched in QuickBooks since the v8/v9 transition (no reason for an incremental "since" pull to ever re-fetch them) were still showing leftover netted values from the old, already-removed v8 logic — confirmed directly against a real customer (#27, #17 stale; #29, edited today, was correctly raw). Forcing one more full re-fetch so every entry gets reprocessed under the current, un-netted code, not just ones QuickBooks happened to touch recently.
+var JE_FILTER_VERSION='11'; // v11: added a diagnostic-only, customer-scoped netting calculation (see paidByJEForCustomer) — NOT wired into the main Journal entry total or Ending balance anywhere, purely a visible "netted (unverified)" figure in the detail view to check against QuickBooks before trusting it for anything real. Forcing a full re-fetch so old entries (like #27) actually get this new field computed, not just ones touched recently.
 if(localStorage.getItem('pc_coll_je_filter_version')!==JE_FILTER_VERSION){
   _collJournalEntryCache={};
   _collJournalEntryLastSync=null;
@@ -3046,16 +3046,30 @@ async function runCollectionReport(){
   // real concept via QuickBooks's own "Outstanding Transactions" view,
   // which shows an Original Amount vs Open Balance for a JE-based charge
   // the same way it does for an Invoice). Both attempts produced WRONG
-  // numbers in two DIFFERENT ways — one wildly over-subtracted company-
-  // wide, the other over-subtracted on the one entry we could directly
-  // verify against QuickBooks. Whatever a Payment.Line.LinkedTxn pointing
-  // at a JournalEntry actually represents in this business's QuickBooks
-  // usage, it is NOT a reliable 1:1 "this amount settled this charge"
-  // signal, and this app has no further reliable way to determine it from
-  // the API alone. This is intentionally left as a raw, un-netted total —
-  // treat it as informational only. Use the "JE adjustment" box above
-  // (a number looked up directly from QuickBooks) for anything requiring
-  // an exact reconciled total.
+  // numbers — most likely because they summed EVERY payment referencing
+  // that JournalEntry.Id company-wide, with no regard for WHICH customer
+  // made the payment. If an unrelated payment from a different customer
+  // happens to reference the same JE.Id for some other reason, that gets
+  // wrongly counted as "paid down." This attempt scopes it: only a
+  // payment belonging to the SAME customer as the journal entry's AR line
+  // counts toward netting it. This is diagnostic-only for now — it's
+  // NOT wired into the main Journal entry total or Ending balance yet.
+  // Verify it against a customer you can check directly in QuickBooks
+  // (see the "netted (customer-scoped)" line in the detail view) before
+  // trusting it for anything that matters.
+  var paidByJEForCustomer={}; // "jeId|custId" -> $ paid by THIS SPECIFIC customer against THIS specific JE
+  Object.values(_collAllPaymentsCache||{}).forEach(function(p){
+    var payCustId=p.CustomerRef&&p.CustomerRef.value;
+    if(!payCustId) return;
+    (p.Line||[]).forEach(function(line){
+      (line.LinkedTxn||[]).forEach(function(lt){
+        if(lt.TxnType==='JournalEntry' && lt.TxnId){
+          var key=lt.TxnId+'|'+payCustId;
+          paidByJEForCustomer[key]=(paidByJEForCustomer[key]||0)+Number(line.Amount||0);
+        }
+      });
+    });
+  });
   jeChanged.forEach(function(je){
     var impacts=[];
     (je.Line||[]).forEach(function(line){
@@ -3068,7 +3082,9 @@ async function runCollectionReport(){
       if(!acctRef || !arAccountIds[acctRef.value]) return; // not an Accounts Receivable line — e.g. job-costing/billable-expense tagging, not an AR adjustment
       var amt=Number(line.Amount||0);
       var signedAmt=(detail.PostingType==='Debit')?amt:-amt;
-      impacts.push({custId:entity.EntityRef.value,amount:signedAmt,rawAmt:amt,postingType:detail.PostingType||'',acctName:(acctRef&&acctRef.name)||'',lastUpdated:(je.MetaData&&je.MetaData.LastUpdatedTime)||''});
+      var custId=entity.EntityRef.value;
+      var paidByThisCustomer=paidByJEForCustomer[je.Id+'|'+custId]||0;
+      impacts.push({custId:custId,amount:signedAmt,rawAmt:amt,postingType:detail.PostingType||'',acctName:(acctRef&&acctRef.name)||'',lastUpdated:(je.MetaData&&je.MetaData.LastUpdatedTime)||'',diagnosticNetted:signedAmt-(signedAmt>=0?paidByThisCustomer:-paidByThisCustomer)});
     });
     if(impacts.length){ _collJournalEntryCache[je.Id]={Id:je.Id,DocNumber:je.DocNumber||'',TxnDate:(je.TxnDate||'').slice(0,10),impacts:impacts}; jeKeptCount++; }
     else delete _collJournalEntryCache[je.Id]; // no AR-affecting customer-linked lines (anymore) — nothing to track
@@ -3329,7 +3345,7 @@ function computeCollectionGroups(){
     (je.impacts||[]).forEach(function(imp){
       journalByQbId[imp.custId]=(journalByQbId[imp.custId]||0)+imp.amount;
       if(!journalDetailByQbId[imp.custId]) journalDetailByQbId[imp.custId]=[];
-      journalDetailByQbId[imp.custId].push({docNumber:je.DocNumber||'(no #)',txnDate:je.TxnDate||'',amount:imp.amount,rawAmt:imp.rawAmt,postingType:imp.postingType,acctName:imp.acctName,lastUpdated:imp.lastUpdated});
+      journalDetailByQbId[imp.custId].push({docNumber:je.DocNumber||'(no #)',txnDate:je.TxnDate||'',amount:imp.amount,rawAmt:imp.rawAmt,postingType:imp.postingType,acctName:imp.acctName,lastUpdated:imp.lastUpdated,diagnosticNetted:imp.diagnosticNetted});
     });
   });
   function journalOfCust(qbCustId){
@@ -3683,7 +3699,9 @@ function renderCollectionReport(){
             +entry.journalDetail.slice().sort(function(a,b){ return b.txnDate<a.txnDate?-1:1; }).map(function(jd){
               return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 16px 4px 40px;font-size:12px;border-bottom:1px dashed var(--line)">'
                 +'<span>#'+esc(jd.docNumber)+' · '+esc(jd.txnDate)+' · '+esc(jd.postingType||'?')+' · acct: '+esc(jd.acctName||'(unnamed)')+(jd.lastUpdated?' · last edited '+esc(jd.lastUpdated.slice(0,19).replace('T',' ')):'')+'</span>'
-                +'<span style="font-family:var(--mono);white-space:nowrap">raw line amt '+money(jd.rawAmt!==undefined?jd.rawAmt:jd.amount)+' → <b>'+money(jd.amount)+'</b></span></div>';
+                +'<span style="font-family:var(--mono);white-space:nowrap">raw line amt '+money(jd.rawAmt!==undefined?jd.rawAmt:jd.amount)+' → <b>'+money(jd.amount)+'</b>'
+                  +(jd.diagnosticNetted!==undefined && Math.abs(jd.diagnosticNetted-jd.amount)>0.004?' <span style="color:#9c6b1f" title="EXPERIMENTAL — not verified yet, not used anywhere else in this report. Only counts a payment toward netting this entry if it belongs to the SAME customer. Check this against QuickBooks\'s Outstanding Transactions view for this customer before trusting it.">(netted, customer-scoped, UNVERIFIED: '+money(jd.diagnosticNetted)+')</span>':'')
+                +'</span></div>';
             }).join(''))
           : '')
         +(_collGroupMode==='salesperson' && entry.custBalances && entry.custBalances.length
@@ -3929,7 +3947,7 @@ function _buildCollectionCSVRows(onlyKey){
     // report (which DOES correctly know which are still open).
     if(_collGroupMode==='customer' && entry.journalDetail && entry.journalDetail.length){
       entry.journalDetail.slice().sort(function(a,b){ return b.txnDate<a.txnDate?-1:1; }).forEach(function(jd){
-        rows.push(['','','','','','','','','','','','JOURNAL',jd.txnDate,jd.postingType+' -> '+(jd.acctName||'(unnamed account)')+' -> raw line amt '+(jd.rawAmt!==undefined?jd.rawAmt:jd.amount).toFixed(2)+(jd.lastUpdated?' -> last edited '+jd.lastUpdated.slice(0,19).replace('T',' '):''),'#'+jd.docNumber,jd.amount.toFixed(2)]);
+        rows.push(['','','','','','','','','','','','JOURNAL',jd.txnDate,jd.postingType+' -> '+(jd.acctName||'(unnamed account)')+' -> raw line amt '+(jd.rawAmt!==undefined?jd.rawAmt:jd.amount).toFixed(2)+(jd.lastUpdated?' -> last edited '+jd.lastUpdated.slice(0,19).replace('T',' '):'')+(jd.diagnosticNetted!==undefined && Math.abs(jd.diagnosticNetted-jd.amount)>0.004?' -> UNVERIFIED customer-scoped netted: '+jd.diagnosticNetted.toFixed(2):''),'#'+jd.docNumber,jd.amount.toFixed(2)]);
       });
     }
     entry.payments.slice().sort(function(a,b){ return a.date<b.date?1:-1; }).forEach(function(row){

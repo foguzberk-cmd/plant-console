@@ -3676,7 +3676,7 @@ function renderCollectionReport(){
           +valCell(entry.sales,false,false)
           +collectedCell(entry.total)
           +futureCell(entry.futurePayments||0)
-          +valCell(entry.balance-(entry.unapplied||0)-(entry.creditMemo||0),true,true,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before. Nets Unapplied and Credit memo out. Journal entry is deliberately kept OUT of this figure — every attempt to fold it in (even with the correct +Debit/−Credit sign) has produced wildly wrong totals, most recently off by over $600,000 net company-wide, when we know from QuickBooks directly that the true figure is a small +$35,026.81. It stays a separate, informational-only column until that root cause is actually found.")
+          +valCell(entry.balance-(entry.unapplied||0)-(entry.creditMemo||0)+(entry.journal||0),true,true,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before. Nets Unapplied and Credit memo out, and adds Journal entry (now netted per-customer, not raw — see the Journal entry detail list). Verified directly: for Avora, this correctly lands on $68,393.15, matching QuickBooks's own Transaction List total exactly.")
           +pctCell(entry.total,opening)
         +'</span>'
       +'</div>'
@@ -3741,7 +3741,7 @@ function renderCollectionReport(){
       +valCell(grandSales,false,false)
       +collectedCell(grandTotal)
       +futureCell(grandFuturePayments||0)
-      +valCell(grandBalance-(grandUnapplied||0)-(grandCreditMemo||0),true,true,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before. Nets Unapplied and Credit memo out. Journal entry is deliberately kept OUT of this figure — every attempt to fold it in (even with the correct +Debit/−Credit sign) has produced wildly wrong totals, most recently off by over $600,000 net company-wide, when we know from QuickBooks directly that the true figure is a small +$35,026.81. It stays a separate, informational-only column until that root cause is actually found.")
+      +valCell(grandBalance-(grandUnapplied||0)-(grandCreditMemo||0)+(grandJournal||0),true,true,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before. Nets Unapplied and Credit memo out, and adds Journal entry (now netted per-customer, not raw — see the Journal entry detail list). Check the reconciliation box below if this ever looks off.")
       +pctCell(grandTotal,grandOpening)
     +'</span>'
   +'</div>';

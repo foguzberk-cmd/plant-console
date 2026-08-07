@@ -2506,6 +2506,7 @@ var _collOpeningByQbId=null; // {customer QB id: open-invoice balance as of the 
 var _collEndingByQbId=null;  // {customer QB id: open-invoice balance as of the report's "To" date}
 var _collEndingDetailByQbId=null; // {customer QB id: [{docNumber, txnDate, totalAmt, balance, contribution}, ...]} — the exact invoices behind each customer's Ending Balance, for direct invoice-by-invoice comparison against QuickBooks
 var _collFutureByQbId=null; // {customer QB id: total $ from payments dated AFTER today} — a payment applied to an invoice with a date in the future is a data anomaly (typo'd year, pre-recorded check, etc.), and would otherwise make the reconstruction "un-pay" that invoice back open for any "as of" date before it. That money is folded into the Undeposited column instead of inflating Ending/Opening balance — see computeAsOfBalances.
+var _collFutureDetailByQbId=null; // {customer QB id: [{docNumber, txnDate, amount}, ...]} — the exact invoices behind _collFutureByQbId, so that redirect is traceable per-invoice too, not just a lump sum
 // Unapplied Credit Memos — a Credit Memo's own Balance field is the
 // remaining amount of that credit NOT yet applied to any invoice (same
 // concept as a Payment's UnappliedAmt, just for credits instead of cash).
@@ -3007,6 +3008,7 @@ async function runCollectionReport(){
   _collEndingByQbId=asOf.ending;
   _collEndingDetailByQbId=asOf.endingDetail;
   _collFutureByQbId=asOf.future;
+  _collFutureDetailByQbId=asOf.futureDetail;
   renderCollectionReport();
 }
 
@@ -3076,6 +3078,7 @@ function computeAsOfBalances(fromDate,toDate){
 
   var opening={}, ending={}, future={}; // customer QB id -> total (opening/ending balance, or future-dated-payment $ folded into Undeposited)
   var endingDetail={}; // customer QB id -> [{docNumber, txnDate, totalAmt, balance, appliedAfterTo}, ...] — the exact invoices behind the Ending Balance number, for matching invoice-by-invoice against QuickBooks
+  var futureDetail={}; // customer QB id -> [{docNumber, txnDate, amount}, ...] — the exact invoices whose future-dated payment got folded into Undeposited instead of Ending Balance, so that redirect is traceable too, not just a lump sum
   invoices.forEach(function(inv){
     var custId=inv.CustomerRef&&inv.CustomerRef.value;
     if(!custId) return;
@@ -3091,6 +3094,8 @@ function computeAsOfBalances(fromDate,toDate){
     var futureAmt=futureAppliedByInvoice[inv.Id]||0;
     if(futureAmt>0.004){
       future[custId]=(future[custId]||0)+futureAmt;
+      if(!futureDetail[custId]) futureDetail[custId]=[];
+      futureDetail[custId].push({docNumber:inv.DocNumber||'(no #)',txnDate:invDate,amount:futureAmt});
     }
     if(invDate<=fromDate){
       var openAtFrom=currentBalance+appliedAfter(fromDate);
@@ -3106,7 +3111,7 @@ function computeAsOfBalances(fromDate,toDate){
       }
     }
   });
-  return {opening:opening,ending:ending,endingDetail:endingDetail,future:future};
+  return {opening:opening,ending:ending,endingDetail:endingDetail,future:future,futureDetail:futureDetail};
 }
 
 // Computes the customer/sales-person groupings from the cached
@@ -3183,6 +3188,30 @@ function computeCollectionGroups(){
     if(!qbCustId) return 0;
     return undepositedByQbId[qbCustId]||0;
   }
+  // Combined detail behind the Undeposited total, from BOTH sources above
+  // — tagged so each line reads clearly which one it is, since they're
+  // genuinely different situations that happen to land in the same
+  // column: real money sitting in the Undeposited Funds account, vs. an
+  // invoice whose payment got redirected here because its date is in the
+  // future.
+  var undepositedDetailByQbId={};
+  Object.values(_collAllPaymentsCache||{}).forEach(function(p){
+    var qbCustId=p.CustomerRef&&p.CustomerRef.value;
+    if(!qbCustId) return;
+    if(!_looksLikeUndepositedAccount(p.DepositToAccountRef)) return;
+    if(!undepositedDetailByQbId[qbCustId]) undepositedDetailByQbId[qbCustId]=[];
+    undepositedDetailByQbId[qbCustId].push({source:'Undeposited Funds',ref:p.PaymentRefNum||'',txnDate:(p.TxnDate||'').slice(0,10),amount:Number(p.TotalAmt||0)});
+  });
+  Object.keys(_collFutureDetailByQbId||{}).forEach(function(qbCustId){
+    if(!undepositedDetailByQbId[qbCustId]) undepositedDetailByQbId[qbCustId]=[];
+    (_collFutureDetailByQbId[qbCustId]||[]).forEach(function(fd){
+      undepositedDetailByQbId[qbCustId].push({source:'Future-dated payment',ref:'#'+fd.docNumber,txnDate:fd.txnDate,amount:fd.amount});
+    });
+  });
+  function undepositedDetailOfCust(qbCustId){
+    if(!qbCustId) return [];
+    return undepositedDetailByQbId[qbCustId]||[];
+  }
 
   // "Credit Memo (unapplied)" — a credit sitting against a customer that
   // hasn't been used against any invoice yet. Same concept as Unapplied
@@ -3251,7 +3280,7 @@ function computeCollectionGroups(){
     var undep=undepositedOfCust(qbCustId);
     var cm=creditMemoOfCust(qbCustId);
     var jrn=journalOfCust(qbCustId);
-    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,creditMemo:cm,journal:jrn,journalDetail:journalDetailOfCust(qbCustId),payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndeposited+=undep; grandCreditMemo+=cm; grandJournal+=jrn; }
+    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,creditMemo:cm,journal:jrn,journalDetail:journalDetailOfCust(qbCustId),undepositedDetail:undepositedDetailOfCust(qbCustId),payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndeposited+=undep; grandCreditMemo+=cm; grandJournal+=jrn; }
     byCust[custKey].total+=amt;
     byCust[custKey].payments.push({date:date,amount:amt,ref:ref});
 
@@ -3291,7 +3320,7 @@ function computeCollectionGroups(){
     var undep=undepositedOfCust(qbCustId);
     var cm=creditMemoOfCust(qbCustId);
     var jrn=journalOfCust(qbCustId);
-    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,creditMemo:cm,journal:jrn,journalDetail:journalDetailOfCust(qbCustId),payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndeposited+=undep; grandCreditMemo+=cm; grandJournal+=jrn; }
+    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,creditMemo:cm,journal:jrn,journalDetail:journalDetailOfCust(qbCustId),undepositedDetail:undepositedDetailOfCust(qbCustId),payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndeposited+=undep; grandCreditMemo+=cm; grandJournal+=jrn; }
     byCust[custKey].sales+=amt;
 
     var rep=salesPersonOf(d)||'Unassigned';
@@ -3340,7 +3369,7 @@ function computeCollectionGroups(){
     var known=custByQbId[qbCustId]; // may be undefined if not yet synced locally
     var custName=(known&&known.name)||'Unknown customer (not yet synced — id '+qbCustId+')';
     if(!byCust[custKey]){
-      byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,creditMemo:cm,journal:jrn,journalDetail:journalDetailOfCust(qbCustId),payments:[]};
+      byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undeposited:undep,creditMemo:cm,journal:jrn,journalDetail:journalDetailOfCust(qbCustId),undepositedDetail:undepositedDetailOfCust(qbCustId),payments:[]};
       grandBalance+=bal;
       grandOpening+=open;
       grandUnapplied+=unapp;
@@ -3472,6 +3501,14 @@ function renderCollectionReport(){
                 +'<span style="font-family:var(--mono);white-space:nowrap">'+money(d.totalAmt)+' → '+money(d.balance)+(d.appliedAfterTo>0.004?' + '+money(d.appliedAfterTo)+' paid-after-"To"':'')+' = <b>'+money(d.contribution)+'</b></span></div>';
             }).join('')
             +'<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Payments this period</div>')
+          : '')
+        +(_collGroupMode==='customer' && entry.undepositedDetail && entry.undepositedDetail.length
+          ? ('<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Undeposited ('+entry.undepositedDetail.length+') — real money sitting undeposited, or a future-dated payment redirected here instead of inflating Ending Balance</div>'
+            +entry.undepositedDetail.slice().sort(function(a,b){ return b.amount-a.amount; }).map(function(ud){
+              return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 16px 4px 40px;font-size:12px;border-bottom:1px dashed var(--line)">'
+                +'<span>'+esc(ud.source)+' · '+esc(ud.ref||'(no ref)')+' · '+esc(ud.txnDate)+'</span>'
+                +'<span style="font-family:var(--mono);white-space:nowrap;color:#6a4c93">'+money(ud.amount)+'</span></div>';
+            }).join(''))
           : '')
         +(_collGroupMode==='customer' && entry.journalDetail && entry.journalDetail.length
           ? ('<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Journal entries tagged to this customer\'s A/R ('+entry.journalDetail.length+') — check each one in QuickBooks; some may already be resolved elsewhere and shouldn\'t count</div>'
@@ -3698,6 +3735,15 @@ function _buildCollectionCSVRows(onlyKey){
     if(_collGroupMode==='customer' && _collEndingDetailByQbId && _collEndingDetailByQbId[k]){
       _collEndingDetailByQbId[k].slice().sort(function(a,b){ return b.contribution-a.contribution; }).forEach(function(d){
         rows.push(['','','','','','','','','','','INVOICE',d.txnDate,'Total '+d.totalAmt.toFixed(2)+' -> Current bal. '+d.balance.toFixed(2)+(d.appliedAfterTo>0.004?' + '+d.appliedAfterTo.toFixed(2)+' paid after "To"':''),'#'+d.docNumber,d.contribution.toFixed(2)]);
+      });
+    }
+    // Customer-mode only: the combined Undeposited breakdown — real money
+    // sitting in the Undeposited Funds account, or a future-dated payment
+    // that got redirected here instead of inflating Ending Balance. Right
+    // under the invoice list on purpose, so both can be read together.
+    if(_collGroupMode==='customer' && entry.undepositedDetail && entry.undepositedDetail.length){
+      entry.undepositedDetail.slice().sort(function(a,b){ return b.amount-a.amount; }).forEach(function(ud){
+        rows.push(['','','','','','','','','','','UNDEPOSITED',ud.txnDate,ud.source,ud.ref||'',ud.amount.toFixed(2)]);
       });
     }
     // Customer-mode only: every Journal Entry currently tagged to this

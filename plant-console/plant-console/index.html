@@ -3482,7 +3482,6 @@ function renderCollectionReport(){
     +'<button class="btn btn-sm" style="padding:4px 9px;visibility:hidden">⬇</button>'
     +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
       +headerLabel('Sales',88)
-      +headerLabel('Balance owed',88)
       +'<span style="display:flex;align-items:center;gap:14px;border-left:1px solid var(--line);border-right:1px solid var(--line);border-top:1px solid var(--line);border-radius:9px 9px 0 0;padding:4px 12px 3px">'
         +'<span style="min-width:76px;text-align:right;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Collected</span>'
         +'<span style="min-width:76px;text-align:right;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);cursor:help;border-bottom:1px dotted var(--muted)" title="Both are money from a payment — the difference is timing. Collected is realized: the payment has actually cleared. Future Payments exists but is dated after today, so it hasn\'t actually happened yet by any real-world clock.">Future Pmts</span>'
@@ -3514,7 +3513,6 @@ function renderCollectionReport(){
         +'<button onclick="event.stopPropagation();exportCollectionReportGroupCSV(_collRowKeys['+ri+'])" class="btn btn-sm" title="Export this row to CSV/Excel" style="padding:4px 9px">⬇</button>'
         +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
           +valBlock('Sales',entry.sales,false,false)
-          +valBlock('Balance owed',opening,true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before.")
           +comboValCell([{val:entry.total,bold:true},{val:entry.futurePayments||0}])
           +valBlock('Ending balance',entry.balance,true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before.")
           +valBlock('Unapplied',entry.unapplied||0,false,false)
@@ -3581,7 +3579,6 @@ function renderCollectionReport(){
     +'<span style="flex:1;min-width:120px;font-weight:700">Total</span>'
     +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
       +valBlock('Sales',grandSales,false,false)
-      +valBlock('Balance owed',grandOpening,true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before.")
       +comboValCell([{val:grandTotal,bold:true},{val:grandFuturePayments||0}])
       +valBlock('Ending balance',grandBalance,true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before.")
       +valBlock('Unapplied',grandUnapplied||0,false,false)

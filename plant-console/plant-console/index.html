@@ -2375,7 +2375,8 @@ function renderReports(){
   var today=new Date().toISOString().slice(0,10);
   var firstOpen=earliestOpeningDate()||today;
   var deptOpts=DEPARTMENTS.map(function(d){return '<option value="'+esc(d)+'">'+esc(d)+'</option>';}).join('');
-  view.innerHTML='<div class="eyebrow">'+s.kicker+'</div><h2>'+s.title+'</h2>'
+  view.innerHTML='<div id="rpt-header-sticky" style="position:sticky;top:0;z-index:25;background:var(--bg);padding-bottom:2px">'
+    +'<div class="eyebrow">'+s.kicker+'</div><h2>'+s.title+'</h2>'
     +'<p class="lede">Inventory movement statement — opening value, what came in, what went out, and the net change over a period. Pick a department to see that department\'s own statement, or leave it on "All departments" for the plant-wide total.</p>'
     +'<div style="display:flex;gap:8px;margin:6px 0 18px;border-bottom:1px solid var(--line)">'
       +'<button id="rpt-tab-inventory" class="btn" onclick="switchReportTab(\'inventory\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:#fff;font-weight:700;color:var(--brand);border-top:3px solid var(--brand);border-left:1.5px solid var(--line);border-right:1.5px solid var(--line)">Inventory Statement</button>'
@@ -2383,6 +2384,7 @@ function renderReports(){
       +'<button id="rpt-tab-cashflow" class="btn" onclick="switchReportTab(\'cashflow\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Scheduled Payments</button>'
       +'<button id="rpt-tab-checks" class="btn" onclick="switchReportTab(\'checks\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Checks</button>'
     +'</div>'
+  +'</div>'
     +'<div id="rpt-panel-inventory">'
     +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
       +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Department</label>'
@@ -2619,19 +2621,25 @@ function clearCollSearch(){
 }
 window.clearCollSearch=clearCollSearch;
 
-// Re-syncs the table header's sticky offset when the window resizes —
-// the toolbar above it can wrap onto more/fewer lines at different
-// widths, which changes its height, and the table header needs to sit
-// right below it either way, not at a stale offset from before the
-// resize.
+// Stacks the three sticky layers on the Customer Payments report — the
+// shared report title+tabs, this report's own toolbar, and the table's
+// column header — each sitting directly below whichever one is above it.
+// Called after every render AND on window resize, since none of their
+// heights are fixed (text wraps differently at different widths).
+function _collSyncStickyOffsets(){
+  var rptHeaderEl=document.getElementById('rpt-header-sticky');
+  var toolbarEl=document.getElementById('coll-toolbar-sticky');
+  var tableHeaderEl=document.getElementById('coll-header-sticky');
+  var rptHeaderH=rptHeaderEl?rptHeaderEl.offsetHeight:0;
+  if(toolbarEl) toolbarEl.style.top=rptHeaderH+'px';
+  if(tableHeaderEl) tableHeaderEl.style.top=rptHeaderH+(toolbarEl?toolbarEl.offsetHeight:0)+'px';
+}
+window._collSyncStickyOffsets=_collSyncStickyOffsets;
+
 var _collResizeSyncTimer=null;
 window.addEventListener('resize',function(){
   if(_collResizeSyncTimer) clearTimeout(_collResizeSyncTimer);
-  _collResizeSyncTimer=setTimeout(function(){
-    var toolbarEl=document.getElementById('coll-toolbar-sticky');
-    var tableHeaderEl=document.getElementById('coll-header-sticky');
-    if(toolbarEl && tableHeaderEl) tableHeaderEl.style.top=toolbarEl.offsetHeight+'px';
-  },150);
+  _collResizeSyncTimer=setTimeout(_collSyncStickyOffsets,150);
 });
 window.toggleCollSearchClear=toggleCollSearchClear;
 
@@ -3659,15 +3667,15 @@ function renderCollectionReport(){
       +'</div>';
   }
   if(bodyEl) bodyEl.innerHTML=html;
-  // The toolbar (dates/buttons/search/status) is sticky on its own above
-  // this table, but its height isn't fixed — it wraps differently at
-  // different widths, and the status line's text length varies. So the
-  // table's own sticky header can't just hardcode a "top" offset; it has
-  // to measure the toolbar's actual rendered height each time and sit
-  // directly beneath it, or the two would either overlap or leave a gap.
-  var toolbarEl=document.getElementById('coll-toolbar-sticky');
-  var tableHeaderEl=document.getElementById('coll-header-sticky');
-  if(toolbarEl && tableHeaderEl) tableHeaderEl.style.top=toolbarEl.offsetHeight+'px';
+  // Three sticky layers stack here: the shared report title+tabs
+  // (#rpt-header-sticky, same on every Reports tab), this report's own
+  // toolbar (#coll-toolbar-sticky), and the table's column header
+  // (#coll-header-sticky) — each one needs to sit directly below
+  // whichever one is above it. None of their heights are fixed (text
+  // wraps differently at different widths, the status line's length
+  // varies), so this measures the actual rendered heights each time
+  // rather than hardcoding offsets that would drift out of alignment.
+  _collSyncStickyOffsets();
 }
 
 // Prints a clean, letter-size version of the Sales Person breakdown —
@@ -5751,6 +5759,12 @@ function switchReportTab(tab){
     pair[0].style.borderLeft=active?'1.5px solid var(--line)':'1.5px solid transparent';
     pair[0].style.borderRight=active?'1.5px solid var(--line)':'1.5px solid transparent';
   });
+  // If the Customer Payments report was already rendered from an earlier
+  // pull, switching back to it just toggles display — no new render, so
+  // nothing would otherwise re-measure the sticky offsets. Measuring
+  // height while still display:none returns 0, so this waits one tick
+  // for the display:block change above to actually take effect first.
+  if(tab==='collection' && typeof _collSyncStickyOffsets==='function') setTimeout(_collSyncStickyOffsets,0);
 }
 
 // Freezes the currently rendered report (exact numbers, breakdowns, and

@@ -3487,7 +3487,6 @@ function renderCollectionReport(){
         +'<span style="min-width:76px;text-align:right;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);cursor:help;border-bottom:1px dotted var(--muted)" title="Both are money from a payment — the difference is timing. Collected is realized: the payment has actually cleared. Future Payments exists but is dated after today, so it hasn\'t actually happened yet by any real-world clock.">Future Pmts</span>'
       +'</span>'
       +headerLabel('Ending balance',88)
-      +headerLabel('Journal entry',88)
       +headerLabel('% collected',60)
     +'</span>'
   +'</div>';
@@ -3511,8 +3510,7 @@ function renderCollectionReport(){
         +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
           +valBlock('Sales',entry.sales,false,false)
           +comboValCell([{val:entry.total,bold:true},{val:entry.futurePayments||0}])
-          +valBlock('Ending balance',entry.balance+(entry.unapplied||0)+(entry.creditMemo||0),true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before. Includes Unapplied and Credit memo, summarized into this one figure.")
-          +valBlock('Journal entry',entry.journal||0,false,false)
+          +valBlock('Ending balance',entry.balance+(entry.unapplied||0)+(entry.creditMemo||0)+(entry.journal||0),true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before. Includes Unapplied, Credit memo, and Journal entry, summarized into this one figure. NOTE: Journal entry isn't reliably accurate (see the Journal entry detail list when expanded), so this combined total inherits that same uncertainty.")
           +pctBlock('% collected',entry.total,opening)
         +'</span>'
       +'</div>'
@@ -3574,8 +3572,7 @@ function renderCollectionReport(){
     +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
       +valBlock('Sales',grandSales,false,false)
       +comboValCell([{val:grandTotal,bold:true},{val:grandFuturePayments||0}])
-      +valBlock('Ending balance',grandBalance+(grandUnapplied||0)+(grandCreditMemo||0),true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before. Includes Unapplied and Credit memo, summarized into this one figure.")
-      +valBlock('Journal entry',grandJournal||0,false,false)
+      +valBlock('Ending balance',grandBalance+(grandUnapplied||0)+(grandCreditMemo||0)+(grandJournal||0),true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before. Includes Unapplied, Credit memo, and Journal entry, summarized into this one figure. NOTE: Journal entry isn't reliably accurate (see the Journal entry detail list when expanded), so this combined total inherits that same uncertainty.")
       +pctBlock('% collected',grandTotal,grandOpening)
     +'</span>'
   +'</div>';

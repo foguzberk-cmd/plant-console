@@ -2561,25 +2561,6 @@ var _collGroupMode='customer'; // 'customer' | 'salesperson'
 var _collRowKeys=[]; // groupKeys from the last render, indexed the same as each row — lets per-row buttons (like Print) reference a rep name safely without embedding raw text (which could contain apostrophes) into an onclick attribute
 var _cashFlowStartBalance=(function(){ var v=localStorage.getItem('pc_cf_start_balance'); return v!==null?Number(v):null; })();
 
-// A manual correction for the Journal Entry gap — the ONE piece of the
-// Customer Payments Report that can't be tracked reliably from the API
-// (see the Journal entry detail list for why). Rather than a toolbar
-// input box (removed per feedback — too intrusive), this lives as a
-// compact, editable figure right in the Total row itself, next to the
-// numbers it corrects. Look up the true net Journal Entry figure from
-// QuickBooks's own Open Invoices Report (sum its "Journal Entry" type
-// rows) whenever it changes, type it in here, and the Total row's
-// Ending balance folds it in automatically.
-var _collJeCorrection=(function(){ var v=localStorage.getItem('pc_coll_je_correction'); return v!==null?Number(v):35026.81; })();
-function setCollJeCorrection(v){
-  var n=Number(v);
-  _collJeCorrection=isNaN(n)?null:n;
-  if(_collJeCorrection===null) localStorage.removeItem('pc_coll_je_correction');
-  else localStorage.setItem('pc_coll_je_correction',String(_collJeCorrection));
-  if(_collPayments) renderCollectionReport();
-}
-window.setCollJeCorrection=setCollJeCorrection;
-
 // Adjustable column widths for the Customer Payments Report — persisted
 // so a resize sticks across reloads. All rows AND the header share these
 // same five widths via CSS custom properties set once on the outer
@@ -3731,16 +3712,6 @@ function renderCollectionReport(){
       +valCell(grandBalance-(grandUnapplied||0)-(grandCreditMemo||0)+(grandJournal||0),true,true,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before. Nets Unapplied and Credit memo out (matching how QuickBooks's own reports net them), and adds Journal entry — same sign convention QuickBooks uses. NOTE: Journal entry isn't reliably accurate (see the Journal entry detail list when expanded), so this combined total inherits that same uncertainty.")
       +pctCell(grandTotal,grandOpening)
     +'</span>'
-    +'<span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.25;min-width:100px" title="The one piece that can\'t be tracked reliably from the API — look up the true net Journal Entry figure from QuickBooks\'s own Open Invoices Report (sum its \'Journal Entry\' type rows) and enter it here whenever it changes.">'
-      +'<span style="font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);cursor:help;border-bottom:1px dotted var(--muted)">JE Correction</span>'
-      +'<input type="number" step="0.01" value="'+(_collJeCorrection!==null?_collJeCorrection:'')+'" placeholder="0.00" oninput="setCollJeCorrection(this.value)" style="width:100px;text-align:right;font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:2px 6px;background:var(--panel)"/>'
-    +'</span>'
-    +(_collJeCorrection!==null
-      ? ('<span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.25;min-width:110px">'
-          +'<span style="font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:#1b5e20">Matches QB</span>'
-          +'<span style="font-family:var(--mono);font-size:14px;font-weight:700;color:#1b5e20">'+money(grandBalance-(grandUnapplied||0)-(grandCreditMemo||0)+(grandJournal||0)+_collJeCorrection)+'</span>'
-        +'</span>')
-      : '')
   +'</div>';
   html+='</div>';
   html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4"><b>"Balance owed" and "Ending balance" are NOT filtered to the From/To date range</b> the way Sales/Collected are — they always reflect the real, running balance as of that specific date, pulled from full invoice/payment history. A customer can show $0 Sales and $0 Collected for a short date range and still show a real Ending balance here, because they owe money from before that range — that\'s expected, not a bug. "Sales" is Invoices + Sales Receipts issued during this period, net of any Credit Memos issued in the same window — matching how QuickBooks\'s own Sales by Product/Service report nets returns out. "Balance owed" is the true sum of open invoices for each customer as of the report\'s "From" date, and "Ending balance" is the same thing as of the "To" date — both reconstructed directly from invoice/payment history (not derived from Sales/Collected, and not QuickBooks\'s live "right now" balance), so they stay accurate for whatever date range you pick — proven to match QuickBooks exactly, customer by customer. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice — also an exact match to QuickBooks. "Undeposited Funds" is real money that\'s been received and applied to an invoice (so it\'s already out of "Ending balance") but hasn\'t been physically deposited to the bank yet in QuickBooks. "Future Payments" is a separate, different thing that used to share a column with Undeposited Funds — it\'s a payment dated after today, redirected here so it doesn\'t inflate "Ending balance" by making a paid-off invoice look open again. "Credit memo" is the unapplied portion of a credit memo — a credit sitting against a customer, not yet used against any invoice — also an exact match. "Journal entry" is the raw, un-netted total of every Journal Entry posted directly against this customer\'s Accounts Receivable — a JE-based charge CAN later be partially paid down (confirmed via QuickBooks\'s own "Outstanding Transactions" view), but two separate attempts to detect that automatically both produced wrong numbers in different ways, so this column is informational only and intentionally NOT netted.</div>';

@@ -3438,6 +3438,28 @@ function renderCollectionReport(){
       +'<span style="font-family:var(--mono);font-size:'+(bold?'14px':'13px')+';font-weight:'+(bold?'700':'600')+';color:'+(colorPositive&&val>0?'#b8460b':(bold?'#0f6e40':'var(--ink)'))+'">'+money(val)+'</span>'
     +'</span>';
   }
+  // A single bordered box holding TWO value columns side by side, for
+  // metrics that are related enough to read together but shouldn't be
+  // added into one number — Collected and Future Payments are both
+  // "money from a payment," but Collected is realized (cleared, real
+  // cash) and Future Payments is a payment that exists but hasn't
+  // actually happened yet by date. Keeping them visually grouped but
+  // numerically separate makes that distinction obvious at a glance
+  // instead of either merging them (wrong) or scattering them far apart
+  // among unrelated columns (easy to miss the connection).
+  function comboValBlock(groupLabel,items,tooltip){
+    return '<span style="display:flex;flex-direction:column;align-items:center;border:1px solid var(--line);border-radius:9px;padding:5px 12px 6px;background:var(--bg)">'
+      +'<span'+(tooltip?' title="'+esc(tooltip)+'"':'')+' style="font-family:var(--mono);font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:3px'+(tooltip?';border-bottom:1px dotted var(--muted);cursor:help':'')+'">'+groupLabel+'</span>'
+      +'<span style="display:flex;gap:14px">'
+        +items.map(function(it){
+          return '<span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.25;min-width:76px">'
+            +'<span style="font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">'+it.label+'</span>'
+            +'<span style="font-family:var(--mono);font-size:'+(it.bold?'14px':'13px')+';font-weight:'+(it.bold?'700':'600')+';color:'+(it.color||(it.bold?'#0f6e40':'var(--ink)'))+'">'+money(it.val)+'</span>'
+          +'</span>';
+        }).join('')
+      +'</span>'
+    +'</span>';
+  }
   function pctBlock(lbl,collected,opening){
     var pct=opening>0?(collected/opening)*100:null;
     var label=pct===null?'—':Math.round(pct)+'%';
@@ -3465,11 +3487,10 @@ function renderCollectionReport(){
         +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
           +valBlock('Sales',entry.sales,false,false)
           +valBlock('Balance owed',opening,true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before.")
-          +valBlock('Collected',entry.total,false,true)
+          +comboValBlock('Collection — realized vs. not yet',[{label:'Collected',val:entry.total,bold:true},{label:'Future Pmts',val:entry.futurePayments||0}],"Both are money from a payment, grouped together here since they're the same underlying concept — the difference is timing. Collected is realized: the payment has actually cleared. Future Payments exists but is dated after today, so it hasn't actually happened yet by any real-world clock.")
           +valBlock('Ending balance',entry.balance,true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before.")
           +valBlock('Unapplied',entry.unapplied||0,false,false)
           +valBlock('Undeposited Funds',entry.undepositedFunds||0,false,false)
-          +valBlock('Future Payments',entry.futurePayments||0,false,false)
           +valBlock('Credit memo',entry.creditMemo||0,false,false)
           +valBlock('Journal entry',entry.journal||0,false,false)
           +pctBlock('% collected',entry.total,opening)
@@ -3533,11 +3554,10 @@ function renderCollectionReport(){
     +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
       +valBlock('Sales',grandSales,false,false)
       +valBlock('Balance owed',grandOpening,true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before.")
-      +valBlock('Collected',grandTotal,false,true)
+      +comboValBlock('Collection — realized vs. not yet',[{label:'Collected',val:grandTotal,bold:true},{label:'Future Pmts',val:grandFuturePayments||0}],"Both are money from a payment, grouped together here since they're the same underlying concept — the difference is timing. Collected is realized: the payment has actually cleared. Future Payments exists but is dated after today, so it hasn't actually happened yet by any real-world clock.")
       +valBlock('Ending balance',grandBalance,true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before.")
       +valBlock('Unapplied',grandUnapplied||0,false,false)
       +valBlock('Undeposited Funds',grandUndepositedFunds||0,false,false)
-      +valBlock('Future Payments',grandFuturePayments||0,false,false)
       +valBlock('Credit memo',grandCreditMemo||0,false,false)
       +valBlock('Journal entry',grandJournal||0,false,false)
       +pctBlock('% collected',grandTotal,grandOpening)

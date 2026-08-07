@@ -3454,9 +3454,9 @@ function renderCollectionReport(){
   // actual "From" and "To" dates (see computeAsOfBalances) — not derived
   // via arithmetic, and not QuickBooks's live "right now" balance. So these
   // stay accurate no matter what "To" date is picked, past or present.
-  function valBlock(lbl,val,colorPositive,bold){
+  function valBlock(lbl,val,colorPositive,bold,tooltip){
     return '<span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.25;min-width:88px">'
-      +'<span style="font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">'+lbl+'</span>'
+      +'<span'+(tooltip?' title="'+esc(tooltip)+'"':'')+' style="font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)'+(tooltip?';border-bottom:1px dotted var(--muted);cursor:help':'')+'">'+lbl+'</span>'
       +'<span style="font-family:var(--mono);font-size:'+(bold?'14px':'13px')+';font-weight:'+(bold?'700':'600')+';color:'+(colorPositive&&val>0?'#b8460b':(bold?'#0f6e40':'var(--ink)'))+'">'+money(val)+'</span>'
     +'</span>';
   }
@@ -3486,9 +3486,9 @@ function renderCollectionReport(){
         +'<button onclick="event.stopPropagation();exportCollectionReportGroupCSV(_collRowKeys['+ri+'])" class="btn btn-sm" title="Export this row to CSV/Excel" style="padding:4px 9px">⬇</button>'
         +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
           +valBlock('Sales',entry.sales,false,false)
-          +valBlock('Balance owed',opening,true,false)
+          +valBlock('Balance owed',opening,true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before.")
           +valBlock('Collected',entry.total,false,true)
-          +valBlock('Ending balance',entry.balance,true,false)
+          +valBlock('Ending balance',entry.balance,true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before.")
           +valBlock('Unapplied',entry.unapplied||0,false,false)
           +valBlock('Undeposited Funds',entry.undepositedFunds||0,false,false)
           +valBlock('Future Payments',entry.futurePayments||0,false,false)
@@ -3554,9 +3554,9 @@ function renderCollectionReport(){
     +'<span style="flex:1;min-width:120px;font-weight:700">Total</span>'
     +'<span style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">'
       +valBlock('Sales',grandSales,false,false)
-      +valBlock('Balance owed',grandOpening,true,false)
+      +valBlock('Balance owed',grandOpening,true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before.")
       +valBlock('Collected',grandTotal,false,true)
-      +valBlock('Ending balance',grandBalance,true,false)
+      +valBlock('Ending balance',grandBalance,true,false,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before.")
       +valBlock('Unapplied',grandUnapplied||0,false,false)
       +valBlock('Undeposited Funds',grandUndepositedFunds||0,false,false)
       +valBlock('Future Payments',grandFuturePayments||0,false,false)
@@ -3573,7 +3573,7 @@ function renderCollectionReport(){
     +'</div>';
   }
   html+='</div>';
-  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">"Sales" is Invoices + Sales Receipts issued during this period, net of any Credit Memos issued in the same window — matching how QuickBooks\'s own Sales by Product/Service report nets returns out. "Balance owed" is the true sum of open invoices for each customer as of the report\'s "From" date, and "Ending balance" is the same thing as of the "To" date — both reconstructed directly from invoice/payment history (not derived from Sales/Collected, and not QuickBooks\'s live "right now" balance), so they stay accurate for whatever date range you pick — proven to match QuickBooks exactly, customer by customer. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice — also an exact match to QuickBooks. "Undeposited Funds" is real money that\'s been received and applied to an invoice (so it\'s already out of "Ending balance") but hasn\'t been physically deposited to the bank yet in QuickBooks. "Future Payments" is a separate, different thing that used to share a column with Undeposited Funds — it\'s a payment dated after today, redirected here so it doesn\'t inflate "Ending balance" by making a paid-off invoice look open again. "Credit memo" is the unapplied portion of a credit memo — a credit sitting against a customer, not yet used against any invoice — also an exact match. "Journal entry" is the raw, un-netted total of every Journal Entry posted directly against this customer\'s Accounts Receivable — a JE-based charge CAN later be partially paid down (confirmed via QuickBooks\'s own "Outstanding Transactions" view), but two separate attempts to detect that automatically both produced wrong numbers in different ways, so this column is informational only and intentionally NOT netted. Use the "JE adjustment" box above (a number looked up directly from QuickBooks) and the green "Total (matches QuickBooks)" row for anything requiring an exact reconciled total.</div>';
+  html+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4"><b>"Balance owed" and "Ending balance" are NOT filtered to the From/To date range</b> the way Sales/Collected are — they always reflect the real, running balance as of that specific date, pulled from full invoice/payment history. A customer can show $0 Sales and $0 Collected for a short date range and still show a real Ending balance here, because they owe money from before that range — that\'s expected, not a bug. "Sales" is Invoices + Sales Receipts issued during this period, net of any Credit Memos issued in the same window — matching how QuickBooks\'s own Sales by Product/Service report nets returns out. "Balance owed" is the true sum of open invoices for each customer as of the report\'s "From" date, and "Ending balance" is the same thing as of the "To" date — both reconstructed directly from invoice/payment history (not derived from Sales/Collected, and not QuickBooks\'s live "right now" balance), so they stay accurate for whatever date range you pick — proven to match QuickBooks exactly, customer by customer. "Unapplied" is money sitting against a customer from a payment that hasn\'t been applied to any invoice — also an exact match to QuickBooks. "Undeposited Funds" is real money that\'s been received and applied to an invoice (so it\'s already out of "Ending balance") but hasn\'t been physically deposited to the bank yet in QuickBooks. "Future Payments" is a separate, different thing that used to share a column with Undeposited Funds — it\'s a payment dated after today, redirected here so it doesn\'t inflate "Ending balance" by making a paid-off invoice look open again. "Credit memo" is the unapplied portion of a credit memo — a credit sitting against a customer, not yet used against any invoice — also an exact match. "Journal entry" is the raw, un-netted total of every Journal Entry posted directly against this customer\'s Accounts Receivable — a JE-based charge CAN later be partially paid down (confirmed via QuickBooks\'s own "Outstanding Transactions" view), but two separate attempts to detect that automatically both produced wrong numbers in different ways, so this column is informational only and intentionally NOT netted. Use the "JE adjustment" box above (a number looked up directly from QuickBooks) and the green "Total (matches QuickBooks)" row for anything requiring an exact reconciled total.</div>';
   if(_collJeDiagnostics){
     var jd=_collJeDiagnostics;
     function money2(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }

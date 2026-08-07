@@ -2375,7 +2375,7 @@ function renderReports(){
   var today=new Date().toISOString().slice(0,10);
   var firstOpen=earliestOpeningDate()||today;
   var deptOpts=DEPARTMENTS.map(function(d){return '<option value="'+esc(d)+'">'+esc(d)+'</option>';}).join('');
-  view.innerHTML='<div id="rpt-header-sticky" style="position:sticky;top:0;z-index:25;background:var(--bg);padding-bottom:2px">'
+  view.innerHTML='<div id="rpt-header-sticky" style="background:var(--bg);padding-bottom:2px">'
     +'<div class="eyebrow">'+s.kicker+'</div><h2>'+s.title+'</h2>'
     +'<p class="lede">Inventory movement statement — opening value, what came in, what went out, and the net change over a period. Pick a department to see that department\'s own statement, or leave it on "All departments" for the plant-wide total.</p>'
     +'<div style="display:flex;gap:8px;margin:6px 0 18px;border-bottom:1px solid var(--line)">'
@@ -2385,6 +2385,7 @@ function renderReports(){
       +'<button id="rpt-tab-checks" class="btn" onclick="switchReportTab(\'checks\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Checks</button>'
     +'</div>'
   +'</div>'
+  +'<span id="rpt-header-anchor" style="display:none"></span>'
     +'<div id="rpt-panel-inventory">'
     +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
       +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Department</label>'
@@ -2621,18 +2622,16 @@ function clearCollSearch(){
 }
 window.clearCollSearch=clearCollSearch;
 
-// Stacks the three sticky layers on the Customer Payments report — the
-// shared report title+tabs, this report's own toolbar, and the table's
-// column header — each sitting directly below whichever one is above it.
-// Called after every render AND on window resize, since none of their
-// heights are fixed (text wraps differently at different widths).
+// Positions the table's own sticky column header directly below the
+// toolbar's sticky element (which now also contains the title+tabs,
+// physically relocated into it by switchReportTab — see there for why).
+// Just one offset to compute now instead of two chained ones. Called
+// after every render AND on window resize, since the toolbar's height
+// isn't fixed — it wraps differently at different widths.
 function _collSyncStickyOffsets(){
-  var rptHeaderEl=document.getElementById('rpt-header-sticky');
   var toolbarEl=document.getElementById('coll-toolbar-sticky');
   var tableHeaderEl=document.getElementById('coll-header-sticky');
-  var rptHeaderH=rptHeaderEl?rptHeaderEl.offsetHeight:0;
-  if(toolbarEl) toolbarEl.style.top=rptHeaderH+'px';
-  if(tableHeaderEl) tableHeaderEl.style.top=rptHeaderH+(toolbarEl?toolbarEl.offsetHeight:0)+'px';
+  if(toolbarEl && tableHeaderEl) tableHeaderEl.style.top=toolbarEl.offsetHeight+'px';
 }
 window._collSyncStickyOffsets=_collSyncStickyOffsets;
 
@@ -5759,11 +5758,26 @@ function switchReportTab(tab){
     pair[0].style.borderLeft=active?'1.5px solid var(--line)':'1.5px solid transparent';
     pair[0].style.borderRight=active?'1.5px solid var(--line)':'1.5px solid transparent';
   });
-  // If the Customer Payments report was already rendered from an earlier
-  // pull, switching back to it just toggles display — no new render, so
-  // nothing would otherwise re-measure the sticky offsets. Measuring
-  // height while still display:none returns 0, so this waits one tick
-  // for the display:block change above to actually take effect first.
+  // Two SEPARATE position:sticky elements coordinating via a JS-computed
+  // offset turned out not to be reliable — the outer one (title+tabs)
+  // simply didn't stick, even though the inner one (the toolbar) correctly
+  // reserved space for it, leaving a gap that scrolled content showed
+  // through. Physically relocating the title+tabs DOM node to be the
+  // FIRST CHILD of the toolbar's sticky element instead sidesteps that
+  // entirely — it's not a second sticky layer anymore, just more content
+  // inside the one that's proven to actually work. Moved back out to its
+  // normal spot at the top when a different tab is active, since only
+  // Customer Payments has this sticky treatment right now.
+  var rptHeaderEl=document.getElementById('rpt-header-sticky');
+  var collToolbarEl=document.getElementById('coll-toolbar-sticky');
+  var viewTopAnchor=document.getElementById('rpt-header-anchor');
+  if(rptHeaderEl){
+    if(tab==='collection' && collToolbarEl){
+      collToolbarEl.insertBefore(rptHeaderEl,collToolbarEl.firstChild);
+    } else if(viewTopAnchor && rptHeaderEl.parentNode!==viewTopAnchor.parentNode){
+      viewTopAnchor.parentNode.insertBefore(rptHeaderEl,viewTopAnchor);
+    }
+  }
   if(tab==='collection' && typeof _collSyncStickyOffsets==='function') setTimeout(_collSyncStickyOffsets,0);
 }
 

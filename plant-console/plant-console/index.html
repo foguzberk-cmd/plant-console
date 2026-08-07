@@ -3448,16 +3448,13 @@ function renderCollectionReport(){
   // instead of either merging them (wrong) or scattering them far apart
   // among unrelated columns (easy to miss the connection).
   function comboValBlock(groupLabel,items,tooltip){
-    return '<span style="display:flex;flex-direction:column;align-items:center;border:1px solid var(--line);border-radius:9px;padding:5px 12px 6px;background:var(--bg)">'
-      +'<span'+(tooltip?' title="'+esc(tooltip)+'"':'')+' style="font-family:var(--mono);font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:3px'+(tooltip?';border-bottom:1px dotted var(--muted);cursor:help':'')+'">'+groupLabel+'</span>'
-      +'<span style="display:flex;gap:14px">'
-        +items.map(function(it){
-          return '<span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.25;min-width:76px">'
-            +'<span style="font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">'+it.label+'</span>'
-            +'<span style="font-family:var(--mono);font-size:'+(it.bold?'14px':'13px')+';font-weight:'+(it.bold?'700':'600')+';color:'+(it.color||(it.bold?'#0f6e40':'var(--ink)'))+'">'+money(it.val)+'</span>'
-          +'</span>';
-        }).join('')
-      +'</span>'
+    return '<span'+(tooltip?' title="'+esc(tooltip)+'"':'')+' style="display:flex;align-items:center;gap:14px;border:1px solid var(--line);border-radius:9px;padding:6px 12px'+(tooltip?';cursor:help':'')+'">'
+      +items.map(function(it){
+        return '<span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.25;min-width:76px">'
+          +'<span style="font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">'+it.label+'</span>'
+          +'<span style="font-family:var(--mono);font-size:'+(it.bold?'14px':'13px')+';font-weight:'+(it.bold?'700':'600')+';color:'+(it.color||(it.bold?'#0f6e40':'var(--ink)'))+'">'+money(it.val)+'</span>'
+        +'</span>';
+      }).join('')
     +'</span>';
   }
   function pctBlock(lbl,collected,opening){

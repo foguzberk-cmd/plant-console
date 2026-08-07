@@ -3354,6 +3354,7 @@ function computeCollectionGroups(){
   var grandFuturePayments=0;
   var grandCreditMemo=0;
   var grandJournal=0;
+  var todayStr=new Date().toISOString().slice(0,10);
   payments.forEach(function(p){
     var amt=Number(p.TotalAmt||0);
     if(!amt) return;
@@ -3370,12 +3371,30 @@ function computeCollectionGroups(){
     var cm=creditMemoOfCust(qbCustId);
     var jrn=journalOfCust(qbCustId);
     if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undepositedFunds:undepF,futurePayments:futP,creditMemo:cm,journal:jrn,journalDetail:journalDetailOfCust(qbCustId),undepositedFundsDetail:undepositedFundsDetailOfCust(qbCustId),futurePaymentsDetail:futurePaymentsDetailOfCust(qbCustId),payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndepositedFunds+=undepF; grandFuturePayments+=futP; grandCreditMemo+=cm; grandJournal+=jrn; }
-    byCust[custKey].total+=amt;
+    // A check received TODAY hasn't necessarily made it to the bank yet —
+    // it's not "collected" in any real sense until it has. If it's dated
+    // today AND still sitting in the Undeposited Funds account (not yet
+    // swept into a real bank deposit), treat it the same as a genuinely
+    // future-dated payment instead of counting it as realized cash: pull
+    // it out of Collected and into Future Payments for this customer.
+    // Once it's actually deposited (DepositToAccountRef points at a real
+    // bank account), it counts as Collected like any other payment.
+    var isUndepositedToday=(date===todayStr && _looksLikeUndepositedAccount(p.DepositToAccountRef));
+    if(isUndepositedToday){
+      byCust[custKey].futurePayments+=amt;
+      grandFuturePayments+=amt;
+    } else {
+      byCust[custKey].total+=amt;
+    }
     byCust[custKey].payments.push({date:date,amount:amt,ref:ref});
 
     var rep=salesPersonOf(p)||'Unassigned';
     if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,opening:0,sales:0,unapplied:0,undepositedFunds:0,futurePayments:0,creditMemo:0,journal:0,payments:[],_custKeysSeen:{},custBalances:[]};
-    bySalesPerson[rep].total+=amt;
+    if(isUndepositedToday){
+      bySalesPerson[rep].futurePayments+=amt;
+    } else {
+      bySalesPerson[rep].total+=amt;
+    }
     if(!bySalesPerson[rep]._custKeysSeen[custKey]){
       bySalesPerson[rep]._custKeysSeen[custKey]=true;
       bySalesPerson[rep].balance+=bal;
@@ -3389,7 +3408,7 @@ function computeCollectionGroups(){
     }
     bySalesPerson[rep].payments.push({date:date,amount:amt,ref:ref,customer:custName});
 
-    grandTotal+=amt;
+    if(!isUndepositedToday) grandTotal+=amt;
   });
 
   // Second pass: Sales (Invoices + Sales Receipts issued during the same

@@ -4290,10 +4290,20 @@ function toggleSectionCollapse(key){
 window.toggleSectionCollapse=toggleSectionCollapse;
 // Builds a clickable header line with a count and a collapse/expand
 // chevron, shared across all six sections above.
+// ISO 8601 week number (1-53) for a 'YYYY-MM-DD' date string — used to
+// label week-group headers ("Wk 32") alongside the "Week of ..." date
+// range, so a specific week can be referenced quickly without counting
+// Mondays by hand.
+function _isoWeekNumber(dateStr){
+  var d=new Date(dateStr+'T00:00:00');
+  d.setDate(d.getDate()+4-(d.getDay()||7)); // shift to the Thursday of this week (ISO weeks are defined by their Thursday)
+  var yearStart=new Date(d.getFullYear(),0,1);
+  return Math.ceil((((d-yearStart)/86400000)+1)/7);
+}
 function _collapsibleHeader(key,label,count){
   var collapsed=!!_sectionCollapsed[key];
-  return '<div onclick="toggleSectionCollapse(\''+key+'\')" style="cursor:pointer;display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;user-select:none">'
-    +'<span style="display:inline-block;transition:transform .12s;transform:rotate('+(collapsed?'-90deg':'0deg')+')">▾</span>'
+  return '<div onclick="toggleSectionCollapse(\''+key+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;user-select:none">'
+    +'<span style="display:inline-block;transition:transform .12s;transform:rotate('+(collapsed?'-90deg':'0deg')+');font-size:16px;line-height:1;color:var(--ink)">▾</span>'
     +label+' ('+count+')'
   +'</div>';
 }
@@ -4478,14 +4488,14 @@ function renderScheduledPaymentsSection(){
     byWeek[weekMonday].dateKeys.forEach(function(dk){
       byDate[dk].forEach(function(row){ weekTotal+=Number(row.split.amount||0); weekCount++; });
     });
-    var weekLabel='Week of '+fmtShort(weekMonday)+' – '+fmtShort(weekSunday.toISOString().slice(0,10))+' ('+weekCount+')';
+    var weekLabel='Week '+_isoWeekNumber(weekMonday)+' · '+fmtShort(weekMonday)+' – '+fmtShort(weekSunday.toISOString().slice(0,10))+' ('+weekCount+')';
     grandTotal+=weekTotal;
     var weekKey='cfScheduled_'+weekMonday;
     var rowClass='wk-cfScheduled-'+weekMonday;
     var weekIsCollapsed=!!_weekCollapsed[weekKey];
     html+='<tr onclick="toggleCFWeekGroup(\''+weekKey+'\',\''+rowClass+'\')" style="cursor:pointer">'
       +'<td colspan="4" style="border:1px solid #c9a227;padding:7px 10px;font-weight:700;background:#ffe082">'
-        +'<span id="wk-chev-'+rowClass+'" style="display:inline-block;transition:transform .12s;margin-right:6px;transform:rotate('+(weekIsCollapsed?'-90deg':'0deg')+')">▾</span>'
+        +'<span id="wk-chev-'+rowClass+'" style="display:inline-block;transition:transform .12s;margin-right:8px;transform:rotate('+(weekIsCollapsed?'-90deg':'0deg')+');font-size:16px;line-height:1;vertical-align:middle;color:#000">▾</span>'
         +esc(weekLabel)
       +'</td>'
       +'<td style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe082;font-family:var(--mono)">'+money(weekTotal)+'</td>'
@@ -4675,14 +4685,14 @@ function renderInProcessPaymentsSection(){
     var weekCount=0;
     var weekTotal=0;
     byWeek[weekMonday].forEach(function(dk){ byDate[dk].forEach(function(row){ weekTotal+=Number(row.split.amount||0); weekCount++; }); });
-    var weekLabel='Week of '+fmtShort(weekMonday)+' – '+fmtShort(weekSunday.toISOString().slice(0,10))+' ('+weekCount+')';
+    var weekLabel='Week '+_isoWeekNumber(weekMonday)+' · '+fmtShort(weekMonday)+' – '+fmtShort(weekSunday.toISOString().slice(0,10))+' ('+weekCount+')';
     grandTotal+=weekTotal;
     var weekKey='cfInProcess_'+weekMonday;
     var rowClass='wk-cfInProcess-'+weekMonday;
     var weekIsCollapsed=!!_weekCollapsed[weekKey];
     html+='<tr onclick="toggleCFWeekGroup(\''+weekKey+'\',\''+rowClass+'\')" style="cursor:pointer">'
       +'<td colspan="5" style="border:1px solid #1565c0;padding:7px 10px;font-weight:700;background:#bbdefb">'
-        +'<span id="wk-chev-'+rowClass+'" style="display:inline-block;transition:transform .12s;margin-right:6px;transform:rotate('+(weekIsCollapsed?'-90deg':'0deg')+')">▾</span>'
+        +'<span id="wk-chev-'+rowClass+'" style="display:inline-block;transition:transform .12s;margin-right:8px;transform:rotate('+(weekIsCollapsed?'-90deg':'0deg')+');font-size:16px;line-height:1;vertical-align:middle;color:#000">▾</span>'
         +esc(weekLabel)
       +'</td>'
       +'<td style="border:1px solid #1565c0;padding:7px 10px;text-align:right;font-weight:700;background:#bbdefb;font-family:var(--mono)">'+money(weekTotal)+'</td>'
@@ -5368,14 +5378,14 @@ function renderChecksInHandSection(){
     var weekCount=0;
     var weekTotal=0;
     byWeek[weekMonday].forEach(function(d){ byDate[d].forEach(function(p){ weekTotal+=Number(p.TotalAmt||0); weekCount++; }); });
-    var weekLabel='Week of '+_checksFmtShort(weekMonday)+' – '+_checksFmtShort(weekSunday.toISOString().slice(0,10))+' ('+weekCount+')';
+    var weekLabel='Week '+_isoWeekNumber(weekMonday)+' · '+_checksFmtShort(weekMonday)+' – '+_checksFmtShort(weekSunday.toISOString().slice(0,10))+' ('+weekCount+')';
     grandTotal+=weekTotal;
     var weekKey='chkInHand_'+weekMonday;
     var rowClass='wk-chkInHand-'+weekMonday;
     var weekIsCollapsed=!!_weekCollapsed[weekKey];
     html+='<tr onclick="toggleCFWeekGroup(\''+weekKey+'\',\''+rowClass+'\')" style="cursor:pointer">'
       +'<td colspan="3" style="border:1px solid #c9a227;padding:7px 10px;font-weight:700;background:#ffe082">'
-        +'<span id="wk-chev-'+rowClass+'" style="display:inline-block;transition:transform .12s;margin-right:6px;transform:rotate('+(weekIsCollapsed?'-90deg':'0deg')+')">▾</span>'
+        +'<span id="wk-chev-'+rowClass+'" style="display:inline-block;transition:transform .12s;margin-right:8px;transform:rotate('+(weekIsCollapsed?'-90deg':'0deg')+');font-size:16px;line-height:1;vertical-align:middle;color:#000">▾</span>'
         +esc(weekLabel)
       +'</td>'
       +'<td style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe082;font-family:var(--mono)">'+_checksMoneyFmt(weekTotal)+'</td>'

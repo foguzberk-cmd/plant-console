@@ -134,7 +134,7 @@
   .clock{font-family:var(--mono);font-size:12px;color:var(--ink);letter-spacing:.04em;text-align:right}
   .clock small{display:block;color:var(--muted);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase}
 
-  .view{padding:38px 40px;flex:1;overflow:auto;position:relative}
+  .view{padding:38px 40px;flex:1;position:relative}
   .view::before{
     content:'';
     position:fixed;
@@ -329,7 +329,7 @@
     .nav-kicker{display:none}
     .nav-item{flex:0 0 auto;width:auto;padding:9px 14px}
     .nav-item.active::before{top:auto;bottom:0;left:8px;right:8px;width:auto;height:3px;border-radius:3px 3px 0 0}
-    .view{padding:26px 20px;min-height:0}
+    .view{padding:26px 20px;min-height:0;overflow:auto}
     .topbar{padding:0 20px}
     .view h2{font-size:24px}
     .form-row{grid-template-columns:1fr}
@@ -2409,7 +2409,7 @@ function renderReports(){
     +'</div>'
     +'</div>'
     +'<div id="rpt-panel-collection" style="display:none">'
-      +'<div id="coll-toolbar-sticky" style="position:sticky;top:0;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
+      +'<div id="coll-toolbar-sticky" style="position:sticky;top:62px;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
         +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
           +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">From</label>'
           +'<input type="date" id="coll-from" value="'+firstOpen+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
@@ -2625,13 +2625,17 @@ window.clearCollSearch=clearCollSearch;
 // Positions the table's own sticky column header directly below the
 // toolbar's sticky element (which now also contains the title+tabs,
 // physically relocated into it by switchReportTab — see there for why).
-// Just one offset to compute now instead of two chained ones. Called
-// after every render AND on window resize, since the toolbar's height
-// isn't fixed — it wraps differently at different widths.
+// The +62 accounts for the app's own top bar (.topbar, a fixed 62px)
+// sitting above everything — now that .view no longer intercepts scroll
+// (see the overflow:auto removal above), these elements bind to the
+// real page scroll the same way .topbar does, so they need to stack
+// below it explicitly instead of both trying to sit at the very top.
+// Called after every render AND on window resize, since the toolbar's
+// height isn't fixed — it wraps differently at different widths.
 function _collSyncStickyOffsets(){
   var toolbarEl=document.getElementById('coll-toolbar-sticky');
   var tableHeaderEl=document.getElementById('coll-header-sticky');
-  if(toolbarEl && tableHeaderEl) tableHeaderEl.style.top=toolbarEl.offsetHeight+'px';
+  if(toolbarEl && tableHeaderEl) tableHeaderEl.style.top=(62+toolbarEl.offsetHeight)+'px';
 }
 window._collSyncStickyOffsets=_collSyncStickyOffsets;
 

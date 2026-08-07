@@ -2406,25 +2406,27 @@ function renderReports(){
     +'</div>'
     +'</div>'
     +'<div id="rpt-panel-collection" style="display:none">'
-      +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
-        +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">From</label>'
-        +'<input type="date" id="coll-from" value="'+firstOpen+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
-        +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">To</label>'
-        +'<input type="date" id="coll-to" value="'+today+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
-        +'<button class="btn btn-primary" onclick="runCollectionReport()">Pull from QuickBooks</button>'
+      +'<div id="coll-toolbar-sticky" style="position:sticky;top:0;z-index:20;background:var(--bg);padding-top:2px">'
+        +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
+          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">From</label>'
+          +'<input type="date" id="coll-from" value="'+firstOpen+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
+          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">To</label>'
+          +'<input type="date" id="coll-to" value="'+today+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
+          +'<button class="btn btn-primary" onclick="runCollectionReport()">Pull from QuickBooks</button>'
+        +'</div>'
+        +'<div style="display:flex;gap:8px;margin-bottom:14px;align-items:center">'
+          +'<button id="coll-grp-customer" class="btn btn-sm btn-primary" onclick="setCollGroupMode(\'customer\')">Group by Customer</button>'
+          +'<button id="coll-grp-salesperson" class="btn btn-sm" onclick="setCollGroupMode(\'salesperson\')">Group by Sales Person</button>'
+          +'<button id="coll-print-all" class="btn btn-sm" style="margin-left:auto" onclick="doPrintReportGroup(null)">🖨 Print all</button>'
+          +'<button class="btn btn-sm" onclick="exportCollectionReportCSV()">⬇ Export CSV</button>'
+          +'<button class="btn btn-sm" title="Balance/Unapplied data syncs incrementally for speed — use this if you suspect it\'s drifted (e.g. a deleted/voided record)" onclick="forceFullCollectionResync()">Force full resync</button>'
+        +'</div>'
+        +'<div style="position:relative;margin-bottom:14px">'
+          +'<input type="text" id="coll-search" placeholder="Search customer or sales person..." oninput="renderCollectionReport();toggleCollSearchClear()" style="width:100%;padding:9px 34px 9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
+          +'<button id="coll-search-clear" type="button" onclick="clearCollSearch()" title="Clear search" style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);width:22px;height:22px;border:none;background:var(--muted);color:var(--panel);border-radius:50%;font-size:13px;line-height:1;cursor:pointer;padding:0">✕</button>'
+        +'</div>'
+        +'<div id="coll-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'</div>'
-      +'<div style="display:flex;gap:8px;margin-bottom:14px;align-items:center">'
-        +'<button id="coll-grp-customer" class="btn btn-sm btn-primary" onclick="setCollGroupMode(\'customer\')">Group by Customer</button>'
-        +'<button id="coll-grp-salesperson" class="btn btn-sm" onclick="setCollGroupMode(\'salesperson\')">Group by Sales Person</button>'
-        +'<button id="coll-print-all" class="btn btn-sm" style="margin-left:auto" onclick="doPrintReportGroup(null)">🖨 Print all</button>'
-        +'<button class="btn btn-sm" onclick="exportCollectionReportCSV()">⬇ Export CSV</button>'
-        +'<button class="btn btn-sm" title="Balance/Unapplied data syncs incrementally for speed — use this if you suspect it\'s drifted (e.g. a deleted/voided record)" onclick="forceFullCollectionResync()">Force full resync</button>'
-      +'</div>'
-      +'<div style="position:relative;margin-bottom:14px">'
-        +'<input type="text" id="coll-search" placeholder="Search customer or sales person..." oninput="renderCollectionReport();toggleCollSearchClear()" style="width:100%;padding:9px 34px 9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
-        +'<button id="coll-search-clear" type="button" onclick="clearCollSearch()" title="Clear search" style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);width:22px;height:22px;border:none;background:var(--muted);color:var(--panel);border-radius:50%;font-size:13px;line-height:1;cursor:pointer;padding:0">✕</button>'
-      +'</div>'
-      +'<div id="coll-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'<div id="coll-body"></div>'
     +'</div>'
     +'<div id="rpt-panel-cashflow" style="display:none">'
@@ -2616,6 +2618,21 @@ function clearCollSearch(){
   renderCollectionReport();
 }
 window.clearCollSearch=clearCollSearch;
+
+// Re-syncs the table header's sticky offset when the window resizes —
+// the toolbar above it can wrap onto more/fewer lines at different
+// widths, which changes its height, and the table header needs to sit
+// right below it either way, not at a stale offset from before the
+// resize.
+var _collResizeSyncTimer=null;
+window.addEventListener('resize',function(){
+  if(_collResizeSyncTimer) clearTimeout(_collResizeSyncTimer);
+  _collResizeSyncTimer=setTimeout(function(){
+    var toolbarEl=document.getElementById('coll-toolbar-sticky');
+    var tableHeaderEl=document.getElementById('coll-header-sticky');
+    if(toolbarEl && tableHeaderEl) tableHeaderEl.style.top=toolbarEl.offsetHeight+'px';
+  },150);
+});
 window.toggleCollSearchClear=toggleCollSearchClear;
 
 function setCollGroupMode(mode){
@@ -3532,7 +3549,7 @@ function renderCollectionReport(){
   // The header row — sticky so it stays visible while scrolling a long
   // customer list, and built with the SAME grid + spacer structure as a
   // data row below so its labels land directly above the right values.
-  var headerRow='<div style="position:sticky;top:0;z-index:5;display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:12px 16px 10px;background:var(--panel);border-bottom:2px solid var(--line);border-radius:14px 14px 0 0;box-shadow:0 2px 4px rgba(0,0,0,.06)">'
+  var headerRow='<div id="coll-header-sticky" style="position:sticky;top:0;z-index:5;display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:12px 16px 10px;background:var(--panel);border-bottom:2px solid var(--line);border-radius:14px 14px 0 0;box-shadow:0 2px 4px rgba(0,0,0,.06)">'
     +'<span style="flex:1;min-width:160px"></span>'
     +'<button class="btn btn-sm" style="padding:4px 9px;visibility:hidden">🖨</button>'
     +'<button class="btn btn-sm" style="padding:4px 9px;visibility:hidden">⬇</button>'
@@ -3642,6 +3659,15 @@ function renderCollectionReport(){
       +'</div>';
   }
   if(bodyEl) bodyEl.innerHTML=html;
+  // The toolbar (dates/buttons/search/status) is sticky on its own above
+  // this table, but its height isn't fixed — it wraps differently at
+  // different widths, and the status line's text length varies. So the
+  // table's own sticky header can't just hardcode a "top" offset; it has
+  // to measure the toolbar's actual rendered height each time and sit
+  // directly beneath it, or the two would either overlap or leave a gap.
+  var toolbarEl=document.getElementById('coll-toolbar-sticky');
+  var tableHeaderEl=document.getElementById('coll-header-sticky');
+  if(toolbarEl && tableHeaderEl) tableHeaderEl.style.top=toolbarEl.offsetHeight+'px';
 }
 
 // Prints a clean, letter-size version of the Sales Person breakdown —

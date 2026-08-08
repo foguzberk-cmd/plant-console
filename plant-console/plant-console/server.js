@@ -298,7 +298,7 @@ function requireAuth(req, res) {
   const cookies = parseCookies(req);
   const session = getSession(cookies.pc_session);
   if (!session) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.writeHead(401, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
     res.end(JSON.stringify({ error: 'Not authenticated', needsLogin: true }));
     return null;
   }
@@ -312,7 +312,7 @@ function requireAdmin(req, res) {
   const session = requireAuth(req, res);
   if (!session) return null; // requireAuth already sent the 401
   if (session.role !== 'admin') {
-    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.writeHead(403, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
     res.end(JSON.stringify({ error: 'Admin access required.' }));
     return null;
   }
@@ -699,18 +699,20 @@ const server = http.createServer(async (req, res) => {
         return { data, user: u, ok: matched, skipWrite: !needsMigration };
       });
       if (!ok) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.writeHead(401, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
         res.end(JSON.stringify({ error: 'Incorrect email or PIN.' }));
         return;
       }
       const token = createSession(user);
       res.writeHead(200, {
         'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
         'Set-Cookie': sessionCookieHeader(token, SESSION_TTL_MS / 1000)
       });
       res.end(JSON.stringify({ success: true, user: { id: user.id, name: user.name, email: user.email, role: user.role, perms: user.perms || {} } }));
     } catch (e) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: e.message }));
     }
     return;
@@ -718,7 +720,7 @@ const server = http.createServer(async (req, res) => {
   if (url === '/api/logout' && req.method === 'POST') {
     const cookies = parseCookies(req);
     destroySession(cookies.pc_session);
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': sessionCookieHeader('', 0) });
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Set-Cookie': sessionCookieHeader('', 0) });
     res.end(JSON.stringify({ success: true }));
     return;
   }
@@ -726,18 +728,18 @@ const server = http.createServer(async (req, res) => {
     const cookies = parseCookies(req);
     const session = getSession(cookies.pc_session);
     if (!session) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.writeHead(401, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: 'Not authenticated' }));
       return;
     }
     const data = await readSharedData();
     const user = data.users.find(u => u.id === session.userId);
     if (!user) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.writeHead(401, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: 'User no longer exists' }));
       return;
     }
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
     res.end(JSON.stringify({ user: { id: user.id, name: user.name, email: user.email, role: user.role, perms: user.perms || {} } }));
     return;
   }
@@ -858,10 +860,10 @@ const server = http.createServer(async (req, res) => {
         const merged = Object.assign({}, current, incoming);
         return { data: merged };
       });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ success: true }));
     } catch (e) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: e.message }));
     }
     return;
@@ -878,7 +880,7 @@ const server = http.createServer(async (req, res) => {
       const bodyStr = await readRequestBody(req);
       const body = JSON.parse(bodyStr || '{}');
       if (!body || !body.id) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
         res.end(JSON.stringify({ error: 'Missing id' }));
         return;
       }
@@ -892,10 +894,10 @@ const server = http.createServer(async (req, res) => {
         const cappedTombstones = tombstones.length > 5000 ? tombstones.slice(tombstones.length - 5000) : tombstones;
         return { data: Object.assign({}, current, { scaleLogs, deletedScaleLogIds: cappedTombstones }) };
       });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ success: true }));
     } catch (e) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: e.message }));
     }
     return;
@@ -914,7 +916,7 @@ const server = http.createServer(async (req, res) => {
       const bodyStr = await readRequestBody(req);
       const body = JSON.parse(bodyStr || '{}');
       if (!body || !body.billId) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
         res.end(JSON.stringify({ error: 'Missing billId' }));
         return;
       }
@@ -926,10 +928,10 @@ const server = http.createServer(async (req, res) => {
         const cappedTombstones = tombstones.length > 5000 ? tombstones.slice(tombstones.length - 5000) : tombstones;
         return { data: Object.assign({}, current, { cfScheduledDates, deletedCfBillIds: cappedTombstones }) };
       });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ success: true }));
     } catch (e) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: e.message }));
     }
     return;
@@ -954,7 +956,7 @@ const server = http.createServer(async (req, res) => {
       const bodyStr = await readRequestBody(req);
       const body = JSON.parse(bodyStr || '{}');
       if (!body || !body.billId || !body.record) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
         res.end(JSON.stringify({ error: 'Missing billId or record' }));
         return;
       }
@@ -964,10 +966,10 @@ const server = http.createServer(async (req, res) => {
         const tombstones = (Array.isArray(current.deletedCfBillIds) ? current.deletedCfBillIds : []).filter(id => id !== body.billId);
         return { data: Object.assign({}, current, { cfScheduledDates, deletedCfBillIds: tombstones }) };
       });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ success: true }));
     } catch (e) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: e.message }));
     }
     return;
@@ -979,10 +981,10 @@ const server = http.createServer(async (req, res) => {
     if (!requireAdmin(req, res)) return;
     try {
       const list = await listBackups();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ backups: list }));
     } catch (e) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: e.message }));
     }
     return;
@@ -991,10 +993,10 @@ const server = http.createServer(async (req, res) => {
     if (!requireAdmin(req, res)) return;
     try {
       const filename = await takeServerBackup('manual');
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ success: true, filename: filename }));
     } catch (e) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: e.message }));
     }
     return;
@@ -1005,16 +1007,16 @@ const server = http.createServer(async (req, res) => {
       const bodyStr = await readRequestBody(req);
       const payload = JSON.parse(bodyStr || '{}');
       if (!payload || payload._backupType !== 'plant-console-server-backup' || !payload.data) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
         res.end(JSON.stringify({ error: 'That file is not a valid Plant Console server backup.' }));
         return;
       }
       await takeServerBackup('pre-restore');
       await writeSharedData(payload.data);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ success: true }));
     } catch (e) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: e.message }));
     }
     return;
@@ -1023,7 +1025,7 @@ const server = http.createServer(async (req, res) => {
     if (!requireAdmin(req, res)) return;
     const filename = decodeURIComponent(url.slice('/api/backups/'.length, -'/restore'.length));
     if (!BACKUP_FILENAME_RE.test(filename)) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: 'Invalid backup filename.' }));
       return;
     }
@@ -1031,7 +1033,7 @@ const server = http.createServer(async (req, res) => {
       const raw = await fs.promises.readFile(path.join(BACKUP_DIR, filename), 'utf8');
       const payload = JSON.parse(raw);
       if (!payload || payload._backupType !== 'plant-console-server-backup' || !payload.data) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
         res.end(JSON.stringify({ error: 'That file is not a valid server backup.' }));
         return;
       }
@@ -1039,10 +1041,10 @@ const server = http.createServer(async (req, res) => {
       // restore itself has an undo path.
       await takeServerBackup('pre-restore');
       await writeSharedData(payload.data);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ success: true }));
     } catch (e) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: e.message }));
     }
     return;
@@ -1051,7 +1053,7 @@ const server = http.createServer(async (req, res) => {
     if (!requireAdmin(req, res)) return;
     const filename = decodeURIComponent(url.slice('/api/backups/'.length));
     if (!BACKUP_FILENAME_RE.test(filename)) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: 'Invalid backup filename.' }));
       return;
     }
@@ -1059,11 +1061,13 @@ const server = http.createServer(async (req, res) => {
       const raw = await fs.promises.readFile(path.join(BACKUP_DIR, filename), 'utf8');
       res.writeHead(200, {
         'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
         'Content-Disposition': 'attachment; filename="' + filename + '"'
       });
       res.end(raw);
     } catch (e) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.writeHead(404, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: 'Backup not found.' }));
     }
     return;
@@ -1090,7 +1094,7 @@ const server = http.createServer(async (req, res) => {
     const filePath = path.join(__dirname, url.slice(1));
     fs.readFile(filePath, (err, data) => {
       if (err) { res.writeHead(404); res.end('Not found'); return; }
-      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(data);
     });
     return;
@@ -1114,7 +1118,7 @@ const server = http.createServer(async (req, res) => {
   // Check connection status
   if (url === '/api/qb/status') {
     if (!requireAuth(req, res)) return;
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
     res.end(JSON.stringify({ connected: !!accessToken, realm: activeRealm }));
     return;
   }
@@ -1124,10 +1128,10 @@ const server = http.createServer(async (req, res) => {
     if (!requireAuth(req, res)) return;
     try {
       const result = await diagnose(false);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify(result, null, 2));
     } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: err.message }));
     }
     return;
@@ -1151,24 +1155,24 @@ const server = http.createServer(async (req, res) => {
         if (startPos !== null && !isNaN(startPos)) {
           const data = await fetchQBEntityPage(ent, startPos, false, since, from);
           const rows = (data.QueryResponse && data.QueryResponse[ent]) || [];
-          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
           const out = {}; out[ent] = rows; out.pageSize = 100; out.startPosition = startPos;
           res.end(JSON.stringify(out));
           return;
         }
         // Fetch-all mode (kept for small types)
         const rows = await fetchQBEntity(ent, since, from);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
         const out = {}; out[ent] = rows;
         res.end(JSON.stringify(out));
         return;
       }
       const data = await fetchQBDocuments();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify(data));
     } catch (err) {
       const needsReconnect = err.message === 'NEEDS_RECONNECT';
-      res.writeHead(needsReconnect ? 401 : 500, { 'Content-Type': 'application/json' });
+      res.writeHead(needsReconnect ? 401 : 500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: err.message, needsReconnect: needsReconnect }));
     }
     return;
@@ -1179,12 +1183,12 @@ const server = http.createServer(async (req, res) => {
     if (!requireAuth(req, res)) return;
     try {
       const data = await fetchQBItems(false);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify(data));
     } catch (err) {
       console.error('QB fetch error:', err.message);
       const needsReconnect = err.message === 'NEEDS_RECONNECT';
-      res.writeHead(needsReconnect ? 401 : 500, { 'Content-Type': 'application/json' });
+      res.writeHead(needsReconnect ? 401 : 500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({
         error: needsReconnect ? 'QuickBooks connection expired. Please reconnect.' : err.message,
         needsReconnect: needsReconnect
@@ -1198,12 +1202,12 @@ const server = http.createServer(async (req, res) => {
     if (!requireAuth(req, res)) return;
     try {
       const data = await fetchQBCustomers(false);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify(data));
     } catch (err) {
       console.error('QB fetch error:', err.message);
       const needsReconnect = err.message === 'NEEDS_RECONNECT';
-      res.writeHead(needsReconnect ? 401 : 500, { 'Content-Type': 'application/json' });
+      res.writeHead(needsReconnect ? 401 : 500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({
         error: needsReconnect ? 'QuickBooks connection expired. Please reconnect.' : err.message,
         needsReconnect: needsReconnect
@@ -1217,10 +1221,10 @@ const server = http.createServer(async (req, res) => {
     if (!requireAuth(req, res)) return;
     try {
       const ok = await refreshAccessToken();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ success: ok }));
     } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: err.message }));
     }
     return;
@@ -1230,7 +1234,7 @@ const server = http.createServer(async (req, res) => {
   if (url.startsWith('/callback')) {
     const cookies = parseCookies(req);
     if (!getSession(cookies.pc_session)) {
-      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end('<html><body><h2>Your session expired before QuickBooks finished connecting.</h2><p><a href="/">Log back in</a> and try connecting again.</p></body></html>');
       return;
     }
@@ -1243,16 +1247,16 @@ const server = http.createServer(async (req, res) => {
         const msg = ok
           ? '<h2 style="color:#0f6e40">✓ Connected to QuickBooks successfully!</h2><p>You can close this window and return to Plant Console. Click <b>Sync from QuickBooks</b> to load your items.</p>'
           : '<h2 style="color:#c23b33">Connection failed</h2><p>Please try connecting again.</p>';
-        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
         res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>QuickBooks Connection</title>
         <style>body{font-family:Arial,sans-serif;max-width:600px;margin:80px auto;padding:0 24px;text-align:center;line-height:1.7;color:#222}</style></head>
         <body>${msg}<p style="margin-top:30px"><a href="/" style="background:#1a5f7a;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none">Return to Plant Console</a></p></body></html>`);
       } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'text/html' });
+        res.writeHead(500, { 'Content-Type': 'text/html', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
         res.end('<h2>Error connecting: ' + err.message + '</h2>');
       }
     } else {
-      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end('<html><body><h2>No authorization code received.</h2><p><a href="/connect">Try again</a></p></body></html>');
     }
     return;
@@ -1260,7 +1264,7 @@ const server = http.createServer(async (req, res) => {
 
   // EULA page
   if (url === '/eula') {
-    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
     res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>End User License Agreement - Plant Console</title>
     <style>body{font-family:Arial,sans-serif;max-width:800px;margin:60px auto;padding:0 24px;line-height:1.7;color:#222}h1{font-size:26px;margin-bottom:8px}h2{font-size:16px;margin-top:32px}p{margin:10px 0}footer{margin-top:60px;color:#888;font-size:12px}</style></head>
     <body><h1>End User License Agreement</h1><p><strong>Plant Console</strong> — Leader Meat Co.<br>Last updated: June 2026</p>
@@ -1276,7 +1280,7 @@ const server = http.createServer(async (req, res) => {
 
   // Privacy Policy page
   if (url === '/privacy') {
-    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
     res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Privacy Policy - Plant Console</title>
     <style>body{font-family:Arial,sans-serif;max-width:800px;margin:60px auto;padding:0 24px;line-height:1.7;color:#222}h1{font-size:26px;margin-bottom:8px}h2{font-size:16px;margin-top:32px}p{margin:10px 0}footer{margin-top:60px;color:#888;font-size:12px}</style></head>
     <body><h1>Privacy Policy</h1><p><strong>Plant Console</strong> — Leader Meat Co.<br>Last updated: June 2026</p>
@@ -1295,7 +1299,7 @@ const server = http.createServer(async (req, res) => {
     accessToken = '';
     refreshToken = '';
     clearQBTokens();
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
     res.end(JSON.stringify({ success: true }));
     return;
   }

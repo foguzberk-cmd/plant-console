@@ -2379,14 +2379,14 @@ function renderReports(){
     +'<div class="eyebrow">'+s.kicker+'</div><h2>'+s.title+'</h2>'
     +'<p class="lede">Inventory movement statement — opening value, what came in, what went out, and the net change over a period. Pick a department to see that department\'s own statement, or leave it on "All departments" for the plant-wide total.</p>'
     +'<div style="display:flex;gap:8px;margin:6px 0 18px;border-bottom:1px solid var(--line)">'
-      +'<button id="rpt-tab-inventory" class="btn" onclick="switchReportTab(\'inventory\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:#fff;font-weight:700;color:var(--brand);border-top:3px solid var(--brand);border-left:1.5px solid var(--line);border-right:1.5px solid var(--line)">Inventory Statement</button>'
-      +'<button id="rpt-tab-collection" class="btn" onclick="switchReportTab(\'collection\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Customer Payments</button>'
+      +'<button id="rpt-tab-collection" class="btn" onclick="switchReportTab(\'collection\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:#fff;font-weight:700;color:var(--brand);border-top:3px solid var(--brand);border-left:1.5px solid var(--line);border-right:1.5px solid var(--line)">Customer Payments</button>'
       +'<button id="rpt-tab-cashflow" class="btn" onclick="switchReportTab(\'cashflow\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Scheduled Payments</button>'
       +'<button id="rpt-tab-checks" class="btn" onclick="switchReportTab(\'checks\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Checks</button>'
+      +'<button id="rpt-tab-inventory" class="btn" onclick="switchReportTab(\'inventory\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Inventory Statement</button>'
     +'</div>'
   +'</div>'
   +'<span id="rpt-header-anchor" style="display:none"></span>'
-    +'<div id="rpt-panel-inventory">'
+    +'<div id="rpt-panel-inventory" style="display:none">'
     +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
       +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Department</label>'
       +'<select id="rpt-dept" onchange="buildBalanceReport()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)">'
@@ -2408,7 +2408,7 @@ function renderReports(){
       +'<div id="savedReportsList" style="background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden"></div>'
     +'</div>'
     +'</div>'
-    +'<div id="rpt-panel-collection" style="display:none">'
+    +'<div id="rpt-panel-collection">'
       +'<div id="coll-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
         +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
           +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">From</label>'
@@ -2460,6 +2460,13 @@ function renderReports(){
   buildCashFlowTableShell();
   buildChecksTableShell();
   renderSavedReportsList();
+  // Customer Payments is now the default visible tab (Inventory Statement
+  // moved to the end) — switchReportTab() is also what physically
+  // relocates the title+tabs block into the sticky toolbar (see there for
+  // why), so it needs to actually run once here even though nothing was
+  // clicked, or the sticky header would only work after manually clicking
+  // away and back to this tab.
+  switchReportTab('collection');
   // Same fix as Cash Flow's shell: navigating away from Reports and back
   // rebuilds this whole section's HTML from scratch, which would show
   // "no data" here even though a fetch already happened this session —

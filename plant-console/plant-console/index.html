@@ -2618,6 +2618,49 @@ function collColResizeStart(e,colKey){
 }
 window.collColResizeStart=collColResizeStart;
 
+// Column REORDERING — separate from resizing above. Columns are grouped
+// into 4 draggable units (Collected+Future Pmts move together as one,
+// since they share a visual border box and are conceptually paired);
+// Sales, Ending balance, and % collected each move independently. The
+// Customers column stays pinned first — it holds the row's expand
+// chevron and print/export buttons, which only make sense at the start
+// of a row, so it's intentionally not part of the reorderable set.
+var _COLL_COL_ORDER_DEFAULT=['sales','collectedFuture','ending','pct'];
+var _collColOrder=(function(){
+  try{
+    var v=JSON.parse(localStorage.getItem('pc_coll_col_order')||'null');
+    if(v && v.length===_COLL_COL_ORDER_DEFAULT.length && _COLL_COL_ORDER_DEFAULT.every(function(k){ return v.indexOf(k)>=0; })) return v;
+    return _COLL_COL_ORDER_DEFAULT.slice();
+  }catch(e){ return _COLL_COL_ORDER_DEFAULT.slice(); }
+})();
+var _collColDragKey=null;
+function collColDragStart(e,colKey){
+  _collColDragKey=colKey;
+  e.dataTransfer.effectAllowed='move';
+  // Firefox requires setData to be called for drag to actually start.
+  try{ e.dataTransfer.setData('text/plain',colKey); }catch(err){}
+}
+function collColDragOver(e){
+  e.preventDefault(); // required to allow dropping at all
+  e.dataTransfer.dropEffect='move';
+}
+function collColDrop(e,targetKey){
+  e.preventDefault();
+  var dragKey=_collColDragKey;
+  _collColDragKey=null;
+  if(!dragKey || dragKey===targetKey) return;
+  var from=_collColOrder.indexOf(dragKey);
+  var to=_collColOrder.indexOf(targetKey);
+  if(from<0 || to<0) return;
+  _collColOrder.splice(from,1);
+  _collColOrder.splice(to,0,dragKey);
+  localStorage.setItem('pc_coll_col_order',JSON.stringify(_collColOrder));
+  if(_collPayments) renderCollectionReport();
+}
+window.collColDragStart=collColDragStart;
+window.collColDragOver=collColDragOver;
+window.collColDrop=collColDrop;
+
 var _cashFlowInvoices=null; // cached open (Balance>0) Invoices from the last successful Cash Flow pull
 var _cashFlowBills=null;    // cached open (Balance>0) Bills from the last successful Cash Flow pull
 function setCashFlowStartBalance(v){
@@ -3647,13 +3690,16 @@ function renderCollectionReport(){
   // via arithmetic, and not QuickBooks's live "right now" balance. So these
   // stay accurate no matter what "To" date is picked, past or present.
   //
-  // Value area layout: a CSS Grid with 5 columns (sales, collected,
-  // future, ending, pct), widths driven by --cw-* custom properties set
-  // ONCE on the outer #coll-table-wrap and inherited by every row AND the
-  // header below — this is what makes the columns genuinely resizable and
-  // keeps the header aligned with the data without having to touch every
-  // row individually when a handle gets dragged.
-  var gridCols='grid-template-columns:var(--cw-sales) var(--cw-collected) var(--cw-future) var(--cw-ending) var(--cw-pct);';
+  // Value area layout: a CSS Grid, widths driven by --cw-* custom
+  // properties set ONCE on the outer #coll-table-wrap and inherited by
+  // every row AND the header below — this is what makes the columns
+  // genuinely resizable and keeps the header aligned with the data
+  // without having to touch every row individually when a handle gets
+  // dragged. The actual LEFT-TO-RIGHT ORDER of columns is driven by
+  // _collColOrder (see collColDragStart/collColDrop above) — this
+  // registry is what makes a column's header, grid-template fragment,
+  // and data-cell rendering all travel together as one unit whenever a
+  // column gets dragged to a new position.
   function valCell(val,colorPositive,bold,tooltip){
     return '<span'+(tooltip?' title="'+esc(tooltip)+'"':'')+' style="display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:center;font-family:var(--mono);font-size:'+(bold?'14px':'13px')+';font-weight:'+(bold?'700':'600')+';color:'+(colorPositive&&val>0?'#b8460b':(bold?'#0f6e40':'var(--ink)'))+'">'+money(val)+'</span>';
   }
@@ -3662,7 +3708,9 @@ function renderCollectionReport(){
   // so stacked row after row underneath the header (which DOES have the
   // top border + rounded corners), the vertical lines line up
   // continuously down the page: it reads as ONE bordered column spanning
-  // the whole table, not a separate box per customer.
+  // the whole table, not a separate box per customer. They always move
+  // together when dragged, since splitting this pair apart wouldn't make
+  // visual sense with a shared border.
   //
   // display:block + overflow:hidden here (and on every other cell below)
   // matters more than it looks: without it, a dollar amount too wide for
@@ -3683,20 +3731,55 @@ function renderCollectionReport(){
     var label=pct===null?'—':Math.round(pct)+'%';
     return '<span style="display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:center;font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ink)">'+label+'</span>';
   }
-  // A drag handle at the right edge of a header cell — now visibly
-  // rendered (a small vertical bar), not just an invisible hit-area, so
-  // it's actually discoverable instead of something you have to already
-  // know is there. Mousedown starts tracking horizontal mouse movement
-  // (see collColResizeStart) and grows/shrinks that one column via its
-  // --cw-* custom property.
+  // A drag handle at the right edge of a header cell — visibly rendered
+  // (a small vertical bar), not just an invisible hit-area. Its own
+  // mousedown handler stops propagation, which is what keeps it from
+  // ALSO triggering the header cell's drag-to-REORDER behavior below —
+  // grabbing this specific narrow strip resizes; grabbing anywhere else
+  // on the header reorders.
   function resizeHandle(colKey){
     return '<span onmousedown="collColResizeStart(event,\''+colKey+'\')" title="Drag to resize" style="position:absolute;right:-10px;top:0;bottom:0;width:18px;cursor:col-resize;z-index:2;display:flex;align-items:center;justify-content:center">'
       +'<span style="width:3px;height:60%;background:var(--muted);border-radius:2px;opacity:.5"></span>'
     +'</span>';
   }
-  function headerCell(lbl,colKey,tooltip){
-    return '<span'+(tooltip?' title="'+esc(tooltip)+'"':'')+' style="position:relative;overflow:visible;white-space:nowrap;text-align:center;font-family:var(--mono);font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink)'+(tooltip?';cursor:help':'')+'">'+lbl+resizeHandle(colKey)+'</span>';
+  // draggable="true" + the three ondrag*/ondrop handlers are what make a
+  // header cell reorderable — grab anywhere on it (other than the resize
+  // handle) and drop it on another column's header to swap positions.
+  function headerCell(lbl,colKey,orderKey,tooltip){
+    return '<span'+(tooltip?' title="'+esc(tooltip)+'"':'')+' draggable="true" ondragstart="collColDragStart(event,\''+orderKey+'\')" ondragover="collColDragOver(event)" ondrop="collColDrop(event,\''+orderKey+'\')" style="position:relative;overflow:visible;white-space:nowrap;text-align:center;font-family:var(--mono);font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);cursor:grab'+(tooltip?';cursor:help':'')+'">'+lbl+resizeHandle(colKey)+'</span>';
   }
+  // The column registry — one entry per reorderable unit. gridTemplate is
+  // this column's fragment of grid-template-columns; header()/cell() are
+  // called in whatever order _collColOrder currently says, so dragging a
+  // column moves its header, its grid track, AND its data together.
+  function _collColDef(key){
+    switch(key){
+      case 'sales': return {
+        gridTemplate:'var(--cw-sales)',
+        header:function(){ return headerCell('Sales','sales','sales'); },
+        cell:function(e){ return valCell(e.sales,false,false); }
+      };
+      case 'collectedFuture': return {
+        gridTemplate:'var(--cw-collected) var(--cw-future)',
+        header:function(){
+          return '<span draggable="true" ondragstart="collColDragStart(event,\'collectedFuture\')" ondragover="collColDragOver(event)" ondrop="collColDrop(event,\'collectedFuture\')" style="position:relative;overflow:visible;text-align:center;font-family:var(--mono);font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);border-left:1px solid var(--line);border-top:1px solid var(--line);border-radius:9px 0 0 0;padding:5px 4px 4px;cursor:grab"><span style="display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">Collected</span>'+resizeHandle('collected')+'</span>'
+            +'<span draggable="true" ondragstart="collColDragStart(event,\'collectedFuture\')" ondragover="collColDragOver(event)" ondrop="collColDrop(event,\'collectedFuture\')" title="Both are money from a payment — the difference is timing. Collected is realized: the payment has actually cleared. Future Payments exists but is dated after today, so it hasn\'t actually happened yet by any real-world clock." style="position:relative;overflow:visible;text-align:center;font-family:var(--mono);font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);border-right:1px solid var(--line);border-top:1px solid var(--line);border-radius:0 9px 0 0;padding:5px 4px 4px;cursor:help"><span style="display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">Future Pmts</span>'+resizeHandle('future')+'</span>';
+        },
+        cell:function(e){ return collectedCell(e.total)+futureCell(e.futurePayments||0); }
+      };
+      case 'ending': return {
+        gridTemplate:'var(--cw-ending)',
+        header:function(){ return headerCell('Ending balance','ending','ending',"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before."); },
+        cell:function(e){ return valCell(e.balance-(e.unapplied||0)-(e.creditMemo||0)+(e.journal||0),true,true,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before. Nets Unapplied and Credit memo out, and adds Journal entry (now netted per-customer, not raw — see the Journal entry detail list)."); }
+      };
+      case 'pct': return {
+        gridTemplate:'var(--cw-pct)',
+        header:function(){ return headerCell('% collected','pct','pct'); },
+        cell:function(e,opening){ return pctCell(e.total,opening); }
+      };
+    }
+  }
+  var gridCols='grid-template-columns:'+_collColOrder.map(function(k){ return _collColDef(k).gridTemplate; }).join(' ')+';';
   // The header row — sticky so it stays visible while scrolling a long
   // customer list, and built with the SAME grid + spacer structure as a
   // data row below so its labels land directly above the right values.
@@ -3706,11 +3789,7 @@ function renderCollectionReport(){
     +'<button class="btn btn-sm" style="padding:4px 9px;visibility:hidden">🖨</button>'
     +'<button class="btn btn-sm" style="padding:4px 9px;visibility:hidden">⬇</button>'
     +'<span style="display:grid;'+gridCols+'gap:16px;align-items:end">'
-      +headerCell('Sales','sales')
-      +'<span style="position:relative;overflow:visible;text-align:center;font-family:var(--mono);font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);border-left:1px solid var(--line);border-top:1px solid var(--line);border-radius:9px 0 0 0;padding:5px 4px 4px"><span style="display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">Collected</span>'+resizeHandle('collected')+'</span>'
-      +'<span style="position:relative;overflow:visible;text-align:center;font-family:var(--mono);font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);border-right:1px solid var(--line);border-top:1px solid var(--line);border-radius:0 9px 0 0;padding:5px 4px 4px;cursor:help" title="Both are money from a payment — the difference is timing. Collected is realized: the payment has actually cleared. Future Payments exists but is dated after today, so it hasn\'t actually happened yet by any real-world clock."><span style="display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">Future Pmts</span>'+resizeHandle('future')+'</span>'
-      +headerCell('Ending balance','ending')
-      +headerCell('% collected','pct')
+      +_collColOrder.map(function(k){ return _collColDef(k).header(); }).join('')
     +'</span>'
   +'</div>';
 
@@ -3732,11 +3811,7 @@ function renderCollectionReport(){
         +'<button onclick="event.stopPropagation();doPrintReportGroup(_collRowKeys['+ri+'])" class="btn btn-sm" title="Print this row" style="padding:4px 9px">🖨</button>'
         +'<button onclick="event.stopPropagation();exportCollectionReportGroupCSV(_collRowKeys['+ri+'])" class="btn btn-sm" title="Export this row to CSV/Excel" style="padding:4px 9px">⬇</button>'
         +'<span style="display:grid;'+gridCols+'gap:16px;align-items:center">'
-          +valCell(entry.sales,false,false)
-          +collectedCell(entry.total)
-          +futureCell(entry.futurePayments||0)
-          +valCell(entry.balance-(entry.unapplied||0)-(entry.creditMemo||0)+(entry.journal||0),true,true,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before. Nets Unapplied and Credit memo out, and adds Journal entry (now netted per-customer, not raw — see the Journal entry detail list). Verified directly: for Avora, this correctly lands on $68,393.15, matching QuickBooks's own Transaction List total exactly.")
-          +pctCell(entry.total,opening)
+          +_collColOrder.map(function(k){ return _collColDef(k).cell(entry,opening); }).join('')
         +'</span>'
       +'</div>'
       +'<div id="'+rowId+'" style="display:none;padding-bottom:6px">'
@@ -3798,11 +3873,10 @@ function renderCollectionReport(){
     +'<span style="width:var(--cw-name);flex-shrink:0;font-weight:700">Total</span>'
     +'<span style="flex:1"></span>'
     +'<span style="display:grid;'+gridCols+'gap:16px;align-items:center">'
-      +valCell(grandSales,false,false)
-      +collectedCell(grandTotal)
-      +futureCell(grandFuturePayments||0)
-      +valCell(grandBalance-(grandUnapplied||0)-(grandCreditMemo||0)+(grandJournal||0),true,true,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before. Nets Unapplied and Credit memo out, and adds Journal entry (now netted per-customer, not raw — see the Journal entry detail list). Check the reconciliation box below if this ever looks off.")
-      +pctCell(grandTotal,grandOpening)
+      +(function(){
+        var grandEntry={sales:grandSales,total:grandTotal,futurePayments:grandFuturePayments||0,balance:grandBalance,unapplied:grandUnapplied||0,creditMemo:grandCreditMemo||0,journal:grandJournal||0};
+        return _collColOrder.map(function(k){ return _collColDef(k).cell(grandEntry,grandOpening); }).join('');
+      })()
     +'</span>'
   +'</div>';
   html+='</div>';

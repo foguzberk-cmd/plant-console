@@ -3502,16 +3502,22 @@ function _computeCollectionGroupsUncached(){
     var cm=creditMemoOfCust(qbCustId);
     var jrn=journalOfCust(qbCustId);
     if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undepositedFunds:undepF,futurePayments:futP,creditMemo:cm,journal:jrn,journalDetail:journalDetailOfCust(qbCustId),undepositedFundsDetail:undepositedFundsDetailOfCust(qbCustId),futurePaymentsDetail:futurePaymentsDetailOfCust(qbCustId),payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndepositedFunds+=undepF; grandFuturePayments+=futP; grandCreditMemo+=cm; grandJournal+=jrn; }
-    // A check received TODAY hasn't necessarily made it to the bank yet —
-    // it's not "collected" in any real sense until it has. If it's dated
-    // today AND still sitting in the Undeposited Funds account (not yet
-    // swept into a real bank deposit), treat it the same as a genuinely
-    // future-dated payment instead of counting it as realized cash: pull
-    // it out of Collected and into Future Payments for this customer.
-    // Once it's actually deposited (DepositToAccountRef points at a real
-    // bank account), it counts as Collected like any other payment.
-    var isUndepositedToday=(date===todayStr && _looksLikeUndepositedAccount(p.DepositToAccountRef));
-    if(isUndepositedToday){
+    // A check hasn't necessarily made it to the bank yet just because its
+    // date has arrived or passed — it's not "collected" in any real sense
+    // until it has. Originally this only checked payments dated EXACTLY
+    // today, but the same logic applies to any past-dated payment too: if
+    // it's still sitting in Undeposited Funds (not yet swept into a real
+    // bank deposit), it belongs in Future Payments, not Collected,
+    // regardless of how long ago it was dated. Genuinely future-dated
+    // payments (date > today) are handled separately and always redirected
+    // regardless of deposit status — a payment dated next month can't
+    // possibly have cleared yet no matter what its deposit field says, so
+    // date takes precedence there. This check only matters for closing the
+    // gap on today-or-earlier payments specifically. Once a payment is
+    // actually deposited (DepositToAccountRef points at a real bank
+    // account), it counts as Collected like any other payment.
+    var isUndepositedNotYetReal=(date<=todayStr && _looksLikeUndepositedAccount(p.DepositToAccountRef));
+    if(isUndepositedNotYetReal){
       byCust[custKey].futurePayments+=amt;
       grandFuturePayments+=amt;
     } else {
@@ -3521,7 +3527,7 @@ function _computeCollectionGroupsUncached(){
 
     var rep=salesPersonOf(p)||'Unassigned';
     if(!bySalesPerson[rep]) bySalesPerson[rep]={total:0,balance:0,opening:0,sales:0,unapplied:0,undepositedFunds:0,futurePayments:0,creditMemo:0,journal:0,payments:[],_custKeysSeen:{},custBalances:[]};
-    if(isUndepositedToday){
+    if(isUndepositedNotYetReal){
       bySalesPerson[rep].futurePayments+=amt;
     } else {
       bySalesPerson[rep].total+=amt;
@@ -3539,7 +3545,7 @@ function _computeCollectionGroupsUncached(){
     }
     bySalesPerson[rep].payments.push({date:date,amount:amt,ref:ref,customer:custName});
 
-    if(!isUndepositedToday) grandTotal+=amt;
+    if(!isUndepositedNotYetReal) grandTotal+=amt;
   });
 
   // Second pass: Sales (Invoices + Sales Receipts issued during the same

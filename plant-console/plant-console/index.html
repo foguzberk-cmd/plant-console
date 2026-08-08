@@ -3242,7 +3242,33 @@ function computeAsOfBalances(fromDate,toDate){
 // Computes the customer/sales-person groupings from the cached
 // payments+sales data — shared by the on-screen report (renderCollectionReport)
 // and the printable/CSV-export versions (doPrintReportGroup, exportCollectionReportCSV), so all three always agree.
+//
+// Memoized: this rebuilds several full maps across every payment and
+// invoice (Undeposited Funds, Future Payments, Credit Memo, Journal
+// Entry, plus the customer/sales-person grouping itself) — real work,
+// proportional to the size of the whole pull. Without caching, it was
+// re-running from scratch on every render call, INCLUDING every single
+// keystroke while typing in the search box (search filters the result
+// afterward, so none of that recomputation was even needed for a
+// search). Cached on (_collGroupMode, the exact _collPayments array
+// reference) — that reference only changes once, right when a fresh
+// pull completes, so this is invalidated automatically exactly when it
+// needs to be, and reused for everything else (typing in search,
+// re-rendering, printing, exporting) in between.
+var _collGroupsCache=null;
+var _collGroupsCacheMode=null;
+var _collGroupsCacheSrc=null;
 function computeCollectionGroups(){
+  if(_collGroupsCache && _collGroupsCacheMode===_collGroupMode && _collGroupsCacheSrc===_collPayments){
+    return _collGroupsCache;
+  }
+  var result=_computeCollectionGroupsUncached();
+  _collGroupsCache=result;
+  _collGroupsCacheMode=_collGroupMode;
+  _collGroupsCacheSrc=_collPayments;
+  return result;
+}
+function _computeCollectionGroupsUncached(){
   var payments=_collPayments||[];
 
   // Look up each payment's customer (by QuickBooks id) to read Sales Person.

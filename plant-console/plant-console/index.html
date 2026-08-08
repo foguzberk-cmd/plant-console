@@ -2576,11 +2576,11 @@ var _cashFlowStartBalance=(function(){ var v=localStorage.getItem('pc_cf_start_b
 // reference the same variable, instead of having to touch every row's
 // DOM node directly.
 var _collColWidths=(function(){
-  try{ var v=JSON.parse(localStorage.getItem('pc_coll_col_widths')||'null'); return v||{sales:100,collected:90,future:90,ending:120,pct:70}; }
-  catch(e){ return {sales:100,collected:90,future:90,ending:120,pct:70}; }
+  try{ var v=JSON.parse(localStorage.getItem('pc_coll_col_widths')||'null'); return v||{name:220,sales:100,collected:90,future:90,ending:120,pct:70}; }
+  catch(e){ return {name:220,sales:100,collected:90,future:90,ending:120,pct:70}; }
 })();
 function _collColVarStyle(){
-  return '--cw-sales:'+_collColWidths.sales+'px;--cw-collected:'+_collColWidths.collected+'px;--cw-future:'+_collColWidths.future+'px;--cw-ending:'+_collColWidths.ending+'px;--cw-pct:'+_collColWidths.pct+'px;';
+  return '--cw-name:'+(_collColWidths.name||220)+'px;--cw-sales:'+_collColWidths.sales+'px;--cw-collected:'+_collColWidths.collected+'px;--cw-future:'+_collColWidths.future+'px;--cw-ending:'+_collColWidths.ending+'px;--cw-pct:'+_collColWidths.pct+'px;';
 }
 function collColResizeStart(e,colKey){
   e.preventDefault();
@@ -3677,7 +3677,8 @@ function renderCollectionReport(){
   // customer list, and built with the SAME grid + spacer structure as a
   // data row below so its labels land directly above the right values.
   var headerRow='<div id="coll-header-sticky" style="position:static;z-index:15;display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:12px 16px 10px;background:#F5EFE8;border-bottom:2px solid var(--line);border-radius:14px 14px 0 0;box-shadow:0 2px 4px rgba(0,0,0,.06)">'
-    +'<span style="flex:1;min-width:160px"></span>'
+    +'<span style="position:relative;width:var(--cw-name);flex-shrink:0;text-align:left;font-family:var(--mono);font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink)">Customers'+resizeHandle('name')+'</span>'
+    +'<span style="flex:1"></span>'
     +'<button class="btn btn-sm" style="padding:4px 9px;visibility:hidden">🖨</button>'
     +'<button class="btn btn-sm" style="padding:4px 9px;visibility:hidden">⬇</button>'
     +'<span style="display:grid;'+gridCols+'gap:16px;align-items:end">'
@@ -3700,9 +3701,10 @@ function renderCollectionReport(){
     var opening=entry.opening||0;
     html+='<div style="border-bottom:1px solid var(--line)">'
       +'<div onclick="toggleReportRow(\''+rowId+'\')" style="cursor:pointer;display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:12px 16px">'
-        +'<span style="flex:1;min-width:160px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px">'
+        +'<span style="width:var(--cw-name);flex-shrink:0;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">'
           +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
           +esc(label)+' <span style="color:var(--muted);font-weight:400;font-family:var(--mono);font-size:12px">('+rows.length+' payment'+(rows.length!==1?'s':'')+')</span></span>'
+        +'<span style="flex:1"></span>'
         +'<button onclick="event.stopPropagation();doPrintReportGroup(_collRowKeys['+ri+'])" class="btn btn-sm" title="Print this row" style="padding:4px 9px">🖨</button>'
         +'<button onclick="event.stopPropagation();exportCollectionReportGroupCSV(_collRowKeys['+ri+'])" class="btn btn-sm" title="Export this row to CSV/Excel" style="padding:4px 9px">⬇</button>'
         +'<span style="display:grid;'+gridCols+'gap:16px;align-items:center">'
@@ -3769,7 +3771,8 @@ function renderCollectionReport(){
       +'</div></div>';
   });
   html+='<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:14px 16px;background:var(--bg);border-radius:0 0 14px 14px">'
-    +'<span style="flex:1;min-width:120px;font-weight:700">Total</span>'
+    +'<span style="width:var(--cw-name);flex-shrink:0;font-weight:700">Total</span>'
+    +'<span style="flex:1"></span>'
     +'<span style="display:grid;'+gridCols+'gap:16px;align-items:center">'
       +valCell(grandSales,false,false)
       +collectedCell(grandTotal)

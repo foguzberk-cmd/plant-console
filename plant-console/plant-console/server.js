@@ -10,6 +10,13 @@ const QB_REALM = process.env.QB_REALM || '';
 const CLIENT_ID = process.env.QB_CLIENT_ID || '';
 const CLIENT_SECRET = process.env.QB_CLIENT_SECRET || '';
 const REDIRECT_URI = process.env.QB_REDIRECT_URI || 'https://plant-console-app.onrender.com/callback';
+// From the Intuit Developer Portal's Webhooks page (a separate secret from
+// CLIENT_ID/CLIENT_SECRET) — used to verify that an incoming webhook POST
+// genuinely came from Intuit and wasn't forged by sending a fake "everything
+// changed" payload at this endpoint. Webhooks simply won't work without this
+// set, but the rest of the app (including the existing background sync) is
+// unaffected if it's missing.
+const QB_WEBHOOK_VERIFIER_TOKEN = process.env.QB_WEBHOOK_VERIFIER_TOKEN || '';
 
 // Fail loudly rather than silently running with a broken QuickBooks integration.
 // (Previously these had real credentials hardcoded as fallback defaults — that
@@ -606,6 +613,147 @@ async function fetchQBEntity(entity, since, from) {
   return all;
 }
 
+// Fetches exactly ONE record by ID, directly — not a query, a real single-
+// entity read (GET /v3/company/{realm}/{entity}/{id}). This is what a
+// webhook notification actually needs: it tells us "Customer 42 changed,"
+// not what changed about it, so a targeted read of that one record is the
+// correct follow-up — not a full re-sync of every customer.
+async function fetchQBEntityById(entity, id, retry) {
+  if (!retry) await ensureFreshToken();
+  const reqPath = `/v3/company/${activeRealm}/${entity.toLowerCase()}/${encodeURIComponent(id)}?minorversion=75`;
+  const res = await httpsRequest({
+    hostname: 'quickbooks.api.intuit.com',
+    path: reqPath,
+    method: 'GET',
+    headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/json' }
+  });
+  if (res.status === 401 && !retry) {
+    const ok = await refreshAccessToken();
+    if (ok) return fetchQBEntityById(entity, id, true);
+    throw new Error('NEEDS_RECONNECT');
+  }
+  if (res.status === 404) return null; // e.g. deleted between the webhook firing and this fetch
+  if (res.status !== 200) throw new Error('QB API error ' + res.status + ' fetching ' + entity + ' ' + id + ': ' + res.body);
+  const data = JSON.parse(res.body);
+  return data[entity] || null; // QB wraps the single record under its entity name, e.g. {"Customer": {...}}
+}
+
+// ===== QUICKBOOKS WEBHOOKS =====
+// Verifies that an incoming webhook payload genuinely came from Intuit.
+// Per Intuit's documented scheme: HMAC-SHA256 of the RAW request body
+// (bytes, not a re-serialized/re-parsed copy — re-stringifying JSON can
+// change whitespace and silently break this comparison), keyed with the
+// Verifier Token from the Developer Portal, base64-encoded, compared
+// against the incoming "intuit-signature" header.
+function verifyIntuitWebhookSignature(rawBodyStr, signatureHeader) {
+  if (!QB_WEBHOOK_VERIFIER_TOKEN || !signatureHeader) return false;
+  try {
+    const computed = crypto.createHmac('sha256', QB_WEBHOOK_VERIFIER_TOKEN)
+      .update(Buffer.from(rawBodyStr, 'utf8'))
+      .digest('base64');
+    // Constant-time comparison — a naive === here would leak timing
+    // information about how many leading bytes matched, which is exactly
+    // the kind of subtle gap that turns "we verify signatures" into
+    // "we verify signatures, sort of."
+    const a = Buffer.from(computed);
+    const b = Buffer.from(signatureHeader);
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+  } catch (e) {
+    return false;
+  }
+}
+
+// Extracts a flat list of {entity, id, operation} from either webhook
+// payload shape Intuit uses — the newer CloudEvents format (required for
+// all NEW subscriptions) or the older dataChangeEvent format (still seen
+// on subscriptions created before the cutover). Handling both defensively
+// costs almost nothing and avoids a "which format is this again?" support
+// problem later.
+function parseIntuitWebhookEvents(body) {
+  const out = [];
+  if (Array.isArray(body && body.events)) {
+    // CloudEvents format: { events: [{ entity, entityId, operation, ... }] }
+    body.events.forEach(e => {
+      if (e && e.entity && e.entityId) {
+        out.push({ entity: e.entity, id: e.entityId, operation: e.operation || '' });
+      }
+    });
+  }
+  if (Array.isArray(body && body.eventNotifications)) {
+    // Legacy format: { eventNotifications: [{ dataChangeEvent: { entities: [{ name, id, operation }] } }] }
+    body.eventNotifications.forEach(n => {
+      const entities = (n && n.dataChangeEvent && n.dataChangeEvent.entities) || [];
+      entities.forEach(e => {
+        if (e && e.name && e.id) out.push({ entity: e.name, id: e.id, operation: e.operation || '' });
+      });
+    });
+  }
+  return out;
+}
+
+// Applies ONE changed Customer or Vendor to the shared data store, using
+// SyncToken (a version counter QuickBooks includes on every object) to
+// reject a stale/out-of-order webhook delivery instead of letting it
+// overwrite a newer version with an older one — Intuit's own docs warn
+// deliveries can arrive duplicated or out of order, so this isn't a
+// theoretical concern.
+async function applyWebhookEntityChange(entityName, id) {
+  const entity = entityName.toLowerCase() === 'vendor' ? 'Vendor' : (entityName.toLowerCase() === 'customer' ? 'Customer' : null);
+  if (!entity) return; // scoped to Customers/Vendors for now — see the discussion this was built from
+  const record = await fetchQBEntityById(entity, id);
+  await updateSharedData(async (current) => {
+    if (entity === 'Customer') {
+      const customers = Array.isArray(current.customers) ? current.customers.slice() : [];
+      const idx = customers.findIndex(c => c && c.qbId === id);
+      if (!record) {
+        // Deleted/deactivated between the webhook firing and this fetch —
+        // Customer/Vendor can't truly be deleted in QuickBooks (name-list
+        // entities only ever get deactivated), so there's nothing to apply.
+        return { skipWrite: true };
+      }
+      const newSyncToken = Number(record.SyncToken || 0);
+      const oldSyncToken = idx >= 0 ? Number((customers[idx].qbSyncToken) || -1) : -1;
+      if (idx >= 0 && newSyncToken <= oldSyncToken) return { skipWrite: true }; // stale/duplicate delivery
+      const mapped = {
+        id: idx >= 0 ? customers[idx].id : 'cust_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+        qbId: record.Id,
+        qbSyncToken: newSyncToken,
+        name: record.DisplayName || record.FullyQualifiedName || record.CompanyName || '',
+        active: record.Active !== false,
+        salesRep: idx >= 0 ? (customers[idx].salesRep || '') : '',
+        balance: Number(record.Balance || 0)
+      };
+      if (idx >= 0) customers[idx] = mapped; else customers.push(mapped);
+      return { data: Object.assign({}, current, { customers }) };
+    } else {
+      const vendors = Array.isArray(current.vendors) ? current.vendors.slice() : [];
+      const idx = vendors.findIndex(v => v && v.qbId === id);
+      if (!record) return { skipWrite: true };
+      const newSyncToken = Number(record.SyncToken || 0);
+      const oldSyncToken = idx >= 0 ? Number((vendors[idx].qbSyncToken) || -1) : -1;
+      if (idx >= 0 && newSyncToken <= oldSyncToken) return { skipWrite: true };
+      let purchRep = '';
+      (record.CustomField || []).forEach(f => {
+        if (!purchRep && f.Name && (f.Name.toLowerCase().includes('purch') || f.Name.toLowerCase().includes('rep')) && f.StringValue) {
+          purchRep = f.StringValue.trim();
+        }
+      });
+      const finalPurchRep = purchRep || (idx >= 0 ? (vendors[idx].purchRep || '') : '');
+      const mapped = {
+        id: idx >= 0 ? vendors[idx].id : 'vend_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+        qbId: record.Id,
+        qbSyncToken: newSyncToken,
+        name: record.DisplayName || record.CompanyName || '',
+        active: record.Active !== false,
+        purchRep: finalPurchRep
+      };
+      if (idx >= 0) vendors[idx] = mapped; else vendors.push(mapped);
+      return { data: Object.assign({}, current, { vendors }) };
+    }
+  });
+}
+
 // ===== BACKGROUND SYNC =====
 // Runs on the server itself, independent of any open browser tab — the
 // point is that nobody should ever have to click "Sync from QuickBooks"
@@ -636,6 +784,13 @@ async function backgroundSyncCustomers() {
       const mapped = {
         id: existing >= 0 ? customers[existing].id : 'cust_' + Date.now() + '_' + Math.random().toString(36).slice(2),
         qbId: qc.Id,
+        // Tracked so a later webhook delivery (see applyWebhookEntityChange)
+        // can tell whether IT has newer information than what's already
+        // here — without this being kept current on every write path, that
+        // staleness check would only be accurate immediately after a
+        // webhook fires, then silently go stale itself the next time this
+        // periodic sync runs and overwrites it.
+        qbSyncToken: Number(qc.SyncToken || 0),
         name: qc.DisplayName || qc.FullyQualifiedName || qc.CompanyName || '',
         active: qc.Active !== false,
         // Sales Rep is Plant-Console-only, never touched by any QB sync —
@@ -669,6 +824,7 @@ async function backgroundSyncVendors() {
       const mapped = {
         id: existing >= 0 ? vendors[existing].id : 'vend_' + Date.now() + '_' + Math.random().toString(36).slice(2),
         qbId: qv.Id,
+        qbSyncToken: Number(qv.SyncToken || 0), // see the matching comment in backgroundSyncCustomers
         name: qv.DisplayName || qv.CompanyName || '',
         active: qv.Active !== false,
         purchRep: finalPurchRep
@@ -777,6 +933,51 @@ const server = http.createServer(async (req, res) => {
   const fullUrl = req.url;
   const url = fullUrl.split('?')[0];
   const queryParams = querystring.parse(fullUrl.split('?')[1] || '');
+
+  // QuickBooks webhook receiver — deliberately has NO requireAuth() call.
+  // Intuit itself calls this directly; it has no session cookie for this
+  // app and never will. The signature check below IS this endpoint's
+  // authentication — that's the whole point of verifying it.
+  if (url === '/api/qb-webhook' && req.method === 'POST') {
+    let rawBody = '';
+    try {
+      rawBody = await readRequestBody(req);
+    } catch (e) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Could not read request body.' }));
+      return;
+    }
+    const signature = req.headers['intuit-signature'];
+    if (!verifyIntuitWebhookSignature(rawBody, signature)) {
+      // Deliberately vague response — don't give an attacker probing this
+      // endpoint any hint about WHY verification failed (missing header,
+      // wrong token, bad payload, etc).
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Signature verification failed.' }));
+      return;
+    }
+    // Respond 200 immediately, before doing any of our own downstream
+    // QuickBooks API calls — Intuit expects a fast acknowledgment and can
+    // disable an endpoint that's slow or unreliable to respond. The actual
+    // fetch-and-apply work happens after responding, not before.
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ received: true }));
+    try {
+      const body = JSON.parse(rawBody || '{}');
+      const events = parseIntuitWebhookEvents(body);
+      for (const ev of events) {
+        try {
+          await applyWebhookEntityChange(ev.entity, ev.id);
+        } catch (e) {
+          console.error('Webhook: failed to apply', ev.entity, ev.id, '-', e.message);
+          // One bad event shouldn't stop the rest of the batch from applying.
+        }
+      }
+    } catch (e) {
+      console.error('Webhook: failed to parse/process payload:', e.message);
+    }
+    return;
+  }
 
   // ===== Auth =====
   if (url === '/api/login' && req.method === 'POST') {

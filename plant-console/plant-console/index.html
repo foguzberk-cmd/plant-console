@@ -8159,6 +8159,35 @@ var _custDraft=null; // working copy of customerAllowed[_custPanelDept] — noth
 // sitting in memory from page load (which could be minutes or hours
 // stale on a tab that's been open a while, and is exactly the kind of
 // staleness that caused confusion before this rework).
+// Shared by the Customers and Vendors panels — shows when the server's
+// own background sync last ran, so the automatic sync isn't a completely
+// invisible black box. Renders into a placeholder div immediately, then
+// fills it in once the (tiny, fast) status fetch resolves.
+function _relativeTimeAgo(ms){
+  var diff=Date.now()-ms;
+  var mins=Math.round(diff/60000);
+  if(mins<1) return 'just now';
+  if(mins<60) return mins+' minute'+(mins!==1?'s':'')+' ago';
+  var hrs=Math.round(mins/60);
+  if(hrs<24) return hrs+' hour'+(hrs!==1?'s':'')+' ago';
+  var days=Math.round(hrs/24);
+  return days+' day'+(days!==1?'s':'')+' ago';
+}
+async function _renderBackgroundSyncStatusInto(elId){
+  var el=document.getElementById(elId);
+  if(!el) return;
+  try{
+    var res=await fetch('/api/background-sync-status',{cache:'no-store'});
+    if(!res.ok) return;
+    var status=await res.json();
+    if(!status.lastSyncAt){ el.textContent='Automatic background sync hasn\'t run yet.'; return; }
+    var r=status.lastResult;
+    var parts=[];
+    if(r&&r.customers) parts.push('Customers '+(r.customers.ok?('✓ '+r.customers.count):'✗ failed'));
+    if(r&&r.vendors) parts.push('Vendors '+(r.vendors.ok?('✓ '+r.vendors.count):'✗ failed'));
+    el.textContent='Auto-synced '+_relativeTimeAgo(status.lastSyncAt)+(parts.length?' — '+parts.join(', '):'')+(status.inFlight?' (syncing now…)':'');
+  }catch(e){ /* leave the placeholder text as-is on failure — not worth surfacing an error for a status line */ }
+}
 async function renderCustomersPanel(){
   var panel=document.getElementById('customersPanel');
   if(!panel) return;
@@ -8173,6 +8202,7 @@ async function renderCustomersPanel(){
     }
   }catch(e){ /* fall through and render with whatever's already in memory rather than block the whole panel on a network hiccup */ }
   _renderCustomersPanelBody(panel);
+  _renderBackgroundSyncStatusInto('cust-bgsync-status');
 }
 function _renderCustomersPanelBody(panel){
   if(!customers.length){
@@ -8186,6 +8216,7 @@ function _renderCustomersPanelBody(panel){
   if(!_custPanelDept || DEPARTMENTS.indexOf(_custPanelDept)<0) _custPanelDept=DEPARTMENTS[0];
   _custDraft=(customerAllowed[_custPanelDept]||[]).slice();
   panel.innerHTML=`
+    <div id="cust-bgsync-status" style="font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-bottom:10px">Checking automatic sync status…</div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
       <label style="font-size:12px;color:var(--muted);white-space:nowrap">Department:</label>
       <select id="cust-dept" onchange="onCustomerDeptChange()" style="padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink)">
@@ -8479,6 +8510,7 @@ async function renderVendorsPanel(){
     }
   }catch(e){ /* fall through and render with whatever's already in memory rather than block on a network hiccup */ }
   _renderVendorsPanelBody(panel);
+  _renderBackgroundSyncStatusInto('vend-bgsync-status');
 }
 function _renderVendorsPanelBody(panel){
   if(!vendors.length){
@@ -8492,6 +8524,8 @@ function _renderVendorsPanelBody(panel){
   if(!_vendPanelDept || DEPARTMENTS.indexOf(_vendPanelDept)<0) _vendPanelDept=DEPARTMENTS[0];
   _vendDraft=vendors.filter(function(v){ return _vendorDepartments[v.qbId||v.name]===_vendPanelDept; }).map(function(v){ return v.qbId||v.name; });
   panel.innerHTML=`
+    <div id="vend-bgsync-status" style="font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-bottom:10px">Checking automatic sync status…</div>
+
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
       <label style="font-size:12px;color:var(--muted);white-space:nowrap">Department:</label>
       <select id="vend-dept" onchange="onVendorDeptChange()" style="padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink)">

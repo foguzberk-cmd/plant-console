@@ -2465,7 +2465,7 @@ function renderReports(){
           +'<button class="btn btn-sm" onclick="exportCollectionReportCSV()">⬇ Export CSV</button>'
           +'<button class="btn btn-sm" title="Balance/Unapplied data syncs incrementally for speed — use this if you suspect it\'s drifted (e.g. a deleted/voided record)" onclick="forceFullCollectionResync()">Force full resync</button>'
         +'</div>'
-        +'<div style="position:relative;margin-bottom:14px">'
+        +'<div style="position:relative;margin-bottom:14px;max-width:320px">'
           +'<input type="text" id="coll-search" placeholder="Search customer or sales person..." oninput="renderCollectionReport();toggleCollSearchClear()" style="width:100%;padding:9px 34px 9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
           +'<button id="coll-search-clear" type="button" onclick="clearCollSearch()" title="Clear search" style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);width:22px;height:22px;border:none;background:var(--muted);color:var(--panel);border-radius:50%;font-size:13px;line-height:1;cursor:pointer;padding:0">✕</button>'
         +'</div>'

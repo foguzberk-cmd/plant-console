@@ -1335,6 +1335,31 @@ async function _pushToServerImpl(){
           var newCustomerAllowed=Object.assign({}, smallData.customerAllowed, customerAllowed);
           if(JSON.stringify(newCustomerAllowed)!==JSON.stringify(customerAllowed)){ customerAllowed=newCustomerAllowed; safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed)); }
         }
+        // customers (salesRep, etc.) had NO pre-push protection at all —
+        // unlike everything else in this block, a stale local copy could
+        // blindly overwrite a Sales Rep edit made moments earlier on
+        // another device. Take the server's current copy as the base (it's
+        // more likely to be fresh than whatever this device loaded at page-
+        // open), but keep any customer THIS device knows about that the
+        // server doesn't have yet (e.g. one added moments ago whose push
+        // hasn't landed for some reason — a plain "trust the server" swap
+        // would otherwise silently drop it), then re-apply this device's
+        // own very-recent edits on top via the same _recentlySavedCustomers
+        // grace-window mechanism already used elsewhere, so an edit THIS
+        // device just made doesn't get discarded by its own pre-push
+        // refresh either.
+        if(Array.isArray(smallData.customers)&&smallData.customers.length){
+          var mergedCustomers=smallData.customers.slice();
+          var _serverCustIds={};
+          mergedCustomers.forEach(function(c){ if(c) _serverCustIds[c.id]=true; });
+          customers.forEach(function(c){ if(c && !_serverCustIds[c.id]) mergedCustomers.push(c); });
+          Object.keys(_recentlySavedCustomers).forEach(function(id){
+            var i=mergedCustomers.findIndex(function(c){return c.id===id;});
+            if(i>=0) mergedCustomers[i]=_recentlySavedCustomers[id];
+            else mergedCustomers.push(_recentlySavedCustomers[id]);
+          });
+          if(JSON.stringify(mergedCustomers)!==JSON.stringify(customers)){ customers=mergedCustomers; safeSetLocal('pc_customers',JSON.stringify(customers)); }
+        }
         if(smallData.cfScheduledDates && typeof smallData.cfScheduledDates==='object' && !Array.isArray(smallData.cfScheduledDates)){
           var newCfScheduled=Object.assign({}, smallData.cfScheduledDates, _cfScheduledDates);
           Object.keys(_recentlyDeletedCfBillIds).forEach(function(id){ delete newCfScheduled[id]; });

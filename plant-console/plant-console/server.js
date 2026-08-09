@@ -854,6 +854,103 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({ customers: data.customers || [], customerAllowed: data.customerAllowed || {} }));
     return;
   }
+  // Same "dumb terminal" pattern as customers/salesrep — updates ONLY this
+  // one vendor's Purch Rep field, nothing else touched.
+  if (url.startsWith('/api/vendors/') && url.endsWith('/purchrep') && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    const vKey = decodeURIComponent(url.slice('/api/vendors/'.length, -'/purchrep'.length));
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      const purchRep = typeof body.purchRep === 'string' ? body.purchRep.trim() : '';
+      let found = false;
+      await updateSharedData(async (current) => {
+        const vendors = Array.isArray(current.vendors) ? current.vendors : [];
+        const idx = vendors.findIndex(v => v && (v.qbId || v.name) === vKey);
+        if (idx >= 0) {
+          found = true;
+          vendors[idx] = Object.assign({}, vendors[idx], { purchRep });
+        }
+        return { data: Object.assign({}, current, { vendors }), skipWrite: !found };
+      });
+      if (!found) {
+        res.writeHead(404, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+        res.end(JSON.stringify({ error: 'Vendor not found.' }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, vendorKey: vKey, purchRep }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  // Single-vendor version of the department endpoint below — used by CSV
+  // bulk import, which touches many individual vendors (possibly across
+  // several different departments in one file) rather than "replace one
+  // department's whole list."
+  if (url.startsWith('/api/vendors/') && url.endsWith('/department') && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    const vKey = decodeURIComponent(url.slice('/api/vendors/'.length, -'/department'.length));
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      const dept = typeof body.dept === 'string' && body.dept ? body.dept : null;
+      await updateSharedData(async (current) => {
+        const vendorDepartments = Object.assign({}, current.vendorDepartments || {});
+        if (dept) vendorDepartments[vKey] = dept;
+        else delete vendorDepartments[vKey];
+        return { data: Object.assign({}, current, { vendorDepartments }) };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, vendorKey: vKey, dept: dept }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  // Targeted write for ONE department's vendor assignments. vendorDepartments
+  // is shaped {vendorKey: dept} (one department per vendor, unlike
+  // customerAllowed's {dept: [ids]}), so "set this department's vendor
+  // list" means: clear this department off anything currently assigned to
+  // it but missing from the new list, and assign it to everything IN the
+  // new list — without ever touching a vendor that belongs to a DIFFERENT
+  // department. Mirrors exactly what the client used to compute locally
+  // before pushing an entire snapshot.
+  if (url.startsWith('/api/vendor-departments/') && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    const dept = decodeURIComponent(url.slice('/api/vendor-departments/'.length));
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      const vendorKeys = Array.isArray(body.vendorKeys) ? body.vendorKeys : [];
+      const keySet = new Set(vendorKeys);
+      await updateSharedData(async (current) => {
+        const vendorDepartments = Object.assign({}, current.vendorDepartments || {});
+        Object.keys(vendorDepartments).forEach(k => {
+          if (vendorDepartments[k] === dept && !keySet.has(k)) delete vendorDepartments[k];
+        });
+        vendorKeys.forEach(k => { vendorDepartments[k] = dept; });
+        return { data: Object.assign({}, current, { vendorDepartments }) };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, dept: dept, count: vendorKeys.length }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  // Read-only fresh fetch, pairs with the two endpoints above.
+  if (url === '/api/vendors' && req.method === 'GET') {
+    if (!requireAuth(req, res)) return;
+    const data = await readSharedData();
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+    res.end(JSON.stringify({ vendors: data.vendors || [], vendorDepartments: data.vendorDepartments || {} }));
+    return;
+  }
   if (url === '/api/data' && req.method === 'POST') {
     if (!requireAuth(req, res)) return;
     try {

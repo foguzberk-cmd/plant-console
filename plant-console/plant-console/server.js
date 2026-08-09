@@ -602,6 +602,104 @@ async function fetchQBEntity(entity, since, from) {
   return all;
 }
 
+// ===== BACKGROUND SYNC =====
+// Runs on the server itself, independent of any open browser tab — the
+// point is that nobody should ever have to click "Sync from QuickBooks"
+// and wait for it. By the time anyone opens the app, Customers and
+// Vendors should already be close to current, kept that way by this
+// running on a timer whether or not anyone's looking. Client-triggered
+// manual syncs (the existing "Sync" buttons) still work exactly as
+// before, for anyone who wants to force an immediate refresh rather than
+// wait for the next scheduled run — this is additive, not a replacement.
+//
+// Deliberately limited to Customers and Vendors for now, not the much
+// larger/slower Bill/Invoice/Payment/JournalEntry sync used by the
+// Customer Payments and Inventory reports — those have real date-range
+// and incremental-sync complexity that deserves its own careful pass
+// later, not a rushed inclusion here.
+const BACKGROUND_SYNC_INTERVAL_MS = 30 * 60 * 1000; // every 30 minutes
+let _backgroundSyncInFlight = false;
+let _lastBackgroundSyncAt = 0;
+let _lastBackgroundSyncResult = null; // { at, customers: {ok,count,error}, vendors: {ok,count,error} }
+
+async function backgroundSyncCustomers() {
+  const data = await fetchQBCustomers(false);
+  const qbCustomers = (data.QueryResponse && data.QueryResponse.Customer) || [];
+  await updateSharedData(async (current) => {
+    const customers = Array.isArray(current.customers) ? current.customers.slice() : [];
+    qbCustomers.forEach(qc => {
+      const existing = customers.findIndex(x => x && x.qbId === qc.Id);
+      const mapped = {
+        id: existing >= 0 ? customers[existing].id : 'cust_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+        qbId: qc.Id,
+        name: qc.DisplayName || qc.FullyQualifiedName || qc.CompanyName || '',
+        active: qc.Active !== false,
+        // Sales Rep is Plant-Console-only, never touched by any QB sync —
+        // always carried forward from whatever's already there.
+        salesRep: existing >= 0 ? (customers[existing].salesRep || '') : '',
+        balance: Number(qc.Balance || 0)
+      };
+      if (existing >= 0) customers[existing] = mapped; else customers.push(mapped);
+    });
+    return { data: Object.assign({}, current, { customers }) };
+  });
+  return qbCustomers.length;
+}
+
+async function backgroundSyncVendors() {
+  const qbVendors = await fetchQBEntity('Vendor');
+  await updateSharedData(async (current) => {
+    const vendors = Array.isArray(current.vendors) ? current.vendors.slice() : [];
+    qbVendors.forEach(qv => {
+      const existing = vendors.findIndex(x => x && x.qbId === qv.Id);
+      let purchRep = '';
+      (qv.CustomField || []).forEach(f => {
+        if (!purchRep && f.Name && (f.Name.toLowerCase().includes('purch') || f.Name.toLowerCase().includes('rep')) && f.StringValue) {
+          purchRep = f.StringValue.trim();
+        }
+      });
+      // Same fallback as the client-side sync: QuickBooks reliably does NOT
+      // expose this custom field, so almost every call here finds nothing —
+      // always fall back to whatever's already saved instead of wiping it.
+      const finalPurchRep = purchRep || (existing >= 0 ? (vendors[existing].purchRep || '') : '');
+      const mapped = {
+        id: existing >= 0 ? vendors[existing].id : 'vend_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+        qbId: qv.Id,
+        name: qv.DisplayName || qv.CompanyName || '',
+        active: qv.Active !== false,
+        purchRep: finalPurchRep
+      };
+      if (existing >= 0) vendors[existing] = mapped; else vendors.push(mapped);
+    });
+    return { data: Object.assign({}, current, { vendors }) };
+  });
+  return qbVendors.length;
+}
+
+async function runBackgroundSync() {
+  if (_backgroundSyncInFlight) return; // never overlap two runs
+  if (!accessToken && !refreshToken) return; // QuickBooks isn't connected yet — nothing to sync
+  _backgroundSyncInFlight = true;
+  const result = { at: new Date().toISOString(), customers: null, vendors: null };
+  try {
+    const count = await backgroundSyncCustomers();
+    result.customers = { ok: true, count };
+  } catch (e) {
+    result.customers = { ok: false, error: e.message };
+    console.error('Background customer sync failed:', e.message);
+  }
+  try {
+    const count = await backgroundSyncVendors();
+    result.vendors = { ok: true, count };
+  } catch (e) {
+    result.vendors = { ok: false, error: e.message };
+    console.error('Background vendor sync failed:', e.message);
+  }
+  _lastBackgroundSyncAt = Date.now();
+  _lastBackgroundSyncResult = result;
+  _backgroundSyncInFlight = false;
+}
+
 // Fetch all purchase/sales documents that move inventory
 async function fetchQBDocuments() {
   // Refresh once up front
@@ -1315,6 +1413,20 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Lets the UI show "last automatic sync: N minutes ago" instead of the
+  // background job being a completely invisible black box — also useful
+  // for confirming it's actually running at all if something looks stale.
+  if (url === '/api/background-sync-status') {
+    if (!requireAuth(req, res)) return;
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+    res.end(JSON.stringify({
+      inFlight: _backgroundSyncInFlight,
+      lastSyncAt: _lastBackgroundSyncAt || null,
+      lastResult: _lastBackgroundSyncResult
+    }));
+    return;
+  }
+
   // Diagnostic endpoint — visit this URL directly in the browser
   if (url === '/api/qb/test') {
     if (!requireAuth(req, res)) return;
@@ -1505,4 +1617,9 @@ server.listen(PORT, () => {
   // on disk right away, instead of waiting for the next backup to be taken
   // (which could be up to an hour away) to trim down existing excess files.
   pruneOldBackups().catch(e => console.error('Could not prune old backups on startup:', e.message));
+  // First background Customers/Vendors sync shortly after boot (not
+  // immediately — give the server a moment to finish settling first),
+  // then on the regular interval after that.
+  setTimeout(() => { runBackgroundSync().catch(e => console.error('Background sync error:', e.message)); }, 15000);
+  setInterval(() => { runBackgroundSync().catch(e => console.error('Background sync error:', e.message)); }, BACKGROUND_SYNC_INTERVAL_MS);
 });

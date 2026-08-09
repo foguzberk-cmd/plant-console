@@ -32,6 +32,10 @@ if (!QB_REALM || !CLIENT_ID || !CLIENT_SECRET) {
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'plant-data.json');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+// Separate file, not bundled into DATA_FILE — this can hold thousands of
+// invoices/payments and shouldn't bloat every read/write of the main,
+// far-more-frequently-touched shared data file.
+const COLLECTION_CACHE_FILE = path.join(DATA_DIR, 'collection-report-cache.json');
 const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [] };
 
 // ===== PIN HASHING =====
@@ -950,6 +954,46 @@ const server = http.createServer(async (req, res) => {
     const data = await readSharedData();
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
     res.end(JSON.stringify({ customers: data.customers || [], customerAllowed: data.customerAllowed || {} }));
+    return;
+  }
+  // Customer Payments report cache — NOT part of the main /api/data
+  // snapshot (kept in its own dedicated file, given its size: this can
+  // bundle thousands of invoices/payments). Whoever clicks "Pull from
+  // QuickBooks" still does that full multi-entity fetch themselves (this
+  // deliberately doesn't touch that fetch/compute logic at all — see the
+  // comments in index.html's runCollectionReport for why that's stayed
+  // hands-off for now), but the RESULT gets saved here afterward so every
+  // other terminal can load the same data instantly instead of repeating
+  // the same slow pull. A blind replace is correct here (unlike
+  // per-field customer data) — the latest successful pull is always
+  // meant to fully supersede whatever was cached before it.
+  if (url === '/api/collection-report-cache' && req.method === 'GET') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const raw = await fs.promises.readFile(COLLECTION_CACHE_FILE, 'utf8');
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(raw);
+    } catch (e) {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ cache: null }));
+    }
+    return;
+  }
+  if (url === '/api/collection-report-cache' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      // Just validate it parses as JSON before writing — the actual shape
+      // is whatever the client's own (already-correct) compute logic
+      // produced, this endpoint doesn't need to understand it.
+      JSON.parse(bodyStr || '{}');
+      await fs.promises.writeFile(COLLECTION_CACHE_FILE, bodyStr, 'utf8');
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
     return;
   }
   // Same "dumb terminal" pattern as customers/salesrep — updates ONLY this

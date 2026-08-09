@@ -8128,9 +8128,28 @@ function labelSelectAll(on){
 
 var _custPanelDept=null; // which department's customer list is currently being edited
 var _custDraft=null; // working copy of customerAllowed[_custPanelDept] — nothing persists until Save is clicked
-function renderCustomersPanel(){
+// "Dumb terminal" read — fetches the current customers/customerAllowed
+// straight from the server every time this panel opens or the department
+// switches, instead of trusting whatever copy happened to already be
+// sitting in memory from page load (which could be minutes or hours
+// stale on a tab that's been open a while, and is exactly the kind of
+// staleness that caused confusion before this rework).
+async function renderCustomersPanel(){
   var panel=document.getElementById('customersPanel');
   if(!panel) return;
+  try{
+    var res=await fetch('/api/customers',{cache:'no-store',headers:{'Cache-Control':'no-cache, no-store, must-revalidate','Pragma':'no-cache'}});
+    if(res.ok){
+      var fresh=await res.json();
+      if(Array.isArray(fresh.customers)) customers=fresh.customers;
+      if(fresh.customerAllowed && typeof fresh.customerAllowed==='object') customerAllowed=fresh.customerAllowed;
+      safeSetLocal('pc_customers',JSON.stringify(customers));
+      safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed));
+    }
+  }catch(e){ /* fall through and render with whatever's already in memory rather than block the whole panel on a network hiccup */ }
+  _renderCustomersPanelBody(panel);
+}
+function _renderCustomersPanelBody(panel){
   if(!customers.length){
     panel.innerHTML='<div class="txn-empty" style="margin:0"><p>No customers synced yet.</p></div>'
       +'<button class="btn btn-primary btn-sm" id="custSyncBtn" onclick="qbSyncCustomers()" style="margin-top:12px">'
@@ -8205,24 +8224,45 @@ function renderCustomersList(){
   var countEl=document.getElementById('cust-count');
   if(countEl) countEl.textContent=_custDraft.length+' of '+customers.length+' customers allowed for '+_custPanelDept+' (unsaved until you click Save)';
 }
-// Sales Rep is managed locally in Plant Console (not synced from QuickBooks —
-// confirmed that field isn't exposed via the QB API). Saves immediately on
-// blur, independent of the per-department allow-list draft/Save flow above.
-function updateCustomerSalesRep(id,value){
-  var c=customers.find(function(x){return x.id===id;});
-  if(!c) return;
-  c.salesRep=(value||'').trim();
-  saveCustomers();
-  // If this introduced a brand-new Sales Rep name, add it to the shared
-  // suggestion list in place (no full re-render, so we don't disrupt
-  // scroll position or focus while typing).
-  if(c.salesRep){
-    var dl=document.getElementById('salesRepOptions');
-    if(dl && !dl.querySelector('option[value="'+CSS.escape(c.salesRep)+'"]')){
-      var opt=document.createElement('option');
-      opt.value=c.salesRep;
-      dl.appendChild(opt);
+// "Dumb terminal" write — sends ONLY this one field, for this one
+// customer, straight to the server. No local array mutation, no full
+// snapshot push, nothing to merge or race against another device's edit
+// to a different customer. This replaced the old approach (mutate the
+// in-memory customers array, then push the ENTIRE list) after that
+// pattern caused a real data-loss bug: any other device's routine push,
+// using its own possibly-stale copy of the full list, could silently
+// overwrite a Sales Rep edit made moments earlier elsewhere, with no
+// error and no warning.
+async function updateCustomerSalesRep(id,value){
+  var salesRep=(value||'').trim();
+  var input=document.querySelector('input[onchange*="'+id+'"]');
+  var statusEl=document.getElementById('cust-save-status');
+  try{
+    var res=await fetch('/api/customers/'+encodeURIComponent(id)+'/salesrep',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({salesRep:salesRep})
+    });
+    if(!res.ok) throw new Error('Server responded with '+res.status);
+    // Update this device's own in-memory copy too, purely so the UI
+    // (search filter, the datalist of known reps, CSV export) reflects
+    // the change immediately — the server write above is what actually
+    // matters, this is just keeping the local display in sync with it.
+    var c=customers.find(function(x){return x.id===id;});
+    if(c) c.salesRep=salesRep;
+    safeSetLocal('pc_customers',JSON.stringify(customers));
+    if(salesRep){
+      var dl=document.getElementById('salesRepOptions');
+      if(dl && !dl.querySelector('option[value="'+CSS.escape(salesRep)+'"]')){
+        var opt=document.createElement('option');
+        opt.value=salesRep;
+        dl.appendChild(opt);
+      }
     }
+    if(statusEl){ statusEl.textContent='Sales Rep saved.'; statusEl.style.color='#0f6e40'; setTimeout(function(){ if(statusEl.textContent==='Sales Rep saved.') statusEl.textContent=''; },3000); }
+  }catch(e){
+    if(statusEl){ statusEl.textContent='Could not save Sales Rep — check your connection and try again.'; statusEl.style.color='#c0392b'; }
+    if(input) input.style.borderColor='#c0392b';
   }
 }
 
@@ -8319,24 +8359,32 @@ function customerSelectAll(on){
   });
   renderCustomersList();
 }
+// "Dumb terminal" write — sends ONLY this department's allow-list,
+// straight to the server, rather than the old approach (push the ENTIRE
+// customerAllowed object across every department, then retry-until-
+// confirmed if it failed). Nothing to merge, nothing that can race
+// against a save for a DIFFERENT department on another device, because
+// this never touches anything but the one key it names.
 async function saveCustomerAllowedForDept(){
   var dept=_custPanelDept;
-  customerAllowed[dept]=_custDraft.slice();
-  safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed));
-  _recentlySavedCustomerAllowed[dept]=customerAllowed[dept].slice();
-  setTimeout(function(){ delete _recentlySavedCustomerAllowed[dept]; },8000);
+  var allowed=_custDraft.slice();
   var statusEl=document.getElementById('cust-save-status');
   if(statusEl){ statusEl.textContent='Saving to server…'; statusEl.style.color=''; }
-  _writeInFlight++;
-  var ok=false;
+  var ok=false, detail='';
   try{
-    for(var attempt=0;attempt<3 && !ok;attempt++){
-      if(attempt>0) await new Promise(function(r){ setTimeout(r,800); });
-      ok=await pushToServer();
-    }
-  }catch(e){ ok=false; }
-  finally{
-    _writeInFlight--;
+    var res=await fetch('/api/customer-allowed/'+encodeURIComponent(dept),{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({allowed:allowed})
+    });
+    ok=res.ok;
+    if(!ok) detail='Server responded with '+res.status;
+  }catch(e){ ok=false; detail=e.message||'network error'; }
+  if(ok){
+    // Update this device's own in-memory copy too, purely for immediate
+    // display — the server write above is the one that actually matters.
+    customerAllowed[dept]=allowed;
+    safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed));
   }
   var freshStatus=document.getElementById('cust-save-status');
   if(freshStatus){
@@ -8344,31 +8392,9 @@ async function saveCustomerAllowedForDept(){
       freshStatus.textContent='Saved for '+dept+' — confirmed on the server.';
       freshStatus.style.color='';
     }else{
-      freshStatus.textContent='Saved on THIS device only — could not confirm with the server ('+(_lastPushFailureDetail||'unknown error')+'). It will keep retrying automatically.';
+      freshStatus.textContent='Could not save to the server ('+(detail||'unknown error')+'). Check your connection and try again.';
       freshStatus.style.color='#c0392b';
-      retryCustomerAllowedSaveUntilConfirmed(dept);
     }
-  }
-}
-// Mirrors retryLabelAllowedSaveUntilConfirmed — same pattern, different element/message.
-async function retryCustomerAllowedSaveUntilConfirmed(dept){
-  _writeInFlight++;
-  try{
-    for(var attempt=0;attempt<10;attempt++){
-      await new Promise(function(r){ setTimeout(r,3000); });
-      var ok=false;
-      try{ ok=await pushToServer(); }catch(e){ ok=false; }
-      if(ok){
-        var el=document.getElementById('cust-save-status');
-        if(el && el.textContent.indexOf('could not confirm with the server')>=0){
-          el.textContent='Now confirmed on the server for '+dept+'.';
-          el.style.color='#0f6e40';
-        }
-        return;
-      }
-    }
-  } finally {
-    _writeInFlight--;
   }
 }
 async function qbSyncCustomers(){

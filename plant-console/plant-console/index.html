@@ -1796,6 +1796,11 @@ async function qbSyncCustomersCore(){
     var mapped={
       id: existing>=0 ? customers[existing].id : 'cust_'+Date.now()+'_'+Math.random().toString(36).slice(2),
       qbId: qc.Id,
+      // Kept in step with the server's own background sync and webhook
+      // handler (see server.js) — all three write paths need to agree on
+      // this or the webhook's staleness check goes wrong the next time
+      // ANY of them runs.
+      qbSyncToken: Number(qc.SyncToken||0),
       name: qc.DisplayName||qc.FullyQualifiedName||qc.CompanyName||'',
       active: qc.Active!==false,
       salesRep: existing>=0 ? (customers[existing].salesRep||'') : '',
@@ -1853,6 +1858,7 @@ async function qbSyncVendorsCore(){
     var mapped={
       id: existing>=0 ? vendors[existing].id : 'vend_'+Date.now()+'_'+Math.random().toString(36).slice(2),
       qbId: qv.Id,
+      qbSyncToken: Number(qv.SyncToken||0), // see the matching comment in qbSyncCustomersCore
       name: qv.DisplayName||qv.CompanyName||'',
       active: qv.Active!==false,
       purchRep: finalPurchRep

@@ -2414,9 +2414,11 @@ function renderReports(){
   var firstOpen=earliestOpeningDate()||today;
   var deptOpts=DEPARTMENTS.map(function(d){return '<option value="'+esc(d)+'">'+esc(d)+'</option>';}).join('');
   view.innerHTML='<div id="rpt-header-sticky" style="background:var(--bg);padding-bottom:2px">'
+    +'<div id="rpt-header-text">'
     +'<div class="eyebrow">'+s.kicker+'</div><h2>'+s.title+'</h2>'
     +'<p class="lede">Inventory movement statement — opening value, what came in, what went out, and the net change over a period. Pick a department to see that department\'s own statement, or leave it on "All departments" for the plant-wide total.</p>'
-    +'<div style="display:flex;gap:8px;margin:6px 0 18px;border-bottom:1px solid var(--line)">'
+    +'</div>'
+    +'<div id="rpt-tabs-bar" style="display:flex;gap:8px;margin:6px 0 18px;border-bottom:1px solid var(--line)">'
       +'<button id="rpt-tab-collection" class="btn" onclick="switchReportTab(\'collection\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:#fff;font-weight:700;color:var(--brand);border-top:3px solid var(--brand);border-left:1.5px solid var(--line);border-right:1.5px solid var(--line)">Customer Payments</button>'
       +'<button id="rpt-tab-cashflow" class="btn" onclick="switchReportTab(\'cashflow\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Scheduled Payments</button>'
       +'<button id="rpt-tab-checks" class="btn" onclick="switchReportTab(\'checks\')" style="border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Checks</button>'
@@ -6273,11 +6275,25 @@ function switchReportTab(tab){
   var rptHeaderEl=document.getElementById('rpt-header-sticky');
   var collToolbarEl=document.getElementById('coll-toolbar-sticky');
   var viewTopAnchor=document.getElementById('rpt-header-anchor');
+  var rptHeaderTextEl=document.getElementById('rpt-header-text');
+  var rptTabsBarEl=document.getElementById('rpt-tabs-bar');
   if(rptHeaderEl){
     if(tab==='collection' && collToolbarEl){
       collToolbarEl.insertBefore(rptHeaderEl,collToolbarEl.firstChild);
-    } else if(viewTopAnchor && rptHeaderEl.parentNode!==viewTopAnchor.parentNode){
-      viewTopAnchor.parentNode.insertBefore(rptHeaderEl,viewTopAnchor);
+      // Once pinned to the top of the screen, the "Reports" title and the
+      // long lede paragraph just eat vertical space without adding value —
+      // collapse them here so the sticky area stays short and the customer
+      // list is visible sooner when scrolling.
+      if(rptHeaderTextEl) rptHeaderTextEl.style.display='none';
+      if(rptTabsBarEl){ rptTabsBarEl.style.margin='0 0 8px'; }
+      if(rptHeaderEl){ rptHeaderEl.style.paddingTop='6px'; }
+    } else {
+      if(rptHeaderTextEl) rptHeaderTextEl.style.display='';
+      if(rptTabsBarEl){ rptTabsBarEl.style.margin='6px 0 18px'; }
+      if(rptHeaderEl){ rptHeaderEl.style.paddingTop=''; }
+      if(viewTopAnchor && rptHeaderEl.parentNode!==viewTopAnchor.parentNode){
+        viewTopAnchor.parentNode.insertBefore(rptHeaderEl,viewTopAnchor);
+      }
     }
   }
   if(tab==='collection' && typeof _collSyncStickyOffsets==='function') setTimeout(_collSyncStickyOffsets,0);

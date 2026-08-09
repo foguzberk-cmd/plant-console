@@ -780,6 +780,80 @@ const server = http.createServer(async (req, res) => {
     }));
     return;
   }
+  // Targeted, single-field write — the first piece of a broader move
+  // toward "dumb terminal" architecture: instead of every device loading
+  // the full customer list into memory, mutating its own copy, and pushing
+  // an entire snapshot back (the pattern that caused the Sales Rep data-
+  // loss bug), this updates ONLY the one field, for the one customer, that
+  // was actually changed. There's nothing to merge and nothing that can
+  // race against another device's edit to a DIFFERENT customer, because
+  // this never touches anything but the single record it names.
+  if (url.startsWith('/api/customers/') && url.endsWith('/salesrep') && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    const custId = decodeURIComponent(url.slice('/api/customers/'.length, -'/salesrep'.length));
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      const salesRep = typeof body.salesRep === 'string' ? body.salesRep.trim() : '';
+      let found = false;
+      await updateSharedData(async (current) => {
+        const customers = Array.isArray(current.customers) ? current.customers : [];
+        const idx = customers.findIndex(c => c && c.id === custId);
+        if (idx >= 0) {
+          found = true;
+          customers[idx] = Object.assign({}, customers[idx], { salesRep });
+        }
+        return { data: Object.assign({}, current, { customers }), skipWrite: !found };
+      });
+      if (!found) {
+        res.writeHead(404, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+        res.end(JSON.stringify({ error: 'Customer not found.' }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, id: custId, salesRep }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  // Same "dumb terminal" reasoning as above, for the per-department
+  // customer allow-list: this touches ONLY that one department's key
+  // inside customerAllowed, never the whole object, so a save for
+  // "Resale Box" can never race against or clobber a concurrent save for
+  // a different department on another device.
+  if (url.startsWith('/api/customer-allowed/') && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    const dept = decodeURIComponent(url.slice('/api/customer-allowed/'.length));
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      const allowed = Array.isArray(body.allowed) ? body.allowed : [];
+      await updateSharedData(async (current) => {
+        const customerAllowed = Object.assign({}, current.customerAllowed || {});
+        customerAllowed[dept] = allowed;
+        return { data: Object.assign({}, current, { customerAllowed }) };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, dept: dept, count: allowed.length }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  // Read-only, on-demand fetch of just the customer list + allow-lists —
+  // pairs with the two endpoints above. A "dumb terminal" should re-read
+  // this fresh whenever the Customers settings panel opens, rather than
+  // trusting whatever copy is already sitting in memory from page load.
+  if (url === '/api/customers' && req.method === 'GET') {
+    if (!requireAuth(req, res)) return;
+    const data = await readSharedData();
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+    res.end(JSON.stringify({ customers: data.customers || [], customerAllowed: data.customerAllowed || {} }));
+    return;
+  }
   if (url === '/api/data' && req.method === 'POST') {
     if (!requireAuth(req, res)) return;
     try {

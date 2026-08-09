@@ -34,3 +34,10 @@ services:
         sync: false
       - key: QB_REDIRECT_URI
         value: https://plant-console-app.onrender.com/callback
+      # From the Intuit Developer Portal -> your app -> Webhooks page (a
+      # separate secret from CLIENT_ID/CLIENT_SECRET). Required for
+      # /api/qb-webhook to verify that incoming requests genuinely came
+      # from Intuit. The rest of the app works fine without this set —
+      # only real-time Customer/Vendor webhook updates need it.
+      - key: QB_WEBHOOK_VERIFIER_TOKEN
+        sync: false

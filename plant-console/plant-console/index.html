@@ -1843,12 +1843,19 @@ async function qbSyncVendorsCore(){
       }
     });
     if(purchRep) withCustomFieldCount++;
+    // If QuickBooks's custom field lookup found nothing (the confirmed-
+    // normal case per the comment above — this field isn't reliably
+    // exposed via the API), fall back to whatever Purch Rep was already
+    // set locally instead of wiping it out. Every previous sync would
+    // otherwise silently erase anyone's manually-entered Purch Rep the
+    // next time this ran.
+    var finalPurchRep=purchRep||(existing>=0?(vendors[existing].purchRep||''):'');
     var mapped={
       id: existing>=0 ? vendors[existing].id : 'vend_'+Date.now()+'_'+Math.random().toString(36).slice(2),
       qbId: qv.Id,
       name: qv.DisplayName||qv.CompanyName||'',
       active: qv.Active!==false,
-      purchRep: purchRep
+      purchRep: finalPurchRep
     };
     if(existing>=0){ vendors[existing]=mapped; } else { vendors.push(mapped); }
   });
@@ -5506,11 +5513,29 @@ window.renderCashFlowReport=renderCashFlowReport;
 // concept of your plant's departments) — same pattern as Sales Rep on the
 // Customer Payments side. Keyed by vendor id (or name, if no id).
 var _vendorDepartments=(function(){ try{ return JSON.parse(localStorage.getItem('pc_vendor_departments')||'{}'); }catch(e){ return {}; } })();
-function setVendorDepartment(vendorKey,dept){
+// "Dumb terminal" write — same single-vendor endpoint the Vendors settings
+// panel's CSV import uses. Used when a department gets assigned to a
+// vendor directly from the Scheduled Payments view rather than Settings.
+async function setVendorDepartment(vendorKey,dept){
+  var prevDept=_vendorDepartments[vendorKey];
   if(dept) _vendorDepartments[vendorKey]=dept;
   else delete _vendorDepartments[vendorKey];
-  _saveVendorDepartments();
+  safeSetLocal('pc_vendor_departments',JSON.stringify(_vendorDepartments)); // optimistic, for immediate display
   renderCashFlowReport();
+  try{
+    var res=await fetch('/api/vendors/'+encodeURIComponent(vendorKey)+'/department',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({dept:dept||null})
+    });
+    if(!res.ok) throw new Error('Server responded with '+res.status);
+  }catch(e){
+    // Roll back the optimistic local change — the server never confirmed it.
+    if(prevDept) _vendorDepartments[vendorKey]=prevDept; else delete _vendorDepartments[vendorKey];
+    safeSetLocal('pc_vendor_departments',JSON.stringify(_vendorDepartments));
+    renderCashFlowReport();
+    alert('Could not save that department assignment — check your connection and try again.');
+  }
 }
 window.setVendorDepartment=setVendorDepartment;
 
@@ -8437,9 +8462,25 @@ window.qbSyncVendors=qbSyncVendors;
 var _vendPanelDept=null; // which department's vendor list is currently being edited
 var _vendDraft=null; // working copy — vendor keys checked (assigned) to _vendPanelDept, nothing persists until Save is clicked
 
-function renderVendorsPanel(){
+// "Dumb terminal" read — fetches vendors/vendorDepartments fresh from the
+// server every time this panel opens or the department switches, same
+// reasoning as renderCustomersPanel.
+async function renderVendorsPanel(){
   var panel=document.getElementById('vendorsPanel');
   if(!panel) return;
+  try{
+    var res=await fetch('/api/vendors',{cache:'no-store',headers:{'Cache-Control':'no-cache, no-store, must-revalidate','Pragma':'no-cache'}});
+    if(res.ok){
+      var fresh=await res.json();
+      if(Array.isArray(fresh.vendors)) vendors=fresh.vendors;
+      if(fresh.vendorDepartments && typeof fresh.vendorDepartments==='object') _vendorDepartments=fresh.vendorDepartments;
+      safeSetLocal('pc_vendors',JSON.stringify(vendors));
+      safeSetLocal('pc_vendor_departments',JSON.stringify(_vendorDepartments));
+    }
+  }catch(e){ /* fall through and render with whatever's already in memory rather than block on a network hiccup */ }
+  _renderVendorsPanelBody(panel);
+}
+function _renderVendorsPanelBody(panel){
   if(!vendors.length){
     panel.innerHTML='<div class="txn-empty" style="margin:0"><p>No vendors synced yet.</p></div>'
       +'<button class="btn btn-primary btn-sm" id="vendSyncBtn" onclick="qbSyncVendors()" style="margin-top:12px">'
@@ -8532,23 +8573,34 @@ function renderVendorsList(){
 }
 window.renderVendorsList=renderVendorsList;
 
-// Purch Rep is managed locally in Plant Console, same as Sales Rep on the
-// Customers panel — confirmed via sync diagnostic that QuickBooks doesn't
-// expose this custom field through the API. Saves immediately on blur.
-function updateVendorPurchRep(vKey,value){
-  var v=vendors.find(function(x){ return (x.qbId||x.name)===vKey; });
-  if(!v) return;
-  v.purchRep=(value||'').trim();
-  saveVendors();
-  // If this introduced a brand-new Purch Rep name, add it to the shared
-  // suggestion list in place, same as Sales Rep does.
-  if(v.purchRep){
-    var dl=document.getElementById('purchRepOptions');
-    if(dl && !dl.querySelector('option[value="'+CSS.escape(v.purchRep)+'"]')){
-      var opt=document.createElement('option');
-      opt.value=v.purchRep;
-      dl.appendChild(opt);
+// "Dumb terminal" write — sends ONLY this one field, for this one vendor,
+// straight to the server. Same reasoning as updateCustomerSalesRep: no
+// local-array-mutate-then-full-push, nothing to merge or race against
+// another device's edit to a different vendor.
+async function updateVendorPurchRep(vKey,value){
+  var purchRep=(value||'').trim();
+  var statusEl=document.getElementById('vend-save-status');
+  try{
+    var res=await fetch('/api/vendors/'+encodeURIComponent(vKey)+'/purchrep',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({purchRep:purchRep})
+    });
+    if(!res.ok) throw new Error('Server responded with '+res.status);
+    var v=vendors.find(function(x){ return (x.qbId||x.name)===vKey; });
+    if(v) v.purchRep=purchRep;
+    safeSetLocal('pc_vendors',JSON.stringify(vendors));
+    if(purchRep){
+      var dl=document.getElementById('purchRepOptions');
+      if(dl && !dl.querySelector('option[value="'+CSS.escape(purchRep)+'"]')){
+        var opt=document.createElement('option');
+        opt.value=purchRep;
+        dl.appendChild(opt);
+      }
     }
+    if(statusEl){ statusEl.textContent='Purch Rep saved.'; statusEl.style.color='#0f6e40'; setTimeout(function(){ if(statusEl.textContent==='Purch Rep saved.') statusEl.textContent=''; },3000); }
+  }catch(e){
+    if(statusEl){ statusEl.textContent='Could not save Purch Rep — check your connection and try again.'; statusEl.style.color='#c0392b'; }
   }
 }
 window.updateVendorPurchRep=updateVendorPurchRep;
@@ -8574,20 +8626,45 @@ function vendorSelectAll(on){
 }
 window.vendorSelectAll=vendorSelectAll;
 
-function saveVendorDeptForDept(){
+// "Dumb terminal" write — sends ONLY this department's vendor list,
+// straight to the server, which computes the actual add/remove diff
+// itself (see the /api/vendor-departments/:dept handler). No local
+// mutation of _vendorDepartments, no full snapshot push.
+async function saveVendorDeptForDept(){
   var dept=_vendPanelDept;
-  vendors.forEach(function(v){
-    var vKey=v.qbId||v.name;
-    var isChecked=_vendDraft.indexOf(vKey)>=0;
-    var currentlyThisDept=_vendorDepartments[vKey]===dept;
-    if(isChecked && !currentlyThisDept) _vendorDepartments[vKey]=dept;
-    else if(!isChecked && currentlyThisDept) delete _vendorDepartments[vKey];
-    // Vendors assigned to a DIFFERENT department and left unchecked here are untouched.
-  });
-  _saveVendorDepartments();
+  var vendorKeys=_vendDraft.slice();
   var statusEl=document.getElementById('vend-save-status');
-  if(statusEl){ statusEl.textContent='Saved.'; statusEl.style.color='#0f6e40'; }
-  renderCashFlowReport(); // reflect the change in Scheduled Payments' vendor grouping too, if it's built
+  if(statusEl){ statusEl.textContent='Saving to server…'; statusEl.style.color=''; }
+  var ok=false, detail='';
+  try{
+    var res=await fetch('/api/vendor-departments/'+encodeURIComponent(dept),{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({vendorKeys:vendorKeys})
+    });
+    ok=res.ok;
+    if(!ok) detail='Server responded with '+res.status;
+  }catch(e){ ok=false; detail=e.message||'network error'; }
+  if(ok){
+    // Update this device's own in-memory copy too, purely for immediate
+    // display — mirrors exactly what the server just did.
+    Object.keys(_vendorDepartments).forEach(function(k){
+      if(_vendorDepartments[k]===dept && vendorKeys.indexOf(k)<0) delete _vendorDepartments[k];
+    });
+    vendorKeys.forEach(function(k){ _vendorDepartments[k]=dept; });
+    safeSetLocal('pc_vendor_departments',JSON.stringify(_vendorDepartments));
+  }
+  var freshStatus=document.getElementById('vend-save-status');
+  if(freshStatus){
+    if(ok){
+      freshStatus.textContent='Saved for '+dept+' — confirmed on the server.';
+      freshStatus.style.color='#0f6e40';
+      renderCashFlowReport(); // reflect the change in Scheduled Payments' vendor grouping too, if it's built
+    }else{
+      freshStatus.textContent='Could not save to the server ('+(detail||'unknown error')+'). Check your connection and try again.';
+      freshStatus.style.color='#c0392b';
+    }
+  }
 }
 window.saveVendorDeptForDept=saveVendorDeptForDept;
 
@@ -8648,6 +8725,7 @@ async function importVendorDepartmentCSV(file){
   var byName={};
   vendors.forEach(function(v){ byName[(v.name||'').trim().toLowerCase()]=v; });
   var updated=0, unmatched=[], badDept=[];
+  var writes=[]; // collect targeted per-vendor writes, fire them after parsing the whole file
   for(var i=1;i<rows.length;i++){
     var r=rows[i];
     var name=(r[nameCol]||'').trim();
@@ -8657,15 +8735,37 @@ async function importVendorDepartmentCSV(file){
     if(!v){ unmatched.push(name); continue; }
     if(dept && DEPARTMENTS.indexOf(dept)<0){ badDept.push(name+' ("'+dept+'")'); continue; }
     var vKey=v.qbId||v.name;
-    if(dept) _vendorDepartments[vKey]=dept; else delete _vendorDepartments[vKey];
+    writes.push({vKey:vKey,dept:dept||null});
     updated++;
   }
-  _saveVendorDepartments();
+  if(statusEl) statusEl.textContent='Saving '+writes.length+' vendor(s) to the server…';
+  // "Dumb terminal" write, one targeted call per vendor — no local mutation
+  // of _vendorDepartments, no full snapshot push. Sequential rather than
+  // parallel so a mid-import network hiccup fails cleanly (whatever's
+  // already gone through stays saved) rather than firing 200 requests at
+  // once.
+  var writeFailures=0;
+  for(var wi=0;wi<writes.length;wi++){
+    var w=writes[wi];
+    try{
+      var wres=await fetch('/api/vendors/'+encodeURIComponent(w.vKey)+'/department',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({dept:w.dept})
+      });
+      if(!wres.ok) writeFailures++;
+      else{
+        if(w.dept) _vendorDepartments[w.vKey]=w.dept; else delete _vendorDepartments[w.vKey];
+      }
+    }catch(e){ writeFailures++; }
+  }
+  safeSetLocal('pc_vendor_departments',JSON.stringify(_vendorDepartments));
   renderVendorsList();
-  var msg=updated+' vendor(s) updated.';
+  var msg=(updated-writeFailures)+' vendor(s) updated.';
+  if(writeFailures) msg+=' '+writeFailures+' failed to save to the server — check your connection and try importing again.';
   if(unmatched.length) msg+=' '+unmatched.length+' name(s) didn\'t match any synced vendor'+(unmatched.length<=5?' ('+unmatched.slice(0,5).join(', ')+')':'')+'.';
   if(badDept.length) msg+=' '+badDept.length+' had an unrecognized department name and were skipped'+(badDept.length<=5?' ('+badDept.slice(0,5).join(', ')+')':'')+'.';
-  if(statusEl){ statusEl.textContent=msg; statusEl.style.color=(unmatched.length||badDept.length)?'#b8460b':''; }
+  if(statusEl){ statusEl.textContent=msg; statusEl.style.color=(writeFailures||unmatched.length||badDept.length)?'#b8460b':'#0f6e40'; }
 }
 window.importVendorDepartmentCSV=importVendorDepartmentCSV;
 
@@ -8726,20 +8826,36 @@ async function importVendorPurchRepCSV(file){
   var byName={};
   vendors.forEach(function(v){ byName[(v.name||'').trim().toLowerCase()]=v; });
   var updated=0, unmatched=[];
+  var writes=[];
   for(var i=1;i<rows.length;i++){
     var r=rows[i];
     var name=(r[nameCol]||'').trim();
     var rep=(r[repCol]||'').trim();
     if(!name) continue;
     var v=byName[name.toLowerCase()];
-    if(v){ v.purchRep=rep; updated++; }
+    if(v){ writes.push({vKey:v.qbId||v.name,vObj:v,rep:rep}); updated++; }
     else unmatched.push(name);
   }
-  saveVendors();
+  if(statusEl) statusEl.textContent='Saving '+writes.length+' vendor(s) to the server…';
+  var writeFailures=0;
+  for(var wi=0;wi<writes.length;wi++){
+    var w=writes[wi];
+    try{
+      var wres=await fetch('/api/vendors/'+encodeURIComponent(w.vKey)+'/purchrep',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({purchRep:w.rep})
+      });
+      if(!wres.ok) writeFailures++;
+      else w.vObj.purchRep=w.rep;
+    }catch(e){ writeFailures++; }
+  }
+  safeSetLocal('pc_vendors',JSON.stringify(vendors));
   renderVendorsList();
-  var msg=updated+' vendor(s) updated.';
+  var msg=(updated-writeFailures)+' vendor(s) updated.';
+  if(writeFailures) msg+=' '+writeFailures+' failed to save to the server — check your connection and try importing again.';
   if(unmatched.length) msg+=' '+unmatched.length+' name(s) in the file didn\'t match any synced vendor'+(unmatched.length<=5?' ('+unmatched.slice(0,5).join(', ')+')':'')+'.';
-  if(statusEl){ statusEl.textContent=msg; statusEl.style.color=unmatched.length?'#b8860b':''; }
+  if(statusEl){ statusEl.textContent=msg; statusEl.style.color=(writeFailures||unmatched.length)?'#b8860b':'#0f6e40'; }
 }
 window.importVendorPurchRepCSV=importVendorPurchRepCSV;
 

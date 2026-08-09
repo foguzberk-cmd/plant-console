@@ -775,7 +775,8 @@ const server = http.createServer(async (req, res) => {
       labelAllowed: data.labelAllowed,
       savedReports: data.savedReports,
       customerAllowed: data.customerAllowed,
-      cfScheduledDates: data.cfScheduledDates
+      cfScheduledDates: data.cfScheduledDates,
+      customers: data.customers
     }));
     return;
   }
@@ -831,6 +832,26 @@ const server = http.createServer(async (req, res) => {
         // survive regardless of what order pushes happen to land in.
         if (incoming.labelTemplates && typeof incoming.labelTemplates === 'object') {
           incoming.labelTemplates = Object.assign({}, current.labelTemplates || {}, incoming.labelTemplates);
+        }
+        // customers (holding per-customer fields like salesRep, edited via
+        // Settings → Customers) had NO merge protection at all — a blind
+        // top-level replace, the exact bug scaleLogs used to have. If one
+        // device edits a customer's Sales Rep, and a second device (which
+        // simply hasn't pulled that edit yet) pushes its own routine
+        // snapshot shortly after, the blind replace would silently erase
+        // the first device's edit — not because anyone deleted it, just
+        // because the second device's copy was older. Same union-by-id
+        // fix as scaleLogs: for any customer present in both, the incoming
+        // (freshly-pushed) record wins field-by-field over the old server
+        // copy, and anything the current push doesn't know about (added on
+        // another device) is preserved rather than dropped.
+        if (Array.isArray(incoming.customers)) {
+          const merged = new Map((current.customers || []).map(c => [c && c.id, c]));
+          for (const c of incoming.customers) {
+            if (!c) continue;
+            merged.set(c.id, Object.assign({}, merged.get(c.id) || {}, c));
+          }
+          incoming.customers = Array.from(merged.values());
         }
         // labelAllowed is likewise now a per-department object (each
         // department has its own product allow-list for printing) — same

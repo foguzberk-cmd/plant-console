@@ -2508,9 +2508,27 @@ function renderReports(){
   // rebuilds this whole section's HTML from scratch, which would show
   // "no data" here even though a fetch already happened this session —
   // the data itself was never lost, just not redisplayed. Reapply it if
-  // it's already sitting in memory.
-  if(_collPayments) renderCollectionReport();
-  if(_collPayments) renderAuditReport();
+  // it's already sitting in memory. If NOTHING is in memory yet (first
+  // time opening Reports this session), try the server's shared cache
+  // before giving up and showing "click Pull from QuickBooks" — most of
+  // the time someone else already pulled recently, so this avoids making
+  // every single terminal wait through its own slow pull.
+  if(_collPayments){
+    renderCollectionReport();
+    renderAuditReport();
+  } else {
+    (async function(){
+      var statusEl=document.getElementById('coll-status');
+      if(statusEl) statusEl.textContent='Checking for a recent shared pull…';
+      var loaded=await _collTryLoadSharedCache();
+      if(loaded){
+        renderCollectionReport();
+        renderAuditReport();
+      } else if(statusEl){
+        statusEl.textContent='';
+      }
+    })();
+  }
 }
 // Switches between the two Reports sub-tabs without re-rendering the whole
 // page (so neither report's inputs/state get reset when switching back).
@@ -3255,6 +3273,111 @@ async function runCollectionReport(){
   _collFutureByQbId=asOf.future;
   _collFutureDetailByQbId=asOf.futureDetail;
   renderCollectionReport();
+  // Share this pull with every other terminal — see the comment on
+  // _collBuildSharedCacheBundle for why this is a "cache the result"
+  // approach rather than moving the fetch itself server-side. Fire-and-
+  // forget: whoever just pulled already has correct data rendered above
+  // regardless of whether this specific push succeeds.
+  _collPushSharedCache();
+}
+
+// Bundles every raw/derived cache this report depends on into one object
+// for sharing via the server (see /api/collection-report-cache). NOT
+// included: column widths/order, group-by mode — those are personal
+// display preferences, not data, and shouldn't be forced onto every
+// other terminal just because one device pulled fresh numbers.
+function _collBuildSharedCacheBundle(){
+  return {
+    savedAt:new Date().toISOString(),
+    payments:_collPayments,
+    salesDocs:_collSalesDocs,
+    openInvoicesCache:_collOpenInvoicesCache,
+    openInvoicesLastSync:_collOpenInvoicesLastSync,
+    unappliedCache:_collUnappliedCache,
+    unappliedLastSync:_collUnappliedLastSync,
+    allInvoicesCache:_collAllInvoicesCache,
+    allPaymentsCache:_collAllPaymentsCache,
+    unappliedCreditMemoCache:_collUnappliedCreditMemoCache,
+    unappliedCreditMemoLastSync:_collUnappliedCreditMemoLastSync,
+    journalEntryCache:_collJournalEntryCache,
+    journalEntryLastSync:_collJournalEntryLastSync,
+    jeDiagnostics:_collJeDiagnostics,
+    openingByQbId:_collOpeningByQbId,
+    endingByQbId:_collEndingByQbId,
+    endingDetailByQbId:_collEndingDetailByQbId,
+    futureByQbId:_collFutureByQbId,
+    futureDetailByQbId:_collFutureDetailByQbId,
+    range:_collRange,
+    undepositedFundsAccountIds:window._collUndepositedFundsAccountIds||{}
+  };
+}
+// Restores every field from a shared bundle into this device's own local
+// state AND localStorage — after this runs, the report behaves exactly
+// as if THIS device had just completed its own pull, without having
+// made a single QuickBooks API call itself.
+function _collRestoreSharedCacheBundle(b){
+  if(!b || !b.payments) return false;
+  _collPayments=b.payments;
+  _collSalesDocs=b.salesDocs||null;
+  _collOpenInvoicesCache=b.openInvoicesCache||{};
+  _collOpenInvoicesLastSync=b.openInvoicesLastSync||null;
+  _collUnappliedCache=b.unappliedCache||{};
+  _collUnappliedLastSync=b.unappliedLastSync||null;
+  _collOpenInvoices=Object.keys(_collOpenInvoicesCache).length?Object.values(_collOpenInvoicesCache):null;
+  _collUnappliedPayments=Object.keys(_collUnappliedCache).length?Object.values(_collUnappliedCache):null;
+  _collAllInvoicesCache=b.allInvoicesCache||{};
+  _collAllPaymentsCache=b.allPaymentsCache||{};
+  _collUnappliedCreditMemoCache=b.unappliedCreditMemoCache||{};
+  _collUnappliedCreditMemoLastSync=b.unappliedCreditMemoLastSync||null;
+  _collJournalEntryCache=b.journalEntryCache||{};
+  _collJournalEntryLastSync=b.journalEntryLastSync||null;
+  _collJeDiagnostics=b.jeDiagnostics||null;
+  _collOpeningByQbId=b.openingByQbId||null;
+  _collEndingByQbId=b.endingByQbId||null;
+  _collEndingDetailByQbId=b.endingDetailByQbId||null;
+  _collFutureByQbId=b.futureByQbId||null;
+  _collFutureDetailByQbId=b.futureDetailByQbId||null;
+  _collRange=b.range||null;
+  window._collUndepositedFundsAccountIds=b.undepositedFundsAccountIds||{};
+  safeSetLocal('pc_coll_open_invoices',JSON.stringify(_collOpenInvoicesCache));
+  if(_collOpenInvoicesLastSync) safeSetLocal('pc_coll_open_invoices_synctime',_collOpenInvoicesLastSync);
+  safeSetLocal('pc_coll_unapplied',JSON.stringify(_collUnappliedCache));
+  if(_collUnappliedLastSync) safeSetLocal('pc_coll_unapplied_synctime',_collUnappliedLastSync);
+  safeSetLocal('pc_coll_all_invoices',JSON.stringify(_collAllInvoicesCache));
+  safeSetLocal('pc_coll_all_payments',JSON.stringify(_collAllPaymentsCache));
+  safeSetLocal('pc_coll_unapplied_cm',JSON.stringify(_collUnappliedCreditMemoCache));
+  if(_collUnappliedCreditMemoLastSync) safeSetLocal('pc_coll_unapplied_cm_synctime',_collUnappliedCreditMemoLastSync);
+  safeSetLocal('pc_coll_journal_entries',JSON.stringify(_collJournalEntryCache));
+  if(_collJournalEntryLastSync) safeSetLocal('pc_coll_journal_entries_synctime',_collJournalEntryLastSync);
+  return true;
+}
+async function _collPushSharedCache(){
+  try{
+    await fetch('/api/collection-report-cache',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(_collBuildSharedCacheBundle())
+    });
+  }catch(e){ /* best-effort — this device's own view is already correct regardless of whether the share succeeds */ }
+}
+// Checked when the Customer Payments tab opens and nothing is loaded in
+// THIS device's memory yet — loads whatever the last successful pull
+// (from any terminal) left on the server, so most people never have to
+// click "Pull from QuickBooks" and wait at all.
+async function _collTryLoadSharedCache(){
+  try{
+    var res=await fetch('/api/collection-report-cache',{cache:'no-store'});
+    if(!res.ok) return false;
+    var bundle=await res.json();
+    var loaded=_collRestoreSharedCacheBundle(bundle);
+    if(loaded && _collRange){
+      var fromEl=document.getElementById('coll-from');
+      var toEl=document.getElementById('coll-to');
+      if(fromEl) fromEl.value=_collRange.from;
+      if(toEl) toEl.value=_collRange.to;
+    }
+    return loaded;
+  }catch(e){ return false; }
 }
 
 // Reconstructs each customer's TRUE open-invoice balance as of two specific

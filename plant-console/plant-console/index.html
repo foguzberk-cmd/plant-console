@@ -5104,6 +5104,33 @@ function printReportSection(elId,title){
   w.focus();
   setTimeout(function(){w.print();},250);
 }
+// Prints just ONE week's rows within a section (e.g. "Week 33 · Aug 10 –
+// Aug 16") instead of the whole table — rowClass is the same class already
+// stamped onto that week's header row AND all its data rows (see
+// renderScheduledPaymentsSection/renderInProcessPaymentsSection), so this
+// just clones the section's <thead> plus every row carrying that one
+// class, rather than needing a second parallel code path that rebuilds
+// the week's rows from scratch.
+function printCFWeekGroup(sectionElId,rowClass,weekLabel){
+  var el=document.getElementById(sectionElId);
+  var table=el&&el.querySelector('table');
+  if(!table) return;
+  var thead=table.querySelector('thead');
+  var rows=table.querySelectorAll('.'+rowClass+'-hdr, .'+rowClass);
+  if(!rows.length) return;
+  var w=window.open('','_blank');
+  if(!w){ alert('Please allow pop-ups for this site to print.'); return; }
+  var tbodyHtml='';
+  rows.forEach(function(r){ tbodyHtml+=r.outerHTML; });
+  w.document.write('<html><head><title>'+weekLabel+'</title>'
+    +'<style>body{font-family:Arial,sans-serif;padding:30px;color:#222}table{width:100%}.no-print{display:none!important}</style></head><body>'
+    +'<h3 style="margin:0 0 12px">'+weekLabel+'</h3>'
+    +'<table style="'+table.getAttribute('style')+'">'+thead.outerHTML+'<tbody>'+tbodyHtml+'</tbody></table>'
+    +'</body></html>');
+  w.document.close();
+  w.focus();
+  setTimeout(function(){w.print();},250);
+}
 
 var _cfEditingInProgress=false; // true while any Cash Flow date field is mid-edit — see rerenderCurrentSection's reports branch for why
 function editCFScheduledDate(billId,splitId){
@@ -5290,13 +5317,15 @@ function renderScheduledPaymentsSection(){
     var weekKey='cfScheduled_'+weekMonday;
     var rowClass='wk-cfScheduled-'+weekMonday;
     var weekIsCollapsed=!!_weekCollapsed[weekKey];
-    html+='<tr onclick="toggleCFWeekGroup(\''+weekKey+'\',\''+rowClass+'\')" style="cursor:pointer">'
+    html+='<tr class="'+rowClass+'-hdr" onclick="toggleCFWeekGroup(\''+weekKey+'\',\''+rowClass+'\')" style="cursor:pointer">'
       +'<td colspan="4" style="border:1px solid #c9a227;padding:7px 10px;font-weight:700;background:#ffe082">'
         +'<span id="wk-chev-'+rowClass+'" style="display:inline-block;transition:transform .12s;margin-right:8px;transform:rotate('+(weekIsCollapsed?'-90deg':'0deg')+');font-size:16px;line-height:1;vertical-align:middle;color:#000">▾</span>'
         +esc(weekLabel)
       +'</td>'
       +'<td style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe082;font-family:var(--mono)">'+money(weekTotal)+'</td>'
-      +'<td style="border:1px solid #c9a227;background:#ffe082"></td>'
+      +'<td style="border:1px solid #c9a227;background:#ffe082;text-align:center">'
+        +'<button class="no-print" onclick="event.stopPropagation();printCFWeekGroup(\'cf-scheduled-section\',\''+rowClass+'\',\''+esc(weekLabel).replace(/'/g,"\\'")+'\')" title="Print this week" style="padding:1px 5px;font-size:12px;line-height:1;border:1px solid #c9a227;border-radius:5px;background:#fff8e1;cursor:pointer">🖨</button>'
+      +'</td>'
     +'</tr>';
 
     byWeek[weekMonday].dateKeys.forEach(function(dateKey){
@@ -5327,7 +5356,9 @@ function renderScheduledPaymentsSection(){
   html+='<tr>'
     +'<td colspan="4" style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe58a">TOTAL SCHEDULED</td>'
     +'<td style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe58a;font-family:var(--mono)">'+money(grandTotal)+'</td>'
-    +'<td style="border:1px solid #c9a227;background:#ffe58a"></td>'
+    +'<td style="border:1px solid #c9a227;background:#ffe58a;text-align:center">'
+      +'<button class="no-print" onclick="printReportSection(\'cf-scheduled-section\',\'Scheduled Payments\')" title="Print entire list" style="padding:1px 5px;font-size:12px;line-height:1;border:1px solid #c9a227;border-radius:5px;background:#fff8e1;cursor:pointer">🖨</button>'
+    +'</td>'
   +'</tr>';
   html+='</tbody></table></div>';
   el.innerHTML=html;
@@ -5405,7 +5436,9 @@ function renderApprovedPaymentsSection(){
   html+='<tr>'
     +'<td colspan="4" style="border:1px solid #388e3c;padding:7px 10px;text-align:right;font-weight:700;background:#c8e6c9">TOTAL APPROVED</td>'
     +'<td style="border:1px solid #388e3c;padding:7px 10px;text-align:right;font-weight:700;background:#c8e6c9;font-family:var(--mono)">'+money(grandTotal)+'</td>'
-    +'<td style="border:1px solid #388e3c;background:#c8e6c9"></td>'
+    +'<td style="border:1px solid #388e3c;background:#c8e6c9;text-align:center">'
+      +'<button class="no-print" onclick="printReportSection(\'cf-approved-section\',\'Approved Payments\')" title="Print entire list" style="padding:1px 5px;font-size:12px;line-height:1;border:1px solid #388e3c;border-radius:5px;background:#e8f5e9;cursor:pointer">🖨</button>'
+    +'</td>'
   +'</tr>';
   html+='</tbody></table>'
     +'<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">Cleared automatically once QuickBooks shows the bill is no longer open (i.e. paid) — checked every time you "Pull from QuickBooks." Only catches a bill being paid off entirely; a partial payment in QuickBooks that doesn\'t fully close the bill won\'t clear a specific approved installment on its own.</div>'
@@ -5487,13 +5520,15 @@ function renderInProcessPaymentsSection(){
     var weekKey='cfInProcess_'+weekMonday;
     var rowClass='wk-cfInProcess-'+weekMonday;
     var weekIsCollapsed=!!_weekCollapsed[weekKey];
-    html+='<tr onclick="toggleCFWeekGroup(\''+weekKey+'\',\''+rowClass+'\')" style="cursor:pointer">'
+    html+='<tr class="'+rowClass+'-hdr" onclick="toggleCFWeekGroup(\''+weekKey+'\',\''+rowClass+'\')" style="cursor:pointer">'
       +'<td colspan="5" style="border:1px solid #1565c0;padding:7px 10px;font-weight:700;background:#bbdefb">'
         +'<span id="wk-chev-'+rowClass+'" style="display:inline-block;transition:transform .12s;margin-right:8px;transform:rotate('+(weekIsCollapsed?'-90deg':'0deg')+');font-size:16px;line-height:1;vertical-align:middle;color:#000">▾</span>'
         +esc(weekLabel)
       +'</td>'
       +'<td style="border:1px solid #1565c0;padding:7px 10px;text-align:right;font-weight:700;background:#bbdefb;font-family:var(--mono)">'+money(weekTotal)+'</td>'
-      +'<td style="border:1px solid #1565c0;background:#bbdefb"></td>'
+      +'<td style="border:1px solid #1565c0;background:#bbdefb;text-align:center">'
+        +'<button class="no-print" onclick="event.stopPropagation();printCFWeekGroup(\'cf-inprocess-section\',\''+rowClass+'\',\''+esc(weekLabel).replace(/'/g,"\\'")+'\')" title="Print this week" style="padding:1px 5px;font-size:12px;line-height:1;border:1px solid #1565c0;border-radius:5px;background:#e3f2fd;cursor:pointer">🖨</button>'
+      +'</td>'
     +'</tr>';
 
     byWeek[weekMonday].forEach(function(dateKey){
@@ -5524,7 +5559,9 @@ function renderInProcessPaymentsSection(){
   html+='<tr>'
     +'<td colspan="5" style="border:1px solid #1565c0;padding:7px 10px;text-align:right;font-weight:700;background:#bbdefb">TOTAL IN PROCESS</td>'
     +'<td style="border:1px solid #1565c0;padding:7px 10px;text-align:right;font-weight:700;background:#bbdefb;font-family:var(--mono)">'+money(grandTotal)+'</td>'
-    +'<td style="border:1px solid #1565c0;background:#bbdefb"></td>'
+    +'<td style="border:1px solid #1565c0;background:#bbdefb;text-align:center">'
+      +'<button class="no-print" onclick="printReportSection(\'cf-inprocess-section\',\'In Process Payments\')" title="Print entire list" style="padding:1px 5px;font-size:12px;line-height:1;border:1px solid #1565c0;border-radius:5px;background:#e3f2fd;cursor:pointer">🖨</button>'
+    +'</td>'
   +'</tr>';
   html+='</tbody></table>'
     +'<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4">Cleared automatically once QuickBooks shows the bill is no longer open — checked every time you "Pull from QuickBooks."</div>'

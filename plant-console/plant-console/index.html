@@ -2665,6 +2665,29 @@ if(localStorage.getItem('pc_coll_je_filter_version')!==JE_FILTER_VERSION){
 }
 var _collRange=null;      // {from,to} for the cached fetch
 var _collGroupMode='customer'; // 'customer' | 'salesperson'
+var _collSortKey=null;  // null = default sort (by Collected desc, Unassigned last); otherwise one of: name/sales/collected/future/ending
+var _collSortDir='desc'; // 'asc' | 'desc'
+function _collSortValue(entry,label,key){
+  switch(key){
+    case 'name': return (label||'').toLowerCase();
+    case 'sales': return Number(entry.sales||0);
+    case 'collected': return Number(entry.total||0);
+    case 'future': return Number(entry.futurePayments||0);
+    case 'ending': return Number(entry.balance-(entry.unapplied||0)-(entry.creditMemo||0)+(entry.journal||0));
+  }
+  return 0;
+}
+function setCollSort(key){
+  if(_collSortKey===key){ _collSortDir=(_collSortDir==='desc')?'asc':'desc'; }
+  else { _collSortKey=key; _collSortDir=(key==='name')?'asc':'desc'; }
+  renderCollectionReport();
+}
+window.setCollSort=setCollSort;
+function _collSortArrow(key){
+  var active=_collSortKey===key;
+  var arrow=active?(_collSortDir==='asc'?'▲':'▼'):'↕';
+  return '<span onclick="event.stopPropagation();setCollSort(\''+key+'\')" title="Sort by this column" style="margin-left:5px;cursor:pointer;font-size:10px;color:'+(active?'var(--brand)':'var(--muted)')+'">'+arrow+'</span>';
+}
 var _collRowKeys=[]; // groupKeys from the last render, indexed the same as each row — lets per-row buttons (like Print) reference a rep name safely without embedding raw text (which could contain apostrophes) into an onclick attribute
 var _cashFlowStartBalance=(function(){ var v=localStorage.getItem('pc_cf_start_balance'); return v!==null?Number(v):null; })();
 
@@ -4041,6 +4064,15 @@ function renderCollectionReport(){
 
   var byMode = (_collGroupMode==='salesperson') ? bySalesPerson : byCust;
   var groupKeys=Object.keys(byMode).sort(function(a,b){
+    if(_collSortKey){
+      var la=(_collGroupMode==='salesperson')?a:byMode[a].name;
+      var lb=(_collGroupMode==='salesperson')?b:byMode[b].name;
+      var va=_collSortValue(byMode[a],la,_collSortKey);
+      var vb=_collSortValue(byMode[b],lb,_collSortKey);
+      if(va<vb) return _collSortDir==='asc'?-1:1;
+      if(va>vb) return _collSortDir==='asc'?1:-1;
+      return 0;
+    }
     if(_collGroupMode==='salesperson'){
       if(a==='Unassigned') return 1;
       if(b==='Unassigned') return -1;
@@ -4129,7 +4161,7 @@ function renderCollectionReport(){
   // header cell reorderable — grab anywhere on it (other than the resize
   // handle) and drop it on another column's header to swap positions.
   function headerCell(lbl,colKey,orderKey,tooltip){
-    return '<span'+(tooltip?' title="'+esc(tooltip)+'"':'')+' draggable="true" ondragstart="collColDragStart(event,\''+orderKey+'\')" ondragover="collColDragOver(event)" ondrop="collColDrop(event,\''+orderKey+'\')" style="position:relative;overflow:visible;white-space:nowrap;text-align:center;font-family:var(--mono);font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);cursor:grab'+(tooltip?';cursor:help':'')+'">'+lbl+resizeHandle(colKey)+'</span>';
+    return '<span'+(tooltip?' title="'+esc(tooltip)+'"':'')+' draggable="true" ondragstart="collColDragStart(event,\''+orderKey+'\')" ondragover="collColDragOver(event)" ondrop="collColDrop(event,\''+orderKey+'\')" style="position:relative;overflow:visible;white-space:nowrap;text-align:center;font-family:var(--mono);font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);cursor:grab'+(tooltip?';cursor:help':'')+'">'+lbl+_collSortArrow(colKey)+resizeHandle(colKey)+'</span>';
   }
   // The column registry — one entry per reorderable unit. gridTemplate is
   // this column's fragment of grid-template-columns; header()/cell() are
@@ -4145,8 +4177,8 @@ function renderCollectionReport(){
       case 'collectedFuture': return {
         gridTemplate:'var(--cw-collected) var(--cw-future)',
         header:function(){
-          return '<span draggable="true" ondragstart="collColDragStart(event,\'collectedFuture\')" ondragover="collColDragOver(event)" ondrop="collColDrop(event,\'collectedFuture\')" style="position:relative;overflow:visible;text-align:center;font-family:var(--mono);font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);border-left:1px solid var(--line);border-top:1px solid var(--line);border-radius:9px 0 0 0;padding:5px 4px 4px;cursor:grab"><span style="display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">Collected</span>'+resizeHandle('collected')+'</span>'
-            +'<span draggable="true" ondragstart="collColDragStart(event,\'collectedFuture\')" ondragover="collColDragOver(event)" ondrop="collColDrop(event,\'collectedFuture\')" title="Both are money from a payment — the difference is timing. Collected is realized: the payment has actually cleared. Future Payments exists but is dated after today, so it hasn\'t actually happened yet by any real-world clock." style="position:relative;overflow:visible;text-align:center;font-family:var(--mono);font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);border-right:1px solid var(--line);border-top:1px solid var(--line);border-radius:0 9px 0 0;padding:5px 4px 4px;cursor:help"><span style="display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">Future Pmts</span>'+resizeHandle('future')+'</span>';
+          return '<span draggable="true" ondragstart="collColDragStart(event,\'collectedFuture\')" ondragover="collColDragOver(event)" ondrop="collColDrop(event,\'collectedFuture\')" style="position:relative;overflow:visible;text-align:center;font-family:var(--mono);font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);border-left:1px solid var(--line);border-top:1px solid var(--line);border-radius:9px 0 0 0;padding:5px 4px 4px;cursor:grab"><span style="display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">Collected'+_collSortArrow('collected')+'</span>'+resizeHandle('collected')+'</span>'
+            +'<span draggable="true" ondragstart="collColDragStart(event,\'collectedFuture\')" ondragover="collColDragOver(event)" ondrop="collColDrop(event,\'collectedFuture\')" title="Both are money from a payment — the difference is timing. Collected is realized: the payment has actually cleared. Future Payments exists but is dated after today, so it hasn\'t actually happened yet by any real-world clock." style="position:relative;overflow:visible;text-align:center;font-family:var(--mono);font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);border-right:1px solid var(--line);border-top:1px solid var(--line);border-radius:0 9px 0 0;padding:5px 4px 4px;cursor:help"><span style="display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">Future Pmts'+_collSortArrow('future')+'</span>'+resizeHandle('future')+'</span>';
         },
         cell:function(e){ return collectedCell(e.total)+futureCell(e.futurePayments||0); }
       };
@@ -4178,7 +4210,7 @@ function renderCollectionReport(){
   // customer list, and built with the SAME grid + spacer structure as a
   // data row below so its labels land directly above the right values.
   var headerRow='<div id="coll-header-sticky" style="position:static;z-index:15;display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:12px 16px 10px;background:#F5EFE8;border-bottom:2px solid var(--line);border-radius:14px 14px 0 0;box-shadow:0 2px 4px rgba(0,0,0,.06)">'
-    +'<span style="position:relative;width:var(--cw-name);flex-shrink:0;text-align:left;font-family:var(--mono);font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink)">Customers'+resizeHandle('name')+'</span>'
+    +'<span style="position:relative;width:var(--cw-name);flex-shrink:0;text-align:left;font-family:var(--mono);font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink)">Customers'+_collSortArrow('name')+resizeHandle('name')+'</span>'
     +'<span style="flex:1"></span>'
     +'<span style="display:grid;'+gridCols+'gap:16px;align-items:end">'
       +_collColOrder.map(function(k){ return _collColDef(k).header(); }).join('')

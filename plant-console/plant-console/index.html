@@ -4830,7 +4830,14 @@ function splitCFPayment(billId,splitId){
   bg.id='cfSplitModalBg';
   bg.setAttribute('role','dialog');
   bg.setAttribute('aria-modal','true');
-  bg.onclick=function(e){ if(e.target===bg) closeCFSplitModal(); };
+  // Only closes if BOTH the press and the release happened directly on
+  // the backdrop, not just a plain click listener checking the release
+  // target alone — that was closing the modal by accident whenever
+  // selecting/highlighting text in a field near the edge, if the
+  // selection drag happened to end past the modal's boundary onto the
+  // dark overlay behind it.
+  bg.addEventListener('mousedown',function(e){ bg._downOnBg=(e.target===bg); });
+  bg.addEventListener('mouseup',function(e){ if(bg._downOnBg && e.target===bg) closeCFSplitModal(); bg._downOnBg=false; });
   bg.innerHTML='<div class="modal" style="max-width:560px">'
     +'<h3 style="margin:0 0 4px">Payment Plan</h3>'
     +'<p style="color:var(--muted);font-size:13px;margin:0 0 16px">'+esc(_cfSplitState.vendor)+' · Bill #'+esc(_cfSplitState.docNum)+' · Total '+_cfMoney(_cfSplitState.totalAmount)+'<br>Adjust the date/amount below, or add more parts to split this into multiple payments.</p>'
@@ -4938,7 +4945,8 @@ function scheduleCFPartial(billId){
   bg.id='cfPartialModalBg';
   bg.setAttribute('role','dialog');
   bg.setAttribute('aria-modal','true');
-  bg.onclick=function(e){ if(e.target===bg) closeCFPartialModal(); };
+  bg.addEventListener('mousedown',function(e){ bg._downOnBg=(e.target===bg); });
+  bg.addEventListener('mouseup',function(e){ if(bg._downOnBg && e.target===bg) closeCFPartialModal(); bg._downOnBg=false; });
   bg.innerHTML='<div class="modal" style="max-width:420px">'
     +'<h3 style="margin:0 0 4px">Schedule Partial Payment</h3>'
     +'<p style="color:var(--muted);font-size:13px;margin:0 0 16px">'+esc(vName)+' · Bill #'+esc(bill.DocNumber||'')+' · Unscheduled: '+_cfMoney(remaining)+'</p>'
@@ -5757,7 +5765,8 @@ function startCFPaymentProcess(billId,splitId){
   bg.id='cfProcessModalBg';
   bg.setAttribute('role','dialog');
   bg.setAttribute('aria-modal','true');
-  bg.onclick=function(e){ if(e.target===bg) closeCFProcessModal(); };
+  bg.addEventListener('mousedown',function(e){ bg._downOnBg=(e.target===bg); });
+  bg.addEventListener('mouseup',function(e){ if(bg._downOnBg && e.target===bg) closeCFProcessModal(); bg._downOnBg=false; });
   bg.innerHTML='<div class="modal" style="max-width:380px">'
     +'<h3 style="margin:0 0 4px">Initiate Payment</h3>'
     +'<p style="color:var(--muted);font-size:13px;margin:0 0 18px">'+esc(rec.vendor)+' · Bill #'+esc(rec.docNum)+' · '+_cfMoney(split.amount)+'<br>How is this being paid?</p>'

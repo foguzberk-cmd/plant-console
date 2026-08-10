@@ -1085,6 +1085,18 @@ function rerenderCurrentSection(){
       try{ renderScheduledPaymentsSection(); }catch(e){}
     }
   }
+  else if(currentSectionId==='settings'){
+    // Same gap as the sections above, just never plugged in for Settings:
+    // a Sales Rep (or any customer field) edited on another device was
+    // already syncing into memory here every 1.5s, but nothing ever told
+    // this screen to redraw — so it looked "stuck" until the person left
+    // the tab and came back. Only refresh the row list itself (not the
+    // whole panel), so this doesn't reset whatever's typed into the
+    // search box or which department is selected mid-use.
+    if(document.getElementById('customersList')){
+      try{ renderCustomersList(); }catch(e){}
+    }
+  }
 }
 async function pullFromServer(){
   if(!currentUser) return false;

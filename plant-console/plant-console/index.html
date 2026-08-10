@@ -4096,7 +4096,11 @@ function renderCollectionReport(){
       +(zeroCount>0?' ('+zeroCount+' $0 record(s) excluded)':'')
       +(_collGroupMode==='salesperson'&&bySalesPerson['Unassigned']?' — some customers have no Sales Person set in QuickBooks.':'')
       +(!anyBalanceSynced?' — balances show as $0: click "Pull from QuickBooks" above to fetch open invoice data.':'');
-    statusEl.style.color='';
+    // Green once counting/pulling has actually finished successfully —
+    // same cue just added to Scheduled Payments — except when there's a
+    // real warning attached (no Sales Person set, or balances not synced
+    // yet), where the color should keep drawing the eye to that instead.
+    statusEl.style.color=(!anyBalanceSynced)?'':'#1a7a3c';
   }
 
   if(!groupKeys.length){

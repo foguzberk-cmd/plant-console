@@ -2889,7 +2889,25 @@ function _reportPanelIdForTab(tab){
   }[tab]||null;
 }
 var _reportActiveTab='collection';
+// DISABLED as of Aug 2026: this JS-computed position:fixed approach was
+// causing a full scroll freeze on Android Chrome specifically (confirmed
+// via screen recording — literally zero movement across a sustained touch
+// drag, with the browser's own address-bar show/hide animating normally,
+// proving the touch WAS being received; something about a fixed element
+// covering most/all of the visible viewport was preventing the browser
+// from ever recognizing .view as the scroll target). Rather than keep
+// guessing at increasingly narrow race conditions without being able to
+// test directly on the affected device, this is turned off entirely —
+// every report tab's header/toolbar now just scrolls away normally with
+// the rest of the page, like any ordinary (non-sticky) webpage. Function
+// left in place as a no-op, callable from the same call sites, in case a
+// more robust approach (e.g. real CSS position:sticky, revisited with
+// more care for the shared-layout quirk mentioned in _collFixedPosition's
+// old comment) is worth trying again later.
 function _collSyncStickyOffsets(){
+  return;
+}
+function _collSyncStickyOffsets_DISABLED_fixedPositionVersion(){
   var toolbarId=_reportToolbarIdForTab(_reportActiveTab);
   var panelId=_reportPanelIdForTab(_reportActiveTab);
   var panelEl=panelId?document.getElementById(panelId):null;

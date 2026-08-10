@@ -4989,18 +4989,40 @@ window.cfSplitSave=cfSplitSave;
 // Marks one split as "initiated" — this app has no real payment-processing
 // integration, so this is a status flag only (who marked it, and when),
 // shown as a green check next to the row instead of the yellow pin.
-function initiateCFPayment(billId,splitId){
+//
+// Split into two one-directional functions (approve / unapprove) rather
+// than a single toggle that flipped whichever way the split wasn't
+// currently in. A toggle meant "Approve payment" and "Send back to
+// Scheduled" could call the exact same function — harmless normally, but
+// if that click ever fired twice in a row (a genuine double-click, or a
+// dropdown menu closing and the click falling through onto whatever was
+// underneath the cursor), the two toggles silently cancelled each other
+// out: Scheduled → Approved → Scheduled, with no visible sign anything
+// had gone wrong beyond a flash. Each function below only ever moves a
+// split ONE way, so that failure mode can't happen anymore — a duplicate
+// call just harmlessly re-applies (or re-clears) the same state.
+function approveCFPayment(billId,splitId){
   if(!hasPerm('cfApprovePayment')){ alert('You don\'t have permission to approve payments.'); return; }
   var rec=_cfScheduledDates[billId];
   if(!rec) return;
   var split=rec.splits.find(function(s){return s.id===splitId;});
   if(!split) return;
-  if(split.initiated){ split.initiated=null; } // toggle off if clicked again
-  else split.initiated={by:(currentUser&&currentUser.name)||'Unknown user',at:new Date().toISOString()};
+  split.initiated={by:(currentUser&&currentUser.name)||'Unknown user',at:new Date().toISOString()};
   _cfSaveScheduled(billId);
   renderCashFlowReport();
 }
-window.initiateCFPayment=initiateCFPayment;
+window.approveCFPayment=approveCFPayment;
+function unapproveCFPayment(billId,splitId){
+  if(!hasPerm('cfApprovePayment')){ alert('You don\'t have permission to approve payments.'); return; }
+  var rec=_cfScheduledDates[billId];
+  if(!rec) return;
+  var split=rec.splits.find(function(s){return s.id===splitId;});
+  if(!split) return;
+  split.initiated=null;
+  _cfSaveScheduled(billId);
+  renderCashFlowReport();
+}
+window.unapproveCFPayment=unapproveCFPayment;
 
 // Removes one split (or the whole bill if it's the only/last split left).
 function removeCFSplit(billId,splitId){
@@ -5041,7 +5063,7 @@ function showCFRowMenu(btn,kind,billId,splitId){
   var html;
   var btnBorder='border-bottom:1px solid #eee';
   if(kind==='scheduled'){
-    html=(hasPerm('cfApprovePayment')?'<button onclick="initiateCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;'+btnBorder+'">Approve payment</button>':'')
+    html=(hasPerm('cfApprovePayment')?'<button onclick="approveCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;'+btnBorder+'">Approve payment</button>':'')
       +'<button onclick="editCFScheduledDate(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;'+btnBorder+'">Edit date</button>'
       +'<button onclick="splitCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;'+btnBorder+'">Split payment</button>'
       +'<button onclick="removeCFSplit(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;color:#b8460b">Remove from schedule</button>';
@@ -5049,7 +5071,7 @@ function showCFRowMenu(btn,kind,billId,splitId){
     // No "Edit date" here either — editing is only allowed at the
     // Scheduled stage now, before it's been approved.
     html=(hasPerm('cfInitiatePayment')?'<button onclick="hideCFRowMenu();startCFPaymentProcess(\''+esc(billId)+'\',\''+esc(splitId)+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;'+btnBorder+';font-weight:600">Initiate payment (wire/check)</button>':'')
-      +(hasPerm('cfApprovePayment')?'<button onclick="initiateCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px">Send back to Scheduled</button>':'');
+      +(hasPerm('cfApprovePayment')?'<button onclick="unapproveCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px">Send back to Scheduled</button>':'');
   } else {
     // No "Edit date" here — once a payment is initiated (wire/check
     // actually sent), its date is locked. Editing is only allowed at the
@@ -5407,7 +5429,7 @@ function renderScheduledPaymentsSection(){
 }
 
 // Approved Payments — the same locked-snapshot idea as Scheduled Payments,
-// but for splits that have been approved (see initiateCFPayment). Sits
+// but for splits that have been approved (see approveCFPayment). Sits
 // above Scheduled Payments since these are further along: an authorized
 // user has signed off, they're just waiting to actually be paid and for
 // QuickBooks to confirm it. Cleared out automatically once QuickBooks

@@ -2489,7 +2489,6 @@ function renderReports(){
       +'<div id="coll-body"></div>'
     +'</div>'
     +'<div id="rpt-panel-cashflow" style="display:none">'
-      +'<p style="color:var(--muted);font-size:13px;margin-bottom:16px;max-width:640px">Starting point: every currently open (unpaid) vendor Bill, grouped by vendor. We\'ll build this up from here — due-date bucketing, expected incoming cash from open Invoices, and a running balance projection.</p>'
       +'<div id="cf-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
         +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:18px">'
           +'<button class="btn btn-primary" onclick="runCashFlowReport()">Pull from QuickBooks</button>'
@@ -2503,7 +2502,6 @@ function renderReports(){
       +'<div id="cf-body"></div>'
     +'</div>'
     +'<div id="rpt-panel-checks" style="display:none">'
-      +'<p style="color:var(--muted);font-size:13px;margin-bottom:16px;max-width:640px">Every customer payment received by check. Checks In Hand → Deposited is tracked manually here. Paid happens automatically — every "Pull from QuickBooks" checks whether the invoice(s) a deposited check was applied to are still open, and moves it to Paid once they\'re not (the manual "Mark paid" button is still there for edge cases, e.g. an unapplied payment with nothing to check).</p>'
       +'<div id="chk-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
         +'<div style="margin-bottom:18px">'
           +'<button class="btn btn-primary" onclick="runChecksReport()">Pull from QuickBooks</button>'
@@ -2515,7 +2513,6 @@ function renderReports(){
       +'<div id="chk-inhand-section"></div>'
     +'</div>'
     +'<div id="rpt-panel-audit" style="display:none">'
-      +'<p style="color:var(--muted);font-size:13px;margin-bottom:16px;max-width:680px">Every customer check that\'s been received and applied to an invoice, but hasn\'t been physically deposited to the bank yet in QuickBooks — pulled from the same data as the Customer Payments report, so run "Pull from QuickBooks" there first if this looks empty.</p>'
       +'<div id="audit-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)"></div>'
       +'<div id="audit-body"></div>'
     +'</div>';

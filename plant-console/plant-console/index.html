@@ -2522,6 +2522,17 @@ function renderReports(){
   // the time someone else already pulled recently, so this avoids making
   // every single terminal wait through its own slow pull.
   if(_collPayments){
+    // Bug fix: this path re-renders using whatever _collRange is already
+    // in memory, but the FROM/TO boxes above were just reset to today's
+    // fresh default when the page rebuilt — without this, the boxes can
+    // show one date range while the report underneath is actually showing
+    // a completely different one (e.g. after navigating away and back).
+    if(_collRange){
+      var fromElA=document.getElementById('coll-from');
+      var toElA=document.getElementById('coll-to');
+      if(fromElA) fromElA.value=_collRange.from;
+      if(toElA) toElA.value=_collRange.to;
+    }
     renderCollectionReport();
     renderAuditReport();
   } else {

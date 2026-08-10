@@ -2850,6 +2850,17 @@ function _collFixedPosition(el,topPx,leftPx,widthPx){
     ph.id=phId;
     el.parentNode.insertBefore(ph,el);
   }
+  // Guard against a 0 (or absurdly small) measured width — this happens on
+  // some mobile browsers when a panel has JUST been switched from
+  // display:none to visible and getBoundingClientRect() is read before
+  // that layout has actually been flushed. Applying position:fixed with a
+  // near-0 width would force every label inside to wrap onto its own line,
+  // inflating el.offsetHeight to a huge number, which then gets baked into
+  // the placeholder below — silently pushing all the real content so far
+  // down the page that scrolling never visibly reaches it. Skip entirely
+  // rather than apply corrupted geometry; the resize listener and the next
+  // tab-switch will retry with (by then) correct numbers.
+  if(!widthPx || widthPx<100) return;
   el.style.position='fixed';
   el.style.left=leftPx+'px';
   el.style.width=widthPx+'px';
@@ -6398,7 +6409,16 @@ function switchReportTab(tab){
       }
     }
   }
-  if(typeof _collSyncStickyOffsets==='function') setTimeout(_collSyncStickyOffsets,0);
+  if(typeof _collSyncStickyOffsets==='function'){
+    // Two rAFs, not setTimeout(0): a single frame can still land before
+    // the browser has actually flushed layout for a panel that was JUST
+    // switched from display:none to visible (this is what was causing the
+    // "shows the header, everything below is frozen" bug on Android
+    // Chrome — see the comment in _collFixedPosition for the full chain).
+    // Waiting for two full animation frames reliably lands after that
+    // layout pass has happened.
+    requestAnimationFrame(function(){ requestAnimationFrame(_collSyncStickyOffsets); });
+  }
   if(tab==='cashflow' && !_cashFlowBills && !_cashFlowInvoices){
     var cfStatusEl=document.getElementById('cf-status');
     if(cfStatusEl) cfStatusEl.textContent='Checking for a recent shared pull…';

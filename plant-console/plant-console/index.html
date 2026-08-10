@@ -2440,6 +2440,7 @@ function renderReports(){
   +'</div>'
   +'<span id="rpt-header-anchor" style="display:none"></span>'
     +'<div id="rpt-panel-inventory" style="display:none">'
+    +'<div id="inv-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
     +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
       +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Department</label>'
       +'<select id="rpt-dept" onchange="buildBalanceReport()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)">'
@@ -2454,6 +2455,7 @@ function renderReports(){
       +'<button class="btn" onclick="printBalanceReport()">Print</button>'
       +'<button class="btn" onclick="saveCurrentReport()" title="Keep a frozen snapshot of this report to view, print, or share later">Save</button>'
       +'<button class="btn" onclick="toggleAllReportRows()" title="Expand or collapse every row and category at once">Expand/Collapse all</button>'
+    +'</div>'
     +'</div>'
     +'<div id="rpt-body"></div>'
     +'<div style="margin-top:28px">'
@@ -2487,10 +2489,12 @@ function renderReports(){
     +'</div>'
     +'<div id="rpt-panel-cashflow" style="display:none">'
       +'<p style="color:var(--muted);font-size:13px;margin-bottom:16px;max-width:640px">Starting point: every currently open (unpaid) vendor Bill, grouped by vendor. We\'ll build this up from here — due-date bucketing, expected incoming cash from open Invoices, and a running balance projection.</p>'
-      +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:18px">'
-        +'<button class="btn btn-primary" onclick="runCashFlowReport()">Pull from QuickBooks</button>'
+      +'<div id="cf-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
+        +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:18px">'
+          +'<button class="btn btn-primary" onclick="runCashFlowReport()">Pull from QuickBooks</button>'
+        +'</div>'
+        +'<div id="cf-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'</div>'
-      +'<div id="cf-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'<div id="cf-paid-section" style="margin-bottom:24px"></div>'
       +'<div id="cf-inprocess-section" style="margin-bottom:24px"></div>'
       +'<div id="cf-approved-section" style="margin-bottom:24px"></div>'
@@ -2499,16 +2503,19 @@ function renderReports(){
     +'</div>'
     +'<div id="rpt-panel-checks" style="display:none">'
       +'<p style="color:var(--muted);font-size:13px;margin-bottom:16px;max-width:640px">Every customer payment received by check. Checks In Hand → Deposited is tracked manually here. Paid happens automatically — every "Pull from QuickBooks" checks whether the invoice(s) a deposited check was applied to are still open, and moves it to Paid once they\'re not (the manual "Mark paid" button is still there for edge cases, e.g. an unapplied payment with nothing to check).</p>'
-      +'<div style="margin-bottom:18px">'
-        +'<button class="btn btn-primary" onclick="runChecksReport()">Pull from QuickBooks</button>'
+      +'<div id="chk-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
+        +'<div style="margin-bottom:18px">'
+          +'<button class="btn btn-primary" onclick="runChecksReport()">Pull from QuickBooks</button>'
+        +'</div>'
+        +'<div id="chk-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'</div>'
-      +'<div id="chk-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'<div id="chk-paid-section" style="margin-bottom:24px"></div>'
       +'<div id="chk-deposited-section" style="margin-bottom:24px"></div>'
       +'<div id="chk-inhand-section"></div>'
     +'</div>'
     +'<div id="rpt-panel-audit" style="display:none">'
       +'<p style="color:var(--muted);font-size:13px;margin-bottom:16px;max-width:680px">Every customer check that\'s been received and applied to an invoice, but hasn\'t been physically deposited to the bank yet in QuickBooks — pulled from the same data as the Customer Payments report, so run "Pull from QuickBooks" there first if this looks empty.</p>'
+      +'<div id="audit-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)"></div>'
       +'<div id="audit-body"></div>'
     +'</div>';
   buildBalanceReport();
@@ -2812,16 +2819,45 @@ function _collFixedPosition(el,topPx,leftPx,widthPx){
   el.style.top=topPx+'px';
   ph.style.height=el.offsetHeight+'px';
 }
+// Maps each report tab to the id of ITS OWN toolbar wrapper — every tab now
+// gets the same pinned-strip treatment (tabs bar + that tab's own controls
+// docked and fixed to the top), instead of only Customer Payments having it.
+function _reportToolbarIdForTab(tab){
+  return {
+    inventory:'inv-toolbar-sticky',
+    collection:'coll-toolbar-sticky',
+    cashflow:'cf-toolbar-sticky',
+    checks:'chk-toolbar-sticky',
+    audit:'audit-toolbar-sticky'
+  }[tab]||null;
+}
+function _reportPanelIdForTab(tab){
+  return {
+    inventory:'rpt-panel-inventory',
+    collection:'rpt-panel-collection',
+    cashflow:'rpt-panel-cashflow',
+    checks:'rpt-panel-checks',
+    audit:'rpt-panel-audit'
+  }[tab]||null;
+}
+var _reportActiveTab='collection';
 function _collSyncStickyOffsets(){
-  var panelEl=document.getElementById('rpt-panel-collection');
-  var toolbarEl=document.getElementById('coll-toolbar-sticky');
-  var tableHeaderEl=document.getElementById('coll-header-sticky');
+  var toolbarId=_reportToolbarIdForTab(_reportActiveTab);
+  var panelId=_reportPanelIdForTab(_reportActiveTab);
+  var panelEl=panelId?document.getElementById(panelId):null;
+  var toolbarEl=toolbarId?document.getElementById(toolbarId):null;
   if(!panelEl || !toolbarEl) return;
   var topbarEl=document.querySelector('.topbar');
   var topbarBottom=topbarEl?Math.round(topbarEl.getBoundingClientRect().bottom):0;
   var panelRect=panelEl.getBoundingClientRect();
   _collFixedPosition(toolbarEl,topbarBottom,panelRect.left,panelRect.width);
-  if(tableHeaderEl) _collFixedPosition(tableHeaderEl,topbarBottom+toolbarEl.offsetHeight,panelRect.left,panelRect.width);
+  // Only Customer Payments has its own second sticky layer below the
+  // toolbar (the customer-list column headers) — every other tab's pinned
+  // area is just the toolbar itself.
+  if(_reportActiveTab==='collection'){
+    var tableHeaderEl=document.getElementById('coll-header-sticky');
+    if(tableHeaderEl) _collFixedPosition(tableHeaderEl,topbarBottom+toolbarEl.offsetHeight,panelRect.left,panelRect.width);
+  }
 }
 window._collSyncStickyOffsets=_collSyncStickyOffsets;
 
@@ -6284,41 +6320,42 @@ function switchReportTab(tab){
     pair[0].style.borderLeft=active?'1.5px solid var(--line)':'1.5px solid transparent';
     pair[0].style.borderRight=active?'1.5px solid var(--line)':'1.5px solid transparent';
   });
-  // Two SEPARATE position:sticky elements coordinating via a JS-computed
-  // offset turned out not to be reliable — the outer one (title+tabs)
-  // simply didn't stick, even though the inner one (the toolbar) correctly
-  // reserved space for it, leaving a gap that scrolled content showed
-  // through. Physically relocating the title+tabs DOM node to be the
-  // FIRST CHILD of the toolbar's sticky element instead sidesteps that
-  // entirely — it's not a second sticky layer anymore, just more content
-  // inside the one that's proven to actually work. Moved back out to its
-  // normal spot at the top when a different tab is active, since only
-  // Customer Payments has this sticky treatment right now.
+  // Every tab now gets the same pinned-strip treatment: the shared
+  // title+tabs block gets physically relocated to be the FIRST CHILD of
+  // THAT tab's own toolbar wrapper (a plain position:sticky setup wasn't
+  // reliable here — see the long comment above _collFixedPosition — so
+  // this uses the same JS-computed position:fixed approach for every tab,
+  // not just Customer Payments).
   var rptHeaderEl=document.getElementById('rpt-header-sticky');
-  var collToolbarEl=document.getElementById('coll-toolbar-sticky');
   var viewTopAnchor=document.getElementById('rpt-header-anchor');
   var rptHeaderTextEl=document.getElementById('rpt-header-text');
   var rptTabsBarEl=document.getElementById('rpt-tabs-bar');
+  var activeToolbarId=_reportToolbarIdForTab(tab);
+  var activeToolbarEl=activeToolbarId?document.getElementById(activeToolbarId):null;
+  _reportActiveTab=tab;
   if(rptHeaderEl){
-    if(tab==='collection' && collToolbarEl){
-      collToolbarEl.insertBefore(rptHeaderEl,collToolbarEl.firstChild);
+    if(activeToolbarEl){
+      activeToolbarEl.insertBefore(rptHeaderEl,activeToolbarEl.firstChild);
       // Once pinned to the top of the screen, the "Reports" title and the
       // long lede paragraph just eat vertical space without adding value —
-      // collapse them here so the sticky area stays short and the customer
-      // list is visible sooner when scrolling.
+      // collapse them here so the pinned area stays short and each tab's
+      // own content is visible sooner when scrolling.
       if(rptHeaderTextEl) rptHeaderTextEl.style.display='none';
       if(rptTabsBarEl){ rptTabsBarEl.style.margin='0 0 8px'; }
-      if(rptHeaderEl){ rptHeaderEl.style.paddingTop='6px'; }
-    } else {
+      rptHeaderEl.style.paddingTop='6px';
+    } else if(viewTopAnchor){
+      // Fallback only — every current tab has a toolbar wrapper, so this
+      // path shouldn't normally run, but keeps things from breaking if a
+      // future tab is added without one.
       if(rptHeaderTextEl) rptHeaderTextEl.style.display='';
       if(rptTabsBarEl){ rptTabsBarEl.style.margin='6px 0 18px'; }
-      if(rptHeaderEl){ rptHeaderEl.style.paddingTop=''; }
-      if(viewTopAnchor && rptHeaderEl.parentNode!==viewTopAnchor.parentNode){
+      rptHeaderEl.style.paddingTop='';
+      if(rptHeaderEl.parentNode!==viewTopAnchor.parentNode){
         viewTopAnchor.parentNode.insertBefore(rptHeaderEl,viewTopAnchor);
       }
     }
   }
-  if(tab==='collection' && typeof _collSyncStickyOffsets==='function') setTimeout(_collSyncStickyOffsets,0);
+  if(typeof _collSyncStickyOffsets==='function') setTimeout(_collSyncStickyOffsets,0);
   if(tab==='audit' && typeof renderAuditReport==='function' && _collPayments) renderAuditReport();
 }
 

@@ -43,6 +43,12 @@ const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 // invoices/payments and shouldn't bloat every read/write of the main,
 // far-more-frequently-touched shared data file.
 const COLLECTION_CACHE_FILE = path.join(DATA_DIR, 'collection-report-cache.json');
+// Same idea as COLLECTION_CACHE_FILE, for the Scheduled Payments (Cash Flow)
+// tab's open-Bills/open-Invoices pull — previously this data was never
+// persisted anywhere at all (in-memory only on whichever browser pulled
+// it), so every other terminal had to redo the full slow pull itself, and
+// even the SAME browser lost it on a page refresh.
+const CASHFLOW_CACHE_FILE = path.join(DATA_DIR, 'cashflow-report-cache.json');
 const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [] };
 
 // ===== PIN HASHING =====
@@ -1189,6 +1195,36 @@ const server = http.createServer(async (req, res) => {
       // produced, this endpoint doesn't need to understand it.
       JSON.parse(bodyStr || '{}');
       await fs.promises.writeFile(COLLECTION_CACHE_FILE, bodyStr, 'utf8');
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  // Scheduled Payments (Cash Flow) report cache — same "pull once, everyone
+  // else loads it instantly" pattern as /api/collection-report-cache above,
+  // in its own file for the same reason (this can hold a business's entire
+  // open-Bills/open-Invoices history and shouldn't bloat the main data file).
+  if (url === '/api/cashflow-report-cache' && req.method === 'GET') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const raw = await fs.promises.readFile(CASHFLOW_CACHE_FILE, 'utf8');
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(raw);
+    } catch (e) {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ cache: null }));
+    }
+    return;
+  }
+  if (url === '/api/cashflow-report-cache' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      JSON.parse(bodyStr || '{}');
+      await fs.promises.writeFile(CASHFLOW_CACHE_FILE, bodyStr, 'utf8');
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ success: true }));
     } catch (e) {

@@ -5075,12 +5075,34 @@ function _isoWeekNumber(dateStr){
   var yearStart=new Date(d.getFullYear(),0,1);
   return Math.ceil((((d-yearStart)/86400000)+1)/7);
 }
-function _collapsibleHeader(key,label,count){
+function _collapsibleHeader(key,label,count,printElId,printTitle){
   var collapsed=!!_sectionCollapsed[key];
+  var printBtn=printElId
+    ? '<button class="no-print" onclick="event.stopPropagation();printReportSection(\''+printElId+'\',\''+(printTitle||label).replace(/'/g,"\\'")+'\')" title="Print this section" style="margin-left:auto;flex-shrink:0;display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border:1.5px solid var(--line);border-radius:7px;background:var(--panel);color:var(--ink);font-family:var(--mono);font-size:11px;cursor:pointer">🖨 Print</button>'
+    : '';
   return '<div onclick="toggleSectionCollapse(\''+key+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink);margin-bottom:8px;user-select:none">'
-    +'<span style="display:inline-block;transition:transform .12s;transform:rotate('+(collapsed?'-90deg':'0deg')+');font-size:16px;line-height:1;color:var(--ink)">▾</span>'
+    +'<span class="no-print" style="display:inline-block;transition:transform .12s;transform:rotate('+(collapsed?'-90deg':'0deg')+');font-size:16px;line-height:1;color:var(--ink)">▾</span>'
     +label+' ('+count+')'
+    +printBtn
   +'</div>';
+}
+// Prints just ONE section (e.g. "In Process", "Approved Payments") instead
+// of the whole tab — same window.open+write pattern already used by
+// printBalanceReport, just generic over which element to print. The
+// collapse-arrow and this print button itself are marked class="no-print"
+// so they don't show up in the actual printout, only the section's title,
+// count, and table.
+function printReportSection(elId,title){
+  var el=document.getElementById(elId);
+  if(!el) return;
+  var w=window.open('','_blank');
+  if(!w){ alert('Please allow pop-ups for this site to print.'); return; }
+  w.document.write('<html><head><title>'+title+'</title>'
+    +'<style>body{font-family:Arial,sans-serif;padding:30px;color:#222}table{width:100%}.no-print{display:none!important}</style></head><body>'
+    +el.outerHTML+'</body></html>');
+  w.document.close();
+  w.focus();
+  setTimeout(function(){w.print();},250);
 }
 
 var _cfEditingInProgress=false; // true while any Cash Flow date field is mid-edit — see rerenderCurrentSection's reports branch for why
@@ -5237,7 +5259,7 @@ function renderScheduledPaymentsSection(){
   var collapsed=!!_sectionCollapsed.cfScheduled;
 
   var grandTotal=0;
-  var html=_collapsibleHeader('cfScheduled','📌 Scheduled Payments',totalCount)
+  var html=_collapsibleHeader('cfScheduled','📌 Scheduled Payments',totalCount,'cf-scheduled-section','Scheduled Payments')
     +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#fffdf5;color:#000;border:1px solid #e0c56b">'
     +'<colgroup><col style="width:130px"><col style="width:220px"><col style="width:100px"><col style="width:140px"><col style="width:150px"><col style="width:44px"></colgroup>'
@@ -5338,7 +5360,7 @@ function renderApprovedPaymentsSection(){
   var collapsed=!!_sectionCollapsed.cfApproved;
 
   var grandTotal=0;
-  var html=_collapsibleHeader('cfApproved','✅ Approved Payments — ready to pay',totalCount)
+  var html=_collapsibleHeader('cfApproved','✅ Approved Payments — ready to pay',totalCount,'cf-approved-section','Approved Payments')
     +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#f3fbf4;color:#000;border:1px solid #8fcf9a">'
     +'<colgroup><col style="width:130px"><col style="width:220px"><col style="width:100px"><col style="width:140px"><col style="width:150px"><col style="width:44px"></colgroup>'
@@ -5435,7 +5457,7 @@ function renderInProcessPaymentsSection(){
   var collapsed=!!_sectionCollapsed.cfInProcess;
 
   var grandTotal=0;
-  var html=_collapsibleHeader('cfInProcess','🔄 In Process — payment sent, awaiting confirmation',totalCount)
+  var html=_collapsibleHeader('cfInProcess','🔄 In Process — payment sent, awaiting confirmation',totalCount,'cf-inprocess-section','In Process Payments')
     +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#eef4fb;color:#000;border:1px solid #a9c6e8">'
     +'<colgroup><col style="width:130px"><col style="width:190px"><col style="width:90px"><col style="width:130px"><col style="width:90px"><col style="width:150px"><col style="width:44px"></colgroup>'
@@ -5533,7 +5555,7 @@ function renderPaidPaymentsSection(){
   rows.sort(function(a,b){ return (b.split.paid.at||'')<(a.split.paid.at||'')?-1:1; }); // most recently confirmed paid first
   var collapsed=!!_sectionCollapsed.cfPaid;
 
-  var html=_collapsibleHeader('cfPaid','💰 Paid — confirmed by QuickBooks, review and clear',rows.length)
+  var html=_collapsibleHeader('cfPaid','💰 Paid — confirmed by QuickBooks, review and clear',rows.length,'cf-paid-section','Paid Payments')
     +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#f5f5f5;color:#000;border:1px solid #bbb">'
     +'<colgroup><col style="width:220px"><col style="width:100px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:60px"></colgroup>'
@@ -6132,7 +6154,7 @@ function renderChecksInHandSection(){
   if(!el) return;
   var payments=(_checksPayments||[]).filter(function(p){ return !_checksDeposited[p.Id]; });
   if(!payments.length){
-    el.innerHTML=_collapsibleHeader('chkInHand','📄 Checks In Hand',0)
+    el.innerHTML=_collapsibleHeader('chkInHand','📄 Checks In Hand',0,'chk-inhand-section','Checks In Hand')
       +'<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px;background:var(--panel);border:1px solid var(--line);border-radius:14px">No checks yet — click "Pull from QuickBooks" above.</div>';
     return;
   }
@@ -6154,7 +6176,7 @@ function renderChecksInHandSection(){
   var collapsed=!!_sectionCollapsed.chkInHand;
 
   var grandTotal=0;
-  var html=_collapsibleHeader('chkInHand','📄 Checks In Hand',payments.length)
+  var html=_collapsibleHeader('chkInHand','📄 Checks In Hand',payments.length,'chk-inhand-section','Checks In Hand')
     +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#fffdf5;color:#000;border:1px solid #e0c56b">'
     +'<colgroup><col style="width:110px"><col style="width:240px"><col style="width:150px"><col style="width:150px"><col style="width:60px"></colgroup>'
@@ -6223,7 +6245,7 @@ function renderDepositedChecksSection(){
   var collapsed=!!_sectionCollapsed.chkDeposited;
   var grandTotal=0;
 
-  var html=_collapsibleHeader('chkDeposited','🏦 Deposited Checks',rows.length)
+  var html=_collapsibleHeader('chkDeposited','🏦 Deposited Checks',rows.length,'chk-deposited-section','Deposited Checks')
     +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#f3fbf4;color:#000;border:1px solid #8fcf9a">'
     +'<colgroup><col style="width:110px"><col style="width:220px"><col style="width:120px"><col style="width:140px"><col style="width:130px"><col style="width:150px"></colgroup>'
@@ -6278,7 +6300,7 @@ function renderPaidChecksSection(){
   var collapsed=!!_sectionCollapsed.chkPaid;
 
   var grandTotal=0;
-  var html=_collapsibleHeader('chkPaid','💰 Paid',rows.length)
+  var html=_collapsibleHeader('chkPaid','💰 Paid',rows.length,'chk-paid-section','Paid Checks')
     +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#f5f5f5;color:#000;border:1px solid #bbb">'
     +'<colgroup><col style="width:110px"><col style="width:220px"><col style="width:120px"><col style="width:140px"><col style="width:130px"><col style="width:60px"></colgroup>'

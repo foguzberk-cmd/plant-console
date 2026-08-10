@@ -629,19 +629,49 @@ const TYPE_ICON={
   ambient:'<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>'
 };
 const PERMISSIONS=[
-  {id:'viewItems',    label:'View items',               desc:'See the full items / inventory list'},
-  {id:'editItems',    label:'Edit items',                desc:'Create, update, and delete inventory items'},
-  {id:'viewTxns',     label:'View transactions',         desc:'See all recorded product movements'},
-  {id:'createTxns',   label:'Create transactions',       desc:'Log new receives, transfers, and shipments'},
-  {id:'editTxns',     label:'Edit & delete transactions',desc:'Modify or remove existing transaction records'},
-  {id:'viewReports',  label:'View reports',              desc:'Access on-hand summaries and throughput reports'},
-  {id:'manageStorage',label:'Manage storage',            desc:'Add, edit, or remove storage locations'},
-  {id:'manageLegal',  label:'Manage legal docs',         desc:'Upload and manage compliance documents'},
-  {id:'manageUsers',  label:'Manage users',              desc:'Add, edit, or remove user accounts (admin only)'},
-  {id:'cfSchedulePayment',label:'Schedule payments (Scheduled Payments)',desc:'Pick a date to schedule a vendor bill for payment, full or partial'},
-  {id:'cfApprovePayment', label:'Approve payments (Scheduled Payments)', desc:'Approve a scheduled payment as ready to pay'},
-  {id:'cfInitiatePayment',label:'Initiate payments (Scheduled Payments)',desc:'Mark an approved payment as sent by wire or check'},
+  // --- Items ---
+  {id:'viewItems',    label:'View items',               desc:'See the full items / inventory list',group:'Items'},
+  {id:'editItems',    label:'Edit items',                desc:'Create, update, and delete inventory items',group:'Items'},
+  // --- Transactions ---
+  {id:'viewTxns',     label:'View transactions',         desc:'See all recorded product movements',group:'Transactions'},
+  {id:'createTxns',   label:'Create transactions',       desc:'Log new receives, transfers, and shipments',group:'Transactions'},
+  {id:'editTxns',     label:'Edit & delete transactions',desc:'Modify or remove existing transaction records',group:'Transactions'},
+  // --- Scale Log ---
+  {id:'viewScaleLog', label:'View Scale Log',            desc:'See the Scale Log tab and printed-label history',group:'Scale Log'},
+  // --- Reports (tab-level access — each report tab can be shown/hidden independently) ---
+  {id:'viewReports',           label:'View Reports section', desc:'See the Reports tab at all (turning this off hides every report below too)',group:'Reports'},
+  {id:'viewReportsCollection', label:'— Customer Payments',  desc:'View the Customer Payments report',group:'Reports'},
+  {id:'viewReportsCashflow',   label:'— Scheduled Payments', desc:'View the Scheduled Payments (Cash Flow) report',group:'Reports'},
+  {id:'viewReportsChecks',     label:'— Checks',             desc:'View the Checks report',group:'Reports'},
+  {id:'viewReportsInventory',  label:'— Inventory Statement',desc:'View the Inventory Statement report',group:'Reports'},
+  {id:'viewReportsAudit',      label:'— Audit',              desc:'View the Audit report',group:'Reports'},
+  {id:'cfSchedulePayment',label:'Schedule payments',   desc:'Pick a date to schedule a vendor bill for payment, full or partial',group:'Reports'},
+  {id:'cfApprovePayment', label:'Approve payments',    desc:'Approve a scheduled payment as ready to pay',group:'Reports'},
+  {id:'cfInitiatePayment',label:'Initiate payments',   desc:'Mark an approved payment as sent by wire or check',group:'Reports'},
+  // --- Settings ---
+  {id:'viewSettings', label:'View Settings section', desc:'See the Settings tab at all (turning this off hides everything below too)',group:'Settings'},
+  {id:'manageStorage',label:'Manage storage',        desc:'Add, edit, or remove storage locations',group:'Settings'},
+  {id:'manageUsers',  label:'Manage users',           desc:'Add, edit, or remove user accounts (admin only)',group:'Settings'},
+  {id:'manageCustomers',label:'Manage customers',    desc:'Edit the Sales Rep field and customer allow-list',group:'Settings'},
+  {id:'manageLabelTemplates',label:'Manage label templates',desc:'Edit label layouts used when printing in the Scale Log',group:'Settings'},
+  // --- Legal ---
+  {id:'viewLegal',    label:'View Legal Documents',  desc:'See the Legal Documents tab',group:'Legal'},
+  {id:'manageLegal',  label:'Manage legal docs',      desc:'Upload and manage compliance documents',group:'Legal'},
 ];
+// Permission IDs that default to ALLOWED when unset, rather than denied.
+// These are all pure tab/section VISIBILITY switches, not action gates —
+// defaulting them to deny-by-default would have instantly hidden major
+// parts of the app for every existing non-admin user the moment this
+// shipped, since none of them have ever had these specific keys set
+// before. They only actually restrict someone once an admin explicitly
+// unchecks the box for them in the new Permissions Matrix.
+const VIEW_PERMS_DEFAULT_ALLOW=['viewItems','viewTxns','viewScaleLog','viewReports','viewReportsCollection','viewReportsCashflow','viewReportsChecks','viewReportsInventory','viewReportsAudit','viewSettings','viewLegal'];
+function hasViewPerm(permId){
+  if(!currentUser) return false;
+  if(currentUser.role==='admin') return true;
+  if(!currentUser.perms || currentUser.perms[permId]===undefined) return VIEW_PERMS_DEFAULT_ALLOW.indexOf(permId)>=0;
+  return !!currentUser.perms[permId];
+}
 // Checks whether the currently logged-in user can perform a specific
 // permission-gated action. Admins always pass. Used to gate the three
 // Cash Flow payment actions (schedule/approve/initiate) below, and can be
@@ -2385,9 +2415,12 @@ const nav=document.getElementById('nav');
 const view=document.getElementById('view');
 const crumb=document.getElementById('crumb');
 
+const SECTION_VIEW_PERM={items:'viewItems',transactions:'viewTxns',scalelog:'viewScaleLog',reports:'viewReports',settings:'viewSettings',legal:'viewLegal'};
 function buildNav(){
   nav.innerHTML='<div class="nav-kicker">Menu</div>';
   SECTIONS.forEach(s=>{
+    var vp=SECTION_VIEW_PERM[s.id];
+    if(vp && !hasViewPerm(vp)) return; // no nav item at all for a section this user can't see
     const b=document.createElement('button');
     b.className='nav-item';
     b.dataset.id=s.id;
@@ -2400,6 +2433,8 @@ function buildNav(){
 
 var currentSectionId=null;
 function select(id){
+  var vp=SECTION_VIEW_PERM[id];
+  if(vp && !hasViewPerm(vp)){ id='dashboard'; } // no nav item ever existed for this, but guard direct calls too
   currentSectionId=id;
   const s=SECTIONS.find(x=>x.id===id);
   document.querySelectorAll('.nav-item').forEach(n=>{
@@ -2442,11 +2477,11 @@ function renderReports(){
     +'<p class="lede">Inventory movement statement — opening value, what came in, what went out, and the net change over a period. Pick a department to see that department\'s own statement, or leave it on "All departments" for the plant-wide total.</p>'
     +'</div>'
     +'<div id="rpt-tabs-bar" style="display:flex;gap:8px;margin:6px 0 18px;border-bottom:1px solid var(--line);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none">'
-      +'<button id="rpt-tab-collection" class="btn" onclick="switchReportTab(\'collection\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:#fff;font-weight:700;color:var(--brand);border-top:3px solid var(--brand);border-left:1.5px solid var(--line);border-right:1.5px solid var(--line)">Customer Payments</button>'
-      +'<button id="rpt-tab-cashflow" class="btn" onclick="switchReportTab(\'cashflow\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Scheduled Payments</button>'
-      +'<button id="rpt-tab-checks" class="btn" onclick="switchReportTab(\'checks\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Checks</button>'
-      +'<button id="rpt-tab-inventory" class="btn" onclick="switchReportTab(\'inventory\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Inventory Statement</button>'
-      +'<button id="rpt-tab-audit" class="btn" onclick="switchReportTab(\'audit\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Audit</button>'
+      +(hasViewPerm('viewReportsCollection')?'<button id="rpt-tab-collection" class="btn" onclick="switchReportTab(\'collection\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:#fff;font-weight:700;color:var(--brand);border-top:3px solid var(--brand);border-left:1.5px solid var(--line);border-right:1.5px solid var(--line)">Customer Payments</button>':'')
+      +(hasViewPerm('viewReportsCashflow')?'<button id="rpt-tab-cashflow" class="btn" onclick="switchReportTab(\'cashflow\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Scheduled Payments</button>':'')
+      +(hasViewPerm('viewReportsChecks')?'<button id="rpt-tab-checks" class="btn" onclick="switchReportTab(\'checks\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Checks</button>':'')
+      +(hasViewPerm('viewReportsInventory')?'<button id="rpt-tab-inventory" class="btn" onclick="switchReportTab(\'inventory\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Inventory Statement</button>':'')
+      +(hasViewPerm('viewReportsAudit')?'<button id="rpt-tab-audit" class="btn" onclick="switchReportTab(\'audit\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Audit</button>':'')
     +'</div>'
   +'</div>'
   +'<span id="rpt-header-anchor" style="display:none"></span>'
@@ -2536,7 +2571,10 @@ function renderReports(){
   // why), so it needs to actually run once here even though nothing was
   // clicked, or the sticky header would only work after manually clicking
   // away and back to this tab.
-  switchReportTab('collection');
+  var _defaultReportTab=['collection','cashflow','checks','inventory','audit'].find(function(t){
+    return hasViewPerm('viewReports'+({collection:'Collection',cashflow:'Cashflow',checks:'Checks',inventory:'Inventory',audit:'Audit'}[t]));
+  })||'collection';
+  switchReportTab(_defaultReportTab);
   // Same fix as Cash Flow's shell: navigating away from Reports and back
   // rebuilds this whole section's HTML from scratch, which would show
   // "no data" here even though a fetch already happened this session —
@@ -6524,6 +6562,12 @@ function undepositCheck(paymentId){
 window.undepositCheck=undepositCheck;
 
 function switchReportTab(tab){
+  var _tabPermMap={collection:'viewReportsCollection',cashflow:'viewReportsCashflow',checks:'viewReportsChecks',inventory:'viewReportsInventory',audit:'viewReportsAudit'};
+  if(_tabPermMap[tab] && !hasViewPerm(_tabPermMap[tab])){
+    var fallback=Object.keys(_tabPermMap).find(function(t){ return hasViewPerm(_tabPermMap[t]); });
+    if(!fallback) return; // no report tab at all is visible to this user
+    tab=fallback;
+  }
   var invPanel=document.getElementById('rpt-panel-inventory');
   var collPanel=document.getElementById('rpt-panel-collection');
   var cfPanel=document.getElementById('rpt-panel-cashflow');
@@ -8384,6 +8428,18 @@ function renderSettings(){
         <ul class="user-list" id="userList"></ul>
       </div>
 
+      <div class="settings-section" id="permMatrixSection" style="${currentUser&&currentUser.role==='admin'?'':'display:none'}">
+        <div class="settings-section-head">
+          <div><h3>Permissions matrix</h3><p>Every permission, every person, in one view — tick a box to grant it, right here, no need to open each person individually. Admins always have everything and can't be edited (their column is grayed out).</p></div>
+        </div>
+        <div style="padding:14px 20px 4px">
+          <input type="text" id="permMatrixFilter" placeholder="Filter permissions… (e.g. &quot;reports&quot;, &quot;transactions&quot;)" oninput="renderPermissionsMatrix()" style="width:100%;max-width:360px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
+        </div>
+        <div style="overflow-x:auto;padding:4px 20px 20px">
+          <table id="permMatrixTable" style="border-collapse:collapse;font-size:12.5px;min-width:100%"></table>
+        </div>
+      </div>
+
       <div class="settings-section">
         <div class="settings-section-head">
           <div><h3>Labeling</h3><p>Choose which products are allowed to print labels in the Scale Log. Only checked products appear in the scale operator's dropdown.</p></div>
@@ -8416,6 +8472,7 @@ function renderSettings(){
   renderMyProfile();
   renderStorageList();
   renderUserList();
+  renderPermissionsMatrix();
   renderLabelingPanel();
   renderCustomersPanel();
   renderVendorsPanel();
@@ -10142,6 +10199,63 @@ function renderUserList(){
     </div>`:''}
   </li>`).join('');
 }
+// Full grid: every permission (grouped by module) as a row, every user as
+// a column, checkboxes editable right in place — the point being to let
+// an admin actually SEE and audit who has what across the whole staff at
+// once, instead of having to open each person one at a time to find out.
+function renderPermissionsMatrix(){
+  var table=document.getElementById('permMatrixTable');
+  if(!table) return;
+  if(!currentUser||currentUser.role!=='admin') return; // section itself is display:none for non-admins too — belt and suspenders
+  var filterEl=document.getElementById('permMatrixFilter');
+  var q=(filterEl&&filterEl.value||'').trim().toLowerCase();
+  var groups={};
+  var groupOrder=[];
+  PERMISSIONS.forEach(function(p){
+    if(q && (p.label+' '+p.desc+' '+p.group).toLowerCase().indexOf(q)<0) return;
+    if(!groups[p.group]){ groups[p.group]=[]; groupOrder.push(p.group); }
+    groups[p.group].push(p);
+  });
+  if(!groupOrder.length){
+    table.innerHTML='<tr><td style="padding:16px;color:var(--muted);font-size:13px">No permissions match "'+esc(q)+'".</td></tr>';
+    return;
+  }
+  var html='<thead><tr>'
+    +'<th style="position:sticky;left:0;background:var(--panel);text-align:left;padding:8px 14px;border-bottom:2px solid var(--line);min-width:220px;z-index:2">Permission</th>'
+    +users.map(function(u){
+      return '<th style="padding:8px 10px;border-bottom:2px solid var(--line);text-align:center;min-width:90px;font-weight:600">'
+        +'<div style="white-space:nowrap">'+esc(u.name)+'</div>'
+        +(u.role==='admin'?'<div style="font-family:var(--mono);font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">admin — all</div>':'')
+      +'</th>';
+    }).join('')
+  +'</tr></thead><tbody>';
+  groupOrder.forEach(function(g){
+    html+='<tr><td colspan="'+(users.length+1)+'" style="position:sticky;left:0;background:#F5EFE8;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:7px 14px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)">'+esc(g)+'</td></tr>';
+    groups[g].forEach(function(p){
+      html+='<tr>'
+        +'<td style="position:sticky;left:0;background:var(--panel);padding:7px 14px;border-bottom:1px solid var(--line)"><div style="font-weight:600">'+esc(p.label)+'</div><div style="font-size:11px;color:var(--muted)">'+esc(p.desc)+'</div></td>'
+        +users.map(function(u){
+          var isAdmin=u.role==='admin';
+          var checked=isAdmin||(u.perms&&u.perms[p.id]);
+          return '<td style="text-align:center;border-bottom:1px solid var(--line)">'
+            +'<input type="checkbox" '+(checked?'checked':'')+' '+(isAdmin?'disabled':'')+' onchange="togglePermMatrixCell(\''+esc(u.id)+'\',\''+p.id+'\',this.checked)" style="width:16px;height:16px;cursor:'+(isAdmin?'not-allowed':'pointer')+';accent-color:var(--brand)"/>'
+          +'</td>';
+        }).join('')
+      +'</tr>';
+    });
+  });
+  html+='</tbody>';
+  table.innerHTML=html;
+}
+async function togglePermMatrixCell(userId,permId,checked){
+  var u=users.find(function(x){return x.id===userId;});
+  if(!u||u.role==='admin') return;
+  if(!u.perms) u.perms={};
+  u.perms[permId]=checked;
+  await saveUsers();
+  renderUserList(); // keep the permission chips under each name in sync too
+}
+window.togglePermMatrixCell=togglePermMatrixCell;
 function buildPermGrid(perms,isAdmin){
   document.getElementById('adminNote').style.display=isAdmin?'block':'none';
   document.getElementById('permGrid').innerHTML=PERMISSIONS.map(p=>`
@@ -10192,7 +10306,7 @@ async function saveUser(){
   }
   const data={id:editingUserId||('user_'+Date.now()),name,email,role,pin,perms};
   if(editingUserId){const i=users.findIndex(x=>x.id===editingUserId);users[i]=data;if(currentUser?.id===editingUserId)currentUser=data;}else users.push(data);
-  await saveUsers();closeUserModal();renderUserList();
+  await saveUsers();closeUserModal();renderUserList();renderPermissionsMatrix();
  }catch(err){
   // Surface any unexpected failure instead of silently doing nothing, so
   // it's actually diagnosable instead of just "the button doesn't work".
@@ -11954,7 +12068,7 @@ function closeDeleteModal(){document.getElementById('deleteModal').classList.add
 function confirmDelete(){
   if(deletingKind==='doc'){transactions=transactions.filter(function(x){return x.docId!==deletingId;});saveTxns();closeDeleteModal();renderTransactions();recalcQuantities();}
   else if(deletingKind==='txn'){transactions=transactions.filter(x=>x.id!==deletingId);saveTxns();closeDeleteModal();renderTransactions();}
-  else if(deletingKind==='user'){users=users.filter(x=>x.id!==deletingId);saveUsers();closeDeleteModal();renderUserList();}
+  else if(deletingKind==='user'){users=users.filter(x=>x.id!==deletingId);saveUsers();closeDeleteModal();renderUserList();renderPermissionsMatrix();}
   else{storages=storages.filter(x=>x.id!==deletingId);saveStorages();closeDeleteModal();renderStorageList();}
 }
 

@@ -2901,10 +2901,10 @@ var _reportActiveTab='collection';
 // more robust approach (e.g. real CSS position:sticky, revisited with
 // more care for the shared-layout quirk mentioned in _collFixedPosition's
 // old comment) is worth trying again later.
+// Re-enabled per request — pinning the report header/toolbar while
+// scrolling was worth keeping despite the Android Chrome scroll-freeze
+// issue found earlier; not a priority to chase down further right now.
 function _collSyncStickyOffsets(){
-  return;
-}
-function _collSyncStickyOffsets_DISABLED_fixedPositionVersion(){
   var toolbarId=_reportToolbarIdForTab(_reportActiveTab);
   var panelId=_reportPanelIdForTab(_reportActiveTab);
   var panelEl=panelId?document.getElementById(panelId):null;

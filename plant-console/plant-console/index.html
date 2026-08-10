@@ -5024,6 +5024,25 @@ function unapproveCFPayment(billId,splitId){
 }
 window.unapproveCFPayment=unapproveCFPayment;
 
+// Manual confirmation for the one case reconciliation can't reliably
+// auto-detect: a QuickBooks payment genuinely split across several of a
+// vendor's bills, where no single bill's own balance drop matches. Only
+// use this after actually checking QuickBooks — this makes no attempt to
+// verify anything itself, unlike the automatic checks in
+// _cfReconcileApprovedPayments.
+function markCFPaidManually(billId,splitId){
+  if(!hasPerm('cfInitiatePayment')){ alert('You don\'t have permission to do this.'); return; }
+  var rec=_cfScheduledDates[billId];
+  if(!rec) return;
+  var split=rec.splits.find(function(s){return s.id===splitId;});
+  if(!split) return;
+  if(!confirm('Mark this '+_cfMoney(split.amount)+' payment to '+(rec.vendor||'this vendor')+' as paid?\n\nOnly confirm this if you\'ve actually verified it in QuickBooks — this is a manual override, not an automatic check.')) return;
+  split.paid={amount:Number(split.amount||0),at:new Date().toISOString(),manual:true,by:(currentUser&&currentUser.name)||'Unknown user'};
+  _cfSaveScheduled(billId);
+  renderCashFlowReport();
+}
+window.markCFPaidManually=markCFPaidManually;
+
 // Removes one split (or the whole bill if it's the only/last split left).
 function removeCFSplit(billId,splitId){
   var rec=_cfScheduledDates[billId];
@@ -5071,12 +5090,15 @@ function showCFRowMenu(btn,kind,billId,splitId){
     // No "Edit date" here either — editing is only allowed at the
     // Scheduled stage now, before it's been approved.
     html=(hasPerm('cfInitiatePayment')?'<button onclick="hideCFRowMenu();startCFPaymentProcess(\''+esc(billId)+'\',\''+esc(splitId)+'\')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;'+btnBorder+';font-weight:600">Initiate payment (wire/check)</button>':'')
-      +(hasPerm('cfApprovePayment')?'<button onclick="unapproveCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px">Send back to Scheduled</button>':'');
+      +(hasPerm('cfApprovePayment')?'<button onclick="unapproveCFPayment(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;'+btnBorder+'">Send back to Scheduled</button>':'')
+      +(hasPerm('cfInitiatePayment')?'<button onclick="markCFPaidManually(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px" title="For the one case auto-detection can\'t catch: one QuickBooks payment split across several bills with no single bill\'s balance matching. Confirm here only once you\'ve actually verified it in QuickBooks.">Mark as paid (manual)</button>':'');
   } else {
     // No "Edit date" here — once a payment is initiated (wire/check
     // actually sent), its date is locked. Editing is only allowed at the
     // Scheduled stage, before it's been approved or sent.
-    html=(hasPerm('cfInitiatePayment')?'<button onclick="revertCFPaymentProcess(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px">Send back to Approved</button>':'<span style="display:block;padding:8px 12px;font-size:12px;color:var(--muted)">No actions available</span>');
+    html=(hasPerm('cfInitiatePayment')?'<button onclick="revertCFPaymentProcess(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px;'+btnBorder+'">Send back to Approved</button>':'')
+      +(hasPerm('cfInitiatePayment')?'<button onclick="markCFPaidManually(\''+esc(billId)+'\',\''+esc(splitId)+'\');hideCFRowMenu()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:#fff;cursor:pointer;font-size:12px" title="For the one case auto-detection can\'t catch: one QuickBooks payment split across several bills with no single bill\'s balance matching. Confirm here only once you\'ve actually verified it in QuickBooks.">Mark as paid (manual)</button>':'');
+    if(!hasPerm('cfInitiatePayment')) html='<span style="display:block;padding:8px 12px;font-size:12px;color:var(--muted)">No actions available</span>';
   }
   el.innerHTML=html;
   el.setAttribute('data-bill',billId);
@@ -5815,15 +5837,11 @@ function _cfReconcileApprovedPayments(freshBills){
     // out a real approved payment with zero actual evidence it was paid.
     // Erring toward NOT clearing it is the safe default: a genuinely
     // closed bill will still get caught on a later pull once it's
-    // reliably reflected, or by the vendor-wide check below; a merely
-    // missing one just gets left alone instead of silently disappearing.
+    // reliably reflected; a merely missing one just gets left alone
+    // instead of silently disappearing.
     if(!currentBalanceById.hasOwnProperty(billId)) return;
     var currentBillBalance=currentBalanceById[billId];
     var billPaidDown=Math.round((Number(rec.balance||0)-currentBillBalance)*100)/100;
-    // TEMP DIAGNOSTIC — remove once the false-positive is found. Open the
-    // browser console (F12) right after clicking "Pull from QuickBooks"
-    // and look for lines starting with [CF-PASS1] for this vendor's bills.
-    console.log('[CF-PASS1]',rec.vendor,rec.docNum,'billId=',billId,'rec.balance=',rec.balance,'currentBillBalance=',currentBillBalance,'billPaidDown=',billPaidDown,'unpaidActiveTotal=',unpaidActiveTotal,'WILL_MARK_PAID=',(billPaidDown>=unpaidActiveTotal-0.01 || currentBillBalance<=0.004));
     if(billPaidDown>=unpaidActiveTotal-0.01 || currentBillBalance<=0.004){
       unpaidActive.forEach(function(s){ s.paid={amount:Number(s.amount||0),at:new Date().toISOString()}; });
       movedCount+=unpaidActive.length;
@@ -5832,84 +5850,25 @@ function _cfReconcileApprovedPayments(freshBills){
     }
   });
 
-  // SECOND PASS — vendor-wide check, for the legitimate opposite case:
+  // A SECOND, vendor-wide pass used to run here — the idea being that
   // QuickBooks doesn't require a payment to apply to any specific bill,
-  // so ONE payment can be split across several of a vendor's open bills,
-  // paying down each PARTIALLY. In that scenario no single bill's own
-  // balance may have dropped enough to trip the check above, even though
-  // real money clearly landed somewhere for that vendor. Skips any bill
-  // pass 1 already resolved, so nothing gets double-counted.
-  var byVendor={}; // vendorKey -> {billIds:[], baselineVendorTotal}
-  Object.keys(_cfScheduledDates).forEach(function(billId){
-    if(billIdsHandledInPass1[billId]) return;
-    var rec=_cfScheduledDates[billId];
-    var hasUnpaidActive=(rec.splits||[]).some(function(s){ return s.initiated && !s.paid; });
-    if(!hasUnpaidActive) return;
-    // Fall back to keying by vendor NAME for records saved before
-    // vendorId/vendorBalanceAtSchedule existed, so old data doesn't break —
-    // just falls back to the old per-bill-only comparison for those.
-    var vendorKey=rec.vendorId||('name:'+(rec.vendor||''));
-    if(!byVendor[vendorKey]) byVendor[vendorKey]={billIds:[],baselineVendorTotal:0,hasVendorBaseline:false};
-    byVendor[vendorKey].billIds.push(billId);
-    if(rec.vendorId && rec.vendorBalanceAtSchedule!==undefined){
-      // Use the largest baseline among this vendor's tracked bills — the
-      // largest snapshot represents the earliest point in time (balances
-      // only go down from payments), which is the right starting point to
-      // measure total reduction from.
-      byVendor[vendorKey].baselineVendorTotal=Math.max(byVendor[vendorKey].baselineVendorTotal,rec.vendorBalanceAtSchedule);
-      byVendor[vendorKey].hasVendorBaseline=true;
-    }
-  });
-
-  Object.keys(byVendor).forEach(function(vendorKey){
-    var group=byVendor[vendorKey];
-    // Same principle as Pass 1: if any of THIS vendor's tracked bills
-    // didn't come back in this pull, the comparison below is unreliable —
-    // a genuinely missing bill would silently read as a $0 balance,
-    // making it look like money arrived that didn't. Skip the whole
-    // vendor this round rather than risk a false "paid" on every one of
-    // their scheduled/approved bills; a real payment will still get
-    // caught on a later pull once the data is complete.
-    var anyBillMissing=group.billIds.some(function(billId){ return !currentBalanceById.hasOwnProperty(billId); });
-    if(anyBillMissing) return;
-    var paidSoFar;
-    if(group.hasVendorBaseline){
-      var currentVendorTotal=currentTotalByVendor[vendorKey]||0;
-      paidSoFar=Math.round((group.baselineVendorTotal-currentVendorTotal)*100)/100;
-    } else {
-      // Old-format record with no vendor baseline — fall back to summing
-      // just the tracked bills' own balances (the original, narrower check).
-      var originalSum=0, currentSum=0;
-      group.billIds.forEach(function(billId){
-        var rec=_cfScheduledDates[billId];
-        originalSum+=Number(rec.balance||0);
-        currentSum+=currentBalanceById.hasOwnProperty(billId)?currentBalanceById[billId]:0;
-      });
-      paidSoFar=Math.round((originalSum-currentSum)*100)/100;
-    }
-    // TEMP DIAGNOSTIC — same as Pass 1 above, look for [CF-PASS2] lines.
-    console.log('[CF-PASS2]','vendorKey=',vendorKey,'billIds=',group.billIds,'hasVendorBaseline=',group.hasVendorBaseline,'baselineVendorTotal=',group.hasVendorBaseline?group.baselineVendorTotal:'(n/a)','currentVendorTotal=',group.hasVendorBaseline?(currentTotalByVendor[vendorKey]||0):'(n/a)','paidSoFar=',paidSoFar,'WILL_MARK_PAID=',(paidSoFar>0.004));
-    if(paidSoFar<=0.004) return; // no reduction detected for this vendor yet
-
-    group.billIds.forEach(function(billId){
-      var rec=_cfScheduledDates[billId];
-      var unpaidActive=(rec.splits||[]).filter(function(s){ return s.initiated && !s.paid; });
-      unpaidActive.forEach(function(s){
-        s.paid={amount:paidSoFar,at:new Date().toISOString()};
-      });
-      movedCount+=unpaidActive.length;
-      if(unpaidActive.length) _cfDiagBillIds.push(billId);
-    });
-  });
-  // Actually sync every bill this reconciliation pass touched — the
-  // previous parameterless _cfSaveScheduled() call only ever wrote to
-  // THIS browser's localStorage (see its own code: the server push only
-  // happens when a billId is passed in). Any "marked paid" from Pass 1 or
-  // Pass 2 was therefore never reaching the server at all — a background
-  // pull on this same device (or a push from any other device) could then
-  // overwrite it right back with the old, still-approved copy.
+  // so one payment could be split across several of a vendor's open bills
+  // without any single bill's own balance dropping enough to trip the
+  // check above. DISABLED as of Aug 2026, confirmed via live diagnostics
+  // to be actively harmful in normal use: for a vendor with several open
+  // bills, ANY one of them closing out through real, ordinary AP activity
+  // completely unrelated to the specific bills scheduled here (a genuinely
+  // everyday occurrence, not a rare edge case) drops that vendor's TOTAL
+  // balance — and this pass had no way to tell "a different bill for this
+  // vendor got paid" apart from "these tracked bills got paid," so it
+  // wrongly marked already-approved bills as paid based on money that
+  // actually went somewhere else entirely. Pass 1 above already handles
+  // the common, evidence-based case correctly (checking each bill's own
+  // balance). The narrower case this was trying to catch — one payment
+  // genuinely split across several bills with no per-bill balance match —
+  // has no reliable automatic signal; if it happens, mark those payments
+  // paid manually from the row's ⋮ menu instead of guessing.
   _cfDiagBillIds.forEach(function(billId){ _cfSaveScheduled(billId); });
-  if(movedCount>0 && !_cfDiagBillIds.length) _cfSaveScheduled(); // safety net, shouldn't normally hit
   return movedCount;
 }
 

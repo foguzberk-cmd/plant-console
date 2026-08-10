@@ -8435,17 +8435,72 @@ function renderCustomersList(){
   var repSet={};
   customers.forEach(function(c){ if(c.salesRep&&c.salesRep.trim()) repSet[c.salesRep.trim()]=true; });
   var repOptions=Object.keys(repSet).sort();
-  var datalistHtml='<datalist id="salesRepOptions">'+repOptions.map(function(r){ return '<option value="'+esc(r)+'">'; }).join('')+'</datalist>';
-  listEl.innerHTML=datalistHtml+shown.map(function(c){
+  window._custRepOptions=repOptions;
+  listEl.innerHTML=shown.map(function(c){
     var on=_custDraft.indexOf(c.id)>=0;
     return '<label style="display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer">'
       +'<input type="checkbox" '+(on?'checked':'')+' onchange="toggleCustomerAllowed(\''+c.id+'\',this.checked)" style="width:17px;height:17px;cursor:pointer;accent-color:var(--brand)"/>'
       +'<div style="flex:1;font-size:13px;font-weight:600">'+esc(c.name)+'</div>'
-      +'<input type="text" list="salesRepOptions" value="'+esc(c.salesRep||'')+'" placeholder="Sales Rep" onclick="event.stopPropagation(); if(this.showPicker){try{this.showPicker();}catch(e){}}" onchange="updateCustomerSalesRep(\''+c.id+'\',this.value)" style="width:140px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink);cursor:text"/>'
+      +'<input type="text" data-repinput="'+c.id+'" value="'+esc(c.salesRep||'')+'" placeholder="Sales Rep" onclick="event.stopPropagation()" onfocus="event.stopPropagation();showRepSuggestions(this,\''+c.id+'\')" oninput="showRepSuggestions(this,\''+c.id+'\')" onblur="setTimeout(hideRepSuggestions,150)" onchange="updateCustomerSalesRep(\''+c.id+'\',this.value)" style="width:140px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink);cursor:text"/>'
       +'</label>';
   }).join('');
   var countEl=document.getElementById('cust-count');
   if(countEl) countEl.textContent=_custDraft.length+' of '+customers.length+' customers allowed for '+_custPanelDept+' (unsaved until you click Save)';
+}
+// Custom Sales Rep suggestion dropdown — replaces relying on the browser's
+// native <input list="..."> + showPicker() combo, which silently does
+// nothing on many mobile browsers (Safari on iOS has no showPicker support
+// at all, and even where a datalist itself is supported, tapping the field
+// often doesn't reliably pop it open). This is built and positioned by hand
+// so "picking" a rep works the same way regardless of device/browser.
+function showRepSuggestions(inputEl,custId){
+  var q=(inputEl.value||'').toLowerCase();
+  var opts=(window._custRepOptions||[]).filter(function(r){ return r.toLowerCase().indexOf(q)>=0; }).slice(0,8);
+  var dd=document.getElementById('custRepSuggestDropdown');
+  if(!dd){
+    dd=document.createElement('div');
+    dd.id='custRepSuggestDropdown';
+    dd.style.position='fixed';
+    dd.style.zIndex='9999';
+    dd.style.background='#fff';
+    dd.style.border='1.5px solid var(--line)';
+    dd.style.borderRadius='9px';
+    dd.style.boxShadow='0 6px 18px rgba(0,0,0,.18)';
+    dd.style.maxHeight='220px';
+    dd.style.overflowY='auto';
+    dd.style.display='none';
+    document.body.appendChild(dd);
+  }
+  if(!opts.length){ dd.style.display='none'; return; }
+  var rect=inputEl.getBoundingClientRect();
+  dd.style.left=Math.round(rect.left)+'px';
+  dd.style.top=Math.round(rect.bottom+4)+'px';
+  dd.style.width=Math.max(Math.round(rect.width),150)+'px';
+  dd.innerHTML='';
+  opts.forEach(function(o){
+    var row=document.createElement('div');
+    row.textContent=o;
+    row.style.padding='9px 11px';
+    row.style.fontSize='12px';
+    row.style.cursor='pointer';
+    row.onmouseover=function(){ row.style.background='var(--bg)'; };
+    row.onmouseout=function(){ row.style.background='#fff'; };
+    // mousedown (not click) fires BEFORE the input's blur, so the value is
+    // set and saved before the blur-triggered hideRepSuggestions() timeout
+    // below would otherwise close this dropdown out from under a tap.
+    row.onmousedown=function(e){
+      e.preventDefault();
+      inputEl.value=o;
+      hideRepSuggestions();
+      updateCustomerSalesRep(custId,o);
+    };
+    dd.appendChild(row);
+  });
+  dd.style.display='block';
+}
+function hideRepSuggestions(){
+  var dd=document.getElementById('custRepSuggestDropdown');
+  if(dd) dd.style.display='none';
 }
 // "Dumb terminal" write — sends ONLY this one field, for this one
 // customer, straight to the server. No local array mutation, no full
@@ -8468,19 +8523,15 @@ async function updateCustomerSalesRep(id,value){
     });
     if(!res.ok) throw new Error('Server responded with '+res.status);
     // Update this device's own in-memory copy too, purely so the UI
-    // (search filter, the datalist of known reps, CSV export) reflects
+    // (search filter, the suggestion dropdown, CSV export) reflects
     // the change immediately — the server write above is what actually
     // matters, this is just keeping the local display in sync with it.
     var c=customers.find(function(x){return x.id===id;});
     if(c) c.salesRep=salesRep;
     safeSetLocal('pc_customers',JSON.stringify(customers));
-    if(salesRep){
-      var dl=document.getElementById('salesRepOptions');
-      if(dl && !dl.querySelector('option[value="'+CSS.escape(salesRep)+'"]')){
-        var opt=document.createElement('option');
-        opt.value=salesRep;
-        dl.appendChild(opt);
-      }
+    if(salesRep && window._custRepOptions && window._custRepOptions.indexOf(salesRep)<0){
+      window._custRepOptions.push(salesRep);
+      window._custRepOptions.sort();
     }
     if(statusEl){ statusEl.textContent='Sales Rep saved.'; statusEl.style.color='#0f6e40'; setTimeout(function(){ if(statusEl.textContent==='Sales Rep saved.') statusEl.textContent=''; },3000); }
   }catch(e){

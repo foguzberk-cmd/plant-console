@@ -2761,6 +2761,42 @@ window.collColDrop=collColDrop;
 
 var _cashFlowInvoices=null; // cached open (Balance>0) Invoices from the last successful Cash Flow pull
 var _cashFlowBills=null;    // cached open (Balance>0) Bills from the last successful Cash Flow pull
+// Bundles the Cash Flow report's raw pulled data for sharing via the server
+// (see /api/cashflow-report-cache) — same "pull once, everyone else loads
+// it instantly" pattern as Customer Payments' shared cache
+// (_collBuildSharedCacheBundle). This is simpler than that one: Cash Flow
+// currently does one full fetch per pull with no incremental sub-caches, so
+// there's nothing else to bundle beyond the two raw lists themselves.
+function _cfBuildSharedCacheBundle(){
+  return { savedAt:new Date().toISOString(), bills:_cashFlowBills, invoices:_cashFlowInvoices };
+}
+function _cfRestoreSharedCacheBundle(b){
+  if(!b || !b.bills) return false;
+  _cashFlowBills=b.bills;
+  _cashFlowInvoices=b.invoices||null;
+  return true;
+}
+async function _cfPushSharedCache(){
+  try{
+    await fetch('/api/cashflow-report-cache',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(_cfBuildSharedCacheBundle())
+    });
+  }catch(e){ /* best-effort — this device's own view is already correct regardless of whether the share succeeds */ }
+}
+// Checked when the Scheduled Payments tab is opened and nothing is loaded
+// in THIS device's memory yet — loads whatever the last successful pull
+// (from any terminal) left on the server, so most people never have to
+// click "Pull from QuickBooks" and wait through their own full pull.
+async function _cfTryLoadSharedCache(){
+  try{
+    var res=await fetch('/api/cashflow-report-cache',{cache:'no-store'});
+    if(!res.ok) return false;
+    var bundle=await res.json();
+    return _cfRestoreSharedCacheBundle(bundle);
+  }catch(e){ return false; }
+}
 function setCashFlowStartBalance(v){
   var n=Number(v);
   _cashFlowStartBalance=isNaN(n)?null:n;
@@ -4507,6 +4543,12 @@ async function runCashFlowReport(){
   if(clearedCount>0 && statusEl){
     statusEl.textContent=(statusEl.textContent?statusEl.textContent+' — ':'')+clearedCount+' approved payment(s) confirmed paid in QuickBooks and cleared automatically.';
   }
+  // Share this pull with every other terminal — see the comment on
+  // _cfBuildSharedCacheBundle for why this is a "cache the result"
+  // approach rather than moving the fetch itself server-side. Fire-and-
+  // forget: whoever just pulled already has correct data rendered above
+  // regardless of whether this specific push succeeds.
+  _cfPushSharedCache();
 }
 window.runCashFlowReport=runCashFlowReport;
 
@@ -6356,6 +6398,16 @@ function switchReportTab(tab){
     }
   }
   if(typeof _collSyncStickyOffsets==='function') setTimeout(_collSyncStickyOffsets,0);
+  if(tab==='cashflow' && !_cashFlowBills && !_cashFlowInvoices){
+    var cfStatusEl=document.getElementById('cf-status');
+    if(cfStatusEl) cfStatusEl.textContent='Checking for a recent shared pull…';
+    (function(){
+      _cfTryLoadSharedCache().then(function(loaded){
+        if(loaded){ renderCashFlowReport(); }
+        else if(cfStatusEl && cfStatusEl.textContent==='Checking for a recent shared pull…'){ cfStatusEl.textContent=''; }
+      });
+    })();
+  }
   if(tab==='audit' && typeof renderAuditReport==='function' && _collPayments) renderAuditReport();
 }
 

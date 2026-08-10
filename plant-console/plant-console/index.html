@@ -4764,6 +4764,19 @@ function _cfAddSplit(billId,date,amount){
   _cfSaveScheduled(billId);
 }
 
+// Sat/Sun check for a yyyy-mm-dd string — used to warn (not block) when
+// scheduling a payment for a non-business day, since a date picker gives
+// no visual cue at all about which day of the week is selected.
+function _cfIsWeekend(dateStr){
+  if(!dateStr) return false;
+  var d=new Date(dateStr+'T00:00:00');
+  var day=d.getDay(); // 0=Sun, 6=Sat
+  return day===0||day===6;
+}
+function _cfWeekendDayName(dateStr){
+  var d=new Date(dateStr+'T00:00:00');
+  return d.toLocaleDateString('en-US',{weekday:'long'});
+}
 // Quick-schedule action from the main table's date input — schedules
 // whatever balance is currently still unscheduled for this bill (the full
 // balance the first time, or just the remainder if it's already been
@@ -4772,6 +4785,10 @@ function _cfAddSplit(billId,date,amount){
 function setCashFlowScheduledDate(billId,value){
   if(!hasPerm('cfSchedulePayment')){ alert('You don\'t have permission to schedule payments.'); renderCashFlowReport(); return; }
   if(!value) return; // nothing to clear here anymore — remove specific installments from the pinned section's ⋮ menu instead
+  if(_cfIsWeekend(value) && !confirm('This falls on a '+_cfWeekendDayName(value)+' — '+value+' is not a business day.\n\nSchedule it anyway?')){
+    renderCashFlowReport(); // reset the date input back to blank rather than leaving a typed-but-unscheduled date sitting there
+    return;
+  }
   var bill=(_cashFlowBills||[]).find(function(b){ return b.Id===billId; });
   if(!bill) return;
   var remaining=_cfRemainingFor(bill);
@@ -4969,6 +4986,12 @@ function cfSplitSave(){
   if(!st) return;
   var bad=st.rows.find(function(r){ return !r.date || !r.amount || r.amount<=0; });
   if(bad){ alert('Every part needs a date and an amount greater than $0.'); return; }
+  var weekendDates=st.rows.map(function(r){return r.date;}).filter(_cfIsWeekend);
+  if(weekendDates.length){
+    var uniqueWeekendDates=weekendDates.filter(function(d,i){return weekendDates.indexOf(d)===i;});
+    var list=uniqueWeekendDates.map(function(d){return d+' ('+_cfWeekendDayName(d)+')';}).join(', ');
+    if(!confirm('One or more parts fall on a non-business day: '+list+'.\n\nSave this payment plan anyway?')) return;
+  }
   var rec=_cfScheduledDates[st.billId];
   if(!rec) { closeCFSplitModal(); return; }
   var idx=rec.splits.findIndex(function(s){return s.id===st.splitId;});
@@ -5248,9 +5271,12 @@ function _cfCommitDateEdit(billId,splitId){
   var input=document.getElementById('cf-editinput-'+billId+'-'+splitId);
   var rec=_cfScheduledDates[billId];
   var split=rec&&rec.splits.find(function(s){return s.id===splitId;});
-  _cfEditingInProgress=false;
-  if(!input||!split){ renderCashFlowReport(); return; }
+  if(!input||!split){ _cfEditingInProgress=false; renderCashFlowReport(); return; }
   var newVal=input.value;
+  if(newVal && newVal!==split.date && _cfIsWeekend(newVal) && !confirm('This falls on a '+_cfWeekendDayName(newVal)+' — '+newVal+' is not a business day.\n\nSave it anyway?')){
+    return; // leave the edit box open with the typed value, un-committed, so they can pick a different date without losing their place
+  }
+  _cfEditingInProgress=false;
   if(newVal && newVal!==split.date){
     split.date=newVal;
     split.edited={by:(currentUser&&currentUser.name)||'Unknown user',at:new Date().toISOString()};

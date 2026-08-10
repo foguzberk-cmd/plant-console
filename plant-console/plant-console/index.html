@@ -914,6 +914,16 @@ async function retryUsersSaveUntilConfirmed(){
 }
 function saveSavedReports(){safeSetLocal('pc_savedreports',JSON.stringify(savedReports));pushToServer();}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+// Display-only reformat of a yyyy-mm-dd string to mm/dd/yyyy — used
+// wherever a raw QuickBooks/scheduling date string gets shown to a person.
+// Sorting/grouping elsewhere still uses the original yyyy-mm-dd form (that
+// ordering only works lexicographically in ISO order), so this is applied
+// at render time, never to the stored value itself. Anything that doesn't
+// match the expected shape is left exactly as-is rather than guessed at.
+function fmtDateUS(s){
+  var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s||'');
+  return m?(m[2]+'/'+m[3]+'/'+m[1]):s;
+}
 // Browsers cap localStorage at roughly 5-10MB per site. A large QuickBooks
 // transaction history can push the local mirror of the data past that limit
 // (this actually happened: "Setting the value of 'pc_transactions' exceeded
@@ -5337,12 +5347,12 @@ function renderScheduledPaymentsSection(){
         var whenStr=split.at?new Date(split.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
         var pinTitle='Scheduled by '+esc(split.by)+(whenStr?' — '+esc(whenStr):'');
         html+='<tr class="'+rowClass+'" style="display:'+(weekIsCollapsed?'none':'table-row')+'">'
-          +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #e0c56b;padding:5px 10px;font-weight:400">'+esc(dateKey)
+          +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #e0c56b;padding:5px 10px;font-weight:400">'+esc(fmtDateUS(dateKey))
             +(split.edited?' <span title="Edited by '+esc(split.edited.by)+(split.edited.at?' — '+esc(new Date(split.edited.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})):'')+'" style="font-size:11px;color:#8a6d1a;font-style:italic;cursor:help">(edited)</span>':'')
           +'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(row.docNum||'')+'</td>'
-          +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(row.due||'—')+'</td>'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(row.due?fmtDateUS(row.due):'—')+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right">'
             +'<span title="'+pinTitle+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#ffd54f;border:1px solid #c9a227;border-radius:2px;font-size:9px;margin-right:4px;cursor:help;transform:rotate(-4deg)">📌</span>'
@@ -5418,12 +5428,12 @@ function renderApprovedPaymentsSection(){
       grandTotal+=bal;
       var whenStr=split.initiated.at?new Date(split.initiated.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
       html+='<tr>'
-        +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(dateKey)
+        +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(fmtDateUS(dateKey))
           +(split.edited?' <span title="Edited by '+esc(split.edited.by)+(split.edited.at?' — '+esc(new Date(split.edited.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})):'')+'" style="font-size:11px;color:#8a6d1a;font-style:italic;cursor:help">(edited)</span>':'')
         +'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.docNum||'')+'</td>'
-        +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.due||'—')+'</td>'
+        +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.due?fmtDateUS(row.due):'—')+'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px;text-align:right">'
           +'<span title="Approved by '+esc(split.initiated.by)+(whenStr?' — '+esc(whenStr):'')+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#a5d6a7;border:1px solid #388e3c;border-radius:2px;font-size:9px;margin-right:4px;cursor:help">✓</span>'
@@ -5539,12 +5549,12 @@ function renderInProcessPaymentsSection(){
         var whenStr=split.inProcess.at?new Date(split.inProcess.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
         var methodLabel=split.inProcess.method==='wire'?'🏦 Wire':'📝 Check';
         html+='<tr class="'+rowClass+'" style="display:'+(weekIsCollapsed?'none':'table-row')+'">'
-          +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(dateKey)
+          +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(fmtDateUS(dateKey))
             +(split.edited?' <span title="Edited by '+esc(split.edited.by)+(split.edited.at?' — '+esc(new Date(split.edited.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})):'')+'" style="font-size:11px;color:#8a6d1a;font-style:italic;cursor:help">(edited)</span>':'')
           +'</td>'
           +'<td style="border:1px solid #a9c6e8;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
           +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(row.docNum||'')+'</td>'
-          +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(row.due||'—')+'</td>'
+          +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(row.due?fmtDateUS(row.due):'—')+'</td>'
           +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+methodLabel+'</td>'
           +'<td style="border:1px solid #a9c6e8;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
           +'<td style="border:1px solid #a9c6e8;padding:5px 10px;text-align:right">'

@@ -8397,12 +8397,12 @@ function _renderCustomersPanelBody(panel){
     </div>
     <div id="custSyncStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>
     <div style="margin-top:24px;border:1px dashed var(--line);border-radius:12px;padding:14px">
-      <div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Sales Rep — bulk edit via CSV</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Sales Rep isn't available from QuickBooks, so it's set here in Plant Console. To fill it in for many customers at once: export the CSV, edit the "Sales Rep" column in Excel, then import it back — matches are made by customer name.</p>
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Sales Rep — bulk edit</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Sales Rep isn't available from QuickBooks, so it's set here in Plant Console. To fill it in for many customers at once: export the CSV, edit the "Sales Rep" column in Excel, then import it back — matches are made by customer name. QuickBooks's own Customer Contact List export (.xls/.xlsx) can also be imported directly, unedited.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="btn btn-sm" onclick="exportCustomersSalesRepCSV()">Export CSV</button>
-        <button class="btn btn-sm" onclick="document.getElementById('cust-csv-file').click()">Import CSV</button>
-        <input type="file" id="cust-csv-file" accept=".csv" style="display:none" onchange="importCustomersSalesRepCSV(this.files[0]); this.value='';"/>
+        <button class="btn btn-sm" onclick="document.getElementById('cust-csv-file').click()">Import file</button>
+        <input type="file" id="cust-csv-file" accept=".csv,.xls,.xlsx" style="display:none" onchange="importCustomersSalesRepFile(this.files[0]); this.value='';"/>
       </div>
       <div id="cust-csv-status" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>
     </div>`;
@@ -8520,22 +8520,48 @@ function exportCustomersSalesRepCSV(){
   setTimeout(function(){ URL.revokeObjectURL(url); },1000);
 }
 
-async function importCustomersSalesRepCSV(file){
+async function importCustomersSalesRepFile(file){
   var statusEl=document.getElementById('cust-csv-status');
   if(!file){ return; }
+  var extMatch=(file.name||'').toLowerCase().match(/\.([a-z0-9]+)$/);
+  var ext=extMatch?extMatch[1]:'';
   if(statusEl){ statusEl.textContent='Reading file…'; statusEl.style.color=''; }
-  var text;
-  try{ text=await file.text(); }
-  catch(e){ if(statusEl){ statusEl.textContent='Could not read file.'; statusEl.style.color='#c0392b'; } return; }
-  var rows=_csvParse(text).filter(function(r){ return r.length && r.some(function(f){return f.trim()!=='';}); });
+  var rows;
+  if(ext==='xls'||ext==='xlsx'){
+    try{
+      var buf=await file.arrayBuffer();
+      var wb=XLSX.read(buf,{type:'array'});
+      var firstSheet=wb.SheetNames[0];
+      // header:1 keeps every row as a plain array (not objects keyed by
+      // header text) so the same matching logic below works identically
+      // whether the file came in as .xls, .xlsx, or .csv.
+      rows=XLSX.utils.sheet_to_json(wb.Sheets[firstSheet],{header:1,raw:false,defval:''});
+    }catch(e){
+      if(statusEl){ statusEl.textContent='Could not read spreadsheet file: '+e.message; statusEl.style.color='#c0392b'; }
+      return;
+    }
+  } else {
+    var text;
+    try{ text=await file.text(); }
+    catch(e){ if(statusEl){ statusEl.textContent='Could not read file.'; statusEl.style.color='#c0392b'; } return; }
+    rows=_csvParse(text);
+  }
+  _applyCustomerSalesRepRows(rows,statusEl);
+}
+function _applyCustomerSalesRepRows(rows,statusEl){
+  rows=(rows||[]).filter(function(r){ return r&&r.length&&r.some(function(f){return String(f||'').trim()!=='';}); });
   if(!rows.length){ if(statusEl){ statusEl.textContent='File is empty.'; statusEl.style.color='#c0392b'; } return; }
-  // Expect header row: Customer Name, Sales Rep (case-insensitive; order
-  // doesn't matter as long as those two headers are present).
-  var header=rows[0].map(function(h){return (h||'').trim().toLowerCase();});
+  // Header matching accepts BOTH this app's own round-trip export
+  // ("Customer Name") AND QuickBooks's own native Customer Contact List
+  // export, which instead titles the same column just "Name" — so the
+  // unedited QuickBooks export can be dropped in directly, with no
+  // reformatting or renaming step in between.
+  var header=rows[0].map(function(h){return String(h||'').trim().toLowerCase();});
   var nameCol=header.indexOf('customer name');
+  if(nameCol<0) nameCol=header.indexOf('name');
   var repCol=header.indexOf('sales rep');
   if(nameCol<0||repCol<0){
-    if(statusEl){ statusEl.textContent='Expected columns "Customer Name" and "Sales Rep" — check the header row.'; statusEl.style.color='#c0392b'; }
+    if(statusEl){ statusEl.textContent='Expected a "Name" (or "Customer Name") column and a "Sales Rep" column — check the header row.'; statusEl.style.color='#c0392b'; }
     return;
   }
   var byName={};
@@ -8543,8 +8569,8 @@ async function importCustomersSalesRepCSV(file){
   var updated=0, unmatched=[];
   for(var i=1;i<rows.length;i++){
     var r=rows[i];
-    var name=(r[nameCol]||'').trim();
-    var rep=(r[repCol]||'').trim();
+    var name=String((r[nameCol]!==undefined?r[nameCol]:'')||'').trim();
+    var rep=String((r[repCol]!==undefined?r[repCol]:'')||'').trim();
     if(!name) continue;
     var c=byName[name.toLowerCase()];
     if(c){ c.salesRep=rep; updated++; }

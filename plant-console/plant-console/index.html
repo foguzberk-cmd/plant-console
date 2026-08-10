@@ -6052,12 +6052,22 @@ function _renderCashFlowReportInner(){
       var entry=byVendor[vKey];
       var groupClass='cf-vgroup-'+vi;
       var billsSorted=entry.bills.slice().sort(function(a,b){ return (a.due||'')<(b.due||'')?-1:1; });
+      // Lets someone schedule a partial payment without expanding the
+      // group first — applies to the OLDEST unscheduled bill for this
+      // vendor (billsSorted[0], since these are due-date sorted), which is
+      // the reasonable default when there's more than one to choose from.
+      // Reuses the exact same modal as each bill row's own "Partial…"
+      // button below, which already names the specific bill # in its
+      // title, so which bill it's applying to stays clear either way.
+      var vendorPartialBtn=(hasPerm('cfSchedulePayment') && billsSorted.length)
+        ?'<button onclick="event.stopPropagation();scheduleCFPartial(\''+esc(billsSorted[0].id)+'\')" class="btn btn-sm" title="'+(billsSorted.length>1?'Schedules a partial payment against the oldest of this vendor\'s '+billsSorted.length+' bills (Bill #'+esc(billsSorted[0].docNum||'')+'). Expand the group to target a different specific bill instead.':'Schedule only part of this balance')+'" style="padding:3px 7px;font-size:11px;white-space:nowrap;margin-left:8px">Partial…</button>'
+        :'';
       rowsHtml+='<tr onclick="toggleCFVendorGroup('+vi+')" style="cursor:pointer;background:#fafafa">'
         +'<td colspan="4" style="border:1px solid #ccc;padding:6px 10px;font-weight:700">'
           +'<span id="cf-vchev-'+vi+'" style="display:inline-block;transition:transform .12s;margin-right:6px">▸</span>'
           +esc(entry.name)+' <span style="font-weight:400;color:#666;font-family:var(--mono);font-size:11px;margin-left:4px">('+billsSorted.length+' bill'+(billsSorted.length!==1?'s':'')+')</span>'
         +'</td>'
-        +'<td style="border:1px solid #ccc;padding:6px 10px;text-align:right;font-weight:700;font-family:var(--mono)">'+money(entry.total)+'</td>'
+        +'<td style="border:1px solid #ccc;padding:6px 10px;text-align:right;font-weight:700;font-family:var(--mono);white-space:nowrap">'+money(entry.total)+vendorPartialBtn+'</td>'
       +'</tr>';
       billsSorted.forEach(function(b){
         var partialNote=b.alreadyScheduled>0.004?'<div style="font-size:10px;color:#8a6d1a;margin-top:2px">'+money(b.alreadyScheduled)+' already scheduled</div>':'';

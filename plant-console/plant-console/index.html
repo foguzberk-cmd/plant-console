@@ -5078,7 +5078,7 @@ function _isoWeekNumber(dateStr){
 function _collapsibleHeader(key,label,count,printElId,printTitle){
   var collapsed=!!_sectionCollapsed[key];
   var printBtn=printElId
-    ? '<button class="no-print" onclick="event.stopPropagation();printReportSection(\''+printElId+'\',\''+(printTitle||label).replace(/'/g,"\\'")+'\')" title="Print this section" style="margin-left:auto;flex-shrink:0;display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border:1.5px solid var(--line);border-radius:7px;background:var(--panel);color:var(--ink);font-family:var(--mono);font-size:11px;cursor:pointer">🖨 Print</button>'
+    ? '<button class="no-print" onclick="event.stopPropagation();printReportSection(\''+printElId+'\',\''+(printTitle||label).replace(/'/g,"\\'")+'\')" title="Print this section" style="flex-shrink:0;display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border:1.5px solid var(--line);border-radius:7px;background:var(--panel);color:var(--ink);font-family:var(--mono);font-size:11px;cursor:pointer">🖨 Print</button>'
     : '';
   return '<div onclick="toggleSectionCollapse(\''+key+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink);margin-bottom:8px;user-select:none">'
     +'<span class="no-print" style="display:inline-block;transition:transform .12s;transform:rotate('+(collapsed?'-90deg':'0deg')+');font-size:16px;line-height:1;color:var(--ink)">▾</span>'

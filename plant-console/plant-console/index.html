@@ -6010,7 +6010,7 @@ function _renderCashFlowReportInner(){
   if(statusEl){
     statusEl.textContent=bills.length+' unscheduled open bill(s) across '+vendorKeys.length+' vendor(s), totaling '+money(grandTotal)
       +(allBills.length>bills.length?' ('+(allBills.length-bills.length)+' fully scheduled — see above)':'');
-    statusEl.style.color='';
+    statusEl.style.color='#1a7a3c'; // green — this text only ever renders once counting/pulling has actually finished successfully
   }
 
   // Group vendors by Purch Rep instead of Department — Purch Rep names

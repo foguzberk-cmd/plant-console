@@ -5799,6 +5799,7 @@ function _cfReconcileApprovedPayments(freshBills){
   // entirely.
   var movedCount=0;
   var billIdsHandledInPass1={};
+  var _cfDiagBillIds=[]; // bills actually changed this pass — need a real server sync each, not just localStorage
   Object.keys(_cfScheduledDates).forEach(function(billId){
     var rec=_cfScheduledDates[billId];
     var unpaidActive=(rec.splits||[]).filter(function(s){ return s.initiated && !s.paid; });
@@ -5819,10 +5820,15 @@ function _cfReconcileApprovedPayments(freshBills){
     if(!currentBalanceById.hasOwnProperty(billId)) return;
     var currentBillBalance=currentBalanceById[billId];
     var billPaidDown=Math.round((Number(rec.balance||0)-currentBillBalance)*100)/100;
+    // TEMP DIAGNOSTIC — remove once the false-positive is found. Open the
+    // browser console (F12) right after clicking "Pull from QuickBooks"
+    // and look for lines starting with [CF-PASS1] for this vendor's bills.
+    console.log('[CF-PASS1]',rec.vendor,rec.docNum,'billId=',billId,'rec.balance=',rec.balance,'currentBillBalance=',currentBillBalance,'billPaidDown=',billPaidDown,'unpaidActiveTotal=',unpaidActiveTotal,'WILL_MARK_PAID=',(billPaidDown>=unpaidActiveTotal-0.01 || currentBillBalance<=0.004));
     if(billPaidDown>=unpaidActiveTotal-0.01 || currentBillBalance<=0.004){
       unpaidActive.forEach(function(s){ s.paid={amount:Number(s.amount||0),at:new Date().toISOString()}; });
       movedCount+=unpaidActive.length;
       billIdsHandledInPass1[billId]=true;
+      _cfDiagBillIds.push(billId);
     }
   });
 
@@ -5881,6 +5887,8 @@ function _cfReconcileApprovedPayments(freshBills){
       });
       paidSoFar=Math.round((originalSum-currentSum)*100)/100;
     }
+    // TEMP DIAGNOSTIC — same as Pass 1 above, look for [CF-PASS2] lines.
+    console.log('[CF-PASS2]','vendorKey=',vendorKey,'billIds=',group.billIds,'hasVendorBaseline=',group.hasVendorBaseline,'baselineVendorTotal=',group.hasVendorBaseline?group.baselineVendorTotal:'(n/a)','currentVendorTotal=',group.hasVendorBaseline?(currentTotalByVendor[vendorKey]||0):'(n/a)','paidSoFar=',paidSoFar,'WILL_MARK_PAID=',(paidSoFar>0.004));
     if(paidSoFar<=0.004) return; // no reduction detected for this vendor yet
 
     group.billIds.forEach(function(billId){
@@ -5890,9 +5898,18 @@ function _cfReconcileApprovedPayments(freshBills){
         s.paid={amount:paidSoFar,at:new Date().toISOString()};
       });
       movedCount+=unpaidActive.length;
+      if(unpaidActive.length) _cfDiagBillIds.push(billId);
     });
   });
-  if(movedCount>0) _cfSaveScheduled();
+  // Actually sync every bill this reconciliation pass touched — the
+  // previous parameterless _cfSaveScheduled() call only ever wrote to
+  // THIS browser's localStorage (see its own code: the server push only
+  // happens when a billId is passed in). Any "marked paid" from Pass 1 or
+  // Pass 2 was therefore never reaching the server at all — a background
+  // pull on this same device (or a push from any other device) could then
+  // overwrite it right back with the old, still-approved copy.
+  _cfDiagBillIds.forEach(function(billId){ _cfSaveScheduled(billId); });
+  if(movedCount>0 && !_cfDiagBillIds.length) _cfSaveScheduled(); // safety net, shouldn't normally hit
   return movedCount;
 }
 

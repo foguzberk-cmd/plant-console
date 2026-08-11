@@ -5904,20 +5904,19 @@ function _cfReconcileApprovedPayments(freshBills){
     var unpaidActive=(rec.splits||[]).filter(function(s){ return s.initiated && !s.paid; });
     if(!unpaidActive.length) return;
     var unpaidActiveTotal=unpaidActive.reduce(function(s,sp){ return s+Number(sp.amount||0); },0);
-    // IMPORTANT: only act when this pull actually RETURNED this bill with
-    // an explicit balance. A bill being absent from the results is
-    // genuinely ambiguous — it usually does mean QuickBooks now considers
-    // it closed, but it can also just mean a pagination hiccup or a
-    // transient gap in this one fetch, and there's no way to tell those
-    // two apart from here. Treating "missing" as "confirmed $0 balance"
-    // (the previous behavior) meant a single incomplete pull could wipe
-    // out a real approved payment with zero actual evidence it was paid.
-    // Erring toward NOT clearing it is the safe default: a genuinely
-    // closed bill will still get caught on a later pull once it's
-    // reliably reflected; a merely missing one just gets left alone
-    // instead of silently disappearing.
-    if(!currentBalanceById.hasOwnProperty(billId)) return;
-    var currentBillBalance=currentBalanceById[billId];
+    // A bill missing entirely from this pull's results means QuickBooks
+    // no longer lists it among OPEN bills — which is exactly what happens
+    // when a bill is genuinely fully paid off (the query only returns
+    // Balance > 0). Treating that as "closed" here is correct and
+    // intentional. (An earlier version of this code treated "missing" as
+    // ambiguous and skipped it — that was based on an unconfirmed worry
+    // about pagination gaps, and it ended up silently blocking detection
+    // of completely normal, everyday full payments instead. The actual
+    // confirmed bug, diagnosed live via console logs, was entirely in the
+    // vendor-wide check below Pass 1 — which is why that one stays
+    // disabled, while this per-bill check keeps its original, direct
+    // signal: THIS bill, specifically, is gone from the open list.)
+    var currentBillBalance=currentBalanceById.hasOwnProperty(billId)?currentBalanceById[billId]:0;
     var billPaidDown=Math.round((Number(rec.balance||0)-currentBillBalance)*100)/100;
     if(billPaidDown>=unpaidActiveTotal-0.01 || currentBillBalance<=0.004){
       unpaidActive.forEach(function(s){ s.paid={amount:Number(s.amount||0),at:new Date().toISOString()}; });

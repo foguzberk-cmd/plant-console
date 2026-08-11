@@ -4796,6 +4796,23 @@ function _cfAddSplit(billId,date,amount){
     };
     prior=_cfScheduledDates[billId];
   }
+  // Guard against exactly the failure mode that created the Mecca Halal
+  // duplicates: something (a bug, a stale screen, a double-click) causes
+  // this bill to look like it still needs scheduling even though its
+  // splits — paid AND unpaid combined — already fully account for its
+  // balance. Unlike _cfScheduledAmountFor (which deliberately excludes
+  // paid splits for the remaining-balance display, since a genuinely
+  // closed bill just disappears from the pull entirely), this check
+  // counts EVERY split regardless of paid status — the actual question
+  // here isn't "how much is left to schedule," it's "have we already
+  // created a commitment for this exact bill before," which paid splits
+  // answer just as much as unpaid ones.
+  var alreadyCommitted=(prior.splits||[]).reduce(function(s,sp){ return s+Number(sp.amount||0); },0);
+  var billBalanceNow=Number(bill&&bill.Balance!==undefined?bill.Balance:prior.balance||0);
+  if(alreadyCommitted>=billBalanceNow-0.01 && alreadyCommitted>0.004){
+    alert('This bill already has '+prior.splits.length+' scheduled installment(s) totaling '+_cfMoney(alreadyCommitted)+' — that already covers its balance, so nothing more should need to be scheduled.\n\nIf that looks wrong, check the Paid section for a mistaken entry rather than scheduling this again.');
+    return;
+  }
   prior.splits.push({
     id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),
     date:date, amount:Math.round(Number(amount)*100)/100,

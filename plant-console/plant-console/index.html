@@ -2548,8 +2548,12 @@ function renderReports(){
     +'</div>'
     +'<div id="rpt-panel-cashflow" style="display:none">'
       +'<div id="cf-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
-        +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:18px">'
+        +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:14px">'
           +'<button class="btn btn-primary" onclick="runCashFlowReport()">Pull from QuickBooks</button>'
+        +'</div>'
+        +'<div style="position:relative;margin-bottom:14px;max-width:320px">'
+          +'<input type="text" id="cf-search" placeholder="Search bill #, amount, or vendor…" oninput="filterCFSearch()" style="width:100%;padding:9px 34px 9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
+          +'<button id="cf-search-clear" onclick="document.getElementById(\'cf-search\').value=\'\';filterCFSearch();" style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);border:none;background:none;color:var(--muted);cursor:pointer;font-size:15px;padding:2px 4px">✕</button>'
         +'</div>'
         +'<div id="cf-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'</div>'
@@ -4949,6 +4953,35 @@ function splitCFPayment(billId,splitId){
 window.splitCFPayment=splitCFPayment;
 
 function _cfMoney(n){ return '$'+Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+// Shared search box (in the Scheduled Payments toolbar) that filters all
+// 4 sections at once — Scheduled, Approved, In Process, and Paid — by
+// bill #, vendor name, or amount. A plain substring match against each
+// field rather than three separate inputs, since a person searching
+// rarely knows in advance which field their term will match.
+var _cfSearchQuery='';
+function filterCFSearch(){
+  var el=document.getElementById('cf-search');
+  _cfSearchQuery=(el&&el.value||'').trim().toLowerCase();
+  var clearBtn=document.getElementById('cf-search-clear');
+  if(clearBtn) clearBtn.style.display=_cfSearchQuery?'block':'none';
+  renderScheduledPaymentsSection();
+  renderApprovedPaymentsSection();
+  renderInProcessPaymentsSection();
+  renderPaidPaymentsSection();
+}
+window.filterCFSearch=filterCFSearch;
+function _cfMatchesSearch(vendor,docNum,amount){
+  if(!_cfSearchQuery) return true;
+  var q=_cfSearchQuery;
+  if((vendor||'').toLowerCase().indexOf(q)>=0) return true;
+  if((docNum||'').toLowerCase().indexOf(q)>=0) return true;
+  // Amount match: strip $ and commas from the query so "6,200" or
+  // "$6200" or just "6200" all match the same way against the raw number.
+  var amountStr=Number(amount||0).toFixed(2);
+  var qNumeric=q.replace(/[$,]/g,'');
+  if(qNumeric && amountStr.indexOf(qNumeric)>=0) return true;
+  return false;
+}
 
 function _cfRenderSplitRows(){
   var st=_cfSplitState;
@@ -5507,6 +5540,7 @@ function renderScheduledPaymentsSection(){
     var rec=_cfScheduledDates[billId];
     (rec.splits||[]).forEach(function(split){
       if(split.initiated) return;
+      if(!_cfMatchesSearch(rec.vendor,rec.docNum,split.amount)) return;
       if(!byDate[split.date]) byDate[split.date]=[];
       byDate[split.date].push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,split:split});
     });
@@ -5633,6 +5667,7 @@ function renderApprovedPaymentsSection(){
     var rec=_cfScheduledDates[billId];
     (rec.splits||[]).forEach(function(split){
       if(!split.initiated || split.inProcess || split.paid) return;
+      if(!_cfMatchesSearch(rec.vendor,rec.docNum,split.amount)) return;
       if(!byDate[split.date]) byDate[split.date]=[];
       byDate[split.date].push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,split:split});
     });
@@ -5712,6 +5747,7 @@ function renderInProcessPaymentsSection(){
     var rec=_cfScheduledDates[billId];
     (rec.splits||[]).forEach(function(split){
       if(!split.inProcess || split.paid) return;
+      if(!_cfMatchesSearch(rec.vendor,rec.docNum,split.amount)) return;
       if(!byDate[split.date]) byDate[split.date]=[];
       byDate[split.date].push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,split:split});
     });
@@ -5841,6 +5877,7 @@ function renderPaidPaymentsSection(){
     var rec=_cfScheduledDates[billId];
     (rec.splits||[]).forEach(function(split){
       if(!split.paid) return;
+      if(!_cfMatchesSearch(rec.vendor,rec.docNum,split.paid.amount!==undefined?split.paid.amount:split.amount)) return;
       var dk=split.date||'unknown';
       if(!byDate[dk]) byDate[dk]=[];
       byDate[dk].push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,split:split});

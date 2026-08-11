@@ -4849,7 +4849,27 @@ function _cfAddSplit(billId,date,amount){
   var alreadyCommitted=(prior.splits||[]).reduce(function(s,sp){ return s+Number(sp.amount||0); },0);
   var billBalanceNow=Number(bill&&bill.Balance!==undefined?bill.Balance:prior.balance||0);
   if(alreadyCommitted>=billBalanceNow-0.01 && alreadyCommitted>0.004){
-    alert('This bill already has '+prior.splits.length+' scheduled installment(s) totaling '+_cfMoney(alreadyCommitted)+' — that already covers its balance, so nothing more should need to be scheduled.\n\nIf that looks wrong, check the Paid section for a mistaken entry rather than scheduling this again.');
+    var paidSplits=prior.splits.filter(function(sp){ return sp.paid; });
+    var unpaidSplits=prior.splits.filter(function(sp){ return !sp.paid; });
+    var paidTotal=paidSplits.reduce(function(s,sp){ return s+Number(sp.amount||0); },0);
+    var unpaidTotal=unpaidSplits.reduce(function(s,sp){ return s+Number(sp.amount||0); },0);
+    var detail=[];
+    if(paidTotal>0.004) detail.push(_cfMoney(paidTotal)+' already marked Paid');
+    if(unpaidTotal>0.004) detail.push(_cfMoney(unpaidTotal)+' still Scheduled/Approved/In Process');
+    // If there's exactly ONE paid split and it's the only thing accounting
+    // for the balance, offer to remove it right here — this is precisely
+    // the situation the old vendor-wide reconciliation bug left behind
+    // across many bills: a Paid entry that was never actually paid,
+    // silently blocking any attempt to reschedule the real thing.
+    if(paidSplits.length===1 && unpaidSplits.length===0){
+      if(confirm('This bill already shows '+detail.join(' and ')+' — that covers its balance, so scheduling again was blocked.\n\nIf that Paid entry was a mistake (never actually paid in QuickBooks), click OK to remove it now and then re-enter your new schedule.\n\nClick Cancel to leave it as-is.')){
+        removeCFSplit(billId,paidSplits[0].id);
+        // removeCFSplit already re-renders; nothing more to schedule
+        // automatically — re-enter the date to try again, now unblocked.
+      }
+    } else {
+      alert('This bill already has '+detail.join(' and ')+' — that covers its balance, so nothing more should need to be scheduled.\n\nIf that looks wrong, find it in the Paid/Approved/In Process/Scheduled sections above (try the search box) and correct or remove the mistaken entry there.');
+    }
     return;
   }
   prior.splits.push({
@@ -5913,15 +5933,20 @@ function renderPaidPaymentsSection(){
 
   var html=_collapsibleHeader('cfPaid','💰 Paid — confirmed by QuickBooks, review and clear',totalCount,'cf-paid-section','Paid Payments')
     +'<div style="display:'+(collapsed?'none':'block')+'">'
+    +'<div id="cfPaidBulkBar" style="display:none;align-items:center;gap:10px;padding:8px 10px;margin-bottom:8px;background:#fff3cd;border:1px solid #e0c56b;border-radius:8px;font-size:12.5px">'
+      +'<span id="cfPaidBulkCount">0 selected</span>'
+      +'<button class="btn btn-sm" onclick="deleteCFPaidSelected()" style="color:#b8460b;font-weight:700">🗑 Delete selected</button>'
+      +'<button class="btn btn-sm" onclick="clearCFPaidSelection()">Clear selection</button>'
+    +'</div>'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#f5f5f5;color:#000;border:1px solid #bbb">'
-    +'<colgroup><col style="width:220px"><col style="width:100px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:60px"></colgroup>'
+    +'<colgroup><col style="width:220px"><col style="width:100px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:80px"></colgroup>'
     +'<thead><tr>'
       +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:left;font-weight:700">Vendor</th>'
       +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:left;font-weight:700">Bill #</th>'
       +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:right;font-weight:700">Scheduled Amount</th>'
       +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:right;font-weight:700">Confirmed Paid</th>'
       +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:left;font-weight:700">Confirmed On</th>'
-      +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px"></th>'
+      +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:center"><input type="checkbox" id="cfPaidSelectAll" onchange="toggleCFPaidSelectAll(this.checked)" title="Select all" style="cursor:pointer"/></th>'
     +'</tr></thead><tbody>';
 
   if(!dateKeys.length){
@@ -5970,6 +5995,7 @@ function renderPaidPaymentsSection(){
           +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:#555">'+money(split.paid.amount)+(isPartial?' <span style="font-size:10px;font-weight:400;color:#b8460b">(partial)</span>':'')+'</td>'
           +'<td style="border:1px solid #bbb;padding:5px 10px;color:#555">'+esc(whenStr)+'</td>'
           +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:center;text-decoration:none">'
+            +'<input type="checkbox" class="cf-paid-select" data-billid="'+esc(billId)+'" data-splitid="'+esc(split.id)+'" onchange="updateCFPaidBulkBar()" style="cursor:pointer;margin-right:6px;vertical-align:middle"/>'
             +'<button onclick="deleteCFPaidPayment(\''+esc(billId)+'\',\''+esc(split.id)+'\')" class="btn btn-sm" title="Delete this entry" style="padding:2px 8px;font-size:12px;color:#b8460b">🗑</button>'
           +'</td>'
         +'</tr>';
@@ -5991,6 +6017,49 @@ function deleteCFPaidPayment(billId,splitId){
   removeCFSplit(billId,splitId);
 }
 window.deleteCFPaidPayment=deleteCFPaidPayment;
+
+// Bulk-select for the Paid section — lets many entries (e.g. the leftover
+// duplicates from the disabled vendor-wide reconciliation bug) be reviewed
+// and cleared in one action instead of one row at a time.
+function toggleCFPaidSelectAll(checked){
+  document.querySelectorAll('.cf-paid-select').forEach(function(cb){ cb.checked=checked; });
+  updateCFPaidBulkBar();
+}
+window.toggleCFPaidSelectAll=toggleCFPaidSelectAll;
+function updateCFPaidBulkBar(){
+  var checked=document.querySelectorAll('.cf-paid-select:checked');
+  var bar=document.getElementById('cfPaidBulkBar');
+  var countEl=document.getElementById('cfPaidBulkCount');
+  if(!bar||!countEl) return;
+  if(checked.length){
+    bar.style.display='flex';
+    countEl.textContent=checked.length+' selected';
+  } else {
+    bar.style.display='none';
+  }
+  // Keep "select all" in sync — checked only when every visible row is.
+  var all=document.querySelectorAll('.cf-paid-select');
+  var selectAllBox=document.getElementById('cfPaidSelectAll');
+  if(selectAllBox) selectAllBox.checked=all.length>0 && checked.length===all.length;
+}
+window.updateCFPaidBulkBar=updateCFPaidBulkBar;
+function clearCFPaidSelection(){
+  document.querySelectorAll('.cf-paid-select').forEach(function(cb){ cb.checked=false; });
+  updateCFPaidBulkBar();
+}
+window.clearCFPaidSelection=clearCFPaidSelection;
+function deleteCFPaidSelected(){
+  var checked=Array.prototype.slice.call(document.querySelectorAll('.cf-paid-select:checked'));
+  if(!checked.length) return;
+  if(!confirm('Delete these '+checked.length+' Paid entr'+(checked.length===1?'y':'ies')+'? This can be undone individually right after (each shows its own Undo), but not as a batch — if you\'re not sure, cancel and review them a few at a time instead.')) return;
+  checked.forEach(function(cb){
+    removeCFSplit(cb.getAttribute('data-billid'),cb.getAttribute('data-splitid'));
+  });
+  // removeCFSplit re-renders (and re-builds the checkboxes) on every call,
+  // so there's nothing left to select afterward — no explicit bar-hide
+  // needed here.
+}
+window.deleteCFPaidSelected=deleteCFPaidSelected;
 
 function startCFPaymentProcess(billId,splitId){
   if(!hasPerm('cfInitiatePayment')){ alert('You don\'t have permission to initiate payments.'); return; }

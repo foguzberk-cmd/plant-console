@@ -5743,18 +5743,48 @@ function renderPaidPaymentsSection(){
   var el=document.getElementById('cf-paid-section');
   if(!el) return;
 
-  var rows=[];
+  // Grouped by the payment's ORIGINAL scheduled date, same as Scheduled
+  // Payments and In Process — not by the "Confirmed On" date (when
+  // QuickBooks confirmed it), which is a separate column shown per row.
+  var byDate={};
   Object.keys(_cfScheduledDates).forEach(function(billId){
     var rec=_cfScheduledDates[billId];
     (rec.splits||[]).forEach(function(split){
       if(!split.paid) return;
-      rows.push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,split:split});
+      var dk=split.date||'unknown';
+      if(!byDate[dk]) byDate[dk]=[];
+      byDate[dk].push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,split:split});
     });
   });
-  rows.sort(function(a,b){ return (b.split.paid.at||'')<(a.split.paid.at||'')?-1:1; }); // most recently confirmed paid first
+  var dateKeys=Object.keys(byDate).sort();
+  function mondayOf(dateStr){
+    var d=new Date(dateStr+'T00:00:00');
+    var day=d.getDay();
+    var diff=(day===0?-6:1-day);
+    d.setDate(d.getDate()+diff);
+    return d.toISOString().slice(0,10);
+  }
+  function fmtShort(dateStr){
+    var d=new Date(dateStr+'T00:00:00');
+    return d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  }
+  var byWeek={};
+  dateKeys.forEach(function(dateKey){
+    var wk=(dateKey==='unknown')?'unknown':mondayOf(dateKey);
+    if(!byWeek[wk]) byWeek[wk]=[];
+    byWeek[wk].push(dateKey);
+  });
+  // "unknown" (a paid split somehow missing its original date) sorts last,
+  // after every real week, rather than breaking the date-based sort.
+  var weekKeys=Object.keys(byWeek).sort(function(a,b){
+    if(a==='unknown') return 1;
+    if(b==='unknown') return -1;
+    return a<b?-1:1;
+  });
+  var totalCount=dateKeys.reduce(function(s,dk){ return s+byDate[dk].length; },0);
   var collapsed=!!_sectionCollapsed.cfPaid;
 
-  var html=_collapsibleHeader('cfPaid','💰 Paid — confirmed by QuickBooks, review and clear',rows.length,'cf-paid-section','Paid Payments')
+  var html=_collapsibleHeader('cfPaid','💰 Paid — confirmed by QuickBooks, review and clear',totalCount,'cf-paid-section','Paid Payments')
     +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#f5f5f5;color:#000;border:1px solid #bbb">'
     +'<colgroup><col style="width:220px"><col style="width:100px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:60px"></colgroup>'
@@ -5767,27 +5797,66 @@ function renderPaidPaymentsSection(){
       +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px"></th>'
     +'</tr></thead><tbody>';
 
-  if(!rows.length){
+  if(!dateKeys.length){
     html+='<tr><td colspan="6" style="border:1px solid #bbb;padding:14px;text-align:center;color:#888">Nothing marked paid yet.</td></tr></tbody></table></div>';
     el.innerHTML=html;
     return;
   }
-  rows.forEach(function(row){
-    var billId=row.billId, split=row.split;
-    var vName=row.vendor||'No vendor on file';
-    var whenStr=split.paid.at?new Date(split.paid.at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
-    var isPartial=split.paid.amount<Number(split.amount||0)-0.004;
-    html+='<tr style="text-decoration:line-through;text-decoration-color:#999;text-decoration-thickness:1.5px">'
-      +'<td style="border:1px solid #bbb;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#555">'+esc(vName)+'</td>'
-      +'<td style="border:1px solid #bbb;padding:5px 10px;color:#555">'+esc(row.docNum||'')+'</td>'
-      +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:right;font-family:var(--mono);color:#555">'+money(split.amount)+'</td>'
-      +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:#555">'+money(split.paid.amount)+(isPartial?' <span style="font-size:10px;font-weight:400;color:#b8460b">(partial)</span>':'')+'</td>'
-      +'<td style="border:1px solid #bbb;padding:5px 10px;color:#555">'+esc(whenStr)+'</td>'
-      +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:center;text-decoration:none">'
-        +'<button onclick="deleteCFPaidPayment(\''+esc(billId)+'\',\''+esc(split.id)+'\')" class="btn btn-sm" title="Delete this entry" style="padding:2px 8px;font-size:12px;color:#b8460b">🗑</button>'
+
+  var grandTotal=0;
+  weekKeys.forEach(function(weekMonday){
+    var isUnknown=(weekMonday==='unknown');
+    var weekCount=0, weekTotal=0;
+    byWeek[weekMonday].forEach(function(dk){ byDate[dk].forEach(function(row){ weekTotal+=Number(row.split.paid.amount||0); weekCount++; }); });
+    var weekLabel;
+    if(isUnknown){
+      weekLabel='No scheduled date on file ('+weekCount+')';
+    } else {
+      var weekSunday=new Date(weekMonday+'T00:00:00'); weekSunday.setDate(weekSunday.getDate()+6);
+      weekLabel='Week '+_isoWeekNumber(weekMonday)+' · '+fmtShort(weekMonday)+' – '+fmtShort(weekSunday.toISOString().slice(0,10))+' ('+weekCount+')';
+    }
+    grandTotal+=weekTotal;
+    var weekKey='cfPaid_'+weekMonday;
+    var rowClass='wk-cfPaid-'+weekMonday;
+    var weekIsCollapsed=!!_weekCollapsed[weekKey];
+    html+='<tr class="'+rowClass+'-hdr" onclick="toggleCFWeekGroup(\''+weekKey+'\',\''+rowClass+'\')" style="cursor:pointer">'
+      +'<td colspan="4" style="border:1px solid #bbb;padding:7px 10px;font-weight:700;background:#e2e2e2">'
+        +'<span id="wk-chev-'+rowClass+'" style="display:inline-block;transition:transform .12s;margin-right:8px;transform:rotate('+(weekIsCollapsed?'-90deg':'0deg')+');font-size:16px;line-height:1;vertical-align:middle;color:#000">▾</span>'
+        +esc(weekLabel)
+      +'</td>'
+      +'<td style="border:1px solid #bbb;padding:7px 10px;text-align:right;font-weight:700;background:#e2e2e2;font-family:var(--mono)">'+money(weekTotal)+'</td>'
+      +'<td style="border:1px solid #bbb;background:#e2e2e2;text-align:center">'
+        +'<button class="no-print" onclick="event.stopPropagation();printCFWeekGroup(\'cf-paid-section\',\''+rowClass+'\',\''+esc(weekLabel).replace(/'/g,"\\'")+'\')" title="Print this week" style="padding:1px 5px;font-size:12px;line-height:1;border:1px solid #bbb;border-radius:5px;background:#fff;cursor:pointer">🖨</button>'
       +'</td>'
     +'</tr>';
+
+    byWeek[weekMonday].forEach(function(dateKey){
+      byDate[dateKey].forEach(function(row){
+        var billId=row.billId, split=row.split;
+        var vName=row.vendor||'No vendor on file';
+        var whenStr=split.paid.at?new Date(split.paid.at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
+        var isPartial=split.paid.amount<Number(split.amount||0)-0.004;
+        html+='<tr class="'+rowClass+'" style="display:'+(weekIsCollapsed?'none':'table-row')+';text-decoration:line-through;text-decoration-color:#999;text-decoration-thickness:1.5px">'
+          +'<td style="border:1px solid #bbb;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#555">'+esc(vName)+'</td>'
+          +'<td style="border:1px solid #bbb;padding:5px 10px;color:#555">'+esc(row.docNum||'')+'</td>'
+          +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:right;font-family:var(--mono);color:#555">'+money(split.amount)+'</td>'
+          +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:#555">'+money(split.paid.amount)+(isPartial?' <span style="font-size:10px;font-weight:400;color:#b8460b">(partial)</span>':'')+'</td>'
+          +'<td style="border:1px solid #bbb;padding:5px 10px;color:#555">'+esc(whenStr)+'</td>'
+          +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:center;text-decoration:none">'
+            +'<button onclick="deleteCFPaidPayment(\''+esc(billId)+'\',\''+esc(split.id)+'\')" class="btn btn-sm" title="Delete this entry" style="padding:2px 8px;font-size:12px;color:#b8460b">🗑</button>'
+          +'</td>'
+        +'</tr>';
+      });
+    });
   });
+
+  html+='<tr>'
+    +'<td colspan="4" style="border:1px solid #bbb;padding:7px 10px;text-align:right;font-weight:700;background:#e2e2e2">TOTAL PAID</td>'
+    +'<td style="border:1px solid #bbb;padding:7px 10px;text-align:right;font-weight:700;background:#e2e2e2;font-family:var(--mono)">'+money(grandTotal)+'</td>'
+    +'<td style="border:1px solid #bbb;background:#e2e2e2;text-align:center">'
+      +'<button class="no-print" onclick="printReportSection(\'cf-paid-section\',\'Paid Payments\')" title="Print entire list" style="padding:1px 5px;font-size:12px;line-height:1;border:1px solid #bbb;border-radius:5px;background:#fff;cursor:pointer">🖨</button>'
+    +'</td>'
+  +'</tr>';
   html+='</tbody></table></div>';
   el.innerHTML=html;
 }

@@ -4733,6 +4733,16 @@ function _cfSaveScheduled(billId){
     // regardless of how much history this business has accumulated.
     var rec=_cfScheduledDates[billId];
     if(rec){
+      // A fresh save for this billId always wins over a stale "this was
+      // just deleted" flag — without this, rescheduling a bill within 8
+      // seconds of deleting a previous (mistaken) entry for it could get
+      // silently wiped right back out by the very next background pull:
+      // the merge would correctly restore this new save via
+      // _recentlySavedCfScheduledDates, then immediately delete it again
+      // anyway because _recentlyDeletedCfBillIds still thought the whole
+      // billId was gone. Clearing it here means the merge only ever sees
+      // one clear signal for this billId, not two contradictory ones.
+      delete _recentlyDeletedCfBillIds[billId];
       _recentlySavedCfScheduledDates[billId]=JSON.parse(JSON.stringify(rec));
       var fallback=setTimeout(function(){ delete _recentlySavedCfScheduledDates[billId]; },20000);
       fetch(window.location.origin+'/api/data/save-cf-schedule',{
@@ -6119,28 +6129,21 @@ function revertCFPaymentProcess(billId,splitId){
 }
 window.revertCFPaymentProcess=revertCFPaymentProcess;
 
-// After every "Pull from QuickBooks," checks each vendor with an
-// Approved/In Process payment against the fresh open-bills list. If
-// QuickBooks now shows LESS total balance owed to that vendor across ALL
-// their bills than when the payment was first scheduled — whether one
-// bill closed out entirely, several partially reduced, or the payment
-// landed on a completely different bill than the one that was
-// scheduled — that's treated as "paid" and moved into the Paid section
-// instead of being deleted outright, so you can review it and clear it
-// out yourself with the delete button there.
+// After every "Pull from QuickBooks," checks each bill with an
+// Approved/In Process payment against its own fresh balance from
+// QuickBooks. If it's dropped by at least what's outstanding on it (or
+// the bill is no longer in the open-bills list at all, meaning
+// QuickBooks now considers it fully closed), that's treated as paid and
+// moved into the Paid section — reviewable, with a delete button there.
 //
-// This is vendor-wide, not per-bill, deliberately: QuickBooks doesn't
-// require one payment to apply to any specific bill — a single check can
-// (and does) get split across several open bills for the same vendor. A
-// per-bill check would only ever see whatever fraction landed on the one
-// bill that was scheduled and miss the rest entirely.
-//
-// Approximation worth knowing: if a vendor has MULTIPLE approved/in-process
-// installments outstanding at once (across one or several of their bills),
-// this can't tell exactly which installment a given payment corresponds
-// to — it reports the same observed "amount paid so far for this vendor"
-// on each of them. In the common case of one installment in flight per
-// vendor at a time, this is exact.
+// A vendor-wide version of this used to run as a second pass, catching
+// the case where one payment gets split across several of a vendor's
+// bills without any single one dropping enough on its own. DISABLED as
+// of Aug 2026 (see the long comment further below, right where that pass
+// used to be) — confirmed via live diagnostics to misfire on completely
+// ordinary AP activity, not just the rare case it was meant for. The
+// fallback for that narrower case now is manual: "Mark as paid (manual)"
+// on the row's ⋮ menu.
 function _cfReconcileApprovedPayments(freshBills){
   var currentBalanceById={};
   var currentTotalByVendor={};

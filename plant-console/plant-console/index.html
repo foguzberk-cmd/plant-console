@@ -359,6 +359,15 @@
     #printLabelArea{visibility:visible!important;position:relative!important;top:auto!important;left:auto!important;overflow:hidden!important;pointer-events:auto!important}
   }
   #rpt-tabs-bar::-webkit-scrollbar{display:none}
+  /* Row-hover highlight across every Cash Flow / Checks payment table —
+     a single rule scoped by container id, rather than tagging every row
+     individually, so it applies uniformly regardless of that row's own
+     background color (week headers, totals, and data rows all get it). */
+  #cf-scheduled-section tr:hover, #cf-approved-section tr:hover,
+  #cf-inprocess-section tr:hover, #cf-paid-section tr:hover,
+  #chk-paid-section tr:hover, #chk-deposited-section tr:hover, #chk-inhand-section tr:hover{
+    filter:brightness(0.93);
+  }
 </style>
 </head>
 <body>

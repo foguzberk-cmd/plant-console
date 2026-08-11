@@ -4740,6 +4740,28 @@ function _cfSaveScheduled(billId){
         // Leave the guard in place until the fallback timeout — a retry
         // (or the next edit to this same bill) will try again.
       });
+    } else {
+      // The record was fully removed locally (the bill's last split just
+      // got deleted) — this was previously a silent no-op right here,
+      // which meant the deletion never reached the server at all. The
+      // NEXT background pull would then fetch the server's still-intact
+      // old record and silently restore it, making the delete button look
+      // completely broken. A dedicated endpoint for this already existed
+      // server-side (with proper tombstoning, so no other device's stale
+      // push can resurrect it either) — it just wasn't being called here.
+      //
+      // No extra local guard needed: removeCFSplit already calls
+      // _cfMarkDeleted(billId) before reaching this point, which both sets
+      // _recentlyDeletedCfBillIds AND fires this same endpoint itself —
+      // so in the current call pattern this is actually a second, harmless
+      // duplicate delete request. Kept here anyway as a safety net for any
+      // FUTURE code path that clears a record without going through
+      // _cfMarkDeleted first; deleting an already-tombstoned billId twice
+      // is a no-op on the server, so this can never cause harm, only help.
+      fetch(window.location.origin+'/api/data/delete-cf-schedule',{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({billId:billId})
+      }).catch(function(e){ console.error('Cash Flow delete-schedule sync failed:',e); });
     }
   } else {
     // No specific bill given (a batch operation touched several at once,

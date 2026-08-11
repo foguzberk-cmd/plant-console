@@ -5158,8 +5158,23 @@ window.markCFPaidManually=markCFPaidManually;
 // Removes one split (or the whole bill if it's the only/last split left).
 function removeCFSplit(billId,splitId){
   var rec=_cfScheduledDates[billId];
-  if(!rec) return;
+  if(!rec){
+    // TEMP DIAGNOSTIC — remove once found. This is the "does nothing at
+    // all" failure mode: the billId this button was built with doesn't
+    // match anything currently in memory.
+    alert('DIAGNOSTIC — please screenshot this:\n\nNo record found for billId "'+billId+'". Nothing to delete — the app doesn\'t currently recognize this bill.');
+    return;
+  }
+  var before=rec.splits.length;
   rec.splits=rec.splits.filter(function(s){return s.id!==splitId;});
+  var after=rec.splits.length;
+  if(before===after){
+    // TEMP DIAGNOSTIC — remove once found. This is the OTHER "does
+    // nothing" failure mode: the bill record itself was found fine, but
+    // no split inside it matched this specific splitId.
+    alert('DIAGNOSTIC — please screenshot this:\n\nFound the bill (billId "'+billId+'"), but no split matched splitId "'+splitId+'". It had '+before+' split(s), none removed.');
+    return;
+  }
   if(!rec.splits.length){ delete _cfScheduledDates[billId]; _cfMarkDeleted(billId); }
   _cfSaveScheduled(billId);
   renderCashFlowReport();

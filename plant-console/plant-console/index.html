@@ -359,14 +359,18 @@
     #printLabelArea{visibility:visible!important;position:relative!important;top:auto!important;left:auto!important;overflow:hidden!important;pointer-events:auto!important}
   }
   #rpt-tabs-bar::-webkit-scrollbar{display:none}
-  /* Row-hover highlight across every Cash Flow / Checks payment table —
-     a single rule scoped by container id, rather than tagging every row
-     individually, so it applies uniformly regardless of that row's own
-     background color (week headers, totals, and data rows all get it). */
-  #cf-scheduled-section tr:hover, #cf-approved-section tr:hover,
-  #cf-inprocess-section tr:hover, #cf-paid-section tr:hover,
-  #chk-paid-section tr:hover, #chk-deposited-section tr:hover, #chk-inhand-section tr:hover{
-    filter:brightness(0.93);
+  /* Row-hover highlight across every Cash Flow / Checks payment table.
+     Targeting the <td> cells (not the <tr> itself) with !important: a
+     CSS filter/background applied directly to a <tr> frequently doesn't
+     paint visibly in tables across browsers, since the row element has no
+     visible surface of its own — the actual background comes from its
+     <td> children, which already carry their own inline background
+     colors that would otherwise take precedence over a plain (non-
+     !important) rule here. */
+  #cf-scheduled-section tr:hover td, #cf-approved-section tr:hover td,
+  #cf-inprocess-section tr:hover td, #cf-paid-section tr:hover td,
+  #chk-paid-section tr:hover td, #chk-deposited-section tr:hover td, #chk-inhand-section tr:hover td{
+    background-color:#cfe0ff!important;
   }
 </style>
 </head>
@@ -5165,30 +5169,53 @@ function markCFPaidManually(billId,splitId){
 window.markCFPaidManually=markCFPaidManually;
 
 // Removes one split (or the whole bill if it's the only/last split left).
+// Shows a brief "Undo" toast afterward — see _cfShowUndoToast — since a
+// deletion here has no other confirmation step and it's easy to hit the
+// wrong 🗑 among a long list of similar-looking rows.
 function removeCFSplit(billId,splitId){
   var rec=_cfScheduledDates[billId];
-  if(!rec){
-    // TEMP DIAGNOSTIC — remove once found. This is the "does nothing at
-    // all" failure mode: the billId this button was built with doesn't
-    // match anything currently in memory.
-    alert('DIAGNOSTIC — please screenshot this:\n\nNo record found for billId "'+billId+'". Nothing to delete — the app doesn\'t currently recognize this bill.');
-    return;
-  }
-  var before=rec.splits.length;
+  if(!rec) return;
+  var recSnapshot=JSON.parse(JSON.stringify(rec)); // full prior state, for undo
+  var removedSplit=rec.splits.find(function(s){return s.id===splitId;});
+  if(!removedSplit) return;
   rec.splits=rec.splits.filter(function(s){return s.id!==splitId;});
-  var after=rec.splits.length;
-  if(before===after){
-    // TEMP DIAGNOSTIC — remove once found. This is the OTHER "does
-    // nothing" failure mode: the bill record itself was found fine, but
-    // no split inside it matched this specific splitId.
-    alert('DIAGNOSTIC — please screenshot this:\n\nFound the bill (billId "'+billId+'"), but no split matched splitId "'+splitId+'". It had '+before+' split(s), none removed.');
-    return;
-  }
-  if(!rec.splits.length){ delete _cfScheduledDates[billId]; _cfMarkDeleted(billId); }
+  var wholeRecordDeleted=false;
+  if(!rec.splits.length){ delete _cfScheduledDates[billId]; _cfMarkDeleted(billId); wholeRecordDeleted=true; }
   _cfSaveScheduled(billId);
   renderCashFlowReport();
+  _cfShowUndoToast(
+    'Deleted '+(recSnapshot.vendor||'this vendor')+' #'+(recSnapshot.docNum||'')+' — '+_cfMoney(removedSplit.amount),
+    function(){
+      if(wholeRecordDeleted) delete _recentlyDeletedCfBillIds[billId]; // don't let the delete-guard immediately re-hide what we're restoring
+      _cfScheduledDates[billId]=recSnapshot;
+      _cfSaveScheduled(billId);
+      renderCashFlowReport();
+    }
+  );
 }
 window.removeCFSplit=removeCFSplit;
+// A small bottom-of-screen toast with an "Undo" button, auto-dismissing
+// after 10s. Only one shown at a time (a second delete replaces the
+// first's toast rather than stacking) — undoing always reverses the MOST
+// RECENT delete, which is the only one still-visible action makes sense.
+function _cfShowUndoToast(message,undoFn){
+  var existing=document.getElementById('cfUndoToast');
+  if(existing) existing.remove();
+  var toast=document.createElement('div');
+  toast.id='cfUndoToast';
+  toast.style.cssText='position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.35);z-index:99999;display:flex;align-items:center;gap:14px;font-size:13px;font-family:var(--mono,monospace);max-width:90vw';
+  var msgSpan=document.createElement('span');
+  msgSpan.textContent=message;
+  msgSpan.style.cssText='white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+  var undoBtn=document.createElement('button');
+  undoBtn.textContent='Undo';
+  undoBtn.style.cssText='background:#4a90d9;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:700;font-size:12px;flex-shrink:0';
+  undoBtn.onclick=function(){ undoFn(); toast.remove(); };
+  toast.appendChild(msgSpan);
+  toast.appendChild(undoBtn);
+  document.body.appendChild(toast);
+  setTimeout(function(){ if(document.getElementById('cfUndoToast')===toast) toast.remove(); },10000);
+}
 
 // Toggles the little ⋮ dropdown menu for one row, closing any other open
 // one first.

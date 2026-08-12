@@ -427,6 +427,83 @@ function httpsRequest(options, body) {
   });
 }
 
+// --- Plaid (bank balance) ---
+// Same persisted-file pattern as QuickBooks above: the access_token Plaid
+// gives us after a successful Link flow lives in its own file on the
+// persistent disk, not in an env var — env vars only matter as a one-time
+// bootstrap if this file doesn't exist yet.
+const PLAID_CLIENT_ID = process.env.PLAID_CLIENT_ID || '';
+const PLAID_SECRET = process.env.PLAID_SECRET || '';
+const PLAID_ENV = process.env.PLAID_ENV || 'sandbox'; // 'sandbox' | 'production'
+const PLAID_HOST = PLAID_ENV === 'production' ? 'production.plaid.com' : 'sandbox.plaid.com';
+const PLAID_TOKEN_FILE = path.join(DATA_DIR, 'plaid-tokens.json');
+
+function loadPlaidTokens() {
+  try {
+    if (!fs.existsSync(PLAID_TOKEN_FILE)) return null;
+    const saved = JSON.parse(fs.readFileSync(PLAID_TOKEN_FILE, 'utf8') || '{}');
+    if (saved && saved.accessToken) return saved;
+  } catch (e) {
+    console.error('Could not read saved Plaid tokens:', e.message);
+  }
+  return null;
+}
+function savePlaidTokens() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(PLAID_TOKEN_FILE, JSON.stringify({
+      accessToken: plaidAccessToken,
+      itemId: plaidItemId,
+      institutionName: plaidInstitutionName,
+      connectedAt: plaidConnectedAt
+    }, null, 2));
+  } catch (e) {
+    console.error('Could not save Plaid tokens to disk:', e.message);
+  }
+}
+function clearPlaidTokens() {
+  try {
+    if (fs.existsSync(PLAID_TOKEN_FILE)) fs.unlinkSync(PLAID_TOKEN_FILE);
+  } catch (e) {
+    console.error('Could not clear saved Plaid tokens:', e.message);
+  }
+}
+let plaidAccessToken = '';
+let plaidItemId = '';
+let plaidInstitutionName = '';
+let plaidConnectedAt = 0;
+(function bootstrapPlaidTokens() {
+  const saved = loadPlaidTokens();
+  if (saved) {
+    plaidAccessToken = saved.accessToken || '';
+    plaidItemId = saved.itemId || '';
+    plaidInstitutionName = saved.institutionName || '';
+    plaidConnectedAt = saved.connectedAt || 0;
+    console.log('Plaid: restored saved connection from disk (' + (plaidInstitutionName || 'unknown institution') + ')');
+  }
+})();
+
+// Every Plaid API call is a POST with client_id+secret in the JSON body
+// (not a header) — this just centralizes that boilerplate.
+async function plaidRequest(pathName, extraBody) {
+  const body = JSON.stringify(Object.assign({
+    client_id: PLAID_CLIENT_ID,
+    secret: PLAID_SECRET
+  }, extraBody || {}));
+  const res = await httpsRequest({
+    hostname: PLAID_HOST,
+    path: pathName,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(body)
+    }
+  }, body);
+  let parsed;
+  try { parsed = JSON.parse(res.body || '{}'); } catch (e) { parsed = { error_message: 'Non-JSON response from Plaid: ' + res.body }; }
+  return { status: res.status, data: parsed };
+}
+
 // Exchange an authorization code for fresh access + refresh tokens
 async function exchangeCodeForTokens(code) {
   const creds = Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64');
@@ -1691,6 +1768,145 @@ const server = http.createServer(async (req, res) => {
     if (!requireAuth(req, res)) return;
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
     res.end(JSON.stringify({ connected: !!accessToken, realm: activeRealm }));
+    return;
+  }
+
+  // --- Plaid (bank balance) ---
+  if (url === '/api/plaid/status') {
+    if (!requireAuth(req, res)) return;
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+    res.end(JSON.stringify({
+      connected: !!plaidAccessToken,
+      institutionName: plaidInstitutionName || null,
+      connectedAt: plaidConnectedAt || null,
+      env: PLAID_ENV
+    }));
+    return;
+  }
+
+  // Step 1 of Plaid Link: get a short-lived link_token that the CLIENT
+  // uses to open the Link widget. Never expose PLAID_CLIENT_ID/SECRET to
+  // the browser directly — this is why it has to be a server round-trip
+  // rather than the client calling Plaid itself.
+  if (url === '/api/plaid/create-link-token' && req.method === 'POST') {
+    const session = requireAuth(req, res);
+    if (!session) return;
+    if (!PLAID_CLIENT_ID || !PLAID_SECRET) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'PLAID_CLIENT_ID / PLAID_SECRET not configured on the server yet.' }));
+      return;
+    }
+    try {
+      const result = await plaidRequest('/link/token/create', {
+        client_name: 'Plant Console',
+        language: 'en',
+        country_codes: ['US'],
+        user: { client_user_id: 'plant-console-' + (session.userId || session.name || 'admin') },
+        products: ['auth']
+      });
+      if (result.status !== 200) {
+        res.writeHead(result.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: result.data.error_message || 'Plaid error creating link token', plaid: result.data }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ link_token: result.data.link_token }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // Step 2: the Link widget hands the client a public_token once the
+  // person finishes logging into their bank inside Plaid's UI. This
+  // exchanges it server-side for a permanent access_token, which is what
+  // actually gets stored and reused for every future balance check.
+  if (url === '/api/plaid/exchange-token' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const body = JSON.parse(await readRequestBody(req) || '{}');
+      if (!body.public_token) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing public_token' }));
+        return;
+      }
+      const result = await plaidRequest('/item/public_token/exchange', { public_token: body.public_token });
+      if (result.status !== 200) {
+        res.writeHead(result.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: result.data.error_message || 'Plaid error exchanging token', plaid: result.data }));
+        return;
+      }
+      plaidAccessToken = result.data.access_token;
+      plaidItemId = result.data.item_id;
+      plaidInstitutionName = body.institutionName || plaidInstitutionName || '';
+      plaidConnectedAt = Date.now();
+      savePlaidTokens();
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // The actual balance pull — call this any time the UI wants a fresh
+  // number, same click-to-refresh model as "Pull from QuickBooks" rather
+  // than a background poll (balance checks count against Plaid's usage-
+  // based billing, so this should only run when someone actually asks).
+  if (url === '/api/plaid/balance' && req.method === 'GET') {
+    if (!requireAuth(req, res)) return;
+    if (!plaidAccessToken) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'No bank account connected yet.' }));
+      return;
+    }
+    try {
+      const result = await plaidRequest('/accounts/balance/get', { access_token: plaidAccessToken });
+      if (result.status !== 200) {
+        res.writeHead(result.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: result.data.error_message || 'Plaid error fetching balance', plaid: result.data }));
+        return;
+      }
+      const accounts = (result.data.accounts || []).map(function (a) {
+        const current = a.balances.current;
+        const available = a.balances.available;
+        // Plaid's Balance product doesn't have a direct "pending amount"
+        // field — "available" already has pending holds subtracted out of
+        // "current" in most cases. current - available is the closest
+        // direct equivalent to "how much is tied up pending" without
+        // pulling in the separate (billed) Transactions product just for
+        // this one number.
+        const pending = (current !== null && available !== null) ? Math.round((current - available) * 100) / 100 : null;
+        return {
+          name: a.name,
+          mask: a.mask,
+          type: a.subtype || a.type,
+          balance: current,
+          availableBalance: available,
+          pendingAmount: pending,
+          currency: a.balances.iso_currency_code || 'USD'
+        };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ institutionName: plaidInstitutionName, accounts: accounts, fetchedAt: Date.now() }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  if (url === '/api/plaid/disconnect' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    plaidAccessToken = '';
+    plaidItemId = '';
+    plaidInstitutionName = '';
+    plaidConnectedAt = 0;
+    clearPlaidTokens();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true }));
     return;
   }
 

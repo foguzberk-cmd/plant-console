@@ -20,6 +20,7 @@
      this app has no build step — if the device is offline when the page
      loads, the export button just won't work until it's back online. -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
 <style>
   :root{
     --bg:#EFEDEA;--panel:#FFFFFF;--ink:#1C1517;--muted:#877E79;
@@ -7843,6 +7844,8 @@ function renderDashboard(){
     +card('Labels printed today',labelsToday.length.toLocaleString(),weightToday.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0})+' lbs scaled')
     +'</div>';
 
+  html+='<div id="bankBalanceCard" style="margin:0 0 22px"></div>';
+
   // Two-column layout: recent activity + top value
   html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start">';
 
@@ -7945,7 +7948,115 @@ function renderDashboard(){
   }
 
   view.innerHTML=html;
+  renderBankBalanceCard();
 }
+
+// --- Plaid bank balance card (Dashboard) ---
+// Click-to-refresh, like "Pull from QuickBooks" — balance checks count
+// against Plaid's usage-based billing, so this never polls in the
+// background, only when someone actually opens the Dashboard or clicks
+// Refresh.
+async function renderBankBalanceCard(){
+  var el=document.getElementById('bankBalanceCard');
+  if(!el) return;
+  el.innerHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 20px;font-size:13px;color:var(--muted)">Checking bank connection…</div>';
+  var status;
+  try{
+    var res=await fetch('/api/plaid/status',{cache:'no-store'});
+    status=await res.json();
+  }catch(e){
+    el.innerHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 20px;font-size:13px;color:#c23b33">Could not check bank connection status.</div>';
+    return;
+  }
+  if(!status.connected){
+    el.innerHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">'
+      +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)">Bank Account</div>'
+      +'<div style="font-size:14px;margin-top:4px">No bank connected yet'+(status.env==='sandbox'?' <span style="font-family:var(--mono);font-size:10px;color:#9E7B00;background:rgba(158,123,0,.1);padding:2px 6px;border-radius:5px;margin-left:4px">SANDBOX</span>':'')+'</div></div>'
+      +'<button class="btn btn-primary btn-sm" onclick="connectPlaidBank()">Connect bank account</button>'
+    +'</div>';
+    return;
+  }
+  el.innerHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 20px;font-size:13px;color:var(--muted)">Loading balance…</div>';
+  try{
+    var balRes=await fetch('/api/plaid/balance',{cache:'no-store'});
+    var balData=await balRes.json();
+    if(!balRes.ok){ throw new Error(balData.error||'Failed to fetch balance'); }
+    var accounts=balData.accounts||[];
+    var sandboxTag=status.env==='sandbox'?' <span style="font-family:var(--mono);font-size:10px;color:#9E7B00;background:rgba(158,123,0,.1);padding:2px 6px;border-radius:5px;margin-left:4px">SANDBOX</span>':'';
+    var html='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">'
+        +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)">Bank Account</div>'
+        +'<div style="font-size:14px;font-weight:600;margin-top:2px">'+esc(balData.institutionName||'Connected bank')+sandboxTag+'</div></div>'
+        +'<div style="display:flex;gap:8px">'
+          +'<button class="btn btn-sm" onclick="renderBankBalanceCard()">Refresh</button>'
+          +'<button class="btn btn-sm" onclick="disconnectPlaidBank()" style="color:#c23b33">Disconnect</button>'
+        +'</div>'
+      +'</div>';
+    if(!accounts.length){
+      html+='<div style="font-size:13px;color:var(--muted)">No accounts returned for this connection.</div>';
+    } else {
+      html+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px">';
+      accounts.forEach(function(a){
+        html+='<div style="border:1px solid var(--line);border-radius:12px;padding:14px 16px">'
+          +'<div style="font-size:12px;font-weight:600;margin-bottom:8px">'+esc(a.name)+(a.mask?' ····'+esc(a.mask):'')+'</div>'
+          +'<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:3px"><span>Balance</span><span style="font-family:var(--mono);font-weight:700;color:var(--ink)">'+(a.balance!==null?_cfMoney(a.balance):'—')+'</span></div>'
+          +'<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:3px"><span>Available</span><span style="font-family:var(--mono);font-weight:700;color:var(--cold)">'+(a.availableBalance!==null?_cfMoney(a.availableBalance):'—')+'</span></div>'
+          +'<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted)"><span>Pending</span><span style="font-family:var(--mono);font-weight:700;color:'+(a.pendingAmount>0?'#9E7B00':'var(--ink)')+'">'+(a.pendingAmount!==null?_cfMoney(a.pendingAmount):'—')+'</span></div>'
+        +'</div>';
+      });
+      html+='</div>';
+    }
+    html+='</div>';
+    el.innerHTML=html;
+  }catch(e){
+    el.innerHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 20px;font-size:13px;color:#c23b33">Could not load balance: '+esc(e.message)+' <button class="btn btn-sm" onclick="renderBankBalanceCard()" style="margin-left:8px">Retry</button></div>';
+  }
+}
+window.renderBankBalanceCard=renderBankBalanceCard;
+
+async function connectPlaidBank(){
+  var res,data;
+  try{
+    res=await fetch('/api/plaid/create-link-token',{method:'POST'});
+    data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Could not start bank connection');
+  }catch(e){
+    alert('Could not start bank connection: '+e.message);
+    return;
+  }
+  if(typeof Plaid==='undefined'){
+    alert('Plaid\'s widget failed to load — check your internet connection and try again.');
+    return;
+  }
+  var handler=Plaid.create({
+    token:data.link_token,
+    onSuccess: async function(public_token, metadata){
+      try{
+        var exRes=await fetch('/api/plaid/exchange-token',{
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({public_token:public_token, institutionName:(metadata&&metadata.institution&&metadata.institution.name)||''})
+        });
+        var exData=await exRes.json();
+        if(!exRes.ok) throw new Error(exData.error||'Could not finish connecting');
+        renderBankBalanceCard();
+      }catch(e){
+        alert('Connected to your bank, but saving the connection failed: '+e.message);
+      }
+    },
+    onExit: function(err){ if(err) console.log('Plaid Link exited:',err); }
+  });
+  handler.open();
+}
+window.connectPlaidBank=connectPlaidBank;
+
+async function disconnectPlaidBank(){
+  if(!confirm('Disconnect this bank account? You can reconnect any time.')) return;
+  try{
+    await fetch('/api/plaid/disconnect',{method:'POST'});
+  }catch(e){}
+  renderBankBalanceCard();
+}
+window.disconnectPlaidBank=disconnectPlaidBank;
 
 /* ===== ITEMS ===== */
 function recalcQuantities(){

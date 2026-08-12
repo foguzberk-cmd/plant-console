@@ -2551,6 +2551,7 @@ function renderReports(){
       +'<div id="cf-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
         +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:14px">'
           +'<button class="btn btn-primary" onclick="runCashFlowReport()">Pull from QuickBooks</button>'
+          +'<button class="btn" onclick="findLikelyBadPaidEntries()" title="Scans the Paid section for entries where the confirmed-paid amount doesn\'t match what was actually scheduled — the pattern left by an old, now-disabled bug — and pre-selects them below for review">🔍 Find likely-bad Paid entries</button>'
         +'</div>'
         +'<div style="position:relative;margin-bottom:14px;max-width:320px">'
           +'<input type="text" id="cf-search" placeholder="Search bill #, amount, or vendor…" oninput="filterCFSearch()" style="width:100%;padding:9px 34px 9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
@@ -6099,6 +6100,49 @@ function deleteCFPaidSelected(){
   // needed here.
 }
 window.deleteCFPaidSelected=deleteCFPaidSelected;
+
+// Finds every Paid entry whose "Confirmed Paid" amount doesn't match its
+// own "Scheduled Amount" — the exact fingerprint the disabled vendor-wide
+// reconciliation bug left behind (it stamped a shared, vendor-level
+// delta onto every bill's split, rather than that specific bill's real
+// amount). A genuinely correct Paid entry's confirmed amount always
+// equals what was scheduled (or is a deliberately smaller number for a
+// real partial payment, never an unrelated, larger, cross-vendor total).
+// Clears the search box and expands the Paid section (and every one of
+// its weeks) so every match is actually visible and selectable, rather
+// than leaving some checked-but-hidden inside a collapsed week.
+function findLikelyBadPaidEntries(){
+  var mismatches=[];
+  Object.keys(_cfScheduledDates).forEach(function(billId){
+    var rec=_cfScheduledDates[billId];
+    (rec.splits||[]).forEach(function(split){
+      if(split.paid && Math.abs(Number(split.paid.amount||0)-Number(split.amount||0))>0.01){
+        mismatches.push({billId:billId,splitId:split.id,vendor:rec.vendor,docNum:rec.docNum,amount:split.amount,paidAmount:split.paid.amount});
+      }
+    });
+  });
+  if(!mismatches.length){
+    alert('No mismatched Paid entries found — every entry currently marked Paid matches its own scheduled amount.');
+    return;
+  }
+  var searchEl=document.getElementById('cf-search');
+  if(searchEl && searchEl.value){ searchEl.value=''; _cfSearchQuery=''; }
+  _sectionCollapsed.cfPaid=false;
+  try{ localStorage.setItem('pc_section_collapsed',JSON.stringify(_sectionCollapsed)); }catch(e){}
+  Object.keys(_weekCollapsed).forEach(function(k){ if(k.indexOf('cfPaid_')===0) delete _weekCollapsed[k]; });
+  try{ localStorage.setItem('pc_week_collapsed',JSON.stringify(_weekCollapsed)); }catch(e){}
+  renderPaidPaymentsSection();
+  setTimeout(function(){
+    mismatches.forEach(function(m){
+      var cb=document.querySelector('.cf-paid-select[data-billid="'+m.billId+'"][data-splitid="'+m.splitId+'"]');
+      if(cb) cb.checked=true;
+    });
+    updateCFPaidBulkBar();
+    var paidSectionEl=document.getElementById('cf-paid-section');
+    if(paidSectionEl) paidSectionEl.scrollIntoView({behavior:'smooth',block:'start'});
+  },50);
+}
+window.findLikelyBadPaidEntries=findLikelyBadPaidEntries;
 
 function startCFPaymentProcess(billId,splitId){
   if(!hasPerm('cfInitiatePayment')){ alert('You don\'t have permission to initiate payments.'); return; }

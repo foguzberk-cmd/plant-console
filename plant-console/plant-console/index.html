@@ -7956,9 +7956,20 @@ function renderDashboard(){
 // against Plaid's usage-based billing, so this never polls in the
 // background, only when someone actually opens the Dashboard or clicks
 // Refresh.
-async function renderBankBalanceCard(){
+var _bankCardLoaded=false;
+async function renderBankBalanceCard(force){
   var el=document.getElementById('bankBalanceCard');
   if(!el) return;
+  // The background sync re-renders the WHOLE Dashboard roughly every 1.5s
+  // to keep inventory numbers fresh — without this guard, this card would
+  // wipe itself and re-fetch from Plaid on every single one of those
+  // ticks forever, visibly flickering the whole time the Dashboard stays
+  // open AND burning through Plaid's usage-based balance-check billing
+  // for no reason. Only actually reload when explicitly asked: the first
+  // time the Dashboard is opened this session, or a forced call right
+  // after Refresh/Connect/Disconnect.
+  if(_bankCardLoaded && !force) return;
+  _bankCardLoaded=true;
   el.innerHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 20px;font-size:13px;color:var(--muted)">Checking bank connection…</div>';
   var status;
   try{
@@ -7988,7 +7999,7 @@ async function renderBankBalanceCard(){
         +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)">Bank Account</div>'
         +'<div style="font-size:14px;font-weight:600;margin-top:2px">'+esc(balData.institutionName||'Connected bank')+sandboxTag+'</div></div>'
         +'<div style="display:flex;gap:8px">'
-          +'<button class="btn btn-sm" onclick="renderBankBalanceCard()">Refresh</button>'
+          +'<button class="btn btn-sm" onclick="renderBankBalanceCard(true)">Refresh</button>'
           +'<button class="btn btn-sm" onclick="disconnectPlaidBank()" style="color:#c23b33">Disconnect</button>'
         +'</div>'
       +'</div>';
@@ -8009,7 +8020,7 @@ async function renderBankBalanceCard(){
     html+='</div>';
     el.innerHTML=html;
   }catch(e){
-    el.innerHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 20px;font-size:13px;color:#c23b33">Could not load balance: '+esc(e.message)+' <button class="btn btn-sm" onclick="renderBankBalanceCard()" style="margin-left:8px">Retry</button></div>';
+    el.innerHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 20px;font-size:13px;color:#c23b33">Could not load balance: '+esc(e.message)+' <button class="btn btn-sm" onclick="renderBankBalanceCard(true)" style="margin-left:8px">Retry</button></div>';
   }
 }
 window.renderBankBalanceCard=renderBankBalanceCard;
@@ -8038,7 +8049,7 @@ async function connectPlaidBank(){
         });
         var exData=await exRes.json();
         if(!exRes.ok) throw new Error(exData.error||'Could not finish connecting');
-        renderBankBalanceCard();
+        renderBankBalanceCard(true);
       }catch(e){
         alert('Connected to your bank, but saving the connection failed: '+e.message);
       }
@@ -8054,7 +8065,7 @@ async function disconnectPlaidBank(){
   try{
     await fetch('/api/plaid/disconnect',{method:'POST'});
   }catch(e){}
-  renderBankBalanceCard();
+  renderBankBalanceCard(true);
 }
 window.disconnectPlaidBank=disconnectPlaidBank;
 

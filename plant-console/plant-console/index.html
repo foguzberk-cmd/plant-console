@@ -7956,35 +7956,43 @@ function renderDashboard(){
 // against Plaid's usage-based billing, so this never polls in the
 // background, only when someone actually opens the Dashboard or clicks
 // Refresh.
-var _bankCardLoaded=false;
+//
+// Caches the last-rendered HTML rather than a plain "already loaded"
+// flag. That distinction matters here specifically because the
+// background sync re-renders the ENTIRE Dashboard from scratch roughly
+// every 1.5s (see rerenderCurrentSection) — every one of those re-renders
+// creates a brand new, empty #bankBalanceCard div. A boolean flag alone
+// would block the fetch on those routine re-renders (correctly, avoiding
+// the flicker/billing problem) but then have nothing to put into that
+// fresh empty div, leaving it permanently blank. Caching the actual HTML
+// means every render call — forced or not — always paints SOMETHING into
+// whatever div currently exists; only the network fetch itself is what
+// gets skipped on routine re-renders.
+var _bankCardHTML=null;
 async function renderBankBalanceCard(force){
   var el=document.getElementById('bankBalanceCard');
   if(!el) return;
-  // The background sync re-renders the WHOLE Dashboard roughly every 1.5s
-  // to keep inventory numbers fresh — without this guard, this card would
-  // wipe itself and re-fetch from Plaid on every single one of those
-  // ticks forever, visibly flickering the whole time the Dashboard stays
-  // open AND burning through Plaid's usage-based balance-check billing
-  // for no reason. Only actually reload when explicitly asked: the first
-  // time the Dashboard is opened this session, or a forced call right
-  // after Refresh/Connect/Disconnect.
-  if(_bankCardLoaded && !force) return;
-  _bankCardLoaded=true;
+  if(_bankCardHTML!==null && !force){
+    el.innerHTML=_bankCardHTML;
+    return;
+  }
   el.innerHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 20px;font-size:13px;color:var(--muted)">Checking bank connection…</div>';
   var status;
   try{
     var res=await fetch('/api/plaid/status',{cache:'no-store'});
     status=await res.json();
   }catch(e){
-    el.innerHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 20px;font-size:13px;color:#c23b33">Could not check bank connection status.</div>';
+    _bankCardHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 20px;font-size:13px;color:#c23b33">Could not check bank connection status.</div>';
+    el.innerHTML=_bankCardHTML;
     return;
   }
   if(!status.connected){
-    el.innerHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">'
+    _bankCardHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">'
       +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)">Bank Account</div>'
       +'<div style="font-size:14px;margin-top:4px">No bank connected yet'+(status.env==='sandbox'?' <span style="font-family:var(--mono);font-size:10px;color:#9E7B00;background:rgba(158,123,0,.1);padding:2px 6px;border-radius:5px;margin-left:4px">SANDBOX</span>':'')+'</div></div>'
       +'<button class="btn btn-primary btn-sm" onclick="connectPlaidBank()">Connect bank account</button>'
     +'</div>';
+    el.innerHTML=_bankCardHTML;
     return;
   }
   el.innerHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 20px;font-size:13px;color:var(--muted)">Loading balance…</div>';
@@ -8018,9 +8026,11 @@ async function renderBankBalanceCard(force){
       html+='</div>';
     }
     html+='</div>';
-    el.innerHTML=html;
+    _bankCardHTML=html;
+    el.innerHTML=_bankCardHTML;
   }catch(e){
-    el.innerHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 20px;font-size:13px;color:#c23b33">Could not load balance: '+esc(e.message)+' <button class="btn btn-sm" onclick="renderBankBalanceCard(true)" style="margin-left:8px">Retry</button></div>';
+    _bankCardHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 20px;font-size:13px;color:#c23b33">Could not load balance: '+esc(e.message)+' <button class="btn btn-sm" onclick="renderBankBalanceCard(true)" style="margin-left:8px">Retry</button></div>';
+    el.innerHTML=_bankCardHTML;
   }
 }
 window.renderBankBalanceCard=renderBankBalanceCard;

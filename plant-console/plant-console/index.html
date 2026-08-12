@@ -6133,13 +6133,21 @@ function findLikelyBadPaidEntries(){
   try{ localStorage.setItem('pc_week_collapsed',JSON.stringify(_weekCollapsed)); }catch(e){}
   renderPaidPaymentsSection();
   setTimeout(function(){
+    var foundCount=0;
     mismatches.forEach(function(m){
       var cb=document.querySelector('.cf-paid-select[data-billid="'+m.billId+'"][data-splitid="'+m.splitId+'"]');
-      if(cb) cb.checked=true;
+      if(cb){ cb.checked=true; foundCount++; }
     });
     updateCFPaidBulkBar();
     var paidSectionEl=document.getElementById('cf-paid-section');
     if(paidSectionEl) paidSectionEl.scrollIntoView({behavior:'smooth',block:'start'});
+    var summary='Found and checked '+foundCount+' likely-bad entr'+(foundCount===1?'y':'ies')+':\n\n'
+      +mismatches.slice(0,15).map(function(m){
+        return '• '+(m.vendor||'Unknown vendor')+' #'+(m.docNum||'')+' — scheduled '+_cfMoney(m.amount)+', but shows '+_cfMoney(m.paidAmount)+' paid';
+      }).join('\n')
+      +(mismatches.length>15?'\n…and '+(mismatches.length-15)+' more':'')
+      +'\n\nThey\'re checked in the Paid table below (you may need to scroll to see all of them, especially in a collapsed week). Review them, then click "🗑 Delete selected" in the yellow bar above the table.';
+    alert(summary);
   },50);
 }
 window.findLikelyBadPaidEntries=findLikelyBadPaidEntries;

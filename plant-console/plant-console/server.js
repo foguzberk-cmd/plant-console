@@ -1802,7 +1802,7 @@ const server = http.createServer(async (req, res) => {
         language: 'en',
         country_codes: ['US'],
         user: { client_user_id: 'plant-console-' + (session.userId || session.name || 'admin') },
-        products: ['auth']
+        products: ['balance']
       });
       if (result.status !== 200) {
         res.writeHead(result.status, { 'Content-Type': 'application/json' });

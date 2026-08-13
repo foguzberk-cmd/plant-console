@@ -49,6 +49,9 @@ const COLLECTION_CACHE_FILE = path.join(DATA_DIR, 'collection-report-cache.json'
 // it), so every other terminal had to redo the full slow pull itself, and
 // even the SAME browser lost it on a page refresh.
 const CASHFLOW_CACHE_FILE = path.join(DATA_DIR, 'cashflow-report-cache.json');
+// Same idea, for the Checks tab's raw QuickBooks Payment pull — see the
+// long comment on /api/checks-report-cache below for why this was missing.
+const CHECKS_CACHE_FILE = path.join(DATA_DIR, 'checks-report-cache.json');
 const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [] };
 
 // ===== PIN HASHING =====
@@ -1310,6 +1313,39 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
+  // Checks tab report cache — same "pull once, everyone else loads it
+  // instantly" pattern as Customer Payments and Scheduled Payments above.
+  // This one was missing entirely until now: every "Pull from QuickBooks"
+  // click on the Checks tab did a full ~90-day Payment fetch (plus an
+  // open-Invoices fetch for auto-paid-detection) completely from scratch,
+  // on every device, every time — this cache is what lets a second device
+  // load a recent pull's results instantly instead of repeating that.
+  if (url === '/api/checks-report-cache' && req.method === 'GET') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const raw = await fs.promises.readFile(CHECKS_CACHE_FILE, 'utf8');
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(raw);
+    } catch (e) {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ cache: null }));
+    }
+    return;
+  }
+  if (url === '/api/checks-report-cache' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      JSON.parse(bodyStr || '{}');
+      await fs.promises.writeFile(CHECKS_CACHE_FILE, bodyStr, 'utf8');
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
   // Same "dumb terminal" pattern as customers/salesrep — updates ONLY this
   // one vendor's Purch Rep field, nothing else touched.
   if (url.startsWith('/api/vendors/') && url.endsWith('/purchrep') && req.method === 'POST') {
@@ -1950,7 +1986,7 @@ const server = http.createServer(async (req, res) => {
       const since = queryParams.since || null;
       const from = queryParams.from || null;
       const startPos = queryParams.startposition ? parseInt(queryParams.startposition, 10) : null;
-      if (ent && ['Bill','Invoice','SalesReceipt','CreditMemo','VendorCredit','Payment','Vendor','JournalEntry','Account'].indexOf(ent) >= 0) {
+      if (ent && ['Bill','Invoice','SalesReceipt','CreditMemo','VendorCredit','Payment','Vendor','JournalEntry','Account','Deposit'].indexOf(ent) >= 0) {
         if (!accessToken) await refreshAccessToken();
         // Single-page mode: return just one page so each HTTP request is fast.
         if (startPos !== null && !isNaN(startPos)) {

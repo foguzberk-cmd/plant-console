@@ -6629,6 +6629,51 @@ async function runChecksReport(){
     startPos+=pageSize;
   }
 
+  // Real bank-deposit detection: pull every Deposit QuickBooks has
+  // recorded (same 90-day window, widened slightly since a check can
+  // legitimately sit a few extra days before being deposited) and see
+  // which of THIS pull's Payments got bundled into one. A Deposit's own
+  // line items link back to the Payment(s) it came from via LinkedTxn —
+  // that's the actual, ground-truth signal for "this check is no longer
+  // in hand, it's at the bank," rather than only ever knowing that from a
+  // manual click in this app.
+  var depositFrom=new Date(); depositFrom.setDate(depositFrom.getDate()-120);
+  depositFrom=depositFrom.toISOString().slice(0,10);
+  var deposits=[];
+  var depStartPos=1, depSafety=0;
+  if(statusEl) statusEl.textContent='Fetching bank deposits from QuickBooks…';
+  while(true){
+    depSafety++;
+    if(depSafety>1000) break;
+    var dctrl=new AbortController();
+    var dtimer=setTimeout(function(){dctrl.abort();},60000);
+    var depRows=null;
+    try{
+      var dr=await fetch(base+'/api/qb/documents?entity=Deposit&startposition='+depStartPos+'&from='+encodeURIComponent(depositFrom),{signal:dctrl.signal});
+      clearTimeout(dtimer);
+      if(dr.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
+      var djd=await dr.json();
+      if(djd && djd.error) break; // don't fail the whole pull over this — checks just won't auto-detect as deposited this time
+      depRows=(djd && djd.Deposit) ? djd.Deposit : [];
+    }catch(e){
+      clearTimeout(dtimer);
+      break; // network hiccup — skip deposit auto-detection this pull
+    }
+    deposits=deposits.concat(depRows);
+    if(statusEl) statusEl.textContent='Fetched '+deposits.length+' deposit(s) so far…';
+    if(depRows.length<pageSize) break;
+    depStartPos+=pageSize;
+  }
+  // Map: Payment Id -> the date QuickBooks actually deposited it.
+  var depositedAtByPaymentId={};
+  deposits.forEach(function(dep){
+    (dep.Line||[]).forEach(function(line){
+      (line.LinkedTxn||[]).forEach(function(lt){
+        if(lt.TxnType==='Payment'){ depositedAtByPaymentId[lt.TxnId]=dep.TxnDate||(dep.MetaData&&dep.MetaData.LastUpdatedTime)||null; }
+      });
+    });
+  });
+
   // PaymentMethodRef isn't populated in this QuickBooks account at all —
   // confirmed via diagnostic (0 of 1,898 payments had it set). Instead,
   // this business records how a payment came in directly in the Ref #
@@ -6646,6 +6691,31 @@ async function runChecksReport(){
   }
   var allPaymentsInWindow=payments;
   payments=payments.filter(function(p){ return _looksLikeCheckRef(p.PaymentRefNum); });
+
+  // Auto-detect Deposited: for every check-like Payment in this pull that
+  // QuickBooks's own Deposit records show as bundled into an actual bank
+  // deposit, mark it deposited here too — automatically, using the real
+  // deposit date, not the moment someone happens to click "Mark
+  // deposited." Never overwrites an existing entry (e.g. one already
+  // manually marked, or already auto-detected as Paid) — this only ever
+  // fills in a NEW deposited record where none existed, it can't undo or
+  // change anything that's already tracked.
+  var autoDetectedDepositedCount=0;
+  payments.forEach(function(p){
+    if(_checksDeposited[p.Id]) return; // already tracked one way or another — leave it alone
+    var depositedAt=depositedAtByPaymentId[p.Id];
+    if(!depositedAt) return; // QuickBooks doesn't show this one as deposited (yet)
+    _checksDeposited[p.Id]={
+      date:(p.TxnDate||'').slice(0,10),
+      customer:(p.CustomerRef&&p.CustomerRef.name)||'',
+      ref:p.PaymentRefNum||'',
+      amount:Number(p.TotalAmt||0),
+      depositedAt:depositedAt,
+      by:'QuickBooks (auto-detected from Deposit record)'
+    };
+    autoDetectedDepositedCount++;
+  });
+  if(autoDetectedDepositedCount>0) _checksSaveDeposited();
 
   // Auto-detect Paid: a check that's already Deposited (not yet marked
   // paid) is considered cleared once every invoice its payment was
@@ -6713,7 +6783,7 @@ async function runChecksReport(){
       statusEl.textContent='0 checks found, but '+allPaymentsInWindow.length+' other payment(s) exist since '+esc(from)+'. Sample Ref # values seen: '+esc(sample)+'. Tell me if checks are recorded differently and I\'ll adjust the match.';
       statusEl.style.color='#b8460b';
     } else {
-      statusEl.textContent=payments.length+' check(s) found (since '+esc(from)+')'+(trackedCount?', '+trackedCount+' already marked deposited/paid':'')+(autoDetectedPaidCount?', '+autoDetectedPaidCount+' auto-detected as paid this pull':'');
+      statusEl.textContent=payments.length+' check(s) found (since '+esc(from)+')'+(trackedCount?', '+trackedCount+' already marked deposited/paid':'')+(autoDetectedDepositedCount?', '+autoDetectedDepositedCount+' auto-detected as deposited this pull':'')+(autoDetectedPaidCount?', '+autoDetectedPaidCount+' auto-detected as paid this pull':'');
       statusEl.style.color='#1a7a3c';
     }
   }

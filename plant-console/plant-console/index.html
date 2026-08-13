@@ -6674,23 +6674,52 @@ async function runChecksReport(){
     });
   });
 
-  // PaymentMethodRef isn't populated in this QuickBooks account at all —
-  // confirmed via diagnostic (0 of 1,898 payments had it set). Instead,
-  // this business records how a payment came in directly in the Ref #
-  // field: a check number for checks, words like "Cash" for everything
-  // else. So a payment counts as a check if its Ref # is filled in and
-  // ISN'T one of the known non-check labels.
-  var NON_CHECK_REF_KEYWORDS=['cash','wire','ach','eft','transfer','card','credit','debit','paypal','venmo','zelle','online','e-check','echeck'];
+  // Historically PaymentMethodRef wasn't populated in this QuickBooks
+  // account at all (confirmed via diagnostic — 0 of 1,898 payments had it
+  // set), so the fallback below has always been necessary. But when it
+  // IS set on a given payment (newer records may have it), it's a much
+  // more direct signal than guessing from the Ref # field, so it's
+  // checked first.
+  var NON_CHECK_KEYWORDS=['cash','wire','ach','eft','transfer','card','credit','debit','paypal','venmo','zelle','online','e-check','echeck'];
+  function _paymentMethodSaysNonCheck(p){
+    var pm=((p.PaymentMethodRef&&p.PaymentMethodRef.name)||'').toLowerCase();
+    if(!pm) return false; // not populated on this payment — no signal either way, fall through
+    for(var i=0;i<NON_CHECK_KEYWORDS.length;i++){ if(pm.indexOf(NON_CHECK_KEYWORDS[i])>=0) return true; }
+    return false;
+  }
+  // Second signal, independent of the above: a genuine check number is
+  // unique to the payer's own checkbook — it should never show up on a
+  // DIFFERENT customer's payment. If the exact same Ref # appears across
+  // 2+ distinct customers, that's a strong sign it's actually a shared
+  // batch/transaction id from a processor (e.g. several credit card
+  // charges settled together), not a check number at all — even when
+  // PaymentMethodRef isn't populated to confirm it directly.
+  var refToCustomerIds={};
+  payments.forEach(function(p){
+    var ref=(p.PaymentRefNum||'').trim();
+    if(!ref) return;
+    var custId=(p.CustomerRef&&(p.CustomerRef.value||p.CustomerRef.name))||'?';
+    if(!refToCustomerIds[ref]) refToCustomerIds[ref]={};
+    refToCustomerIds[ref][custId]=true;
+  });
+  function _refSharedAcrossCustomers(ref){
+    var seen=refToCustomerIds[(ref||'').trim()];
+    return !!(seen && Object.keys(seen).length>1);
+  }
   function _looksLikeCheckRef(ref){
     var r=(ref||'').trim().toLowerCase();
     if(!r) return false;
-    for(var i=0;i<NON_CHECK_REF_KEYWORDS.length;i++){
-      if(r.indexOf(NON_CHECK_REF_KEYWORDS[i])>=0) return false;
+    for(var i=0;i<NON_CHECK_KEYWORDS.length;i++){
+      if(r.indexOf(NON_CHECK_KEYWORDS[i])>=0) return false;
     }
     return true;
   }
   var allPaymentsInWindow=payments;
-  payments=payments.filter(function(p){ return _looksLikeCheckRef(p.PaymentRefNum); });
+  payments=payments.filter(function(p){
+    if(_paymentMethodSaysNonCheck(p)) return false;
+    if(_refSharedAcrossCustomers(p.PaymentRefNum)) return false;
+    return _looksLikeCheckRef(p.PaymentRefNum);
+  });
 
   // Auto-detect Deposited: for every check-like Payment in this pull that
   // QuickBooks's own Deposit records show as bundled into an actual bank

@@ -6771,7 +6771,7 @@ function renderChecksInHandSection(){
         var custName=(p.CustomerRef&&p.CustomerRef.name)||'No customer on file';
         var amt=Number(p.TotalAmt||0);
         html+='<tr class="'+rowClass+'" style="display:'+(weekIsCollapsed?'none':'table-row')+'">'
-          +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(d)+'</td>'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(fmtDateUS(d))+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(custName)+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(p.PaymentRefNum||'')+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-family:var(--mono)">'+_checksMoneyFmt(amt)+'</td>'
@@ -6875,7 +6875,7 @@ function renderDepositedChecksSection(){
       byDate[dk].forEach(function(row){
         var whenStr=row.depositedAt?fmtDateObjUS(new Date(row.depositedAt)):'—';
         html+='<tr class="'+rowClass+'" style="display:'+(weekIsCollapsed?'none':'table-row')+'">'
-          +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.date||'')+'</td>'
+          +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(fmtDateUS(row.date)||'')+'</td>'
           +'<td style="border:1px solid #8fcf9a;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(row.customer||'')+'</td>'
           +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.ref||'')+'</td>'
           +'<td style="border:1px solid #8fcf9a;padding:5px 10px;text-align:right;font-family:var(--mono)">'+_checksMoneyFmt(row.amount)+'</td>'
@@ -6984,7 +6984,7 @@ function renderPaidChecksSection(){
       byDate[dk].forEach(function(row){
         var whenStr=row.paid.at?fmtDateObjUS(new Date(row.paid.at)):'—';
         html+='<tr class="'+rowClass+'" style="display:'+(weekIsCollapsed?'none':'table-row')+'">'
-          +'<td style="border:1px solid #bbb;padding:5px 10px">'+esc(row.date||'')+'</td>'
+          +'<td style="border:1px solid #bbb;padding:5px 10px">'+esc(fmtDateUS(row.date)||'')+'</td>'
           +'<td style="border:1px solid #bbb;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(row.customer||'')+'</td>'
           +'<td style="border:1px solid #bbb;padding:5px 10px">'+esc(row.ref||'')+'</td>'
           +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:right;font-family:var(--mono)">'+_checksMoneyFmt(row.amount)+'</td>'

@@ -5800,7 +5800,7 @@ function renderApprovedPaymentsSection(){
           +(split.edited?' <span title="Edited by '+esc(split.edited.by)+(split.edited.at?' — '+esc(new Date(split.edited.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})):'')+'" style="font-size:11px;color:#8a6d1a;font-style:italic;cursor:help">(edited)</span>':'')
         +'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
-        +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.docNum||'')+(row.docNum?' <span onclick="copyToClipboard(this,\''+esc(row.docNum)+'\')" title="Copy bill #" style="cursor:pointer;opacity:.55;font-size:11px">📋</span>':'')+'</td>'
+        +'<td style="border:1px solid #8fcf9a;padding:5px 10px"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>'+esc(row.docNum||'')+'</span>'+(row.docNum?'<span onclick="copyToClipboard(this,\''+esc(row.docNum)+'\')" title="Copy bill #" style="cursor:pointer;opacity:.6;font-size:16px;flex-shrink:0">📋</span>':'')+'</div></td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.due?fmtDateUS(row.due):'—')+'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px;text-align:right">'

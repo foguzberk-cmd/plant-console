@@ -6554,6 +6554,40 @@ window.toggleCFWeekGroup=toggleCFWeekGroup;
 // this shared across users/devices the same way. =====
 var _checksPayments=null; // cached raw Payment records from the last pull
 var _checksDeposited=(function(){ try{ return JSON.parse(localStorage.getItem('pc_checks_deposited')||'{}'); }catch(e){ return {}; } })();
+// Same "pull once, everyone else loads it instantly" pattern as Customer
+// Payments and Scheduled Payments — see _cfBuildSharedCacheBundle for the
+// original version this mirrors. Only the raw Payment pull is cached
+// here; _checksDeposited (who's marked what deposited/paid) is separate
+// local-only state, same as before this change.
+function _checksBuildSharedCacheBundle(){
+  return { savedAt:new Date().toISOString(), payments:_checksPayments };
+}
+function _checksRestoreSharedCacheBundle(b){
+  if(!b || !b.payments) return false;
+  _checksPayments=b.payments;
+  return true;
+}
+async function _checksPushSharedCache(){
+  try{
+    await fetch('/api/checks-report-cache',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(_checksBuildSharedCacheBundle())
+    });
+  }catch(e){ /* best-effort — this device's own view is already correct regardless of whether the share succeeds */ }
+}
+// Checked when the Checks tab is opened and nothing is loaded in THIS
+// device's memory yet — loads whatever the last successful pull (from any
+// terminal) left on the server, so most people never have to click "Pull
+// from QuickBooks" and wait through their own full ~90-day pull.
+async function _checksTryLoadSharedCache(){
+  try{
+    var res=await fetch('/api/checks-report-cache',{cache:'no-store'});
+    if(!res.ok) return false;
+    var bundle=await res.json();
+    return _checksRestoreSharedCacheBundle(bundle);
+  }catch(e){ return false; }
+}
 function _checksSaveDeposited(){ localStorage.setItem('pc_checks_deposited',JSON.stringify(_checksDeposited)); }
 
 async function runChecksReport(){
@@ -6680,9 +6714,13 @@ async function runChecksReport(){
       statusEl.style.color='#b8460b';
     } else {
       statusEl.textContent=payments.length+' check(s) found (since '+esc(from)+')'+(trackedCount?', '+trackedCount+' already marked deposited/paid':'')+(autoDetectedPaidCount?', '+autoDetectedPaidCount+' auto-detected as paid this pull':'');
-      statusEl.style.color='';
+      statusEl.style.color='#1a7a3c';
     }
   }
+  // Share this pull with every other terminal — fire-and-forget, this
+  // device's own view is already correct regardless of whether the push
+  // succeeds.
+  _checksPushSharedCache();
 }
 window.runChecksReport=runChecksReport;
 
@@ -7167,6 +7205,20 @@ function switchReportTab(tab){
       _cfTryLoadSharedCache().then(function(loaded){
         if(loaded){ renderCashFlowReport(); }
         else if(cfStatusEl && cfStatusEl.textContent==='Checking for a recent shared pull…'){ cfStatusEl.textContent=''; }
+      });
+    })();
+  }
+  if(tab==='checks' && !_checksPayments){
+    var chkStatusEl=document.getElementById('chk-status');
+    if(chkStatusEl) chkStatusEl.textContent='Checking for a recent shared pull…';
+    (function(){
+      _checksTryLoadSharedCache().then(function(loaded){
+        if(loaded){
+          renderChecksInHandSection();
+          renderDepositedChecksSection();
+          renderPaidChecksSection();
+          if(chkStatusEl){ chkStatusEl.textContent=_checksPayments.length+' check(s) loaded from a recent shared pull.'; chkStatusEl.style.color='#1a7a3c'; }
+        } else if(chkStatusEl && chkStatusEl.textContent==='Checking for a recent shared pull…'){ chkStatusEl.textContent=''; }
       });
     })();
   }

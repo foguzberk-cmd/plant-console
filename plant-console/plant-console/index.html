@@ -2611,8 +2611,6 @@ function renderReports(){
         +'</div>'
         +'<div id="chk-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'</div>'
-      +'<div id="chk-paid-section" style="margin-bottom:24px"></div>'
-      +'<div id="chk-deposited-section" style="margin-bottom:24px"></div>'
       +'<div id="chk-inhand-section"></div>'
     +'</div>'
     +'<div id="rpt-panel-audit" style="display:none">'
@@ -5024,9 +5022,8 @@ function splitCFPayment(billId,splitId){
 window.splitCFPayment=splitCFPayment;
 
 function _cfMoney(n){ return '$'+Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
-// Shared search box for the Checks tab — filters Checks In Hand,
-// Deposited, and Paid all at once by ref #, customer, or amount, same
-// approach as the Cash Flow search box above.
+// Shared search box for the Checks tab — filters Checks In Hand by ref #,
+// customer, or amount.
 var _checksSearchQuery='';
 function filterChecksSearch(){
   var el=document.getElementById('chk-search');
@@ -5034,8 +5031,6 @@ function filterChecksSearch(){
   var clearBtn=document.getElementById('chk-search-clear');
   if(clearBtn) clearBtn.style.display=_checksSearchQuery?'block':'none';
   renderChecksInHandSection();
-  renderDepositedChecksSection();
-  renderPaidChecksSection();
 }
 window.filterChecksSearch=filterChecksSearch;
 function _checksMatchesSearch(customer,ref,amount){
@@ -6651,61 +6646,6 @@ async function runChecksReport(){
     startPos+=pageSize;
   }
 
-  // DISABLED for now, per request — auto-detecting deposits from
-  // QuickBooks's own Deposit records moved at least one genuine paper
-  // check (Ref #4882, explicitly "Check" as its payment method) into
-  // Deposited without a manual click, which wasn't trusted. Reverting to
-  // fully manual "Mark deposited" control until this is revisited. Set
-  // back to true to re-enable — the detection logic itself is untouched,
-  // just switched off, so turning it back on later is a one-line change.
-  var CHECKS_AUTO_DETECT_DEPOSITED_ENABLED=false;
-  var depositedAtByPaymentId={};
-  if(CHECKS_AUTO_DETECT_DEPOSITED_ENABLED){
-    // Real bank-deposit detection: pull every Deposit QuickBooks has
-    // recorded (same 90-day window, widened slightly since a check can
-    // legitimately sit a few extra days before being deposited) and see
-    // which of THIS pull's Payments got bundled into one. A Deposit's own
-    // line items link back to the Payment(s) it came from via LinkedTxn —
-    // that's the actual, ground-truth signal for "this check is no longer
-    // in hand, it's at the bank," rather than only ever knowing that from
-    // a manual click in this app.
-    var depositFrom=new Date(); depositFrom.setDate(depositFrom.getDate()-120);
-    depositFrom=depositFrom.toISOString().slice(0,10);
-    var deposits=[];
-    var depStartPos=1, depSafety=0;
-    if(statusEl) statusEl.textContent='Fetching bank deposits from QuickBooks…';
-    while(true){
-      depSafety++;
-      if(depSafety>1000) break;
-      var dctrl=new AbortController();
-      var dtimer=setTimeout(function(){dctrl.abort();},60000);
-      var depRows=null;
-      try{
-        var dr=await fetch(base+'/api/qb/documents?entity=Deposit&startposition='+depStartPos+'&from='+encodeURIComponent(depositFrom),{signal:dctrl.signal});
-        clearTimeout(dtimer);
-        if(dr.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
-        var djd=await dr.json();
-        if(djd && djd.error) break; // don't fail the whole pull over this — checks just won't auto-detect as deposited this time
-        depRows=(djd && djd.Deposit) ? djd.Deposit : [];
-      }catch(e){
-        clearTimeout(dtimer);
-        break; // network hiccup — skip deposit auto-detection this pull
-      }
-      deposits=deposits.concat(depRows);
-      if(statusEl) statusEl.textContent='Fetched '+deposits.length+' deposit(s) so far…';
-      if(depRows.length<pageSize) break;
-      depStartPos+=pageSize;
-    }
-    // Map: Payment Id -> the date QuickBooks actually deposited it.
-    deposits.forEach(function(dep){
-      (dep.Line||[]).forEach(function(line){
-        (line.LinkedTxn||[]).forEach(function(lt){
-          if(lt.TxnType==='Payment'){ depositedAtByPaymentId[lt.TxnId]=dep.TxnDate||(dep.MetaData&&dep.MetaData.LastUpdatedTime)||null; }
-        });
-      });
-    });
-  } // end CHECKS_AUTO_DETECT_DEPOSITED_ENABLED
-
   // Historically PaymentMethodRef wasn't populated in this QuickBooks
   // account at all (confirmed via diagnostic — 0 of 1,898 payments had it
   // set), so the fallback below has always been necessary. But when it
@@ -6769,89 +6709,13 @@ async function runChecksReport(){
     return true;
   });
 
-  // Auto-detect Deposited: for every check-like Payment in this pull that
-  // QuickBooks's own Deposit records show as bundled into an actual bank
-  // deposit, mark it deposited here too — automatically, using the real
-  // deposit date, not the moment someone happens to click "Mark
-  // deposited." Never overwrites an existing entry (e.g. one already
-  // manually marked, or already auto-detected as Paid) — this only ever
-  // fills in a NEW deposited record where none existed, it can't undo or
-  // change anything that's already tracked.
-  var autoDetectedDepositedCount=0;
-  payments.forEach(function(p){
-    if(_checksDeposited[p.Id]) return; // already tracked one way or another — leave it alone
-    var depositedAt=depositedAtByPaymentId[p.Id];
-    if(!depositedAt) return; // QuickBooks doesn't show this one as deposited (yet)
-    _checksDeposited[p.Id]={
-      date:(p.TxnDate||'').slice(0,10),
-      customer:(p.CustomerRef&&p.CustomerRef.name)||'',
-      ref:p.PaymentRefNum||'',
-      amount:Number(p.TotalAmt||0),
-      depositedAt:depositedAt,
-      by:'QuickBooks (auto-detected from Deposit record)'
-    };
-    autoDetectedDepositedCount++;
-  });
-  if(autoDetectedDepositedCount>0) _checksSaveDeposited();
-
-  // Auto-detect Paid: a check that's already Deposited (not yet marked
-  // paid) is considered cleared once every invoice its payment was
-  // applied to is no longer open in QuickBooks. This is checked by
-  // pulling every currently-open invoice and seeing whether any of a
-  // check's linked invoices still show up in that list — if none do, the
-  // money has definitely gone through, so it's moved to Paid automatically
-  // instead of needing a manual click.
-  var candidateIds=Object.keys(_checksDeposited).filter(function(id){ return !_checksDeposited[id].paid; });
-  var autoDetectedPaidCount=0;
-  if(candidateIds.length){
-    if(statusEl) statusEl.textContent='Checking invoice status for deposited checks…';
-    var openInvoiceIds={};
-    var invStartPos=1, invSafety=0;
-    while(true){
-      invSafety++;
-      if(invSafety>1000) break; // hard cap (~100k rows)
-      var ictrl=new AbortController();
-      var itimer=setTimeout(function(){ictrl.abort();},60000);
-      var invRows=null;
-      try{
-        var ir=await fetch(base+'/api/qb/documents?entity=Invoice&startposition='+invStartPos,{signal:ictrl.signal});
-        clearTimeout(itimer);
-        if(ir.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
-        var ijd=await ir.json();
-        if(ijd && ijd.error) break; // don't fail the whole pull over this — just skip auto-detection this time
-        invRows=(ijd && ijd.Invoice) ? ijd.Invoice : [];
-      }catch(e){
-        clearTimeout(itimer);
-        break; // network hiccup — skip auto-detection this pull, manual "Mark paid" still works
-      }
-      invRows.forEach(function(inv){ if(Number(inv.Balance||0)>0) openInvoiceIds[inv.Id]=true; });
-      if(invRows.length<pageSize) break;
-      invStartPos+=pageSize;
-    }
-
-    candidateIds.forEach(function(id){
-      var p=allPaymentsInWindow.find(function(x){ return x.Id===id; });
-      if(!p) return; // this check wasn't in this pull's window — nothing to check it against right now
-      var linkedInvoiceIds=[];
-      (p.Line||[]).forEach(function(line){
-        (line.LinkedTxn||[]).forEach(function(lt){ if(lt.TxnType==='Invoice') linkedInvoiceIds.push(lt.TxnId); });
-      });
-      if(!linkedInvoiceIds.length) return; // nothing to check this against — leave for manual "Mark paid"
-      var stillOpen=linkedInvoiceIds.some(function(invId){ return openInvoiceIds[invId]; });
-      if(!stillOpen){
-        _checksDeposited[id].paid={at:new Date().toISOString(),by:'QuickBooks (auto-detected — linked invoice(s) no longer open)'};
-        autoDetectedPaidCount++;
-      }
-    });
-    if(autoDetectedPaidCount>0) _checksSaveDeposited();
-  }
-
+  // No Deposited/Paid tracking anymore, per request — this is simply
+  // every genuine check payment on file in this window, full stop. All
+  // of them are treated as still "in hand" (not yet deposited); nothing
+  // here moves itself anywhere automatically.
   _checksPayments=payments;
   renderChecksInHandSection();
-  renderDepositedChecksSection();
-  renderPaidChecksSection();
   if(statusEl){
-    var trackedCount=payments.filter(function(p){ return _checksDeposited[p.Id]; }).length;
     if(!payments.length && allPaymentsInWindow.length){
       // Nothing matched a check-like Ref #, but there WAS other payment
       // data in this window — show a sample of what Ref # values actually
@@ -6866,7 +6730,7 @@ async function runChecksReport(){
       if(exclusionCounts.sharedRef) exclusionParts.push(exclusionCounts.sharedRef+' shared-ref batch');
       if(exclusionCounts.refKeyword) exclusionParts.push(exclusionCounts.refKeyword+' by ref keyword');
       if(exclusionCounts.blank) exclusionParts.push(exclusionCounts.blank+' blank ref');
-      statusEl.textContent=payments.length+' check(s) found (since '+esc(from)+')'+(trackedCount?', '+trackedCount+' already marked deposited/paid':'')+(autoDetectedDepositedCount?', '+autoDetectedDepositedCount+' auto-detected as deposited this pull':'')+(autoDetectedPaidCount?', '+autoDetectedPaidCount+' auto-detected as paid this pull':'')+(excludedTotal?' — '+excludedTotal+' other payment(s) excluded ('+exclusionParts.join(', ')+')':'');
+      statusEl.textContent=payments.length+' check(s) found (since '+esc(from)+')'+(excludedTotal?' — '+excludedTotal+' other payment(s) excluded ('+exclusionParts.join(', ')+')':'');
       statusEl.style.color='#1a7a3c';
     }
   }
@@ -6878,8 +6742,6 @@ async function runChecksReport(){
 window.runChecksReport=runChecksReport;
 
 function buildChecksTableShell(){
-  renderPaidChecksSection();
-  renderDepositedChecksSection();
   renderChecksInHandSection();
 }
 window.buildChecksTableShell=buildChecksTableShell;
@@ -6902,8 +6764,9 @@ function _checksFmtShort(dateStr){
 function renderChecksInHandSection(){
   var el=document.getElementById('chk-inhand-section');
   if(!el) return;
-  var payments=(_checksPayments||[]).filter(function(p){ return !_checksDeposited[p.Id]; });
-  payments=payments.filter(function(p){ return _checksMatchesSearch((p.CustomerRef&&p.CustomerRef.name)||'',p.PaymentRefNum||'',p.TotalAmt||0); });
+  // No more Deposited/Paid distinction — every genuine check payment
+  // found is shown here, full stop.
+  var payments=(_checksPayments||[]).filter(function(p){ return _checksMatchesSearch((p.CustomerRef&&p.CustomerRef.name)||'',p.PaymentRefNum||'',p.TotalAmt||0); });
   if(!payments.length){
     el.innerHTML=_collapsibleHeader('chkInHand','📄 Checks In Hand',0,'chk-inhand-section','Checks In Hand')
       +'<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px;background:var(--panel);border:1px solid var(--line);border-radius:14px">'+(_checksSearchQuery?'No checks in hand match your search.':'No checks yet — click "Pull from QuickBooks" above.')+'</div>';
@@ -6930,13 +6793,12 @@ function renderChecksInHandSection(){
   var html=_collapsibleHeader('chkInHand','📄 Checks In Hand',payments.length,'chk-inhand-section','Checks In Hand')
     +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#fffdf5;color:#000;border:1px solid #e0c56b">'
-    +'<colgroup><col style="width:110px"><col style="width:240px"><col style="width:150px"><col style="width:150px"><col style="width:60px"></colgroup>'
+    +'<colgroup><col style="width:110px"><col style="width:280px"><col style="width:170px"><col style="width:170px"></colgroup>'
     +'<thead><tr>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Date</th>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Customer</th>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Ref #</th>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:right;font-weight:700">Amount</th>'
-      +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px"></th>'
     +'</tr></thead><tbody>';
 
   weekKeys.forEach(function(weekMonday){
@@ -6950,12 +6812,12 @@ function renderChecksInHandSection(){
     var rowClass='wk-chkInHand-'+weekMonday;
     var weekIsCollapsed=!!_weekCollapsed[weekKey];
     html+='<tr onclick="toggleCFWeekGroup(\''+weekKey+'\',\''+rowClass+'\')" style="cursor:pointer">'
-      +'<td colspan="3" style="border:1px solid #c9a227;padding:7px 10px;font-weight:700;background:#ffe082">'
+      +'<td colspan="2" style="border:1px solid #c9a227;padding:7px 10px;font-weight:700;background:#ffe082">'
         +'<span id="wk-chev-'+rowClass+'" style="display:inline-block;transition:transform .12s;margin-right:8px;transform:rotate('+(weekIsCollapsed?'-90deg':'0deg')+');font-size:16px;line-height:1;vertical-align:middle;color:#000">▾</span>'
         +esc(weekLabel)
       +'</td>'
-      +'<td style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe082;font-family:var(--mono)">'+_checksMoneyFmt(weekTotal)+'</td>'
       +'<td style="border:1px solid #c9a227;background:#ffe082"></td>'
+      +'<td style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe082;font-family:var(--mono)">'+_checksMoneyFmt(weekTotal)+'</td>'
     +'</tr>';
     byWeek[weekMonday].forEach(function(d){
       byDate[d].forEach(function(p){
@@ -6966,9 +6828,6 @@ function renderChecksInHandSection(){
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(custName)+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(p.PaymentRefNum||'')+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-family:var(--mono)">'+_checksMoneyFmt(amt)+'</td>'
-          +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:center">'
-            +'<button onclick="event.stopPropagation();markCheckDeposited(\''+esc(p.Id)+'\')" class="btn btn-sm" style="padding:2px 8px;font-size:11px">Mark deposited</button>'
-          +'</td>'
         +'</tr>';
       });
     });
@@ -6977,7 +6836,6 @@ function renderChecksInHandSection(){
   html+='<tr>'
     +'<td colspan="3" style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe58a">TOTAL IN HAND</td>'
     +'<td style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe58a;font-family:var(--mono)">'+_checksMoneyFmt(grandTotal)+'</td>'
-    +'<td style="border:1px solid #c9a227;background:#ffe58a"></td>'
   +'</tr>';
   html+='</tbody></table></div>';
   el.innerHTML=html;

@@ -6715,6 +6715,17 @@ async function runChecksReport(){
     return true;
   }
   var allPaymentsInWindow=payments;
+  // TEMP DIAGNOSTIC — remove once resolved. Logs the raw object for any
+  // payment whose Ref # is "3868" (the Family Plate case), plus 2 general
+  // samples, so we can see every field QuickBooks's API actually returns
+  // for a payment — rather than continuing to guess whether
+  // PaymentMethodRef is really absent, or just named/shaped differently
+  // than expected.
+  (function(){
+    var debugMatch=allPaymentsInWindow.filter(function(p){ return (p.PaymentRefNum||'').trim()==='3868'; });
+    if(debugMatch.length) console.log('[CHECKS DEBUG] Ref 3868 raw payment object(s):',JSON.stringify(debugMatch,null,2));
+    console.log('[CHECKS DEBUG] 2 general sample raw payment objects:',JSON.stringify(allPaymentsInWindow.slice(0,2),null,2));
+  })();
   var exclusionCounts={paymentMethod:0,sharedRef:0,refKeyword:0,blank:0};
   payments=payments.filter(function(p){
     if(_paymentMethodSaysNonCheck(p)){ exclusionCounts.paymentMethod++; return false; }

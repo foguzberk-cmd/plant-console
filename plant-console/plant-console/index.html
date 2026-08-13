@@ -996,6 +996,13 @@ function fmtDateUS(s){
   var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s||'');
   return m?(m[2]+'/'+m[3]+'/'+m[1]):s;
 }
+// Same mm/dd/yyyy style, for an actual Date object / timestamp (fmtDateUS
+// above only handles a plain yyyy-mm-dd string).
+function fmtDateObjUS(d){
+  var mm=String(d.getMonth()+1).padStart(2,'0');
+  var dd=String(d.getDate()).padStart(2,'0');
+  return mm+'/'+dd+'/'+d.getFullYear();
+}
 // Browsers cap localStorage at roughly 5-10MB per site. A large QuickBooks
 // transaction history can push the local mirror of the data past that limit
 // (this actually happened: "Setting the value of 'pc_transactions' exceeded
@@ -6054,7 +6061,7 @@ function renderPaidPaymentsSection(){
       byDate[dateKey].forEach(function(row){
         var billId=row.billId, split=row.split;
         var vName=row.vendor||'No vendor on file';
-        var whenStr=split.paid.at?new Date(split.paid.at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
+        var whenStr=split.paid.at?fmtDateObjUS(new Date(split.paid.at)):'—';
         var isPartial=split.paid.amount<Number(split.amount||0)-0.004;
         html+='<tr class="'+rowClass+'" style="display:'+(weekIsCollapsed?'none':'table-row')+';text-decoration:line-through;text-decoration-color:#999;text-decoration-thickness:1.5px">'
           +'<td style="border:1px solid #bbb;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#555">'+esc(vName)+'</td>'
@@ -6866,7 +6873,7 @@ function renderDepositedChecksSection(){
     +'</tr>';
     byWeek[weekMonday].forEach(function(dk){
       byDate[dk].forEach(function(row){
-        var whenStr=row.depositedAt?new Date(row.depositedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
+        var whenStr=row.depositedAt?fmtDateObjUS(new Date(row.depositedAt)):'—';
         html+='<tr class="'+rowClass+'" style="display:'+(weekIsCollapsed?'none':'table-row')+'">'
           +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.date||'')+'</td>'
           +'<td style="border:1px solid #8fcf9a;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(row.customer||'')+'</td>'
@@ -6975,7 +6982,7 @@ function renderPaidChecksSection(){
     +'</tr>';
     byWeek[weekMonday].forEach(function(dk){
       byDate[dk].forEach(function(row){
-        var whenStr=row.paid.at?new Date(row.paid.at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
+        var whenStr=row.paid.at?fmtDateObjUS(new Date(row.paid.at)):'—';
         html+='<tr class="'+rowClass+'" style="display:'+(weekIsCollapsed?'none':'table-row')+'">'
           +'<td style="border:1px solid #bbb;padding:5px 10px">'+esc(row.date||'')+'</td>'
           +'<td style="border:1px solid #bbb;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(row.customer||'')+'</td>'

@@ -6715,10 +6715,13 @@ async function runChecksReport(){
     return true;
   }
   var allPaymentsInWindow=payments;
+  var exclusionCounts={paymentMethod:0,sharedRef:0,refKeyword:0,blank:0};
   payments=payments.filter(function(p){
-    if(_paymentMethodSaysNonCheck(p)) return false;
-    if(_refSharedAcrossCustomers(p.PaymentRefNum)) return false;
-    return _looksLikeCheckRef(p.PaymentRefNum);
+    if(_paymentMethodSaysNonCheck(p)){ exclusionCounts.paymentMethod++; return false; }
+    if(_refSharedAcrossCustomers(p.PaymentRefNum)){ exclusionCounts.sharedRef++; return false; }
+    if(!(p.PaymentRefNum||'').trim()){ exclusionCounts.blank++; return false; }
+    if(!_looksLikeCheckRef(p.PaymentRefNum)){ exclusionCounts.refKeyword++; return false; }
+    return true;
   });
 
   // Auto-detect Deposited: for every check-like Payment in this pull that
@@ -6812,7 +6815,13 @@ async function runChecksReport(){
       statusEl.textContent='0 checks found, but '+allPaymentsInWindow.length+' other payment(s) exist since '+esc(from)+'. Sample Ref # values seen: '+esc(sample)+'. Tell me if checks are recorded differently and I\'ll adjust the match.';
       statusEl.style.color='#b8460b';
     } else {
-      statusEl.textContent=payments.length+' check(s) found (since '+esc(from)+')'+(trackedCount?', '+trackedCount+' already marked deposited/paid':'')+(autoDetectedDepositedCount?', '+autoDetectedDepositedCount+' auto-detected as deposited this pull':'')+(autoDetectedPaidCount?', '+autoDetectedPaidCount+' auto-detected as paid this pull':'');
+      var excludedTotal=exclusionCounts.paymentMethod+exclusionCounts.sharedRef+exclusionCounts.refKeyword+exclusionCounts.blank;
+      var exclusionParts=[];
+      if(exclusionCounts.paymentMethod) exclusionParts.push(exclusionCounts.paymentMethod+' by payment method');
+      if(exclusionCounts.sharedRef) exclusionParts.push(exclusionCounts.sharedRef+' shared-ref batch');
+      if(exclusionCounts.refKeyword) exclusionParts.push(exclusionCounts.refKeyword+' by ref keyword');
+      if(exclusionCounts.blank) exclusionParts.push(exclusionCounts.blank+' blank ref');
+      statusEl.textContent=payments.length+' check(s) found (since '+esc(from)+')'+(trackedCount?', '+trackedCount+' already marked deposited/paid':'')+(autoDetectedDepositedCount?', '+autoDetectedDepositedCount+' auto-detected as deposited this pull':'')+(autoDetectedPaidCount?', '+autoDetectedPaidCount+' auto-detected as paid this pull':'')+(excludedTotal?' — '+excludedTotal+' other payment(s) excluded ('+exclusionParts.join(', ')+')':'');
       statusEl.style.color='#1a7a3c';
     }
   }

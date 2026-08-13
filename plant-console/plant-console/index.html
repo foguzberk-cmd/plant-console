@@ -6681,9 +6681,22 @@ async function runChecksReport(){
   // more direct signal than guessing from the Ref # field, so it's
   // checked first.
   var NON_CHECK_KEYWORDS=['cash','wire','ach','eft','transfer','card','credit','debit','paypal','venmo','zelle','online','e-check','echeck'];
+  // PaymentMethodRef turns out to exist but only ever as a bare numeric
+  // reference (e.g. {"value":"9"}) with no name attached — resolving that
+  // to an actual method name would need a separate lookup against
+  // QuickBooks's PaymentMethod list, so checking .name directly (as a
+  // first attempt here did) never finds anything. Confirmed via live
+  // diagnostic on a real "Family Plate" payment that two OTHER fields are
+  // what actually carry this signal reliably: CreditCardPayment only
+  // exists at all when a card was genuinely processed through
+  // QuickBooks's own payment processing, and ProcessPayment:true means
+  // ANY electronic processing happened (card or bank transfer) — neither
+  // can ever be true for a paper check someone deposited manually.
   function _paymentMethodSaysNonCheck(p){
+    if(p.CreditCardPayment) return true;
+    if(p.ProcessPayment===true) return true;
     var pm=((p.PaymentMethodRef&&p.PaymentMethodRef.name)||'').toLowerCase();
-    if(!pm) return false; // not populated on this payment — no signal either way, fall through
+    if(!pm) return false; // no name attached — no signal either way, fall through
     for(var i=0;i<NON_CHECK_KEYWORDS.length;i++){ if(pm.indexOf(NON_CHECK_KEYWORDS[i])>=0) return true; }
     return false;
   }
@@ -6715,36 +6728,6 @@ async function runChecksReport(){
     return true;
   }
   var allPaymentsInWindow=payments;
-  // TEMP DIAGNOSTIC — remove once resolved. Recursively searches the raw
-  // payment object for anything resembling payment-method info (rather
-  // than dumping the whole deeply-nested object and hoping to spot it by
-  // eye — Intuit's REST API wraps a LOT of SOAP-derived structure around
-  // the actual fields).
-  (function(){
-    function _deepFindClues(obj,path,results,depth){
-      if(!obj||typeof obj!=='object'||depth>6) return;
-      Object.keys(obj).forEach(function(k){
-        var v=obj[k];
-        var kl=k.toLowerCase();
-        if(kl.indexOf('payment')>=0||kl.indexOf('method')>=0){
-          results.push(path+'.'+k+' = '+JSON.stringify(v).slice(0,200));
-        }
-        if(typeof v==='string' && (v.toLowerCase().indexOf('credit')>=0||v.toLowerCase().indexOf('card')>=0||v.toLowerCase().indexOf('check')>=0)){
-          results.push(path+'.'+k+' = '+JSON.stringify(v)+'  <-- contains credit/card/check');
-        }
-        if(v && typeof v==='object') _deepFindClues(v,path+'.'+k,results,depth+1);
-      });
-    }
-    var debugMatch=allPaymentsInWindow.filter(function(p){ return (p.PaymentRefNum||'').trim()==='3868'; });
-    if(debugMatch.length){
-      console.log('[CHECKS DEBUG] Top-level keys on the Ref 3868 payment object:',Object.keys(debugMatch[0]));
-      var clues=[];
-      debugMatch.forEach(function(p,i){ _deepFindClues(p,'payment['+i+']',clues,0); });
-      console.log('[CHECKS DEBUG] Payment-method clues found ('+clues.length+'):',clues.length?clues:'NONE — this payment object has nothing resembling a payment method anywhere in it');
-    } else {
-      console.log('[CHECKS DEBUG] No payment with Ref # "3868" found in this pull\'s window.');
-    }
-  })();
   var exclusionCounts={paymentMethod:0,sharedRef:0,refKeyword:0,blank:0};
   payments=payments.filter(function(p){
     if(_paymentMethodSaysNonCheck(p)){ exclusionCounts.paymentMethod++; return false; }

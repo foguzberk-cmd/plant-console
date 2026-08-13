@@ -958,6 +958,34 @@ async function retryUsersSaveUntilConfirmed(){
 }
 function saveSavedReports(){safeSetLocal('pc_savedreports',JSON.stringify(savedReports));pushToServer();}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+// Generic click-to-copy for any small icon next to a value (bill #, ref
+// #, etc.) — flashes a checkmark briefly so it's clear the click actually
+// did something, since silently copying gives no other feedback at all.
+function copyToClipboard(el,text){
+  var restore=el.textContent;
+  function flash(){
+    el.textContent='✅';
+    setTimeout(function(){ el.textContent=restore; },900);
+  }
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(flash).catch(function(){
+      _copyFallback(text); flash();
+    });
+  } else {
+    _copyFallback(text); flash();
+  }
+}
+window.copyToClipboard=copyToClipboard;
+function _copyFallback(text){
+  var ta=document.createElement('textarea');
+  ta.value=text;
+  ta.style.position='fixed';
+  ta.style.opacity='0';
+  document.body.appendChild(ta);
+  ta.select();
+  try{ document.execCommand('copy'); }catch(e){}
+  document.body.removeChild(ta);
+}
 // Display-only reformat of a yyyy-mm-dd string to mm/dd/yyyy — used
 // wherever a raw QuickBooks/scheduling date string gets shown to a person.
 // Sorting/grouping elsewhere still uses the original yyyy-mm-dd form (that
@@ -5769,7 +5797,7 @@ function renderApprovedPaymentsSection(){
           +(split.edited?' <span title="Edited by '+esc(split.edited.by)+(split.edited.at?' — '+esc(new Date(split.edited.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})):'')+'" style="font-size:11px;color:#8a6d1a;font-style:italic;cursor:help">(edited)</span>':'')
         +'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
-        +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.docNum||'')+'</td>'
+        +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.docNum||'')+(row.docNum?' <span onclick="copyToClipboard(this,\''+esc(row.docNum)+'\')" title="Copy bill #" style="cursor:pointer;opacity:.55;font-size:11px">📋</span>':'')+'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.due?fmtDateUS(row.due):'—')+'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px;text-align:right">'

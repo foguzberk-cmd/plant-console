@@ -2602,8 +2602,9 @@ function renderReports(){
     +'</div>'
     +'<div id="rpt-panel-checks" style="display:none">'
       +'<div id="chk-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
-        +'<div style="margin-bottom:14px">'
+        +'<div style="margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap">'
           +'<button class="btn btn-primary" onclick="runChecksReport()">Pull from QuickBooks</button>'
+          +'<button class="btn" onclick="debugCheckDepositLink(\'4882\')" title="Temporary — finds exactly which QuickBooks Deposit record (if any) incorrectly claims to include Ref #4882">🔍 Debug deposit link (4882)</button>'
         +'</div>'
         +'<div style="position:relative;margin-bottom:14px;max-width:320px">'
           +'<input type="text" id="chk-search" placeholder="Search ref #, amount, or customer…" oninput="filterChecksSearch()" style="width:100%;padding:9px 34px 9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
@@ -6740,6 +6741,55 @@ async function runChecksReport(){
   _checksPushSharedCache();
 }
 window.runChecksReport=runChecksReport;
+
+// TEMP DIAGNOSTIC — remove once resolved. Investigates exactly why the
+// disabled auto-detect-deposited feature previously matched a specific
+// check (by Ref #) as deposited, when QuickBooks's own report says
+// otherwise. Finds that payment's real Id, fetches every Deposit
+// QuickBooks has, and logs the FULL raw object of any Deposit whose Line
+// items claim to link back to that payment — so we can see directly
+// whether that Deposit is voided, zeroed out, or something else odd,
+// rather than guessing.
+async function debugCheckDepositLink(targetRef){
+  var targetPayment=(_checksPayments||[]).find(function(p){ return (p.PaymentRefNum||'').trim()===targetRef; });
+  if(!targetPayment){
+    alert('Ref #'+targetRef+' not found in the current Checks In Hand list. Click "Pull from QuickBooks" first, then try this again.');
+    return;
+  }
+  console.log('[DEPOSIT DEBUG] Target payment (Ref '+targetRef+') full object:',JSON.stringify(targetPayment,null,2));
+  var base=window.location.origin;
+  var depositFrom=new Date(); depositFrom.setDate(depositFrom.getDate()-150);
+  depositFrom=depositFrom.toISOString().slice(0,10);
+  var deposits=[];
+  var startPos=1, safety=0;
+  while(true){
+    safety++;
+    if(safety>1000) break;
+    var r;
+    try{
+      r=await fetch(base+'/api/qb/documents?entity=Deposit&startposition='+startPos+'&from='+encodeURIComponent(depositFrom));
+    }catch(e){ console.log('[DEPOSIT DEBUG] Network error fetching deposits:',e.message); return; }
+    var jd=await r.json();
+    if(jd && jd.error){ console.log('[DEPOSIT DEBUG] Error from server:',jd.error); return; }
+    var rows=(jd&&jd.Deposit)?jd.Deposit:[];
+    deposits=deposits.concat(rows);
+    if(rows.length<100) break;
+    startPos+=100;
+  }
+  console.log('[DEPOSIT DEBUG] Total deposits fetched (since '+depositFrom+'):',deposits.length);
+  var matches=deposits.filter(function(dep){
+    return (dep.Line||[]).some(function(line){
+      return (line.LinkedTxn||[]).some(function(lt){ return lt.TxnType==='Payment' && lt.TxnId===targetPayment.Id; });
+    });
+  });
+  if(!matches.length){
+    console.log('[DEPOSIT DEBUG] No deposit found linking to payment Id '+targetPayment.Id+' — the bug is likely NOT in the Deposit-matching itself, since nothing currently claims this link. (If the old feature ran against different/older data, this may simply no longer apply.)');
+  } else {
+    console.log('[DEPOSIT DEBUG] Deposit(s) linking to payment Id '+targetPayment.Id+' ('+matches.length+' found):',JSON.stringify(matches,null,2));
+  }
+  alert('Done — check the browser console for lines starting with [DEPOSIT DEBUG]. Found '+matches.length+' deposit(s) claiming to link to Ref #'+targetRef+'.');
+}
+window.debugCheckDepositLink=debugCheckDepositLink;
 
 function buildChecksTableShell(){
   renderChecksInHandSection();

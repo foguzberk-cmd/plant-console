@@ -6554,6 +6554,28 @@ window.toggleCFWeekGroup=toggleCFWeekGroup;
 // this shared across users/devices the same way. =====
 var _checksPayments=null; // cached raw Payment records from the last pull
 var _checksDeposited=(function(){ try{ return JSON.parse(localStorage.getItem('pc_checks_deposited')||'{}'); }catch(e){ return {}; } })();
+// One-time cleanup: the auto-detect-from-QuickBooks-Deposit-records
+// feature was briefly live and moved at least one genuine paper check
+// (Ref #4882) into Deposited without a manual click, which wasn't
+// trusted — see CHECKS_AUTO_DETECT_DEPOSITED_ENABLED in runChecksReport,
+// now switched off. This reverts anything THAT specific feature added
+// (identified by its distinct "by" label) back to Checks In Hand. Any
+// check someone genuinely, manually clicked "Mark deposited" on is left
+// completely untouched — only entries with this exact auto-detect
+// fingerprint are removed.
+(function _cleanupAutoDetectedDeposits(){
+  var removed=0;
+  Object.keys(_checksDeposited).forEach(function(id){
+    var rec=_checksDeposited[id];
+    if(rec && rec.by==='QuickBooks (auto-detected from Deposit record)' && !rec.paid){
+      delete _checksDeposited[id];
+      removed++;
+    }
+  });
+  if(removed>0){
+    try{ localStorage.setItem('pc_checks_deposited',JSON.stringify(_checksDeposited)); }catch(e){}
+  }
+})();
 // Same "pull once, everyone else loads it instantly" pattern as Customer
 // Payments and Scheduled Payments — see _cfBuildSharedCacheBundle for the
 // original version this mirrors. Only the raw Payment pull is cached
@@ -6629,50 +6651,60 @@ async function runChecksReport(){
     startPos+=pageSize;
   }
 
-  // Real bank-deposit detection: pull every Deposit QuickBooks has
-  // recorded (same 90-day window, widened slightly since a check can
-  // legitimately sit a few extra days before being deposited) and see
-  // which of THIS pull's Payments got bundled into one. A Deposit's own
-  // line items link back to the Payment(s) it came from via LinkedTxn —
-  // that's the actual, ground-truth signal for "this check is no longer
-  // in hand, it's at the bank," rather than only ever knowing that from a
-  // manual click in this app.
-  var depositFrom=new Date(); depositFrom.setDate(depositFrom.getDate()-120);
-  depositFrom=depositFrom.toISOString().slice(0,10);
-  var deposits=[];
-  var depStartPos=1, depSafety=0;
-  if(statusEl) statusEl.textContent='Fetching bank deposits from QuickBooks…';
-  while(true){
-    depSafety++;
-    if(depSafety>1000) break;
-    var dctrl=new AbortController();
-    var dtimer=setTimeout(function(){dctrl.abort();},60000);
-    var depRows=null;
-    try{
-      var dr=await fetch(base+'/api/qb/documents?entity=Deposit&startposition='+depStartPos+'&from='+encodeURIComponent(depositFrom),{signal:dctrl.signal});
-      clearTimeout(dtimer);
-      if(dr.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
-      var djd=await dr.json();
-      if(djd && djd.error) break; // don't fail the whole pull over this — checks just won't auto-detect as deposited this time
-      depRows=(djd && djd.Deposit) ? djd.Deposit : [];
-    }catch(e){
-      clearTimeout(dtimer);
-      break; // network hiccup — skip deposit auto-detection this pull
-    }
-    deposits=deposits.concat(depRows);
-    if(statusEl) statusEl.textContent='Fetched '+deposits.length+' deposit(s) so far…';
-    if(depRows.length<pageSize) break;
-    depStartPos+=pageSize;
-  }
-  // Map: Payment Id -> the date QuickBooks actually deposited it.
+  // DISABLED for now, per request — auto-detecting deposits from
+  // QuickBooks's own Deposit records moved at least one genuine paper
+  // check (Ref #4882, explicitly "Check" as its payment method) into
+  // Deposited without a manual click, which wasn't trusted. Reverting to
+  // fully manual "Mark deposited" control until this is revisited. Set
+  // back to true to re-enable — the detection logic itself is untouched,
+  // just switched off, so turning it back on later is a one-line change.
+  var CHECKS_AUTO_DETECT_DEPOSITED_ENABLED=false;
   var depositedAtByPaymentId={};
-  deposits.forEach(function(dep){
-    (dep.Line||[]).forEach(function(line){
-      (line.LinkedTxn||[]).forEach(function(lt){
-        if(lt.TxnType==='Payment'){ depositedAtByPaymentId[lt.TxnId]=dep.TxnDate||(dep.MetaData&&dep.MetaData.LastUpdatedTime)||null; }
+  if(CHECKS_AUTO_DETECT_DEPOSITED_ENABLED){
+    // Real bank-deposit detection: pull every Deposit QuickBooks has
+    // recorded (same 90-day window, widened slightly since a check can
+    // legitimately sit a few extra days before being deposited) and see
+    // which of THIS pull's Payments got bundled into one. A Deposit's own
+    // line items link back to the Payment(s) it came from via LinkedTxn —
+    // that's the actual, ground-truth signal for "this check is no longer
+    // in hand, it's at the bank," rather than only ever knowing that from
+    // a manual click in this app.
+    var depositFrom=new Date(); depositFrom.setDate(depositFrom.getDate()-120);
+    depositFrom=depositFrom.toISOString().slice(0,10);
+    var deposits=[];
+    var depStartPos=1, depSafety=0;
+    if(statusEl) statusEl.textContent='Fetching bank deposits from QuickBooks…';
+    while(true){
+      depSafety++;
+      if(depSafety>1000) break;
+      var dctrl=new AbortController();
+      var dtimer=setTimeout(function(){dctrl.abort();},60000);
+      var depRows=null;
+      try{
+        var dr=await fetch(base+'/api/qb/documents?entity=Deposit&startposition='+depStartPos+'&from='+encodeURIComponent(depositFrom),{signal:dctrl.signal});
+        clearTimeout(dtimer);
+        if(dr.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
+        var djd=await dr.json();
+        if(djd && djd.error) break; // don't fail the whole pull over this — checks just won't auto-detect as deposited this time
+        depRows=(djd && djd.Deposit) ? djd.Deposit : [];
+      }catch(e){
+        clearTimeout(dtimer);
+        break; // network hiccup — skip deposit auto-detection this pull
+      }
+      deposits=deposits.concat(depRows);
+      if(statusEl) statusEl.textContent='Fetched '+deposits.length+' deposit(s) so far…';
+      if(depRows.length<pageSize) break;
+      depStartPos+=pageSize;
+    }
+    // Map: Payment Id -> the date QuickBooks actually deposited it.
+    deposits.forEach(function(dep){
+      (dep.Line||[]).forEach(function(line){
+        (line.LinkedTxn||[]).forEach(function(lt){
+          if(lt.TxnType==='Payment'){ depositedAtByPaymentId[lt.TxnId]=dep.TxnDate||(dep.MetaData&&dep.MetaData.LastUpdatedTime)||null; }
+        });
       });
     });
-  });
+  } // end CHECKS_AUTO_DETECT_DEPOSITED_ENABLED
 
   // Historically PaymentMethodRef wasn't populated in this QuickBooks
   // account at all (confirmed via diagnostic — 0 of 1,898 payments had it

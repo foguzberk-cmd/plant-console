@@ -6715,16 +6715,35 @@ async function runChecksReport(){
     return true;
   }
   var allPaymentsInWindow=payments;
-  // TEMP DIAGNOSTIC — remove once resolved. Logs the raw object for any
-  // payment whose Ref # is "3868" (the Family Plate case), plus 2 general
-  // samples, so we can see every field QuickBooks's API actually returns
-  // for a payment — rather than continuing to guess whether
-  // PaymentMethodRef is really absent, or just named/shaped differently
-  // than expected.
+  // TEMP DIAGNOSTIC — remove once resolved. Recursively searches the raw
+  // payment object for anything resembling payment-method info (rather
+  // than dumping the whole deeply-nested object and hoping to spot it by
+  // eye — Intuit's REST API wraps a LOT of SOAP-derived structure around
+  // the actual fields).
   (function(){
+    function _deepFindClues(obj,path,results,depth){
+      if(!obj||typeof obj!=='object'||depth>6) return;
+      Object.keys(obj).forEach(function(k){
+        var v=obj[k];
+        var kl=k.toLowerCase();
+        if(kl.indexOf('payment')>=0||kl.indexOf('method')>=0){
+          results.push(path+'.'+k+' = '+JSON.stringify(v).slice(0,200));
+        }
+        if(typeof v==='string' && (v.toLowerCase().indexOf('credit')>=0||v.toLowerCase().indexOf('card')>=0||v.toLowerCase().indexOf('check')>=0)){
+          results.push(path+'.'+k+' = '+JSON.stringify(v)+'  <-- contains credit/card/check');
+        }
+        if(v && typeof v==='object') _deepFindClues(v,path+'.'+k,results,depth+1);
+      });
+    }
     var debugMatch=allPaymentsInWindow.filter(function(p){ return (p.PaymentRefNum||'').trim()==='3868'; });
-    if(debugMatch.length) console.log('[CHECKS DEBUG] Ref 3868 raw payment object(s):',JSON.stringify(debugMatch,null,2));
-    console.log('[CHECKS DEBUG] 2 general sample raw payment objects:',JSON.stringify(allPaymentsInWindow.slice(0,2),null,2));
+    if(debugMatch.length){
+      console.log('[CHECKS DEBUG] Top-level keys on the Ref 3868 payment object:',Object.keys(debugMatch[0]));
+      var clues=[];
+      debugMatch.forEach(function(p,i){ _deepFindClues(p,'payment['+i+']',clues,0); });
+      console.log('[CHECKS DEBUG] Payment-method clues found ('+clues.length+'):',clues.length?clues:'NONE — this payment object has nothing resembling a payment method anywhere in it');
+    } else {
+      console.log('[CHECKS DEBUG] No payment with Ref # "3868" found in this pull\'s window.');
+    }
   })();
   var exclusionCounts={paymentMethod:0,sharedRef:0,refKeyword:0,blank:0};
   payments=payments.filter(function(p){

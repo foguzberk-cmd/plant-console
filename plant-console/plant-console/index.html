@@ -5917,7 +5917,7 @@ function renderInProcessPaymentsSection(){
         var vName=row.vendor||'No vendor on file';
         var bal=Number(split.amount||0);
         var whenStr=split.inProcess.at?new Date(split.inProcess.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
-        var methodLabel=split.inProcess.method==='wire'?'🏦 Wire':'📝 Check';
+        var methodLabel=split.inProcess.method==='wire'?'🏦 Wire':('📝 Check'+(split.inProcess.checkNumber?' #'+esc(split.inProcess.checkNumber):''));
         html+='<tr class="'+rowClass+'" style="display:'+(weekIsCollapsed?'none':'table-row')+'">'
           +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(fmtDateUS(dateKey))
             +(split.edited?' <span title="Edited by '+esc(split.edited.by)+(split.edited.at?' — '+esc(new Date(split.edited.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})):'')+'" style="font-size:11px;color:#8a6d1a;font-style:italic;cursor:help">(edited)</span>':'')
@@ -6200,17 +6200,47 @@ function startCFPaymentProcess(billId,splitId){
   bg.innerHTML='<div class="modal" style="max-width:380px">'
     +'<h3 style="margin:0 0 4px">Initiate Payment</h3>'
     +'<p style="color:var(--muted);font-size:13px;margin:0 0 18px">'+esc(rec.vendor)+' · Bill #'+esc(rec.docNum)+' · '+_cfMoney(split.amount)+'<br>How is this being paid?</p>'
-    +'<div style="display:flex;gap:10px;margin-bottom:14px">'
-      +'<button class="btn" onclick="cfProcessConfirm(\''+esc(billId)+'\',\''+esc(splitId)+'\',\'check\')" style="flex:1;padding:16px 8px;font-size:14px">📝<br>Check</button>'
+    +'<div id="cfProcessMethodChoice" style="display:flex;gap:10px;margin-bottom:14px">'
+      +'<button class="btn" onclick="cfProcessShowCheckNumber()" style="flex:1;padding:16px 8px;font-size:14px">📝<br>Check</button>'
       +'<button class="btn" onclick="cfProcessConfirm(\''+esc(billId)+'\',\''+esc(splitId)+'\',\'wire\')" style="flex:1;padding:16px 8px;font-size:14px">🏦<br>Wire</button>'
+    +'</div>'
+    +'<div id="cfProcessCheckNumberRow" style="display:none;margin-bottom:14px">'
+      +'<label style="display:block;font-size:12px;color:var(--muted);margin-bottom:5px">Check #</label>'
+      +'<input type="text" id="cfProcessCheckNumberInput" placeholder="e.g. 1042" style="width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;background:var(--bg);color:var(--ink);outline:none" onkeydown="if(event.key===\'Enter\') cfProcessConfirmCheck(\''+esc(billId)+'\',\''+esc(splitId)+'\')"/>'
+      +'<div id="cfProcessCheckNumberErr" style="display:none;color:#c0392b;font-size:12px;margin-top:5px">A check number is required.</div>'
+      +'<button class="btn btn-primary" onclick="cfProcessConfirmCheck(\''+esc(billId)+'\',\''+esc(splitId)+'\')" style="width:100%;margin-top:10px">Confirm</button>'
     +'</div>'
     +'<div class="modal-footer">'
       +'<button class="btn" onclick="closeCFProcessModal()">Cancel</button>'
     +'</div>'
   +'</div>';
   document.body.appendChild(bg);
+  setTimeout(function(){ var inp=document.getElementById('cfProcessCheckNumberInput'); }, 0);
 }
 window.startCFPaymentProcess=startCFPaymentProcess;
+
+function cfProcessShowCheckNumber(){
+  var choice=document.getElementById('cfProcessMethodChoice');
+  var row=document.getElementById('cfProcessCheckNumberRow');
+  if(choice) choice.style.display='none';
+  if(row) row.style.display='block';
+  var inp=document.getElementById('cfProcessCheckNumberInput');
+  if(inp) inp.focus();
+}
+window.cfProcessShowCheckNumber=cfProcessShowCheckNumber;
+
+function cfProcessConfirmCheck(billId,splitId){
+  var inp=document.getElementById('cfProcessCheckNumberInput');
+  var checkNumber=(inp&&inp.value||'').trim();
+  var errEl=document.getElementById('cfProcessCheckNumberErr');
+  if(!checkNumber){
+    if(errEl) errEl.style.display='block';
+    if(inp) inp.focus();
+    return;
+  }
+  cfProcessConfirm(billId,splitId,'check',checkNumber);
+}
+window.cfProcessConfirmCheck=cfProcessConfirmCheck;
 
 function closeCFProcessModal(){
   var bg=document.getElementById('cfProcessModalBg');
@@ -6218,11 +6248,11 @@ function closeCFProcessModal(){
 }
 window.closeCFProcessModal=closeCFProcessModal;
 
-function cfProcessConfirm(billId,splitId,method){
+function cfProcessConfirm(billId,splitId,method,checkNumber){
   var rec=_cfScheduledDates[billId];
   var split=rec&&rec.splits.find(function(s){return s.id===splitId;});
   if(split){
-    split.inProcess={method:method,by:(currentUser&&currentUser.name)||'Unknown user',at:new Date().toISOString()};
+    split.inProcess={method:method,checkNumber:(method==='check'?(checkNumber||''):undefined),by:(currentUser&&currentUser.name)||'Unknown user',at:new Date().toISOString()};
     _cfSaveScheduled(billId);
   }
   closeCFProcessModal();

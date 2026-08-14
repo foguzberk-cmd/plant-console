@@ -11130,8 +11130,8 @@ function renderScaleLog(){
     +'<option value="__none__"'+(_slDeptFilter==='__none__'?' selected':'')+'>No department</option>';
   view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p>
     <!-- TOP: form + live label preview side by side on desktop, stacked on mobile -->
-    <div class="sl-form-grid" style="display:grid;grid-template-columns:1fr auto;gap:28px;align-items:start;margin-top:8px;padding-bottom:22px;border-bottom:1px solid var(--line)">
-      <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;min-width:0">
+    <div class="sl-form-grid" style="display:grid;grid-template-columns:380px auto;gap:28px;align-items:start;margin-top:8px;padding-bottom:22px;border-bottom:1px solid var(--line)">
+      <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;min-width:0">
         <div style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--cold);margin-bottom:14px">Print a label</div>
         <div class="form-group"><label>Department <span style="color:var(--brand-bright)">*</span></label>
           <select id="sl-dept" onchange="onScalePrintDeptChange()" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none">${printDeptOpts}</select>
@@ -11346,7 +11346,7 @@ function updateLabelPreview(){
   // down to 55 % — the layout never overflows, and the printed label still
   // uses the correct 4×6 page size.  For the standard 2.4×3.9 label the
   // scale is effectively 1:1.
-  var PREVIEW_MAX_PX=211; // ≈2.2in at 96 dpi — safe on all screen sizes
+  var PREVIEW_MAX_PX=340; // ≈3.5in at 96 dpi — larger preview, still safe on typical screens
   var actualW=size.w*96;  // label width in CSS px (96 dpi)
   var actualH=size.h*96;  // label height in CSS px
   var scale=Math.min(1, PREVIEW_MAX_PX/actualW);

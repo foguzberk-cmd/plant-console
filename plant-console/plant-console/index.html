@@ -2406,6 +2406,7 @@ async function finishDocSync(data, onProgress){
     unmatchedSample:Object.keys(unmatchedIds).slice(0,8),
     duplicatesRemoved:duplicatesRemoved
   };
+  return {ok:true, added:added, docCounts:docCounts};
 }
 
 /* ===== LOGIN ===== */

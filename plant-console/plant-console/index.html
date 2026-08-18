@@ -4962,7 +4962,19 @@ function setCashFlowScheduledDate(billId,value){
   var bill=(_cashFlowBills||[]).find(function(b){ return b.Id===billId; });
   if(!bill) return;
   var remaining=_cfRemainingFor(bill);
-  if(remaining<=0.004){ return; } // already fully scheduled
+  if(remaining<=0.004){
+    // This used to just `return` with zero feedback — from the user's
+    // side that looks exactly like the date picker "bouncing back" with
+    // no explanation, especially confusing when the row on screen still
+    // shows a nonzero balance (it was rendered from data that's since
+    // changed, e.g. a background pull landed a moment earlier). Surface
+    // WHY nothing happened, and force a re-render so the row reflects
+    // what's actually true right now instead of the stale amount.
+    renderCashFlowReport();
+    var statusEl=document.getElementById('cf-status');
+    if(statusEl){ statusEl.textContent='That bill now shows $0 remaining as of the latest data — nothing left to schedule. If the amount on screen still looked nonzero, this refreshed it. If that\'s still wrong, try "Pull from QuickBooks."'; statusEl.style.color='#b8460b'; }
+    return;
+  }
   _cfAddSplit(billId,value,remaining);
   renderCashFlowReport();
 }

@@ -4888,22 +4888,23 @@ function _cfAddSplit(billId,date,amount){
   }
   // Guard against exactly the failure mode that created the Mecca Halal
   // duplicates: something (a bug, a stale screen, a double-click) causes
-  // this bill to look like it still needs scheduling even though its
-  // splits — paid AND unpaid combined — already fully account for its
-  // balance. Unlike _cfScheduledAmountFor (which deliberately excludes
-  // paid splits for the remaining-balance display, since a genuinely
-  // closed bill just disappears from the pull entirely), this check
-  // counts EVERY split regardless of paid status — the actual question
-  // here isn't "how much is left to schedule," it's "have we already
-  // created a commitment for this exact bill before," which paid splits
-  // answer just as much as unpaid ones.
-  var alreadyCommitted=(prior.splits||[]).reduce(function(s,sp){ return s+Number(sp.amount||0); },0);
+  // this bill to look like it still needs scheduling even though we've
+  // already committed enough to cover it. IMPORTANT: paid splits already
+  // reduced QuickBooks' own balance for this bill, so they must NOT be
+  // added on top of the CURRENT balance again — doing so double-counts
+  // the paid amount and falsely blocks legitimate new scheduling on a
+  // bill that was partially paid down and later grew a new balance (an
+  // added charge, a correction, a fresh invoice reusing the bill, etc).
+  // Paid splits only matter here in the "balance is now fully zero" case,
+  // where they explain why nothing further should be scheduled.
   var billBalanceNow=Number(bill&&bill.Balance!==undefined?bill.Balance:prior.balance||0);
-  if(alreadyCommitted>=billBalanceNow-0.01 && alreadyCommitted>0.004){
-    var paidSplits=prior.splits.filter(function(sp){ return sp.paid; });
-    var unpaidSplits=prior.splits.filter(function(sp){ return !sp.paid; });
-    var paidTotal=paidSplits.reduce(function(s,sp){ return s+Number(sp.amount||0); },0);
-    var unpaidTotal=unpaidSplits.reduce(function(s,sp){ return s+Number(sp.amount||0); },0);
+  var paidSplits=prior.splits.filter(function(sp){ return sp.paid; });
+  var unpaidSplits=prior.splits.filter(function(sp){ return !sp.paid; });
+  var paidTotal=paidSplits.reduce(function(s,sp){ return s+Number(sp.amount||0); },0);
+  var unpaidTotal=unpaidSplits.reduce(function(s,sp){ return s+Number(sp.amount||0); },0);
+  var billIsClosed=billBalanceNow<=0.004;
+  var unpaidAlreadyCoversBalance=unpaidTotal>0.004 && unpaidTotal>=billBalanceNow-0.01;
+  if(billIsClosed || unpaidAlreadyCoversBalance){
     var detail=[];
     if(paidTotal>0.004) detail.push(_cfMoney(paidTotal)+' already marked Paid');
     if(unpaidTotal>0.004) detail.push(_cfMoney(unpaidTotal)+' still Scheduled/Approved/In Process');
@@ -4912,7 +4913,7 @@ function _cfAddSplit(billId,date,amount){
     // the situation the old vendor-wide reconciliation bug left behind
     // across many bills: a Paid entry that was never actually paid,
     // silently blocking any attempt to reschedule the real thing.
-    if(paidSplits.length===1 && unpaidSplits.length===0){
+    if(billIsClosed && paidSplits.length===1 && unpaidSplits.length===0){
       if(confirm('This bill already shows '+detail.join(' and ')+' — that covers its balance, so scheduling again was blocked.\n\nIf that Paid entry was a mistake (never actually paid in QuickBooks), click OK to remove it now and then re-enter your new schedule.\n\nClick Cancel to leave it as-is.')){
         removeCFSplit(billId,paidSplits[0].id);
         // removeCFSplit already re-renders; nothing more to schedule

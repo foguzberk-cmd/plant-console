@@ -1533,9 +1533,40 @@ const server = http.createServer(async (req, res) => {
         // Filtering by the tombstone list here means even a stale device's
         // full snapshot — one that still has an already-deleted bill in
         // its local copy — can never bring it back.
+        //
+        // IMPORTANT — this used to replace a bill's ENTIRE record whenever
+        // both sides had one, which caused exactly this bug: Terminal A
+        // schedules a payment on a bill via the fast dedicated endpoint
+        // (below), and it saves fine. Minutes later, Terminal B — which
+        // pulled this bill's record before A's schedule happened, and is
+        // just doing its own routine periodic full-snapshot save for
+        // something unrelated — pushes ITS stale copy of that same bill's
+        // record, which has no idea A's new split exists. Whole-record
+        // replace let B's stale version silently wipe A's split back out —
+        // "I scheduled it and it bounced back" with no error anywhere,
+        // because nothing failed; A's save succeeded, then B's later save
+        // overwrote it. Merging at the SPLIT level (by split id) instead
+        // means every split either side knows about survives, and a split
+        // already marked Paid can never be un-paid by a stale incoming copy
+        // that still thinks it's unpaid.
         if (incoming.cfScheduledDates && typeof incoming.cfScheduledDates === 'object' && !Array.isArray(incoming.cfScheduledDates)) {
           const cfTombstoned = new Set(Array.isArray(current.deletedCfBillIds) ? current.deletedCfBillIds : []);
-          const mergedCf = Object.assign({}, (current.cfScheduledDates && typeof current.cfScheduledDates === 'object' && !Array.isArray(current.cfScheduledDates)) ? current.cfScheduledDates : {}, incoming.cfScheduledDates);
+          const currentCf = (current.cfScheduledDates && typeof current.cfScheduledDates === 'object' && !Array.isArray(current.cfScheduledDates)) ? current.cfScheduledDates : {};
+          const mergedCf = Object.assign({}, currentCf);
+          for (const billId of Object.keys(incoming.cfScheduledDates)) {
+            const incRec = incoming.cfScheduledDates[billId];
+            const curRec = currentCf[billId];
+            if (!curRec || !Array.isArray(curRec.splits)) { mergedCf[billId] = incRec; continue; }
+            const splitsById = new Map();
+            curRec.splits.forEach(sp => { if (sp && sp.id != null) splitsById.set(sp.id, sp); });
+            (Array.isArray(incRec.splits) ? incRec.splits : []).forEach(sp => {
+              if (!sp || sp.id == null) return;
+              const existing = splitsById.get(sp.id);
+              if (existing && existing.paid && !sp.paid) return; // Paid is one-way; never let a stale copy revert it
+              splitsById.set(sp.id, sp);
+            });
+            mergedCf[billId] = Object.assign({}, curRec, incRec, { splits: Array.from(splitsById.values()) });
+          }
           for (const id of cfTombstoned) delete mergedCf[id];
           incoming.cfScheduledDates = mergedCf;
         }
@@ -1645,8 +1676,29 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       await updateSharedData(async (current) => {
-        const cfScheduledDates = Object.assign({}, current.cfScheduledDates || {});
-        cfScheduledDates[body.billId] = body.record;
+        const currentCf = current.cfScheduledDates || {};
+        const cfScheduledDates = Object.assign({}, currentCf);
+        const curRec = currentCf[body.billId];
+        const incRec = body.record;
+        // Same split-level merge as the general endpoint above, and for the
+        // same reason: this device's local record was built from whatever
+        // it last pulled, which may already be stale by the time this
+        // request lands if another terminal scheduled or paid a split on
+        // this exact bill in between. A plain overwrite here would silently
+        // drop that other terminal's split.
+        if (curRec && Array.isArray(curRec.splits) && incRec && typeof incRec === 'object') {
+          const splitsById = new Map();
+          curRec.splits.forEach(sp => { if (sp && sp.id != null) splitsById.set(sp.id, sp); });
+          (Array.isArray(incRec.splits) ? incRec.splits : []).forEach(sp => {
+            if (!sp || sp.id == null) return;
+            const existing = splitsById.get(sp.id);
+            if (existing && existing.paid && !sp.paid) return; // Paid is one-way
+            splitsById.set(sp.id, sp);
+          });
+          cfScheduledDates[body.billId] = Object.assign({}, curRec, incRec, { splits: Array.from(splitsById.values()) });
+        } else {
+          cfScheduledDates[body.billId] = incRec;
+        }
         const tombstones = (Array.isArray(current.deletedCfBillIds) ? current.deletedCfBillIds : []).filter(id => id !== body.billId);
         return { data: Object.assign({}, current, { cfScheduledDates, deletedCfBillIds: tombstones }) };
       });

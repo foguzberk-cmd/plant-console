@@ -801,13 +801,6 @@ async function applyWebhookEntityChange(entityName, id) {
       const newSyncToken = Number(record.SyncToken || 0);
       const oldSyncToken = idx >= 0 ? Number((customers[idx].qbSyncToken) || -1) : -1;
       if (idx >= 0 && newSyncToken <= oldSyncToken) return { skipWrite: true }; // stale/duplicate delivery
-      let dunsNumber = '';
-      (record.CustomField || []).forEach(f => {
-        if (!dunsNumber && f.Name && f.Name.toLowerCase().includes('dun') && f.StringValue) {
-          dunsNumber = f.StringValue.trim();
-        }
-      });
-      const finalDunsNumber = dunsNumber || (idx >= 0 ? (customers[idx].dunsNumber || '') : '');
       const mapped = {
         id: idx >= 0 ? customers[idx].id : 'cust_' + Date.now() + '_' + Math.random().toString(36).slice(2),
         qbId: record.Id,
@@ -815,7 +808,12 @@ async function applyWebhookEntityChange(entityName, id) {
         name: record.DisplayName || record.FullyQualifiedName || record.CompanyName || '',
         active: record.Active !== false,
         salesRep: idx >= 0 ? (customers[idx].salesRep || '') : '',
-        dunsNumber: finalDunsNumber,
+        // Dun# — confirmed (Aug 2026) QuickBooks's API never returns
+        // Customer CustomField data at all, so there's no point even
+        // attempting to read it here. Managed locally instead (see
+        // /api/customers/:id/dunsnumber) — always carry forward whatever
+        // is already stored, same as Sales Rep just above.
+        dunsNumber: idx >= 0 ? (customers[idx].dunsNumber || '') : '',
         balance: Number(record.Balance || 0)
       };
       if (idx >= 0) customers[idx] = mapped; else customers.push(mapped);
@@ -875,13 +873,6 @@ async function backgroundSyncCustomers() {
     const customers = Array.isArray(current.customers) ? current.customers.slice() : [];
     qbCustomers.forEach(qc => {
       const existing = customers.findIndex(x => x && x.qbId === qc.Id);
-      let dunsNumber = '';
-      (qc.CustomField || []).forEach(f => {
-        if (!dunsNumber && f.Name && f.Name.toLowerCase().includes('dun') && f.StringValue) {
-          dunsNumber = f.StringValue.trim();
-        }
-      });
-      const finalDunsNumber = dunsNumber || (existing >= 0 ? (customers[existing].dunsNumber || '') : '');
       const mapped = {
         id: existing >= 0 ? customers[existing].id : 'cust_' + Date.now() + '_' + Math.random().toString(36).slice(2),
         qbId: qc.Id,
@@ -894,10 +885,14 @@ async function backgroundSyncCustomers() {
         qbSyncToken: Number(qc.SyncToken || 0),
         name: qc.DisplayName || qc.FullyQualifiedName || qc.CompanyName || '',
         active: qc.Active !== false,
-        // Sales Rep is Plant-Console-only, never touched by any QB sync —
-        // always carried forward from whatever's already there.
+        // Sales Rep and Dun# are both Plant-Console-only, never touched by
+        // any QB sync — always carried forward from whatever's already
+        // there. (Dun# was attempted via QuickBooks's CustomField data
+        // here and in the webhook handler, but confirmed live in Aug 2026
+        // that the API never returns it for Customer records at all — see
+        // /api/customers/:id/dunsnumber for the manual-entry path instead.)
         salesRep: existing >= 0 ? (customers[existing].salesRep || '') : '',
-        dunsNumber: finalDunsNumber,
+        dunsNumber: existing >= 0 ? (customers[existing].dunsNumber || '') : '',
         balance: Number(qc.Balance || 0)
       };
       if (existing >= 0) customers[existing] = mapped; else customers.push(mapped);
@@ -1217,6 +1212,40 @@ const server = http.createServer(async (req, res) => {
       }
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ success: true, id: custId, salesRep }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  // Dun# — confirmed (Aug 2026, live diagnostics) that QuickBooks's REST
+  // API does not expose Customer CustomField data at all, via bulk query
+  // OR per-record fetch. Managed locally instead, same reasoning and same
+  // single-field "dumb terminal" write pattern as salesrep just above.
+  if (url.startsWith('/api/customers/') && url.endsWith('/dunsnumber') && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    const custId = decodeURIComponent(url.slice('/api/customers/'.length, -'/dunsnumber'.length));
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      const dunsNumber = typeof body.dunsNumber === 'string' ? body.dunsNumber.trim() : '';
+      let found = false;
+      await updateSharedData(async (current) => {
+        const customers = Array.isArray(current.customers) ? current.customers : [];
+        const idx = customers.findIndex(c => c && c.id === custId);
+        if (idx >= 0) {
+          found = true;
+          customers[idx] = Object.assign({}, customers[idx], { dunsNumber });
+        }
+        return { data: Object.assign({}, current, { customers }), skipWrite: !found };
+      });
+      if (!found) {
+        res.writeHead(404, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+        res.end(JSON.stringify({ error: 'Customer not found.' }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, id: custId, dunsNumber }));
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: e.message }));
@@ -2121,103 +2150,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Dun# backfill — confirmed live (Aug 2026) that QuickBooks's bulk
-  // "SELECT * FROM Customer" query reliably omits CustomField data, even
-  // though a specific customer visibly has a Dun# set in QuickBooks's own
-  // UI — the exact same limitation already documented for Vendor/Purch Rep
-  // above. A direct per-record GET (fetchQBEntityById), rather than the
-  // bulk query, is what actually returns CustomField reliably. This is a
-  // SEPARATE, explicit, on-demand action rather than folded into the
-  // regular customer sync — it's one HTTP round-trip to Intuit PER
-  // customer, which is far more expensive than the single bulk query the
-  // regular sync uses, and has no reason to run every time someone just
-  // wants an updated balance or a new customer picked up.
-  // Runs with limited concurrency (not fully sequential, not fully
-  // parallel) to finish in reasonable time without hammering Intuit's
-  // rate limit. Writes results straight into the shared customer records
-  // via updateSharedData, same as every other write path.
-  if (url === '/api/qb/customers/dun-backfill' && req.method === 'GET') {
-    if (!requireAuth(req, res)) return;
-    try {
-      const current = await readSharedData();
-      const custList = (current.customers || []).filter(c => c && c.qbId);
-      const qbIds = custList.map(c => c.qbId);
-      const dunByQbId = {};
-      let errorCount = 0;
-      let sampleError = null;
-      const CONCURRENCY = 8;
-      let nextIdx = 0;
-      async function worker() {
-        while (nextIdx < qbIds.length) {
-          const id = qbIds[nextIdx++];
-          try {
-            const record = await fetchQBEntityById('Customer', id);
-            let dun = '';
-            (record && record.CustomField || []).forEach(f => {
-              if (!dun && f.Name && f.Name.toLowerCase().includes('dun') && f.StringValue) dun = f.StringValue.trim();
-            });
-            if (dun) dunByQbId[id] = dun;
-          } catch (e) {
-            // Previously silent — but a request failing (auth hiccup, rate
-            // limit, timeout) looks IDENTICAL to "this customer genuinely
-            // has no Dun# set" if nothing tracks it, and confirmed live
-            // that at least one customer visibly DOES have Dun# set in
-            // QuickBooks while this backfill still reported 0 found —
-            // meaning failures, not an empty field, are the more likely
-            // explanation. Count them and keep one sample message so the
-            // response can actually say which it was.
-            errorCount++;
-            if (!sampleError) sampleError = (e && e.message) || String(e);
-          }
-        }
-      }
-      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, qbIds.length) }, worker));
-      // Diagnostic only — fetch ONE specific customer's raw record fresh
-      // (independent of the loop above, so it can't be skipped by a
-      // transient error there) and return its actual CustomField array
-      // verbatim. This is how we find out whether QuickBooks's real field
-      // name/shape differs from what the matching logic above expects
-      // (e.g. a different casing, a nested structure, or a field type
-      // this code isn't reading), instead of guessing blind.
-      let diagnosticCustomField = null;
-      let diagnosticError = null;
-      const diagCust = custList.find(c => (c.name || '').toLowerCase().includes('corner') && (c.name || '').toLowerCase().includes('svm'));
-      if (diagCust) {
-        try {
-          const rec = await fetchQBEntityById('Customer', diagCust.qbId);
-          diagnosticCustomField = (rec && rec.CustomField) || [];
-        } catch (e) {
-          diagnosticError = (e && e.message) || String(e);
-        }
-      }
-      await updateSharedData(async (cur) => {
-        const customers = (cur.customers || []).map(c => {
-          if (c && c.qbId && dunByQbId[c.qbId]) return Object.assign({}, c, { dunsNumber: dunByQbId[c.qbId] });
-          return c;
-        });
-        return { data: Object.assign({}, cur, { customers }) };
-      });
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
-      res.end(JSON.stringify({
-        success: true,
-        checked: qbIds.length,
-        found: Object.keys(dunByQbId).length,
-        errorCount: errorCount,
-        sampleError: sampleError,
-        diagnosticCustomField: diagnosticCustomField,
-        diagnosticError: diagnosticError
-      }));
-    } catch (err) {
-      console.error('Dun# backfill error:', err.message);
-      const needsReconnect = err.message === 'NEEDS_RECONNECT';
-      res.writeHead(needsReconnect ? 401 : 500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
-      res.end(JSON.stringify({
-        error: needsReconnect ? 'QuickBooks connection expired. Please reconnect.' : err.message,
-        needsReconnect: needsReconnect
-      }));
-    }
-    return;
-  }
 
   // QuickBooks token refresh endpoint
   if (url === '/api/qb/refresh') {

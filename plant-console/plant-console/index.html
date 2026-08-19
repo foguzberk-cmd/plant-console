@@ -9823,20 +9823,33 @@ function _applyCustomerSalesRepRows(rows,statusEl){
   // happens to already include its own "Dun#" column (confirmed live) —
   // it's just not populated through the API, only through this kind of
   // UI export — so that column is picked up here too.
-  var header=rows[0].map(function(h){return String(h||'').trim().toLowerCase();});
-  var nameCol=header.indexOf('customer name');
-  if(nameCol<0) nameCol=header.indexOf('customer full name');
-  if(nameCol<0) nameCol=header.indexOf('name');
-  var repCol=header.indexOf('sales rep');
-  var dunCol=header.indexOf('dun#');
-  if(dunCol<0) dunCol=header.indexOf('duns');
-  if(dunCol<0) dunCol=header.indexOf('duns number');
+  //
+  // IMPORTANT: QuickBooks's export has TWO title rows above the actual
+  // header ("Leader Meat Packing Corp", then "Customer Contact List") —
+  // rows[0] is a report title, not column headers at all. Scan the first
+  // several rows for whichever one actually contains a recognizable name
+  // column, rather than assuming it's always row 0.
+  var headerRowIdx=-1, nameCol=-1, repCol=-1, dunCol=-1;
+  for(var h=0; h<Math.min(10,rows.length); h++){
+    var candidate=rows[h].map(function(x){return String(x||'').trim().toLowerCase();});
+    var nc=candidate.indexOf('customer name');
+    if(nc<0) nc=candidate.indexOf('customer full name');
+    if(nc<0) nc=candidate.indexOf('name');
+    if(nc>=0){
+      headerRowIdx=h; nameCol=nc;
+      repCol=candidate.indexOf('sales rep');
+      dunCol=candidate.indexOf('dun#');
+      if(dunCol<0) dunCol=candidate.indexOf('duns');
+      if(dunCol<0) dunCol=candidate.indexOf('duns number');
+      break;
+    }
+  }
   // Sales Rep and Dun# are each optional independently — QuickBooks's own
   // export, for instance, has a Dun# column but NO Sales Rep column at
   // all, and requiring both unconditionally (as this used to) meant that
   // exact, unedited, real-world file could never import at all.
   if(nameCol<0){
-    if(statusEl){ statusEl.textContent='Expected a "Name" (or "Customer Name"/"Customer full name") column — check the header row.'; statusEl.style.color='#c0392b'; }
+    if(statusEl){ statusEl.textContent='Expected a "Name" (or "Customer Name"/"Customer full name") column somewhere in the first 10 rows — check the header row.'; statusEl.style.color='#c0392b'; }
     return;
   }
   if(repCol<0 && dunCol<0){
@@ -9846,7 +9859,7 @@ function _applyCustomerSalesRepRows(rows,statusEl){
   var byName={};
   customers.forEach(function(c){ byName[(c.name||'').trim().toLowerCase()]=c; });
   var updated=0, unmatched=[];
-  for(var i=1;i<rows.length;i++){
+  for(var i=headerRowIdx+1;i<rows.length;i++){
     var r=rows[i];
     var name=String((r[nameCol]!==undefined?r[nameCol]:'')||'').trim();
     var rep=repCol>=0?String((r[repCol]!==undefined?r[repCol]:'')||'').trim():null;

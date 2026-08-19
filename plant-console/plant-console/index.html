@@ -9923,15 +9923,18 @@ async function qbSyncCustomers(){
 // refreshed, not on every routine customer sync.
 async function qbBackfillCustomerDun(){
   var btn=document.getElementById('custDunBackfillBtn');
-  var status=document.getElementById('custDunBackfillStatus');
   if(btn) btn.disabled=true;
+  var status=document.getElementById('custDunBackfillStatus');
   if(status){ status.textContent='Checking each customer individually for a Dun# custom field — this can take a minute for a large customer list…'; status.style.color='var(--muted)'; }
   try{
     var resp=await fetch('/api/qb/customers/dun-backfill');
     var data;
     try{ data=await resp.json(); }catch(e){ data={}; }
     if(!resp.ok || data.error){
+      // renderCustomersPanel() is NOT called on this path, so this status
+      // element is still the same one we set above — safe to update directly.
       if(status){ status.textContent='Backfill failed: '+(data.needsReconnect?'QuickBooks connection expired — reconnect from the Items tab.':(data.error||resp.status)); status.style.color='#c0392b'; }
+      if(btn) btn.disabled=false;
       return;
     }
     // The values just got written server-side — pull the fresh customer
@@ -9940,15 +9943,24 @@ async function qbBackfillCustomerDun(){
     // sync above (it has no way to know customers just changed on its own).
     await qbSyncCustomersFromServerOnly();
     _collGroupsCache=null;
-    if(status){
-      status.textContent='Checked '+data.checked+' customer'+(data.checked!==1?'s':'')+' individually — '+data.found+' had a Dun# come through and '+(data.found>0?'now show':'now shows')+' next to the name on the Customer Payments report.';
-      status.style.color=data.found>0?'#0f6e40':'#b8460b';
+    // IMPORTANT: renderCustomersPanel() rebuilds this whole panel's HTML
+    // from scratch — including a brand new, empty #custDunBackfillStatus
+    // div. Setting the final message BEFORE calling it (like the original
+    // version of this function did) meant the message was written then
+    // immediately wiped out a moment later, so it never actually stayed on
+    // screen — exactly what showed up as "the message just disappears."
+    // Render first, THEN grab the fresh element and write the message.
+    await renderCustomersPanel();
+    var freshStatus=document.getElementById('custDunBackfillStatus');
+    if(freshStatus){
+      freshStatus.textContent='Checked '+data.checked+' customer'+(data.checked!==1?'s':'')+' individually — '+data.found+' had a Dun# come through and '+(data.found>0?'now show':'now shows')+' next to the name on the Customer Payments report.';
+      freshStatus.style.color=data.found>0?'#0f6e40':'#b8460b';
     }
-    renderCustomersPanel();
   }catch(e){
-    if(status){ status.textContent='Backfill failed: network error.'; status.style.color='#c0392b'; }
-  }finally{
-    if(btn) btn.disabled=false;
+    var status2=document.getElementById('custDunBackfillStatus');
+    if(status2){ status2.textContent='Backfill failed: network error.'; status2.style.color='#c0392b'; }
+    var btn2=document.getElementById('custDunBackfillBtn');
+    if(btn2) btn2.disabled=false;
   }
 }
 window.qbBackfillCustomerDun=qbBackfillCustomerDun;

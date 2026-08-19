@@ -2121,6 +2121,67 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Dun# backfill — confirmed live (Aug 2026) that QuickBooks's bulk
+  // "SELECT * FROM Customer" query reliably omits CustomField data, even
+  // though a specific customer visibly has a Dun# set in QuickBooks's own
+  // UI — the exact same limitation already documented for Vendor/Purch Rep
+  // above. A direct per-record GET (fetchQBEntityById), rather than the
+  // bulk query, is what actually returns CustomField reliably. This is a
+  // SEPARATE, explicit, on-demand action rather than folded into the
+  // regular customer sync — it's one HTTP round-trip to Intuit PER
+  // customer, which is far more expensive than the single bulk query the
+  // regular sync uses, and has no reason to run every time someone just
+  // wants an updated balance or a new customer picked up.
+  // Runs with limited concurrency (not fully sequential, not fully
+  // parallel) to finish in reasonable time without hammering Intuit's
+  // rate limit. Writes results straight into the shared customer records
+  // via updateSharedData, same as every other write path.
+  if (url === '/api/qb/customers/dun-backfill' && req.method === 'GET') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const current = await readSharedData();
+      const qbIds = (current.customers || []).filter(c => c && c.qbId).map(c => c.qbId);
+      const dunByQbId = {};
+      const CONCURRENCY = 8;
+      let nextIdx = 0;
+      async function worker() {
+        while (nextIdx < qbIds.length) {
+          const id = qbIds[nextIdx++];
+          try {
+            const record = await fetchQBEntityById('Customer', id);
+            let dun = '';
+            (record && record.CustomField || []).forEach(f => {
+              if (!dun && f.Name && f.Name.toLowerCase().includes('dun') && f.StringValue) dun = f.StringValue.trim();
+            });
+            if (dun) dunByQbId[id] = dun;
+          } catch (e) {
+            // Skip this one customer (e.g. a transient error) and keep going
+            // — one bad record shouldn't abort a backfill covering hundreds.
+          }
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, qbIds.length) }, worker));
+      await updateSharedData(async (cur) => {
+        const customers = (cur.customers || []).map(c => {
+          if (c && c.qbId && dunByQbId[c.qbId]) return Object.assign({}, c, { dunsNumber: dunByQbId[c.qbId] });
+          return c;
+        });
+        return { data: Object.assign({}, cur, { customers }) };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, checked: qbIds.length, found: Object.keys(dunByQbId).length }));
+    } catch (err) {
+      console.error('Dun# backfill error:', err.message);
+      const needsReconnect = err.message === 'NEEDS_RECONNECT';
+      res.writeHead(needsReconnect ? 401 : 500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({
+        error: needsReconnect ? 'QuickBooks connection expired. Please reconnect.' : err.message,
+        needsReconnect: needsReconnect
+      }));
+    }
+    return;
+  }
+
   // QuickBooks token refresh endpoint
   if (url === '/api/qb/refresh') {
     if (!requireAuth(req, res)) return;

@@ -9953,8 +9953,17 @@ async function qbBackfillCustomerDun(){
     await renderCustomersPanel();
     var freshStatus=document.getElementById('custDunBackfillStatus');
     if(freshStatus){
-      freshStatus.textContent='Checked '+data.checked+' customer'+(data.checked!==1?'s':'')+' individually — '+data.found+' had a Dun# come through and '+(data.found>0?'now show':'now shows')+' next to the name on the Customer Payments report.';
-      freshStatus.style.color=data.found>0?'#0f6e40':'#b8460b';
+      var msg='Checked '+data.checked+' customer'+(data.checked!==1?'s':'')+' individually — '+data.found+' had a Dun# come through.';
+      if(data.errorCount>0){
+        msg+=' '+data.errorCount+' of those '+data.checked+' request(s) FAILED (not "no Dun# set" — an actual error) — sample: '+esc(data.sampleError||'unknown');
+      }
+      if(data.diagnosticCustomField){
+        msg+=' | Raw CustomField data QuickBooks returned for "Halal Meat Corner | Svm Foods LLC": '+esc(JSON.stringify(data.diagnosticCustomField));
+      } else if(data.diagnosticError){
+        msg+=' | Could not fetch the diagnostic test customer: '+esc(data.diagnosticError);
+      }
+      freshStatus.textContent=msg;
+      freshStatus.style.color=(data.found>0)?'#0f6e40':(data.errorCount>0?'#c0392b':'#b8460b');
     }
   }catch(e){
     var status2=document.getElementById('custDunBackfillStatus');

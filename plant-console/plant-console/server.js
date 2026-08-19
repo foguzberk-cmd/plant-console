@@ -2140,8 +2140,11 @@ const server = http.createServer(async (req, res) => {
     if (!requireAuth(req, res)) return;
     try {
       const current = await readSharedData();
-      const qbIds = (current.customers || []).filter(c => c && c.qbId).map(c => c.qbId);
+      const custList = (current.customers || []).filter(c => c && c.qbId);
+      const qbIds = custList.map(c => c.qbId);
       const dunByQbId = {};
+      let errorCount = 0;
+      let sampleError = null;
       const CONCURRENCY = 8;
       let nextIdx = 0;
       async function worker() {
@@ -2155,12 +2158,38 @@ const server = http.createServer(async (req, res) => {
             });
             if (dun) dunByQbId[id] = dun;
           } catch (e) {
-            // Skip this one customer (e.g. a transient error) and keep going
-            // — one bad record shouldn't abort a backfill covering hundreds.
+            // Previously silent — but a request failing (auth hiccup, rate
+            // limit, timeout) looks IDENTICAL to "this customer genuinely
+            // has no Dun# set" if nothing tracks it, and confirmed live
+            // that at least one customer visibly DOES have Dun# set in
+            // QuickBooks while this backfill still reported 0 found —
+            // meaning failures, not an empty field, are the more likely
+            // explanation. Count them and keep one sample message so the
+            // response can actually say which it was.
+            errorCount++;
+            if (!sampleError) sampleError = (e && e.message) || String(e);
           }
         }
       }
       await Promise.all(Array.from({ length: Math.min(CONCURRENCY, qbIds.length) }, worker));
+      // Diagnostic only — fetch ONE specific customer's raw record fresh
+      // (independent of the loop above, so it can't be skipped by a
+      // transient error there) and return its actual CustomField array
+      // verbatim. This is how we find out whether QuickBooks's real field
+      // name/shape differs from what the matching logic above expects
+      // (e.g. a different casing, a nested structure, or a field type
+      // this code isn't reading), instead of guessing blind.
+      let diagnosticCustomField = null;
+      let diagnosticError = null;
+      const diagCust = custList.find(c => (c.name || '').toLowerCase().includes('corner') && (c.name || '').toLowerCase().includes('svm'));
+      if (diagCust) {
+        try {
+          const rec = await fetchQBEntityById('Customer', diagCust.qbId);
+          diagnosticCustomField = (rec && rec.CustomField) || [];
+        } catch (e) {
+          diagnosticError = (e && e.message) || String(e);
+        }
+      }
       await updateSharedData(async (cur) => {
         const customers = (cur.customers || []).map(c => {
           if (c && c.qbId && dunByQbId[c.qbId]) return Object.assign({}, c, { dunsNumber: dunByQbId[c.qbId] });
@@ -2169,7 +2198,15 @@ const server = http.createServer(async (req, res) => {
         return { data: Object.assign({}, cur, { customers }) };
       });
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
-      res.end(JSON.stringify({ success: true, checked: qbIds.length, found: Object.keys(dunByQbId).length }));
+      res.end(JSON.stringify({
+        success: true,
+        checked: qbIds.length,
+        found: Object.keys(dunByQbId).length,
+        errorCount: errorCount,
+        sampleError: sampleError,
+        diagnosticCustomField: diagnosticCustomField,
+        diagnosticError: diagnosticError
+      }));
     } catch (err) {
       console.error('Dun# backfill error:', err.message);
       const needsReconnect = err.message === 'NEEDS_RECONNECT';

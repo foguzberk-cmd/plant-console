@@ -1883,14 +1883,13 @@ async function qbSyncItemsCore(){
 // managed locally instead (see Settings → Customers), so this sync
 // preserves whatever salesRep is already stored per customer.
 //
-// Dun# (D-U-N-S number) IS attempted here, same as Purch Rep on the vendor
-// side — QuickBooks's Customer query response includes a CustomField array
-// per record, and unlike Sales Rep it may actually come through if a "Dun#"
-// (or "DUNS")-named custom field is populated on that customer. Matched
-// loosely (name contains "dun") since the exact label varies by company
-// file. Falls back to whatever's already stored if nothing comes through,
-// same reasoning as Purch Rep — never silently wipe a manually-entered
-// value just because this particular sync found nothing.
+// Dun# is the same story — confirmed live (Aug 2026) that QuickBooks's
+// API never returns Customer CustomField data at all (bulk query OR
+// direct per-record fetch both come back empty, even for a customer
+// visibly showing Dun# set in QuickBooks's own UI). It's managed locally
+// instead (Settings → Customers, same as Sales Rep) — see
+// updateCustomerDunsNumber. This sync just carries forward whatever's
+// already stored, never touching it.
 async function qbSyncCustomersCore(){
   var base=window.location.origin;
   var resp;
@@ -1902,17 +1901,8 @@ async function qbSyncCustomersCore(){
     return {ok:false, error:(data.error||resp.status), needsReconnect:(data.needsReconnect||resp.status===401)};
   }
   var qbCustomers=(data.QueryResponse&&data.QueryResponse.Customer)||[];
-  var withDunCount=0;
   qbCustomers.forEach(function(qc){
     var existing=customers.findIndex(function(x){return x.qbId===qc.Id});
-    var dun='';
-    (qc.CustomField||[]).forEach(function(f){
-      if(!dun && f.Name && f.Name.toLowerCase().indexOf('dun')>=0 && f.StringValue){
-        dun=f.StringValue.trim();
-      }
-    });
-    if(dun) withDunCount++;
-    var finalDun=dun||(existing>=0?(customers[existing].dunsNumber||''):'');
     var mapped={
       id: existing>=0 ? customers[existing].id : 'cust_'+Date.now()+'_'+Math.random().toString(36).slice(2),
       qbId: qc.Id,
@@ -1924,13 +1914,13 @@ async function qbSyncCustomersCore(){
       name: qc.DisplayName||qc.FullyQualifiedName||qc.CompanyName||'',
       active: qc.Active!==false,
       salesRep: existing>=0 ? (customers[existing].salesRep||'') : '',
-      dunsNumber: finalDun,
+      dunsNumber: existing>=0 ? (customers[existing].dunsNumber||'') : '',
       balance: Number(qc.Balance||0)
     };
     if(existing>=0){ customers[existing]=mapped; } else { customers.push(mapped); }
   });
   saveCustomers();
-  return {ok:true, count:qbCustomers.length, withDunCount:withDunCount};
+  return {ok:true, count:qbCustomers.length};
 }
 
 // Vendors — same idea as customer sync, but there's no dedicated
@@ -9583,9 +9573,6 @@ function _renderCustomersPanelBody(panel){
       <button class="btn btn-sm" id="custSyncBtn" onclick="qbSyncCustomers()" title="Pull the latest customer list from QuickBooks">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
       </button>
-      <button class="btn btn-sm" id="custDunBackfillBtn" onclick="qbBackfillCustomerDun()" title="Fetch Dun# directly from each customer's QuickBooks record — slower than the regular sync (one request per customer), needed because QuickBooks's bulk customer list reliably leaves this field out">
-        Backfill Dun#
-      </button>
       <span id="cust-count" style="font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap"></span>
     </div>
     <div id="customersList" style="max-height:420px;overflow-y:auto;border:1px solid var(--line);border-radius:10px"></div>
@@ -9594,10 +9581,9 @@ function _renderCustomersPanelBody(panel){
       <span id="cust-save-status" style="font-family:var(--mono);font-size:11px;color:var(--muted)"></span>
     </div>
     <div id="custSyncStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>
-    <div id="custDunBackfillStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:4px"></div>
     <div style="margin-top:24px;border:1px dashed var(--line);border-radius:12px;padding:14px">
-      <div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Sales Rep — bulk edit</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Sales Rep isn't available from QuickBooks, so it's set here in Plant Console. To fill it in for many customers at once: export the CSV, edit the "Sales Rep" column in Excel, then import it back — matches are made by customer name. QuickBooks's own Customer Contact List export (.xls/.xlsx) can also be imported directly, unedited.</p>
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Sales Rep & Dun# — bulk edit</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Neither field is available from QuickBooks's API (confirmed — QuickBooks simply doesn't expose Customer custom fields this way), so both are set here in Plant Console instead. To fill them in for many customers at once: export the CSV, edit the "Sales Rep" and/or "Dun#" columns in Excel, then import it back — matches are made by customer name. QuickBooks's own Customer Contact List export (.xls/.xlsx) can also be imported directly, unedited (it won't have a Dun# column, but Sales Rep will still match if present).</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="btn btn-sm" onclick="exportCustomersSalesRepCSV()">Export CSV</button>
         <button class="btn btn-sm" onclick="document.getElementById('cust-csv-file').click()">Import file</button>
@@ -9631,6 +9617,7 @@ function renderCustomersList(){
       +'<input type="checkbox" '+(on?'checked':'')+' onchange="toggleCustomerAllowed(\''+c.id+'\',this.checked)" style="width:17px;height:17px;cursor:pointer;accent-color:var(--brand)"/>'
       +'<div style="flex:1;font-size:13px;font-weight:600">'+esc(c.name)+'</div>'
       +'<input type="text" data-repinput="'+c.id+'" value="'+esc(c.salesRep||'')+'" placeholder="Sales Rep" onclick="event.stopPropagation()" onfocus="event.stopPropagation();showRepSuggestions(this,\''+c.id+'\')" oninput="showRepSuggestions(this,\''+c.id+'\')" onblur="setTimeout(hideRepSuggestions,150)" onchange="updateCustomerSalesRep(\''+c.id+'\',this.value)" style="width:140px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink);cursor:text"/>'
+      +'<input type="text" value="'+esc(c.dunsNumber||'')+'" placeholder="Dun#" title="Dun# (D-U-N-S number) — not available from QuickBooks\'s API, entered here manually" onclick="event.stopPropagation()" onchange="updateCustomerDunsNumber(\''+c.id+'\',this.value)" style="width:100px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;font-family:var(--mono);background:var(--bg);color:var(--ink);cursor:text"/>'
       +'</label>';
   }).join('');
   var countEl=document.getElementById('cust-count');
@@ -9728,6 +9715,33 @@ async function updateCustomerSalesRep(id,value){
     if(input) input.style.borderColor='#c0392b';
   }
 }
+// Same targeted single-field write pattern as updateCustomerSalesRep just
+// above, and for the same reason — confirmed (Aug 2026) QuickBooks's API
+// never returns Dun# for Customer records, so this is entirely
+// Plant-Console-managed, same as Sales Rep.
+async function updateCustomerDunsNumber(id,value){
+  var dunsNumber=(value||'').trim();
+  var statusEl=document.getElementById('cust-save-status');
+  try{
+    var res=await fetch('/api/customers/'+encodeURIComponent(id)+'/dunsnumber',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({dunsNumber:dunsNumber})
+    });
+    if(!res.ok) throw new Error('Server responded with '+res.status);
+    var c=customers.find(function(x){return x.id===id;});
+    if(c) c.dunsNumber=dunsNumber;
+    safeSetLocal('pc_customers',JSON.stringify(customers));
+    // The Customer Payments report caches its computed groups and has no
+    // way to know a customer's Dun# just changed underneath it — same
+    // reasoning as the sync/backfill paths before this.
+    _collGroupsCache=null;
+    if(statusEl){ statusEl.textContent='Dun# saved.'; statusEl.style.color='#0f6e40'; setTimeout(function(){ if(statusEl.textContent==='Dun# saved.') statusEl.textContent=''; },3000); }
+  }catch(e){
+    if(statusEl){ statusEl.textContent='Could not save Dun# — check your connection and try again.'; statusEl.style.color='#c0392b'; }
+  }
+}
+window.updateCustomerDunsNumber=updateCustomerDunsNumber;
 
 // --- Minimal CSV encode/decode (no library needed for two simple columns) ---
 function _csvField(v){
@@ -9758,9 +9772,9 @@ function _csvParse(text){
 }
 
 function exportCustomersSalesRepCSV(){
-  var rows=[['Customer Name','Sales Rep']];
+  var rows=[['Customer Name','Sales Rep','Dun#']];
   customers.slice().sort(function(a,b){return (a.name||'').localeCompare(b.name||'');})
-    .forEach(function(c){ rows.push([c.name||'', c.salesRep||'']); });
+    .forEach(function(c){ rows.push([c.name||'', c.salesRep||'', c.dunsNumber||'']); });
   var csv=rows.map(function(r){ return r.map(_csvField).join(','); }).join('\n');
   var blob=new Blob([csv],{type:'text/csv'});
   var url=URL.createObjectURL(blob);
@@ -9810,6 +9824,9 @@ function _applyCustomerSalesRepRows(rows,statusEl){
   var nameCol=header.indexOf('customer name');
   if(nameCol<0) nameCol=header.indexOf('name');
   var repCol=header.indexOf('sales rep');
+  var dunCol=header.indexOf('dun#');
+  if(dunCol<0) dunCol=header.indexOf('duns');
+  if(dunCol<0) dunCol=header.indexOf('duns number');
   if(nameCol<0||repCol<0){
     if(statusEl){ statusEl.textContent='Expected a "Name" (or "Customer Name") column and a "Sales Rep" column — check the header row.'; statusEl.style.color='#c0392b'; }
     return;
@@ -9821,12 +9838,22 @@ function _applyCustomerSalesRepRows(rows,statusEl){
     var r=rows[i];
     var name=String((r[nameCol]!==undefined?r[nameCol]:'')||'').trim();
     var rep=String((r[repCol]!==undefined?r[repCol]:'')||'').trim();
+    var dun=dunCol>=0?String((r[dunCol]!==undefined?r[dunCol]:'')||'').trim():null;
     if(!name) continue;
     var c=byName[name.toLowerCase()];
-    if(c){ c.salesRep=rep; updated++; }
+    if(c){
+      c.salesRep=rep;
+      // Only touch dunsNumber if the file actually has a Dun# column at
+      // all — a plain QuickBooks Customer Contact List export (no Dun#
+      // column) should update Sales Rep without silently blanking out
+      // whatever Dun# was already entered here.
+      if(dun!==null) c.dunsNumber=dun;
+      updated++;
+    }
     else unmatched.push(name);
   }
   saveCustomers();
+  _collGroupsCache=null;
   renderCustomersList();
   var msg=updated+' customer(s) updated.';
   if(unmatched.length) msg+=' '+unmatched.length+' name(s) in the file didn\'t match any synced customer'+(unmatched.length<=5?' ('+unmatched.slice(0,5).join(', ')+')':'')+'.';
@@ -9904,91 +9931,8 @@ async function qbSyncCustomers(){
   // a sync that pulled brand new data. Clearing it forces a fresh compute
   // the next time that report renders.
   _collGroupsCache=null;
-  if(status){
-    status.textContent=result.count+' customer'+(result.count!==1?'s':'')+' synced. '
-      +(result.withDunCount>0
-        ? result.withDunCount+' of '+result.count+' had a "Dun#"-like custom field come through from QuickBooks — that\'s now showing next to the name on the Customer Payments report.'
-        : 'No "Dun#"-like custom field came through for any customer (0 of '+result.count+') — QuickBooks\'s bulk customer list often leaves custom fields out even when they\'re set. Try "Backfill Dun#" below, which checks each customer individually instead.');
-    status.style.color=result.withDunCount>0?'#0f6e40':'#b8460b';
-  }
+  if(status) status.textContent=result.count+' customer'+(result.count!==1?'s':'')+' synced.';
   renderCustomersPanel();
-}
-// Confirmed live (Aug 2026): QuickBooks's bulk Customer query reliably
-// omits CustomField data even for a customer that visibly HAS a Dun# set
-// in QuickBooks's own UI — the regular sync above simply can't see it. A
-// direct per-customer GET does reliably include it, so this is a separate,
-// explicit, on-demand action rather than something folded into every
-// regular sync — it costs one HTTP round-trip to Intuit PER customer,
-// which only makes sense to run when someone specifically wants Dun#
-// refreshed, not on every routine customer sync.
-async function qbBackfillCustomerDun(){
-  var btn=document.getElementById('custDunBackfillBtn');
-  if(btn) btn.disabled=true;
-  var status=document.getElementById('custDunBackfillStatus');
-  if(status){ status.textContent='Checking each customer individually for a Dun# custom field — this can take a minute for a large customer list…'; status.style.color='var(--muted)'; }
-  try{
-    var resp=await fetch('/api/qb/customers/dun-backfill');
-    var data;
-    try{ data=await resp.json(); }catch(e){ data={}; }
-    if(!resp.ok || data.error){
-      // renderCustomersPanel() is NOT called on this path, so this status
-      // element is still the same one we set above — safe to update directly.
-      if(status){ status.textContent='Backfill failed: '+(data.needsReconnect?'QuickBooks connection expired — reconnect from the Items tab.':(data.error||resp.status)); status.style.color='#c0392b'; }
-      if(btn) btn.disabled=false;
-      return;
-    }
-    // The values just got written server-side — pull the fresh customer
-    // list down so this browser actually shows them, and clear the
-    // Customer Payments report's cache for the same reason as the regular
-    // sync above (it has no way to know customers just changed on its own).
-    await qbSyncCustomersFromServerOnly();
-    _collGroupsCache=null;
-    // IMPORTANT: renderCustomersPanel() rebuilds this whole panel's HTML
-    // from scratch — including a brand new, empty #custDunBackfillStatus
-    // div. Setting the final message BEFORE calling it (like the original
-    // version of this function did) meant the message was written then
-    // immediately wiped out a moment later, so it never actually stayed on
-    // screen — exactly what showed up as "the message just disappears."
-    // Render first, THEN grab the fresh element and write the message.
-    await renderCustomersPanel();
-    var freshStatus=document.getElementById('custDunBackfillStatus');
-    if(freshStatus){
-      var msg='Checked '+data.checked+' customer'+(data.checked!==1?'s':'')+' individually — '+data.found+' had a Dun# come through.';
-      if(data.errorCount>0){
-        msg+=' '+data.errorCount+' of those '+data.checked+' request(s) FAILED (not "no Dun# set" — an actual error) — sample: '+esc(data.sampleError||'unknown');
-      }
-      if(data.diagnosticCustomField){
-        msg+=' | Raw CustomField data QuickBooks returned for "Halal Meat Corner | Svm Foods LLC": '+esc(JSON.stringify(data.diagnosticCustomField));
-      } else if(data.diagnosticError){
-        msg+=' | Could not fetch the diagnostic test customer: '+esc(data.diagnosticError);
-      }
-      freshStatus.textContent=msg;
-      freshStatus.style.color=(data.found>0)?'#0f6e40':(data.errorCount>0?'#c0392b':'#b8460b');
-    }
-  }catch(e){
-    var status2=document.getElementById('custDunBackfillStatus');
-    if(status2){ status2.textContent='Backfill failed: network error.'; status2.style.color='#c0392b'; }
-    var btn2=document.getElementById('custDunBackfillBtn');
-    if(btn2) btn2.disabled=false;
-  }
-}
-window.qbBackfillCustomerDun=qbBackfillCustomerDun;
-// Pulls the just-updated customer list from the server WITHOUT re-hitting
-// QuickBooks (the backfill endpoint already wrote the new Dun# values into
-// the shared server data) — same fetch the periodic background sync uses
-// to pick up server-side changes, called once here so this browser doesn't
-// have to wait for its next regular poll to see what it just backfilled.
-async function qbSyncCustomersFromServerOnly(){
-  try{
-    var res=await fetch('/api/customers',{cache:'no-store',headers:{'Cache-Control':'no-cache, no-store, must-revalidate','Pragma':'no-cache'}});
-    if(res.ok){
-      var fresh=await res.json();
-      if(Array.isArray(fresh.customers)) customers=fresh.customers;
-      if(fresh.customerAllowed && typeof fresh.customerAllowed==='object') customerAllowed=fresh.customerAllowed;
-      safeSetLocal('pc_customers',JSON.stringify(customers));
-      safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed));
-    }
-  }catch(e){ /* the next regular background pull will pick it up instead */ }
 }
 
 async function qbSyncVendors(){

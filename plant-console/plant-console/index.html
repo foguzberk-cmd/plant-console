@@ -9891,11 +9891,18 @@ async function qbSyncCustomers(){
     if(status) status.textContent='Sync failed: '+(result.needsReconnect?'QuickBooks connection expired — reconnect from the Items tab.':result.error);
     return;
   }
+  // The Customer Payments report caches its computed groups, keyed only off
+  // the payments data and group mode — it has no idea the customer list
+  // itself just changed underneath it (Dun#, Sales Rep, etc.), so without
+  // this it would keep showing whatever it last computed, even right after
+  // a sync that pulled brand new data. Clearing it forces a fresh compute
+  // the next time that report renders.
+  _collGroupsCache=null;
   if(status){
     status.textContent=result.count+' customer'+(result.count!==1?'s':'')+' synced. '
       +(result.withDunCount>0
-        ? result.withDunCount+' of '+result.count+' had a "Dun#"-like custom field come through from QuickBooks — that\'s now showing in the Dun# column on the Customer Payments report.'
-        : 'No "Dun#"-like custom field came through for any customer (0 of '+result.count+') — either it isn\'t set on these customers in QuickBooks, or it isn\'t exposed via this API (same limitation Sales Rep has). The Dun# column will just show blank until that\'s resolved.');
+        ? result.withDunCount+' of '+result.count+' had a "Dun#"-like custom field come through from QuickBooks — that\'s now showing next to the name on the Customer Payments report.'
+        : 'No "Dun#"-like custom field came through for any customer (0 of '+result.count+') — either it isn\'t set on these customers in QuickBooks, or it isn\'t exposed via this API (same limitation Sales Rep has). The Dun# badge will just stay hidden until that\'s resolved.');
     status.style.color=result.withDunCount>0?'#0f6e40':'#b8460b';
   }
   renderCustomersPanel();

@@ -9583,6 +9583,9 @@ function _renderCustomersPanelBody(panel){
       <button class="btn btn-sm" id="custSyncBtn" onclick="qbSyncCustomers()" title="Pull the latest customer list from QuickBooks">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
       </button>
+      <button class="btn btn-sm" id="custDunBackfillBtn" onclick="qbBackfillCustomerDun()" title="Fetch Dun# directly from each customer's QuickBooks record — slower than the regular sync (one request per customer), needed because QuickBooks's bulk customer list reliably leaves this field out">
+        Backfill Dun#
+      </button>
       <span id="cust-count" style="font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap"></span>
     </div>
     <div id="customersList" style="max-height:420px;overflow-y:auto;border:1px solid var(--line);border-radius:10px"></div>
@@ -9591,6 +9594,7 @@ function _renderCustomersPanelBody(panel){
       <span id="cust-save-status" style="font-family:var(--mono);font-size:11px;color:var(--muted)"></span>
     </div>
     <div id="custSyncStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>
+    <div id="custDunBackfillStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:4px"></div>
     <div style="margin-top:24px;border:1px dashed var(--line);border-radius:12px;padding:14px">
       <div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Sales Rep — bulk edit</div>
       <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Sales Rep isn't available from QuickBooks, so it's set here in Plant Console. To fill it in for many customers at once: export the CSV, edit the "Sales Rep" column in Excel, then import it back — matches are made by customer name. QuickBooks's own Customer Contact List export (.xls/.xlsx) can also be imported directly, unedited.</p>
@@ -9904,10 +9908,66 @@ async function qbSyncCustomers(){
     status.textContent=result.count+' customer'+(result.count!==1?'s':'')+' synced. '
       +(result.withDunCount>0
         ? result.withDunCount+' of '+result.count+' had a "Dun#"-like custom field come through from QuickBooks — that\'s now showing next to the name on the Customer Payments report.'
-        : 'No "Dun#"-like custom field came through for any customer (0 of '+result.count+') — either it isn\'t set on these customers in QuickBooks, or it isn\'t exposed via this API (same limitation Sales Rep has). The Dun# badge will just stay hidden until that\'s resolved.');
+        : 'No "Dun#"-like custom field came through for any customer (0 of '+result.count+') — QuickBooks\'s bulk customer list often leaves custom fields out even when they\'re set. Try "Backfill Dun#" below, which checks each customer individually instead.');
     status.style.color=result.withDunCount>0?'#0f6e40':'#b8460b';
   }
   renderCustomersPanel();
+}
+// Confirmed live (Aug 2026): QuickBooks's bulk Customer query reliably
+// omits CustomField data even for a customer that visibly HAS a Dun# set
+// in QuickBooks's own UI — the regular sync above simply can't see it. A
+// direct per-customer GET does reliably include it, so this is a separate,
+// explicit, on-demand action rather than something folded into every
+// regular sync — it costs one HTTP round-trip to Intuit PER customer,
+// which only makes sense to run when someone specifically wants Dun#
+// refreshed, not on every routine customer sync.
+async function qbBackfillCustomerDun(){
+  var btn=document.getElementById('custDunBackfillBtn');
+  var status=document.getElementById('custDunBackfillStatus');
+  if(btn) btn.disabled=true;
+  if(status){ status.textContent='Checking each customer individually for a Dun# custom field — this can take a minute for a large customer list…'; status.style.color='var(--muted)'; }
+  try{
+    var resp=await fetch('/api/qb/customers/dun-backfill');
+    var data;
+    try{ data=await resp.json(); }catch(e){ data={}; }
+    if(!resp.ok || data.error){
+      if(status){ status.textContent='Backfill failed: '+(data.needsReconnect?'QuickBooks connection expired — reconnect from the Items tab.':(data.error||resp.status)); status.style.color='#c0392b'; }
+      return;
+    }
+    // The values just got written server-side — pull the fresh customer
+    // list down so this browser actually shows them, and clear the
+    // Customer Payments report's cache for the same reason as the regular
+    // sync above (it has no way to know customers just changed on its own).
+    await qbSyncCustomersFromServerOnly();
+    _collGroupsCache=null;
+    if(status){
+      status.textContent='Checked '+data.checked+' customer'+(data.checked!==1?'s':'')+' individually — '+data.found+' had a Dun# come through and '+(data.found>0?'now show':'now shows')+' next to the name on the Customer Payments report.';
+      status.style.color=data.found>0?'#0f6e40':'#b8460b';
+    }
+    renderCustomersPanel();
+  }catch(e){
+    if(status){ status.textContent='Backfill failed: network error.'; status.style.color='#c0392b'; }
+  }finally{
+    if(btn) btn.disabled=false;
+  }
+}
+window.qbBackfillCustomerDun=qbBackfillCustomerDun;
+// Pulls the just-updated customer list from the server WITHOUT re-hitting
+// QuickBooks (the backfill endpoint already wrote the new Dun# values into
+// the shared server data) — same fetch the periodic background sync uses
+// to pick up server-side changes, called once here so this browser doesn't
+// have to wait for its next regular poll to see what it just backfilled.
+async function qbSyncCustomersFromServerOnly(){
+  try{
+    var res=await fetch('/api/customers',{cache:'no-store',headers:{'Cache-Control':'no-cache, no-store, must-revalidate','Pragma':'no-cache'}});
+    if(res.ok){
+      var fresh=await res.json();
+      if(Array.isArray(fresh.customers)) customers=fresh.customers;
+      if(fresh.customerAllowed && typeof fresh.customerAllowed==='object') customerAllowed=fresh.customerAllowed;
+      safeSetLocal('pc_customers',JSON.stringify(customers));
+      safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed));
+    }
+  }catch(e){ /* the next regular background pull will pick it up instead */ }
 }
 
 async function qbSyncVendors(){

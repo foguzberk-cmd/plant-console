@@ -9583,7 +9583,7 @@ function _renderCustomersPanelBody(panel){
     <div id="custSyncStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>
     <div style="margin-top:24px;border:1px dashed var(--line);border-radius:12px;padding:14px">
       <div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Sales Rep & Dun# — bulk edit</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Neither field is available from QuickBooks's API (confirmed — QuickBooks simply doesn't expose Customer custom fields this way), so both are set here in Plant Console instead. To fill them in for many customers at once: export the CSV, edit the "Sales Rep" and/or "Dun#" columns in Excel, then import it back — matches are made by customer name. QuickBooks's own Customer Contact List export (.xls/.xlsx) can also be imported directly, unedited (it won't have a Dun# column, but Sales Rep will still match if present).</p>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Neither field is available from QuickBooks's API (confirmed — QuickBooks simply doesn't expose Customer custom fields this way), so both are set here in Plant Console instead. To fill them in for many customers at once: export the CSV, edit the "Sales Rep" and/or "Dun#" columns in Excel, then import it back — matches are made by customer name. QuickBooks's own Customer Contact List export (.xls/.xlsx) can also be imported directly, unedited — it has its own Dun# column (just from a manual export, not the API) but no Sales Rep column, and either one imports fine on its own without needing the other.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="btn btn-sm" onclick="exportCustomersSalesRepCSV()">Export CSV</button>
         <button class="btn btn-sm" onclick="document.getElementById('cust-csv-file').click()">Import file</button>
@@ -9815,20 +9815,32 @@ async function importCustomersSalesRepFile(file){
 function _applyCustomerSalesRepRows(rows,statusEl){
   rows=(rows||[]).filter(function(r){ return r&&r.length&&r.some(function(f){return String(f||'').trim()!=='';}); });
   if(!rows.length){ if(statusEl){ statusEl.textContent='File is empty.'; statusEl.style.color='#c0392b'; } return; }
-  // Header matching accepts BOTH this app's own round-trip export
-  // ("Customer Name") AND QuickBooks's own native Customer Contact List
-  // export, which instead titles the same column just "Name" — so the
-  // unedited QuickBooks export can be dropped in directly, with no
-  // reformatting or renaming step in between.
+  // Header matching accepts this app's own round-trip export ("Customer
+  // Name"), a plain "Name", AND QuickBooks's own native Customer Contact
+  // List export, which titles the same column "Customer full name" — so
+  // the unedited QuickBooks export can be dropped in directly, with no
+  // reformatting or renaming step in between. QuickBooks's export also
+  // happens to already include its own "Dun#" column (confirmed live) —
+  // it's just not populated through the API, only through this kind of
+  // UI export — so that column is picked up here too.
   var header=rows[0].map(function(h){return String(h||'').trim().toLowerCase();});
   var nameCol=header.indexOf('customer name');
+  if(nameCol<0) nameCol=header.indexOf('customer full name');
   if(nameCol<0) nameCol=header.indexOf('name');
   var repCol=header.indexOf('sales rep');
   var dunCol=header.indexOf('dun#');
   if(dunCol<0) dunCol=header.indexOf('duns');
   if(dunCol<0) dunCol=header.indexOf('duns number');
-  if(nameCol<0||repCol<0){
-    if(statusEl){ statusEl.textContent='Expected a "Name" (or "Customer Name") column and a "Sales Rep" column — check the header row.'; statusEl.style.color='#c0392b'; }
+  // Sales Rep and Dun# are each optional independently — QuickBooks's own
+  // export, for instance, has a Dun# column but NO Sales Rep column at
+  // all, and requiring both unconditionally (as this used to) meant that
+  // exact, unedited, real-world file could never import at all.
+  if(nameCol<0){
+    if(statusEl){ statusEl.textContent='Expected a "Name" (or "Customer Name"/"Customer full name") column — check the header row.'; statusEl.style.color='#c0392b'; }
+    return;
+  }
+  if(repCol<0 && dunCol<0){
+    if(statusEl){ statusEl.textContent='Found a name column, but no "Sales Rep" or "Dun#" column to import — check the header row.'; statusEl.style.color='#c0392b'; }
     return;
   }
   var byName={};
@@ -9837,16 +9849,15 @@ function _applyCustomerSalesRepRows(rows,statusEl){
   for(var i=1;i<rows.length;i++){
     var r=rows[i];
     var name=String((r[nameCol]!==undefined?r[nameCol]:'')||'').trim();
-    var rep=String((r[repCol]!==undefined?r[repCol]:'')||'').trim();
+    var rep=repCol>=0?String((r[repCol]!==undefined?r[repCol]:'')||'').trim():null;
     var dun=dunCol>=0?String((r[dunCol]!==undefined?r[dunCol]:'')||'').trim():null;
     if(!name) continue;
     var c=byName[name.toLowerCase()];
     if(c){
-      c.salesRep=rep;
-      // Only touch dunsNumber if the file actually has a Dun# column at
-      // all — a plain QuickBooks Customer Contact List export (no Dun#
-      // column) should update Sales Rep without silently blanking out
-      // whatever Dun# was already entered here.
+      // Only touch a field if the file actually has that column at all —
+      // a plain QuickBooks export (no Sales Rep column) should update
+      // Dun# without silently blanking out Sales Rep, and vice versa.
+      if(rep!==null) c.salesRep=rep;
       if(dun!==null) c.dunsNumber=dun;
       updated++;
     }

@@ -801,6 +801,13 @@ async function applyWebhookEntityChange(entityName, id) {
       const newSyncToken = Number(record.SyncToken || 0);
       const oldSyncToken = idx >= 0 ? Number((customers[idx].qbSyncToken) || -1) : -1;
       if (idx >= 0 && newSyncToken <= oldSyncToken) return { skipWrite: true }; // stale/duplicate delivery
+      let dunsNumber = '';
+      (record.CustomField || []).forEach(f => {
+        if (!dunsNumber && f.Name && f.Name.toLowerCase().includes('dun') && f.StringValue) {
+          dunsNumber = f.StringValue.trim();
+        }
+      });
+      const finalDunsNumber = dunsNumber || (idx >= 0 ? (customers[idx].dunsNumber || '') : '');
       const mapped = {
         id: idx >= 0 ? customers[idx].id : 'cust_' + Date.now() + '_' + Math.random().toString(36).slice(2),
         qbId: record.Id,
@@ -808,6 +815,7 @@ async function applyWebhookEntityChange(entityName, id) {
         name: record.DisplayName || record.FullyQualifiedName || record.CompanyName || '',
         active: record.Active !== false,
         salesRep: idx >= 0 ? (customers[idx].salesRep || '') : '',
+        dunsNumber: finalDunsNumber,
         balance: Number(record.Balance || 0)
       };
       if (idx >= 0) customers[idx] = mapped; else customers.push(mapped);
@@ -867,6 +875,13 @@ async function backgroundSyncCustomers() {
     const customers = Array.isArray(current.customers) ? current.customers.slice() : [];
     qbCustomers.forEach(qc => {
       const existing = customers.findIndex(x => x && x.qbId === qc.Id);
+      let dunsNumber = '';
+      (qc.CustomField || []).forEach(f => {
+        if (!dunsNumber && f.Name && f.Name.toLowerCase().includes('dun') && f.StringValue) {
+          dunsNumber = f.StringValue.trim();
+        }
+      });
+      const finalDunsNumber = dunsNumber || (existing >= 0 ? (customers[existing].dunsNumber || '') : '');
       const mapped = {
         id: existing >= 0 ? customers[existing].id : 'cust_' + Date.now() + '_' + Math.random().toString(36).slice(2),
         qbId: qc.Id,
@@ -882,6 +897,7 @@ async function backgroundSyncCustomers() {
         // Sales Rep is Plant-Console-only, never touched by any QB sync —
         // always carried forward from whatever's already there.
         salesRep: existing >= 0 ? (customers[existing].salesRep || '') : '',
+        dunsNumber: finalDunsNumber,
         balance: Number(qc.Balance || 0)
       };
       if (existing >= 0) customers[existing] = mapped; else customers.push(mapped);

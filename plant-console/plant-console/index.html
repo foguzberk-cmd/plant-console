@@ -1882,6 +1882,15 @@ async function qbSyncItemsCore(){
 // returns it, despite being visibly set in QuickBooks's own UI). It's
 // managed locally instead (see Settings → Customers), so this sync
 // preserves whatever salesRep is already stored per customer.
+//
+// Dun# (D-U-N-S number) IS attempted here, same as Purch Rep on the vendor
+// side — QuickBooks's Customer query response includes a CustomField array
+// per record, and unlike Sales Rep it may actually come through if a "Dun#"
+// (or "DUNS")-named custom field is populated on that customer. Matched
+// loosely (name contains "dun") since the exact label varies by company
+// file. Falls back to whatever's already stored if nothing comes through,
+// same reasoning as Purch Rep — never silently wipe a manually-entered
+// value just because this particular sync found nothing.
 async function qbSyncCustomersCore(){
   var base=window.location.origin;
   var resp;
@@ -1893,8 +1902,17 @@ async function qbSyncCustomersCore(){
     return {ok:false, error:(data.error||resp.status), needsReconnect:(data.needsReconnect||resp.status===401)};
   }
   var qbCustomers=(data.QueryResponse&&data.QueryResponse.Customer)||[];
+  var withDunCount=0;
   qbCustomers.forEach(function(qc){
     var existing=customers.findIndex(function(x){return x.qbId===qc.Id});
+    var dun='';
+    (qc.CustomField||[]).forEach(function(f){
+      if(!dun && f.Name && f.Name.toLowerCase().indexOf('dun')>=0 && f.StringValue){
+        dun=f.StringValue.trim();
+      }
+    });
+    if(dun) withDunCount++;
+    var finalDun=dun||(existing>=0?(customers[existing].dunsNumber||''):'');
     var mapped={
       id: existing>=0 ? customers[existing].id : 'cust_'+Date.now()+'_'+Math.random().toString(36).slice(2),
       qbId: qc.Id,
@@ -1906,12 +1924,13 @@ async function qbSyncCustomersCore(){
       name: qc.DisplayName||qc.FullyQualifiedName||qc.CompanyName||'',
       active: qc.Active!==false,
       salesRep: existing>=0 ? (customers[existing].salesRep||'') : '',
+      dunsNumber: finalDun,
       balance: Number(qc.Balance||0)
     };
     if(existing>=0){ customers[existing]=mapped; } else { customers.push(mapped); }
   });
   saveCustomers();
-  return {ok:true, count:qbCustomers.length};
+  return {ok:true, count:qbCustomers.length, withDunCount:withDunCount};
 }
 
 // Vendors — same idea as customer sync, but there's no dedicated
@@ -2770,6 +2789,7 @@ function _collSortValue(entry,label,key){
     case 'collected': return Number(entry.total||0);
     case 'future': return Number(entry.futurePayments||0);
     case 'ending': return Number(entry.balance-(entry.unapplied||0)-(entry.creditMemo||0)+(entry.journal||0));
+    case 'dun': return (entry.dun||'').toLowerCase();
   }
   return 0;
 }
@@ -2801,7 +2821,7 @@ var _cashFlowStartBalance=(function(){ var v=localStorage.getItem('pc_cf_start_b
 // belonged to which column. Existing users' already-saved widths get
 // migrated to these wider defaults once (see the version check below),
 // not just new users.
-var _COLL_COL_DEFAULTS={name:220,sales:120,collected:110,future:110,ending:130,actions:90};
+var _COLL_COL_DEFAULTS={name:220,sales:120,collected:110,future:110,ending:130,dun:110,actions:90};
 var _collColWidths=(function(){
   try{
     if(localStorage.getItem('pc_coll_col_widths_v')!=='3'){
@@ -2814,7 +2834,7 @@ var _collColWidths=(function(){
   catch(e){ return Object.assign({},_COLL_COL_DEFAULTS); }
 })();
 function _collColVarStyle(){
-  return '--cw-name:'+(_collColWidths.name||220)+'px;--cw-sales:'+_collColWidths.sales+'px;--cw-collected:'+_collColWidths.collected+'px;--cw-future:'+_collColWidths.future+'px;--cw-ending:'+_collColWidths.ending+'px;--cw-actions:'+(_collColWidths.actions||90)+'px;';
+  return '--cw-name:'+(_collColWidths.name||220)+'px;--cw-sales:'+_collColWidths.sales+'px;--cw-collected:'+_collColWidths.collected+'px;--cw-future:'+_collColWidths.future+'px;--cw-ending:'+_collColWidths.ending+'px;--cw-dun:'+(_collColWidths.dun||110)+'px;--cw-actions:'+(_collColWidths.actions||90)+'px;';
 }
 function collColResizeStart(e,colKey){
   e.preventDefault();
@@ -2846,11 +2866,11 @@ window.collColResizeStart=collColResizeStart;
 // Customers column itself stays pinned first — it holds the row's expand
 // chevron and customer name, which need to stay put as the anchor for
 // the whole row — so it's intentionally not part of the reorderable set.
-var _COLL_COL_ORDER_DEFAULT=['sales','collectedFuture','ending','actions'];
+var _COLL_COL_ORDER_DEFAULT=['sales','collectedFuture','ending','dun','actions'];
 var _collColOrder=(function(){
   try{
-    if(localStorage.getItem('pc_coll_col_order_v')!=='2'){
-      localStorage.setItem('pc_coll_col_order_v','2');
+    if(localStorage.getItem('pc_coll_col_order_v')!=='3'){
+      localStorage.setItem('pc_coll_col_order_v','3');
       return _COLL_COL_ORDER_DEFAULT.slice();
     }
     var v=JSON.parse(localStorage.getItem('pc_coll_col_order')||'null');
@@ -3783,6 +3803,15 @@ function _computeCollectionGroupsUncached(){
     var c=qbCustId?custByQbId[qbCustId]:null;
     return (c&&c.salesRep)?c.salesRep.trim():'';
   }
+  // Dun# is a plain customer attribute (like the name), not something
+  // computed from transaction data — pulled straight from the locally
+  // synced customer record (see qbSyncCustomersCore), same lookup pattern
+  // as Sales Person just above.
+  function dunOfCust(qbCustId){
+    if(!qbCustId) return '';
+    var c=custByQbId[qbCustId];
+    return (c&&c.dunsNumber)?c.dunsNumber.trim():'';
+  }
   // "Ending balance" (as of the report's "To" date) and "Opening balance"
   // (as of the report's "From" date) are both read from _collEndingByQbId /
   // _collOpeningByQbId — precomputed ONCE per pull by computeAsOfBalances,
@@ -3944,7 +3973,7 @@ function _computeCollectionGroupsUncached(){
     var futP=futurePaymentsOfCust(qbCustId);
     var cm=creditMemoOfCust(qbCustId);
     var jrn=journalOfCust(qbCustId);
-    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undepositedFunds:undepF,futurePayments:futP,creditMemo:cm,journal:jrn,journalDetail:journalDetailOfCust(qbCustId),undepositedFundsDetail:undepositedFundsDetailOfCust(qbCustId),futurePaymentsDetail:futurePaymentsDetailOfCust(qbCustId),payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndepositedFunds+=undepF; grandFuturePayments+=futP; grandCreditMemo+=cm; grandJournal+=jrn; }
+    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undepositedFunds:undepF,futurePayments:futP,creditMemo:cm,journal:jrn,dun:dunOfCust(qbCustId),journalDetail:journalDetailOfCust(qbCustId),undepositedFundsDetail:undepositedFundsDetailOfCust(qbCustId),futurePaymentsDetail:futurePaymentsDetailOfCust(qbCustId),payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndepositedFunds+=undepF; grandFuturePayments+=futP; grandCreditMemo+=cm; grandJournal+=jrn; }
     // A check hasn't necessarily made it to the bank yet just because its
     // date has arrived or passed — it's not "collected" in any real sense
     // until it has. Originally this only checked payments dated EXACTLY
@@ -4010,7 +4039,7 @@ function _computeCollectionGroupsUncached(){
     var futP=futurePaymentsOfCust(qbCustId);
     var cm=creditMemoOfCust(qbCustId);
     var jrn=journalOfCust(qbCustId);
-    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undepositedFunds:undepF,futurePayments:futP,creditMemo:cm,journal:jrn,journalDetail:journalDetailOfCust(qbCustId),undepositedFundsDetail:undepositedFundsDetailOfCust(qbCustId),futurePaymentsDetail:futurePaymentsDetailOfCust(qbCustId),payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndepositedFunds+=undepF; grandFuturePayments+=futP; grandCreditMemo+=cm; grandJournal+=jrn; }
+    if(!byCust[custKey]){ byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undepositedFunds:undepF,futurePayments:futP,creditMemo:cm,journal:jrn,dun:dunOfCust(qbCustId),journalDetail:journalDetailOfCust(qbCustId),undepositedFundsDetail:undepositedFundsDetailOfCust(qbCustId),futurePaymentsDetail:futurePaymentsDetailOfCust(qbCustId),payments:[]}; grandBalance+=bal; grandOpening+=open; grandUnapplied+=unapp; grandUndepositedFunds+=undepF; grandFuturePayments+=futP; grandCreditMemo+=cm; grandJournal+=jrn; }
     byCust[custKey].sales+=amt;
 
     var rep=salesPersonOf(d)||'Unassigned';
@@ -4063,7 +4092,7 @@ function _computeCollectionGroupsUncached(){
     var known=custByQbId[qbCustId]; // may be undefined if not yet synced locally
     var custName=(known&&known.name)||'Unknown customer (not yet synced — id '+qbCustId+')';
     if(!byCust[custKey]){
-      byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undepositedFunds:undepF,futurePayments:futP,creditMemo:cm,journal:jrn,journalDetail:journalDetailOfCust(qbCustId),undepositedFundsDetail:undepositedFundsDetailOfCust(qbCustId),futurePaymentsDetail:futurePaymentsDetailOfCust(qbCustId),payments:[]};
+      byCust[custKey]={name:custName,total:0,balance:bal,opening:open,sales:0,unapplied:unapp,undepositedFunds:undepF,futurePayments:futP,creditMemo:cm,journal:jrn,dun:(known&&known.dunsNumber)?known.dunsNumber.trim():'',journalDetail:journalDetailOfCust(qbCustId),undepositedFundsDetail:undepositedFundsDetailOfCust(qbCustId),futurePaymentsDetail:futurePaymentsDetailOfCust(qbCustId),payments:[]};
       grandBalance+=bal;
       grandOpening+=open;
       grandUnapplied+=unapp;
@@ -4246,6 +4275,11 @@ function renderCollectionReport(){
   function futureCell(val){
     return '<span style="display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:center;font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ink);border-right:1px solid var(--line);padding:2px 4px">'+money(val)+'</span>';
   }
+  // Dun# is plain text, not money — no color-coding, just the value (or a
+  // muted "—" placeholder when nothing came through from QuickBooks yet).
+  function dunCell(val){
+    return '<span style="display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:center;font-family:var(--mono);font-size:13px;font-weight:600;color:'+(val?'var(--ink)':'var(--muted)')+'">'+esc(val||'—')+'</span>';
+  }
   // A drag handle at the right edge of a header cell — visibly rendered
   // (a small vertical bar), not just an invisible hit-area. Its own
   // mousedown handler stops propagation, which is what keeps it from
@@ -4286,6 +4320,11 @@ function renderCollectionReport(){
         gridTemplate:'var(--cw-ending)',
         header:function(){ return headerCell('Ending balance','ending','ending',"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before."); },
         cell:function(e){ return valCell(e.balance-(e.unapplied||0)-(e.creditMemo||0)+(e.journal||0),true,true,"Reflects the running balance as of this date — NOT limited to activity within the From/To range. A customer with zero Sales or Collected in this window can still show a real balance here if they owe money from before. Nets Unapplied and Credit memo out, and adds Journal entry (now netted per-customer, not raw — see the Journal entry detail list)."); }
+      };
+      case 'dun': return {
+        gridTemplate:'var(--cw-dun)',
+        header:function(){ return headerCell('Dun#','dun','dun',"D-U-N-S number, pulled from a \"Dun#\"-named custom field on the QuickBooks Customer record if one is set. Blank means QuickBooks either doesn't have this field populated for that customer, or isn't exposing it via the API — try re-syncing customers from Settings if you've just added it in QuickBooks."); },
+        cell:function(e){ return dunCell(e.dun); }
       };
       case 'actions': return {
         gridTemplate:'var(--cw-actions)',
@@ -9860,7 +9899,13 @@ async function qbSyncCustomers(){
     if(status) status.textContent='Sync failed: '+(result.needsReconnect?'QuickBooks connection expired — reconnect from the Items tab.':result.error);
     return;
   }
-  if(status) status.textContent=result.count+' customer'+(result.count!==1?'s':'')+' synced.';
+  if(status){
+    status.textContent=result.count+' customer'+(result.count!==1?'s':'')+' synced. '
+      +(result.withDunCount>0
+        ? result.withDunCount+' of '+result.count+' had a "Dun#"-like custom field come through from QuickBooks — that\'s now showing in the Dun# column on the Customer Payments report.'
+        : 'No "Dun#"-like custom field came through for any customer (0 of '+result.count+') — either it isn\'t set on these customers in QuickBooks, or it isn\'t exposed via this API (same limitation Sales Rep has). The Dun# column will just show blank until that\'s resolved.');
+    status.style.color=result.withDunCount>0?'#0f6e40':'#b8460b';
+  }
   renderCustomersPanel();
 }
 

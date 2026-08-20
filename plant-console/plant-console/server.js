@@ -1614,6 +1614,28 @@ const server = http.createServer(async (req, res) => {
           }
           for (const id of cfTombstoned) delete mergedCf[id];
           incoming.cfScheduledDates = mergedCf;
+          // CRITICAL — confirmed live (Aug 2026) this was the actual cause
+          // of a schedule reverting minutes after successfully saving, with
+          // no error anywhere: deletedCfBillIds is meant to be written ONLY
+          // by the two dedicated endpoints below (delete-cf-schedule adds a
+          // tombstone; save-cf-schedule removes its own billId's tombstone
+          // when it's rescheduled). But this general endpoint used to fall
+          // through to `Object.assign({}, current, incoming)` further down
+          // with incoming.deletedCfBillIds left as whatever the PUSHING
+          // DEVICE happened to have locally — so if that device's own
+          // client-side copy still listed a bill as deleted (e.g. it hadn't
+          // refreshed since that bill was legitimately rescheduled
+          // elsewhere), its next routine full-snapshot save — even for
+          // something completely unrelated — would silently reinstate that
+          // stale tombstone here. The very next sync from ANY device would
+          // then see the bill in deletedCfBillIds and delete its
+          // cfScheduledDates entry all over again in the loop just above —
+          // "I scheduled it and it came back later" with no failed request
+          // anywhere, because nothing failed; a stale tombstone just got
+          // resurrected by an unrelated save. Always keep the SERVER's own
+          // current tombstone list here — never adopt a client's copy of it
+          // through this generic merge.
+          incoming.deletedCfBillIds = Array.from(cfTombstoned);
         }
         // Merge: only overwrite the keys actually sent, so saving e.g. just
         // "users" never wipes out items/transactions/storages.

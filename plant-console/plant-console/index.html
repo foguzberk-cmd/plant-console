@@ -4784,9 +4784,37 @@ var _cfScheduledDates=(function(){
   });
   return raw;
 })();
+// Confirmed live (Aug 2026): serializing ONLY the bulk "Delete selected"
+// button's own loop wasn't enough — clicking several individual 🗑 icons
+// on separate rows in quick succession (a completely normal, common thing
+// to do when cleaning up a long list of duplicates) hits the exact same
+// race, because each click independently calls _cfSaveScheduled with no
+// awareness of any other in-flight save for that same bill. The fix
+// belongs here, at the source, so it protects every caller automatically:
+// a per-billId queue of promises. Each save for a given bill waits for
+// whatever save is already in flight for THAT bill to finish first, then
+// runs. Saves for DIFFERENT bills are completely unaffected and still run
+// concurrently — this only ever forces ordering between two saves that
+// would otherwise race for the same bill's record.
+var _cfSaveQueues={};
 function _cfSaveScheduled(billId){
   localStorage.setItem('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates));
   if(billId){
+    var prevInQueue=_cfSaveQueues[billId]||Promise.resolve();
+    var thisSave=prevInQueue.then(function(){ return _cfSaveScheduledNow(billId); },function(){ return _cfSaveScheduledNow(billId); });
+    _cfSaveQueues[billId]=thisSave;
+    return thisSave;
+  } else {
+    // No specific bill given (a batch operation touched several at once,
+    // e.g. reconciliation) — save every currently-present record
+    // individually through the same fast path (each still goes through its
+    // own per-bill queue above).
+    return Promise.all(Object.keys(_cfScheduledDates).map(function(id){ return _cfSaveScheduled(id); }));
+  }
+}
+// The actual save logic, run only once whatever was previously queued for
+// this exact billId has finished — see _cfSaveScheduled above.
+function _cfSaveScheduledNow(billId){
     // Fast path: save just this one bill's record through its own
     // dedicated endpoint, instead of bundling it into the entire app
     // snapshot (items, transactions, everything). That full-snapshot push
@@ -4865,12 +4893,6 @@ function _cfSaveScheduled(billId){
         body:JSON.stringify({billId:billId})
       }).catch(function(e){ console.error('Cash Flow delete-schedule sync failed:',e); });
     }
-  } else {
-    // No specific bill given (a batch operation touched several at once,
-    // e.g. reconciliation) — save every currently-present record
-    // individually through the same fast path.
-    return Promise.all(Object.keys(_cfScheduledDates).map(function(id){ return _cfSaveScheduled(id); }));
-  }
 }
 
 // How much of a bill's balance is still ACTIVELY committed (Scheduled,

@@ -4797,13 +4797,21 @@ var _cfScheduledDates=(function(){
 // concurrently — this only ever forces ordering between two saves that
 // would otherwise race for the same bill's record.
 var _cfSaveQueues={};
+// Runs fn (an async operation for this specific billId) only after
+// whatever was previously queued for that SAME billId has settled — used
+// by both _cfSaveScheduled and the dedicated split-delete call below, so a
+// save and a delete for the same bill can never race each other either,
+// not just two saves.
+function _cfEnqueueForBill(billId,fn){
+  var prevInQueue=_cfSaveQueues[billId]||Promise.resolve();
+  var thisOp=prevInQueue.then(fn,fn);
+  _cfSaveQueues[billId]=thisOp;
+  return thisOp;
+}
 function _cfSaveScheduled(billId){
   localStorage.setItem('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates));
   if(billId){
-    var prevInQueue=_cfSaveQueues[billId]||Promise.resolve();
-    var thisSave=prevInQueue.then(function(){ return _cfSaveScheduledNow(billId); },function(){ return _cfSaveScheduledNow(billId); });
-    _cfSaveQueues[billId]=thisSave;
-    return thisSave;
+    return _cfEnqueueForBill(billId,function(){ return _cfSaveScheduledNow(billId); });
   } else {
     // No specific bill given (a batch operation touched several at once,
     // e.g. reconciliation) — save every currently-present record
@@ -4811,6 +4819,28 @@ function _cfSaveScheduled(billId){
     // own per-bill queue above).
     return Promise.all(Object.keys(_cfScheduledDates).map(function(id){ return _cfSaveScheduled(id); }));
   }
+}
+// Dedicated split delete — see /api/data/delete-cf-split. CRITICAL:
+// deleting a split by re-saving the record via _cfSaveScheduled (with that
+// split simply left out) never actually worked, races or not — the
+// server's save-cf-schedule merge unions splits from its current copy with
+// whatever's sent, and has no way to tell "this split is missing because it
+// was deleted" apart from "missing because this client's copy is just
+// incomplete." Only an explicit tombstone (this endpoint) can represent
+// deletion; a plain resave cannot, no matter how carefully it's sequenced.
+function _cfDeleteSplitOnServer(billId,splitId){
+  return _cfEnqueueForBill(billId,function(){
+    return fetch(window.location.origin+'/api/data/delete-cf-split',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({billId:billId,splitId:splitId})
+    }).then(function(resp){
+      if(!resp.ok) throw new Error('Server returned '+resp.status);
+    }).catch(function(e){
+      console.error('Cash Flow delete-split sync failed:',e);
+      var statusEl=document.getElementById('cf-status');
+      if(statusEl){ statusEl.textContent='Warning: could not sync this deletion to the server ('+(e&&e.message?e.message:e)+') — it may reappear until this succeeds. Try again, or check that the latest server.js is deployed.'; statusEl.style.color='#c0392b'; }
+    });
+  });
 }
 // The actual save logic, run only once whatever was previously queued for
 // this exact billId has finished — see _cfSaveScheduled above.
@@ -5405,14 +5435,42 @@ function removeCFSplit(billId,splitId){
   if(!removedSplit) return Promise.resolve();
   rec.splits=rec.splits.filter(function(s){return s.id!==splitId;});
   var wholeRecordDeleted=false;
-  if(!rec.splits.length){ delete _cfScheduledDates[billId]; _cfMarkDeleted(billId); wholeRecordDeleted=true; }
-  var saved=_cfSaveScheduled(billId);
+  if(!rec.splits.length){
+    delete _cfScheduledDates[billId];
+    _cfMarkDeleted(billId); // whole-bill tombstone path — unaffected by this change
+    wholeRecordDeleted=true;
+  }
+  localStorage.setItem('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates));
+  // CRITICAL: this used to call _cfSaveScheduled(billId) here — a resave of
+  // the whole record with this one split left out. That NEVER actually
+  // deleted anything server-side (see the long comment on
+  // _cfDeleteSplitOnServer / /api/data/delete-cf-split): the server's
+  // save-cf-schedule merge unions splits from its own current copy with
+  // whatever's sent, so a split simply missing from the payload gets added
+  // right back in by that same merge, on the very call meant to remove it.
+  // Only the dedicated tombstone endpoint can actually make a delete stick,
+  // for a whole-record deletion (_cfMarkDeleted, above) or for one split
+  // out of several (here).
+  var saved=wholeRecordDeleted?Promise.resolve():_cfDeleteSplitOnServer(billId,splitId);
   renderCashFlowReport();
   _cfShowUndoToast(
     'Deleted '+(recSnapshot.vendor||'this vendor')+' #'+(recSnapshot.docNum||'')+' — '+_cfMoney(removedSplit.amount),
     function(){
       if(wholeRecordDeleted) delete _recentlyDeletedCfBillIds[billId]; // don't let the delete-guard immediately re-hide what we're restoring
-      _cfScheduledDates[billId]=recSnapshot;
+      // The deleted split's OLD id is now permanently tombstoned server-side
+      // (by design — that's what makes the delete actually stick), so
+      // restoring it under that same id would just get silently dropped
+      // again by save-cf-schedule's tombstone check. Give it back its
+      // other fields but a FRESH id instead — a tombstone can never
+      // collide with an id that didn't exist yet when it was written.
+      var restored=JSON.parse(JSON.stringify(recSnapshot));
+      restored.splits=(restored.splits||[]).map(function(sp){
+        if(sp && sp.id===splitId){
+          return Object.assign({},sp,{id:Date.now().toString(36)+Math.random().toString(36).slice(2,6)});
+        }
+        return sp;
+      });
+      _cfScheduledDates[billId]=restored;
       _cfSaveScheduled(billId);
       renderCashFlowReport();
     }

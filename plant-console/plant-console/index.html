@@ -4948,6 +4948,37 @@ function _cfAddSplit(billId,date,amount){
     }
     return;
   }
+  // Confirmed live (Aug 2026): this is exactly how the Mecca Halal-style
+  // duplicates keep happening, including a fresh case diagnosed this same
+  // day. Every retry after something LOOKED like it hadn't taken (a stale
+  // screen, a background sync landing at a bad moment, genuine confusion
+  // about whether the previous attempt worked) pushes a brand new split —
+  // there was never anything here to recognize "this is the same person
+  // re-doing the same schedule" versus "a second, deliberate, additional
+  // payment." If several of those accumulate and later all get swept into
+  // Paid by the automatic reconciliation pass at once, the result is
+  // several IDENTICAL Paid entries for one bill, individually consistent
+  // and invisible to the amount-mismatch check in
+  // findLikelyBadPaidEntries() (see the duplicate-detection pass added
+  // there alongside this fix).
+  //
+  // The safe, narrow case to auto-collapse: exactly ONE existing unpaid
+  // split that hasn't been initiated yet (no Approve/In-Process action has
+  // touched it), being re-scheduled for the exact same amount. That's the
+  // single-date-input flow's normal shape (it always passes the bill's
+  // full remaining balance), and there's no ambiguity about intent — just
+  // update that split's date instead of adding a second one. Multiple
+  // existing unpaid splits, or one that's already been initiated, is left
+  // alone here (falls through to a normal new split below) since collapsing
+  // those cases risks silently altering something the person is actively
+  // relying on being distinct — Partial's intentionally-multiple-amounts
+  // flow in particular needs to keep behaving exactly as before.
+  if(unpaidSplits.length===1 && !unpaidSplits[0].initiated && Math.abs(Number(unpaidSplits[0].amount||0)-Math.round(Number(amount)*100)/100)<0.01){
+    unpaidSplits[0].date=date;
+    unpaidSplits[0].at=new Date().toISOString();
+    _cfSaveScheduled(billId);
+    return;
+  }
   prior.splits.push({
     id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),
     date:date, amount:Math.round(Number(amount)*100)/100,
@@ -6182,16 +6213,50 @@ window.deleteCFPaidSelected=deleteCFPaidSelected;
 // than leaving some checked-but-hidden inside a collapsed week.
 function findLikelyBadPaidEntries(){
   var mismatches=[];
+  var seenKeys={}; // dedupe if a split somehow matches both checks below
   Object.keys(_cfScheduledDates).forEach(function(billId){
     var rec=_cfScheduledDates[billId];
-    (rec.splits||[]).forEach(function(split){
-      if(split.paid && Math.abs(Number(split.paid.amount||0)-Number(split.amount||0))>0.01){
-        mismatches.push({billId:billId,splitId:split.id,vendor:rec.vendor,docNum:rec.docNum,amount:split.amount,paidAmount:split.paid.amount});
+    var paidSplits=(rec.splits||[]).filter(function(s){ return s.paid; });
+    // Check 1: a split's confirmed-paid amount doesn't match what was
+    // actually scheduled — the pattern from an old, now-disabled bug.
+    paidSplits.forEach(function(split){
+      if(Math.abs(Number(split.paid.amount||0)-Number(split.amount||0))>0.01){
+        var key=billId+'|'+split.id;
+        if(!seenKeys[key]){ seenKeys[key]=true; mismatches.push({billId:billId,splitId:split.id,vendor:rec.vendor,docNum:rec.docNum,amount:split.amount,paidAmount:split.paid.amount,reason:'amount mismatch'}); }
       }
+    });
+    // Check 2: multiple Paid splits on the SAME bill for the exact same
+    // amount. Confirmed live (Aug 2026): repeatedly retrying a schedule
+    // that appeared to "bounce back" doesn't update one split — every
+    // attempt is a genuinely NEW split, since the code has no way to know
+    // a retry is meant to replace a previous attempt rather than add a
+    // second, unrelated payment. If those accumulate and later all get
+    // swept into Paid by the automatic reconciliation pass, the result is
+    // several IDENTICAL Paid entries for one bill — each individually
+    // consistent (so Check 1 above misses it entirely), but collectively
+    // meaning the same amount was "paid" many times over on one bill,
+    // which is never legitimate. Group by amount (rounded to the cent) and
+    // flag every split past the first — the assumption being the earliest
+    // one (by its `at` timestamp) is the real payment and the rest are
+    // duplicates, though this is a starting point for review, not a
+    // verdict — always confirm against QuickBooks before deleting.
+    var byAmount={};
+    paidSplits.forEach(function(split){
+      var amtKey=Math.round(Number(split.amount||0)*100);
+      (byAmount[amtKey]=byAmount[amtKey]||[]).push(split);
+    });
+    Object.keys(byAmount).forEach(function(amtKey){
+      var group=byAmount[amtKey];
+      if(group.length<2) return;
+      group.sort(function(a,b){ return (a.paid.at||'').localeCompare(b.paid.at||''); });
+      group.slice(1).forEach(function(split){
+        var key=billId+'|'+split.id;
+        if(!seenKeys[key]){ seenKeys[key]=true; mismatches.push({billId:billId,splitId:split.id,vendor:rec.vendor,docNum:rec.docNum,amount:split.amount,paidAmount:split.paid.amount,reason:'duplicate — '+group.length+' Paid entries of '+_cfMoney(split.amount)+' on this one bill'}); }
+      });
     });
   });
   if(!mismatches.length){
-    alert('No mismatched Paid entries found — every entry currently marked Paid matches its own scheduled amount.');
+    alert('No mismatched or duplicate Paid entries found — every entry currently marked Paid matches its own scheduled amount, and no bill has more than one Paid entry of the same amount.');
     return;
   }
   var searchEl=document.getElementById('cf-search');
@@ -6212,10 +6277,10 @@ function findLikelyBadPaidEntries(){
     if(paidSectionEl) paidSectionEl.scrollIntoView({behavior:'smooth',block:'start'});
     var summary='Found and checked '+foundCount+' likely-bad entr'+(foundCount===1?'y':'ies')+':\n\n'
       +mismatches.slice(0,15).map(function(m){
-        return '• '+(m.vendor||'Unknown vendor')+' #'+(m.docNum||'')+' — scheduled '+_cfMoney(m.amount)+', but shows '+_cfMoney(m.paidAmount)+' paid';
+        return '• '+(m.vendor||'Unknown vendor')+' #'+(m.docNum||'')+' — '+m.reason;
       }).join('\n')
       +(mismatches.length>15?'\n…and '+(mismatches.length-15)+' more':'')
-      +'\n\nThey\'re checked in the Paid table below (you may need to scroll to see all of them, especially in a collapsed week). Review them, then click "🗑 Delete selected" in the yellow bar above the table.';
+      +'\n\nThey\'re checked in the Paid table below (you may need to scroll to see all of them, especially in a collapsed week). For duplicates, the EARLIEST entry on each bill was left unchecked (assumed to be the real payment) — double check that assumption against QuickBooks before deleting. Review, then click "🗑 Delete selected" in the yellow bar above the table.';
     alert(summary);
   },50);
 }

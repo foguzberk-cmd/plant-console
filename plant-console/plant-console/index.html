@@ -6076,7 +6076,7 @@ function renderInProcessPaymentsSection(){
         var vName=row.vendor||'No vendor on file';
         var bal=Number(split.amount||0);
         var whenStr=split.inProcess.at?new Date(split.inProcess.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
-        var methodLabel=split.inProcess.method==='wire'?'🏦 Wire':('📝 Check'+(split.inProcess.checkNumber?' #'+esc(split.inProcess.checkNumber):''));
+        var methodLabel=split.inProcess.method==='wire'?'🏦 Wire':split.inProcess.method==='zelle'?'💸 Zelle':('📝 Check'+(split.inProcess.checkNumber?' #'+esc(split.inProcess.checkNumber):''));
         html+='<tr class="'+rowClass+'" style="display:'+(weekIsCollapsed?'none':'table-row')+'">'
           +'<td id="cf-datecell-'+billId+'-'+split.id+'" style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(fmtDateUS(dateKey))
             +(split.edited?' <span title="Edited by '+esc(split.edited.by)+(split.edited.at?' — '+esc(new Date(split.edited.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})):'')+'" style="font-size:11px;color:#8a6d1a;font-style:italic;cursor:help">(edited)</span>':'')
@@ -6419,6 +6419,7 @@ function startCFPaymentProcess(billId,splitId){
     +'<div id="cfProcessMethodChoice" style="display:flex;gap:10px;margin-bottom:14px">'
       +'<button class="btn" onclick="cfProcessShowCheckNumber()" style="flex:1;padding:16px 8px;font-size:14px">📝<br>Check</button>'
       +'<button class="btn" onclick="cfProcessConfirm(\''+esc(billId)+'\',\''+esc(splitId)+'\',\'wire\')" style="flex:1;padding:16px 8px;font-size:14px">🏦<br>Wire</button>'
+      +'<button class="btn" onclick="cfProcessConfirm(\''+esc(billId)+'\',\''+esc(splitId)+'\',\'zelle\')" style="flex:1;padding:16px 8px;font-size:14px">💸<br>Zelle</button>'
     +'</div>'
     +'<div id="cfProcessCheckNumberRow" style="display:none;margin-bottom:14px">'
       +'<label style="display:block;font-size:12px;color:var(--muted);margin-bottom:5px">Check #</label>'

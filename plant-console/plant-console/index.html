@@ -4810,7 +4810,17 @@ function _cfSaveScheduled(billId){
       delete _recentlyDeletedCfBillIds[billId];
       _recentlySavedCfScheduledDates[billId]=JSON.parse(JSON.stringify(rec));
       var fallback=setTimeout(function(){ delete _recentlySavedCfScheduledDates[billId]; },20000);
-      fetch(window.location.origin+'/api/data/save-cf-schedule',{
+      // Returned so callers that fire several saves for the SAME bill in a
+      // row (e.g. bulk-deleting multiple Paid entries on one bill) can
+      // await each one before starting the next — confirmed live (Aug
+      // 2026) that firing them all at once with no ordering guarantee lets
+      // a slower, earlier request land on the server AFTER a faster, later
+      // one, and since the split-level merge unions splits from both sides
+      // (it has no way to represent "this specific split was just
+      // deleted"), that stale later-arriving request can resurrect splits
+      // that were already correctly removed. Serializing calls closes that
+      // gap without needing a whole new per-split tombstone system.
+      return fetch(window.location.origin+'/api/data/save-cf-schedule',{
         method:'POST', headers:{'Content-Type':'application/json'},
         body:JSON.stringify({billId:billId, record:rec})
       }).then(function(resp){
@@ -4850,7 +4860,7 @@ function _cfSaveScheduled(billId){
       // FUTURE code path that clears a record without going through
       // _cfMarkDeleted first; deleting an already-tombstoned billId twice
       // is a no-op on the server, so this can never cause harm, only help.
-      fetch(window.location.origin+'/api/data/delete-cf-schedule',{
+      return fetch(window.location.origin+'/api/data/delete-cf-schedule',{
         method:'POST', headers:{'Content-Type':'application/json'},
         body:JSON.stringify({billId:billId})
       }).catch(function(e){ console.error('Cash Flow delete-schedule sync failed:',e); });
@@ -4859,7 +4869,7 @@ function _cfSaveScheduled(billId){
     // No specific bill given (a batch operation touched several at once,
     // e.g. reconciliation) — save every currently-present record
     // individually through the same fast path.
-    Object.keys(_cfScheduledDates).forEach(function(id){ _cfSaveScheduled(id); });
+    return Promise.all(Object.keys(_cfScheduledDates).map(function(id){ return _cfSaveScheduled(id); }));
   }
 }
 
@@ -5367,14 +5377,14 @@ window.markCFPaidManually=markCFPaidManually;
 // wrong 🗑 among a long list of similar-looking rows.
 function removeCFSplit(billId,splitId){
   var rec=_cfScheduledDates[billId];
-  if(!rec) return;
+  if(!rec) return Promise.resolve();
   var recSnapshot=JSON.parse(JSON.stringify(rec)); // full prior state, for undo
   var removedSplit=rec.splits.find(function(s){return s.id===splitId;});
-  if(!removedSplit) return;
+  if(!removedSplit) return Promise.resolve();
   rec.splits=rec.splits.filter(function(s){return s.id!==splitId;});
   var wholeRecordDeleted=false;
   if(!rec.splits.length){ delete _cfScheduledDates[billId]; _cfMarkDeleted(billId); wholeRecordDeleted=true; }
-  _cfSaveScheduled(billId);
+  var saved=_cfSaveScheduled(billId);
   renderCashFlowReport();
   _cfShowUndoToast(
     'Deleted '+(recSnapshot.vendor||'this vendor')+' #'+(recSnapshot.docNum||'')+' — '+_cfMoney(removedSplit.amount),
@@ -5385,6 +5395,7 @@ function removeCFSplit(billId,splitId){
       renderCashFlowReport();
     }
   );
+  return saved;
 }
 window.removeCFSplit=removeCFSplit;
 // A small bottom-of-screen toast with an "Undo" button, auto-dismissing
@@ -6075,7 +6086,7 @@ function renderPaidPaymentsSection(){
     +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<div id="cfPaidBulkBar" style="display:none;align-items:center;gap:10px;padding:8px 10px;margin-bottom:8px;background:#fff3cd;border:1px solid #e0c56b;border-radius:8px;font-size:12.5px">'
       +'<span id="cfPaidBulkCount">0 selected</span>'
-      +'<button class="btn btn-sm" onclick="deleteCFPaidSelected()" style="color:#b8460b;font-weight:700">🗑 Delete selected</button>'
+      +'<button id="cfPaidDeleteSelectedBtn" class="btn btn-sm" onclick="deleteCFPaidSelected()" style="color:#b8460b;font-weight:700">🗑 Delete selected</button>'
       +'<button class="btn btn-sm" onclick="clearCFPaidSelection()">Clear selection</button>'
     +'</div>'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#f5f5f5;color:#000;border:1px solid #bbb">'
@@ -6188,13 +6199,36 @@ function clearCFPaidSelection(){
   updateCFPaidBulkBar();
 }
 window.clearCFPaidSelection=clearCFPaidSelection;
-function deleteCFPaidSelected(){
+var _cfPaidDeleteInProgress=false;
+async function deleteCFPaidSelected(){
+  if(_cfPaidDeleteInProgress) return; // the button gets rebuilt (and re-enabled) by each render inside the loop below — this stops a second click from starting an overlapping run
   var checked=Array.prototype.slice.call(document.querySelectorAll('.cf-paid-select:checked'));
   if(!checked.length) return;
   if(!confirm('Delete these '+checked.length+' Paid entr'+(checked.length===1?'y':'ies')+'? This can be undone individually right after (each shows its own Undo), but not as a batch — if you\'re not sure, cancel and review them a few at a time instead.')) return;
-  checked.forEach(function(cb){
-    removeCFSplit(cb.getAttribute('data-billid'),cb.getAttribute('data-splitid'));
-  });
+  // IMPORTANT — confirmed live (Aug 2026) this is what caused deletes to
+  // silently "revert": these used to all fire at once (a plain forEach
+  // with no waiting), which meant multiple overlapping save requests for
+  // the SAME bill (very much the normal case here — many duplicates on
+  // one bill is exactly why you're bulk-deleting) with no guarantee they'd
+  // reach the server in the order they were sent. The split-level merge
+  // unions splits from both sides rather than treating an absent split as
+  // "deleted" (there's no per-split tombstone, only a per-BILL one), so a
+  // slower, earlier request landing AFTER a faster, later one could
+  // resurrect splits the later one had already correctly removed. Awaiting
+  // each delete before starting the next guarantees they reach the server
+  // strictly in order, so there's never more than one in flight for the
+  // same bill at a time.
+  _cfPaidDeleteInProgress=true;
+  try{
+    for(var i=0;i<checked.length;i++){
+      var cb=checked[i];
+      await removeCFSplit(cb.getAttribute('data-billid'),cb.getAttribute('data-splitid'));
+      var btn=document.getElementById('cfPaidDeleteSelectedBtn'); // re-fetched — removeCFSplit's render replaced the old node
+      if(btn){ btn.disabled=true; btn.textContent='Deleting… ('+(i+1)+'/'+checked.length+')'; }
+    }
+  } finally {
+    _cfPaidDeleteInProgress=false;
+  }
   // removeCFSplit re-renders (and re-builds the checkboxes) on every call,
   // so there's nothing left to select afterward — no explicit bar-hide
   // needed here.

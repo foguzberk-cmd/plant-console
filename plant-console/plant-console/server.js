@@ -52,7 +52,7 @@ const CASHFLOW_CACHE_FILE = path.join(DATA_DIR, 'cashflow-report-cache.json');
 // Same idea, for the Checks tab's raw QuickBooks Payment pull — see the
 // long comment on /api/checks-report-cache below for why this was missing.
 const CHECKS_CACHE_FILE = path.join(DATA_DIR, 'checks-report-cache.json');
-const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [] };
+const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [], deletedCfSplitIds: [] };
 
 // ===== PIN HASHING =====
 // PINs are hashed with scrypt before they ever touch disk. Any user record
@@ -1596,6 +1596,21 @@ const server = http.createServer(async (req, res) => {
         // that still thinks it's unpaid.
         if (incoming.cfScheduledDates && typeof incoming.cfScheduledDates === 'object' && !Array.isArray(incoming.cfScheduledDates)) {
           const cfTombstoned = new Set(Array.isArray(current.deletedCfBillIds) ? current.deletedCfBillIds : []);
+          // Split-level tombstones — confirmed live (Aug 2026) that
+          // whole-bill tombstoning alone isn't enough. Deleting ONE
+          // duplicate split out of several on a bill that still has other
+          // splits left doesn't tombstone the bill at all (correctly —
+          // the bill is still legitimately scheduled). But that leaves
+          // that one deleted split with NO protection whatsoever: any
+          // other device (a second terminal, another open tab, anything)
+          // still holding an older copy of this bill's record — one that
+          // still includes the split that was just deleted — will
+          // resurrect it the moment IT does its own routine full-snapshot
+          // save, via the exact same union-merge logic below that's
+          // otherwise correct and necessary. Tombstoning "billId::splitId"
+          // pairs closes that gap the same way deletedCfBillIds closes it
+          // for whole records.
+          const cfSplitTombstoned = new Set(Array.isArray(current.deletedCfSplitIds) ? current.deletedCfSplitIds : []);
           const currentCf = (current.cfScheduledDates && typeof current.cfScheduledDates === 'object' && !Array.isArray(current.cfScheduledDates)) ? current.cfScheduledDates : {};
           const mergedCf = Object.assign({}, currentCf);
           for (const billId of Object.keys(incoming.cfScheduledDates)) {
@@ -1610,6 +1625,9 @@ const server = http.createServer(async (req, res) => {
               if (existing && existing.paid && !sp.paid) return; // Paid is one-way; never let a stale copy revert it
               splitsById.set(sp.id, sp);
             });
+            for (const splitId of Array.from(splitsById.keys())) {
+              if (cfSplitTombstoned.has(billId + '::' + splitId)) splitsById.delete(splitId);
+            }
             mergedCf[billId] = Object.assign({}, curRec, incRec, { splits: Array.from(splitsById.values()) });
           }
           for (const id of cfTombstoned) delete mergedCf[id];
@@ -1634,8 +1652,10 @@ const server = http.createServer(async (req, res) => {
           // anywhere, because nothing failed; a stale tombstone just got
           // resurrected by an unrelated save. Always keep the SERVER's own
           // current tombstone list here — never adopt a client's copy of it
-          // through this generic merge.
+          // through this generic merge. Same reasoning for the new
+          // split-level tombstone list.
           incoming.deletedCfBillIds = Array.from(cfTombstoned);
+          incoming.deletedCfSplitIds = Array.from(cfSplitTombstoned);
         }
         // Merge: only overwrite the keys actually sent, so saving e.g. just
         // "users" never wipes out items/transactions/storages.
@@ -1719,6 +1739,64 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Dedicated delete for ONE split within a bill's record — separate from
+  // whole-bill delete-cf-schedule above, and for a related but distinct
+  // reason. CRITICAL FIX (confirmed live, Aug 2026): deleting a split by
+  // re-saving the bill's record via save-cf-schedule (below) with that
+  // split simply left out of the array NEVER actually worked, with zero
+  // races or multiple devices required. save-cf-schedule's merge unions
+  // splits from the server's current copy with whatever the client sent —
+  // which is correct and necessary for its actual purpose (another
+  // terminal adding a split this client doesn't know about yet), but it
+  // has no way to tell "this split is absent because it was deleted" apart
+  // from "this split is absent because this client's local copy is just
+  // incomplete/stale." Both look identical: a split present on the server
+  // but missing from what was sent. Every single delete — from any device,
+  // one at a time, with no race whatsoever — was silently undone by that
+  // same merge on the very save call that was trying to perform it. Only
+  // an explicit tombstone can disambiguate "deleted" from "unknown," which
+  // is exactly what this endpoint records.
+  if (url === '/api/data/delete-cf-split' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      if (!body || !body.billId || !body.splitId) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+        res.end(JSON.stringify({ error: 'Missing billId or splitId' }));
+        return;
+      }
+      let wholeRecordDeleted = false;
+      await updateSharedData(async (current) => {
+        const cfScheduledDates = Object.assign({}, current.cfScheduledDates || {});
+        const rec = cfScheduledDates[body.billId];
+        const splitTombstones = Array.isArray(current.deletedCfSplitIds) ? current.deletedCfSplitIds.slice() : [];
+        const splitKey = body.billId + '::' + body.splitId;
+        if (!splitTombstones.includes(splitKey)) splitTombstones.push(splitKey);
+        const cappedSplitTombstones = splitTombstones.length > 20000 ? splitTombstones.slice(splitTombstones.length - 20000) : splitTombstones;
+        let billTombstones = Array.isArray(current.deletedCfBillIds) ? current.deletedCfBillIds.slice() : [];
+        if (rec && Array.isArray(rec.splits)) {
+          const remaining = rec.splits.filter(sp => !sp || sp.id !== body.splitId);
+          if (remaining.length) {
+            cfScheduledDates[body.billId] = Object.assign({}, rec, { splits: remaining });
+          } else {
+            delete cfScheduledDates[body.billId];
+            wholeRecordDeleted = true;
+            if (!billTombstones.includes(body.billId)) billTombstones.push(body.billId);
+            billTombstones = billTombstones.length > 5000 ? billTombstones.slice(billTombstones.length - 5000) : billTombstones;
+          }
+        }
+        return { data: Object.assign({}, current, { cfScheduledDates, deletedCfSplitIds: cappedSplitTombstones, deletedCfBillIds: billTombstones }) };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, wholeRecordDeleted }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
   // Dedicated, atomic SAVE for one Cash Flow bill's scheduled/approved
   // payment record — separate from the general full-snapshot POST for the
   // same reason the delete endpoint above is separate: that generic POST
@@ -1732,6 +1810,12 @@ const server = http.createServer(async (req, res) => {
   // how much other data this business has accumulated. Also clears this
   // bill's id from the tombstone list, since actively saving a record for
   // it means it's no longer deleted.
+  //
+  // This endpoint is for ADDING or UPDATING splits only (scheduling,
+  // approving, marking paid) — NOT for deleting one. Deletion goes through
+  // delete-cf-split above instead, which can express "this split is gone"
+  // as an explicit tombstone; this endpoint's union-merge fundamentally
+  // cannot represent that (see the long comment on delete-cf-split).
   if (url === '/api/data/save-cf-schedule' && req.method === 'POST') {
     if (!requireAuth(req, res)) return;
     try {
@@ -1747,6 +1831,7 @@ const server = http.createServer(async (req, res) => {
         const cfScheduledDates = Object.assign({}, currentCf);
         const curRec = currentCf[body.billId];
         const incRec = body.record;
+        const splitTombstones = new Set(Array.isArray(current.deletedCfSplitIds) ? current.deletedCfSplitIds : []);
         // Same split-level merge as the general endpoint above, and for the
         // same reason: this device's local record was built from whatever
         // it last pulled, which may already be stale by the time this
@@ -1762,6 +1847,9 @@ const server = http.createServer(async (req, res) => {
             if (existing && existing.paid && !sp.paid) return; // Paid is one-way
             splitsById.set(sp.id, sp);
           });
+          for (const splitId of Array.from(splitsById.keys())) {
+            if (splitTombstones.has(body.billId + '::' + splitId)) splitsById.delete(splitId);
+          }
           cfScheduledDates[body.billId] = Object.assign({}, curRec, incRec, { splits: Array.from(splitsById.values()) });
         } else {
           cfScheduledDates[body.billId] = incRec;

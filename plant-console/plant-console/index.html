@@ -411,7 +411,7 @@
         <div><h1>Plant Console</h1><span>Inventory &amp; Operations</span></div>
       </div>
       <nav id="nav" aria-label="Sections"><div class="nav-kicker">Menu</div></nav>
-      <div id="railChat" style="flex:1;min-height:0;display:flex;flex-direction:column;border-top:1px solid rgba(255,255,255,.07);font-family:'Courier New',monospace"></div>
+      <div id="railChat" style="flex:1;min-height:0;display:flex;flex-direction:column;background:rgba(46,124,139,.12);border-top:2px solid var(--cold);font-family:'Courier New',monospace"></div>
       <div class="rail-user">
         <div class="rail-avatar" id="railAvatar">?</div>
         <div class="rail-user-info">
@@ -2537,7 +2537,7 @@ var _chatInitialized=false;
 // deterministically per name (same person always gets the same color,
 // without needing to store a color choice anywhere). Kept light enough to
 // read against the dark sidebar background.
-var _CHAT_NICK_COLORS=['#7fb2ff','#e79fe7','#8fd98f','#e0c168','#ff9e9e','#7fd6d6','#b39bff','#9fc9c9'];
+var _CHAT_NICK_COLORS=['#8ecbff','#ffb3ec','#a8f0a8','#ffd97a','#ff9e9e','#7fe6e6','#c9b3ff','#ffe066'];
 function _chatNickColor(name){
   var h=0; for(var i=0;i<name.length;i++) h=(h*31+name.charCodeAt(i))>>>0;
   return _CHAT_NICK_COLORS[h%_CHAT_NICK_COLORS.length];
@@ -2552,14 +2552,14 @@ function initRailChat(){
   var host=document.getElementById('railChat');
   if(!host) return;
   host.innerHTML=
-     '<div style="font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;color:var(--sb-dim);text-transform:uppercase;padding:10px 12px 4px;display:flex;align-items:center;justify-content:space-between">'
-      +'<span>#leader-meat-plant</span><span id="chatConnStatus" style="letter-spacing:0;text-transform:none">…</span>'
+     '<div style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:#fff;text-transform:uppercase;padding:8px 12px;background:var(--cold);display:flex;align-items:center;justify-content:space-between;font-weight:700">'
+      +'<span>#leader-meat-plant</span><span id="chatConnStatus" style="letter-spacing:0;text-transform:none;font-size:13px">…</span>'
     +'</div>'
-    +'<div id="chatLog" style="flex:1;min-height:0;overflow-y:auto;padding:2px 12px;font-size:11.5px;line-height:1.5;color:var(--sb-ink)"></div>'
-    +'<div id="chatOnlineLine" style="padding:2px 12px;font-size:10px;color:var(--sb-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>'
+    +'<div id="chatLog" style="flex:1;min-height:0;overflow-y:auto;padding:8px 12px;font-size:12px;line-height:1.6;color:#fff"></div>'
+    +'<div id="chatOnlineLine" style="padding:3px 12px;font-size:10.5px;color:#cfe8ee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>'
     +'<div style="padding:6px 10px 10px;display:flex;gap:5px">'
-      +'<input id="chatInput" type="text" placeholder="Message…" maxlength="2000" style="flex:1;min-width:0;font-family:\'Courier New\',monospace;font-size:11.5px;padding:5px 7px;border:1px solid rgba(255,255,255,.15);border-radius:5px;background:rgba(0,0,0,.25);color:#fff;outline:none" onkeydown="if(event.key===\'Enter\') sendChatMessage()"/>'
-      +'<button onclick="sendChatMessage()" title="Send" style="flex:0 0 auto;border:0;border-radius:5px;background:var(--cold,#2a7fff);color:#fff;padding:0 10px;cursor:pointer;font-size:12px">➤</button>'
+      +'<input id="chatInput" type="text" placeholder="Message…" maxlength="2000" style="flex:1;min-width:0;font-family:\'Courier New\',monospace;font-size:12px;padding:6px 8px;border:1.5px solid rgba(255,255,255,.35);border-radius:5px;background:rgba(0,0,0,.35);color:#fff;outline:none" onkeydown="if(event.key===\'Enter\') sendChatMessage()"/>'
+      +'<button onclick="sendChatMessage()" title="Send" style="flex:0 0 auto;border:0;border-radius:5px;background:#fff;color:var(--cold);padding:0 10px;cursor:pointer;font-size:13px;font-weight:700">➤</button>'
     +'</div>';
   _chatFetch(true);
   _chatPollTimer=setInterval(function(){ _chatFetch(false); },2500);
@@ -2597,7 +2597,7 @@ function _chatAppendMessage(m){
   var wasAtBottom=(log.scrollHeight-log.scrollTop-log.clientHeight)<40;
   var row=document.createElement('div');
   row.style.wordBreak='break-word';
-  row.innerHTML='<span style="color:var(--sb-dim)">'+_chatTimeStr(m.at)+'</span> '
+  row.innerHTML='<span style="color:#cfe8ee">'+_chatTimeStr(m.at)+'</span> '
     +'<span style="color:'+_chatNickColor(m.user||'?')+';font-weight:700">'+esc(m.user||'?')+':</span> '
     +'<span>'+esc(m.text||'')+'</span>';
   log.appendChild(row);

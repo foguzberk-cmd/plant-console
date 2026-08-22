@@ -634,7 +634,8 @@ const ICON={
   scalelog:'<path d="M3 6h18l-2 13a2 2 0 0 1-2 1.7H7a2 2 0 0 1-2-1.7L3 6z"/><path d="M3 6l1.5-3h15L21 6"/><path d="M9 11h6"/>',
   reports:'<path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/>',
   settings:'<circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
-  legal:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6M9 9h1"/>'
+  legal:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6M9 9h1"/>',
+  chat:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'
 };
 const TYPE_ICON={
   cold:'<path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>',
@@ -701,6 +702,7 @@ const SECTIONS=[
   {id:'transactions',label:'Transactions',kicker:'Movement',title:'Transactions',lede:'Receiving, production, internal transfers, and shipments — every movement of product in and out of the plant.'},
   {id:'scalelog',label:'Scale Log',kicker:'Production',title:'Scale Log',lede:'Print product labels and log every package scaled — date, time, product, and weight captured the moment a label is printed.'},
   {id:'reports',label:'Reports',kicker:'Insight',title:'Reports',lede:'On-hand summaries, throughput, and traceability rolled up by source, product class, and storage location.',empty:['No reports built yet.','Once items and transactions exist, summaries and breakdowns will appear here.']},
+  {id:'chat',label:'Chat',kicker:'Team',title:'Team Chat',lede:'Talk to everyone else using Plant Console right now.'},
   {id:'settings',label:'Settings',kicker:'Configuration',title:'Settings',lede:'Storage locations, users, and system configuration for the entire console.'},
   {id:'legal',label:'Legal Documents',kicker:'Compliance',title:'Legal Documents',lede:'Certificates, inspection records, HACCP plans, and licenses — stored, dated, and tracked for renewal.',empty:['No documents on file.','Upload and tag compliance records here to keep them in one place.']}
 ];
@@ -2460,6 +2462,7 @@ document.getElementById('loginPin').addEventListener('keydown',e=>{if(e.key==='E
 document.getElementById('loginEmail').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('loginPin').focus()});
 
 function logout(){
+  stopChatPoll();
   fetch('/api/logout',{method:'POST'}).catch(function(){});
   currentUser=null;
   document.getElementById('appShell').classList.remove('visible');
@@ -2494,6 +2497,7 @@ var currentSectionId=null;
 function select(id){
   var vp=SECTION_VIEW_PERM[id];
   if(vp && !hasViewPerm(vp)){ id='dashboard'; } // no nav item ever existed for this, but guard direct calls too
+  if(currentSectionId==='chat' && id!=='chat') stopChatPoll();
   currentSectionId=id;
   const s=SECTIONS.find(x=>x.id===id);
   document.querySelectorAll('.nav-item').forEach(n=>{
@@ -2508,6 +2512,7 @@ function select(id){
   else if(id==='scalelog') renderScaleLog();
   else if(id==='dashboard') renderDashboard();
   else if(id==='reports') renderReports();
+  else if(id==='chat') renderChatPage();
   else view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p><div class="empty"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICON[id]}</svg></div><div><h3>${s.empty[0]}</h3><p>${s.empty[1]}</p></div></div>`;
   view.focus({preventScroll:true});
   // The section above just rendered from whatever's already local/cached, so
@@ -2521,6 +2526,120 @@ function select(id){
 
 /* ===== DASHBOARD ===== */
 /* ===== REPORTS (balance-sheet style) ===== */
+/* ===== CHAT — deliberately old-school mIRC-styled ===== */
+var _chatPollTimer=null;
+var _chatLastId=0;
+var _chatOnline=[];
+// A small, stable set of classic IRC-client nick colors, picked
+// deterministically per name (same person always gets the same color,
+// without needing to store a color choice anywhere).
+var _CHAT_NICK_COLORS=['#0000CD','#8B008B','#006400','#B8860B','#8B0000','#008080','#4B0082','#2F4F4F'];
+function _chatNickColor(name){
+  var h=0; for(var i=0;i<name.length;i++) h=(h*31+name.charCodeAt(i))>>>0;
+  return _CHAT_NICK_COLORS[h%_CHAT_NICK_COLORS.length];
+}
+function _chatTimeStr(iso){
+  try{ return new Date(iso).toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
+  catch(e){ return ''; }
+}
+function renderChatPage(){
+  var s=SECTIONS.find(function(x){return x.id==='chat';});
+  view.innerHTML='<div class="eyebrow">'+s.kicker+'</div><h2>'+s.title+'</h2><p class="lede">'+s.lede+'</p>'
+    +'<div style="display:flex;gap:0;border:2px solid #7a7a7a;border-style:inset;height:520px;max-width:900px;font-family:\'Courier New\',monospace;background:#000;box-shadow:2px 2px 6px rgba(0,0,0,.35)">'
+      +'<div style="flex:1;display:flex;flex-direction:column;min-width:0;background:#fff">'
+        +'<div style="background:linear-gradient(#000080,#1084d0);color:#fff;font-weight:bold;font-size:13px;padding:4px 8px;font-family:Tahoma,Arial,sans-serif;display:flex;align-items:center;justify-content:space-between">'
+          +'<span>#leader-meat-plant — Plant Console Chat</span>'
+          +'<span id="chatConnStatus" style="font-weight:normal;font-size:11px;opacity:.85">connecting…</span>'
+        +'</div>'
+        +'<div id="chatLog" style="flex:1;overflow-y:auto;padding:6px 8px;font-size:13px;line-height:1.55;color:#000;background:#fff"></div>'
+        +'<div style="border-top:2px solid #7a7a7a;border-top-style:groove;padding:6px;background:#c0c0c0;display:flex;gap:6px">'
+          +'<span style="font-weight:bold;color:'+_chatNickColor((currentUser&&currentUser.name)||'')+';align-self:center;font-size:13px">&lt;'+esc((currentUser&&currentUser.name)||'you')+'&gt;</span>'
+          +'<input id="chatInput" type="text" placeholder="Type a message and hit Enter…" maxlength="2000" style="flex:1;font-family:\'Courier New\',monospace;font-size:13px;padding:4px 6px;border:2px inset #7a7a7a;outline:none" onkeydown="if(event.key===\'Enter\') sendChatMessage()"/>'
+          +'<button class="btn btn-primary btn-sm" onclick="sendChatMessage()" style="font-family:Tahoma,Arial,sans-serif">Send</button>'
+        +'</div>'
+      +'</div>'
+      +'<div style="width:150px;flex-shrink:0;background:#fff;border-left:2px solid #7a7a7a;border-left-style:groove;display:flex;flex-direction:column">'
+        +'<div style="background:#c0c0c0;font-weight:bold;font-size:11px;padding:4px 8px;font-family:Tahoma,Arial,sans-serif;border-bottom:1px solid #7a7a7a">Online</div>'
+        +'<div id="chatUserList" style="flex:1;overflow-y:auto;padding:4px 6px;font-size:12px;font-family:\'Courier New\',monospace"></div>'
+      +'</div>'
+    +'</div>';
+  _chatLastId=0;
+  document.getElementById('chatLog').innerHTML='';
+  _chatFetch(true);
+  if(_chatPollTimer) clearInterval(_chatPollTimer);
+  _chatPollTimer=setInterval(function(){ _chatFetch(false); },2500);
+  setTimeout(function(){ var inp=document.getElementById('chatInput'); if(inp) inp.focus(); },0);
+}
+function stopChatPoll(){
+  if(_chatPollTimer){ clearInterval(_chatPollTimer); _chatPollTimer=null; }
+}
+async function _chatFetch(isInitial){
+  var statusEl=document.getElementById('chatConnStatus');
+  try{
+    var url='/api/chat/messages'+(isInitial?'':'?afterId='+_chatLastId);
+    var res=await fetch(url,{cache:'no-store'});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    var data=await res.json();
+    if(statusEl){ statusEl.textContent='connected'; statusEl.style.color='#b6ffb6'; }
+    (data.messages||[]).forEach(function(m){ _chatAppendMessage(m); });
+    if(data.lastId) _chatLastId=data.lastId;
+    if(Array.isArray(data.online)){ _chatOnline=data.online; _chatRenderUserList(); }
+  }catch(e){
+    if(statusEl){ statusEl.textContent='disconnected — retrying…'; statusEl.style.color='#ffb6b6'; }
+  }
+}
+function _chatRenderUserList(){
+  var el=document.getElementById('chatUserList');
+  if(!el) return;
+  if(!_chatOnline.length){ el.innerHTML='<div style="color:#888;font-style:italic">nobody else right now</div>'; return; }
+  el.innerHTML=_chatOnline.map(function(name){
+    return '<div style="color:'+_chatNickColor(name)+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(name)+'">@'+esc(name)+'</div>';
+  }).join('');
+}
+function _chatAppendMessage(m){
+  var log=document.getElementById('chatLog');
+  if(!log) return;
+  var wasAtBottom=(log.scrollHeight-log.scrollTop-log.clientHeight)<40;
+  var row=document.createElement('div');
+  row.style.wordBreak='break-word';
+  row.innerHTML='<span style="color:#888">['+_chatTimeStr(m.at)+']</span> '
+    +'<span style="color:'+_chatNickColor(m.user||'?')+';font-weight:bold">&lt;'+esc(m.user||'?')+'&gt;</span> '
+    +'<span>'+esc(m.text||'')+'</span>';
+  log.appendChild(row);
+  if(wasAtBottom) log.scrollTop=log.scrollHeight;
+}
+async function sendChatMessage(){
+  var inp=document.getElementById('chatInput');
+  if(!inp) return;
+  var text=inp.value.trim();
+  if(!text) return;
+  inp.value='';
+  inp.disabled=true;
+  try{
+    var res=await fetch('/api/chat/send',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text:text})
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    var data=await res.json();
+    if(data.message){ _chatAppendMessage(data.message); if(data.message.id>_chatLastId) _chatLastId=data.message.id; }
+  }catch(e){
+    var log=document.getElementById('chatLog');
+    if(log){
+      var row=document.createElement('div');
+      row.style.color='#c0392b';
+      row.textContent='*** Message failed to send — check your connection and try again.';
+      log.appendChild(row);
+      log.scrollTop=log.scrollHeight;
+    }
+    inp.value=text; // give it back so nothing typed is lost
+  }finally{
+    inp.disabled=false;
+    inp.focus();
+  }
+}
+window.sendChatMessage=sendChatMessage;
+
 function renderReports(){
   const s=SECTIONS.find(x=>x.id==='reports');
   // Recompute balances first so physical-count differences (countedDiff) reflect

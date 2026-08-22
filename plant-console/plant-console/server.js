@@ -52,7 +52,7 @@ const CASHFLOW_CACHE_FILE = path.join(DATA_DIR, 'cashflow-report-cache.json');
 // Same idea, for the Checks tab's raw QuickBooks Payment pull — see the
 // long comment on /api/checks-report-cache below for why this was missing.
 const CHECKS_CACHE_FILE = path.join(DATA_DIR, 'checks-report-cache.json');
-const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [], deletedCfSplitIds: [] };
+const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [], deletedCfSplitIds: [], chatMessages: [] };
 
 // ===== PIN HASHING =====
 // PINs are hashed with scrypt before they ever touch disk. Any user record
@@ -1281,6 +1281,77 @@ const server = http.createServer(async (req, res) => {
   // pairs with the two endpoints above. A "dumb terminal" should re-read
   // this fresh whenever the Customers settings panel opens, rather than
   // trusting whatever copy is already sitting in memory from page load.
+  // ===== All-staff chat =====
+  // Deliberately its own tiny, dedicated read/write pair rather than part
+  // of the main /api/data snapshot: chat needs to be polled frequently
+  // (every few seconds) for it to feel "live," and bundling that into the
+  // full app snapshot would mean either polling the ENTIRE business's data
+  // every few seconds (wasteful, and re-triggers every quota/size concern
+  // already documented around that endpoint elsewhere in this file) or
+  // throttling chat down to match how often that heavier sync runs (not
+  // live at all). A plain cursor-based poll (?afterId=) keeps each request
+  // tiny regardless of how much chat history exists.
+  //
+  // The message's author is taken from the AUTHENTICATED SESSION
+  // (session.name), never from anything the client sends — otherwise
+  // anyone could type messages under someone else's name.
+  // In-memory only (deliberately not persisted) — presence is inherently
+  // "right now" information; it should reset to nothing on every server
+  // restart, not carry stale "online" users forward from before a deploy.
+  if (!global.__chatPresence) global.__chatPresence = new Map(); // name -> last-seen ms
+  if (url === '/api/chat/messages' && req.method === 'GET') {
+    const session = requireAuth(req, res);
+    if (!session) return;
+    try {
+      global.__chatPresence.set(session.name, Date.now());
+      const cutoff = Date.now() - 20000; // active within the last ~2 poll cycles
+      const online = Array.from(global.__chatPresence.entries()).filter(([, t]) => t >= cutoff).map(([name]) => name).sort();
+      const data = await readSharedData();
+      const all = Array.isArray(data.chatMessages) ? data.chatMessages : [];
+      const afterId = Number(queryParams.afterId || 0);
+      const messages = afterId ? all.filter(m => m.id > afterId) : all.slice(-200);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ messages, lastId: all.length ? all[all.length - 1].id : 0, online }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  if (url === '/api/chat/send' && req.method === 'POST') {
+    const session = requireAuth(req, res);
+    if (!session) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      const text = typeof body.text === 'string' ? body.text.trim().slice(0, 2000) : '';
+      if (!text) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+        res.end(JSON.stringify({ error: 'Empty message' }));
+        return;
+      }
+      let saved = null;
+      await updateSharedData(async (current) => {
+        const chatMessages = Array.isArray(current.chatMessages) ? current.chatMessages.slice() : [];
+        const nextId = (chatMessages.length ? chatMessages[chatMessages.length - 1].id : 0) + 1;
+        saved = { id: nextId, user: session.name, text, at: new Date().toISOString() };
+        chatMessages.push(saved);
+        // Cap history — this is live chatter, not a permanent record;
+        // nothing else in the app depends on old chat messages surviving
+        // forever, so an unbounded array here would just be a slow,
+        // silent memory/storage leak.
+        const capped = chatMessages.length > 500 ? chatMessages.slice(chatMessages.length - 500) : chatMessages;
+        return { data: Object.assign({}, current, { chatMessages: capped }) };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, message: saved }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
   if (url === '/api/customers' && req.method === 'GET') {
     if (!requireAuth(req, res)) return;
     const data = await readSharedData();

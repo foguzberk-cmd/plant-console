@@ -4504,16 +4504,20 @@ function renderCollectionReport(){
                   +'<span>#'+esc(d.docNumber)+' · '+esc(d.txnDate)+'</span>'
                   +'<span style="font-family:var(--mono);white-space:nowrap">'+money(d.totalAmt)+' → '+money(d.balance)+(d.appliedAfterTo>0.004?' + '+money(d.appliedAfterTo)+' paid-after-"To"':'')+' = <b>'+money(d.contribution)+'</b></span></div>';
               }).join('')
-            +'</div>'
-            +'<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Payments this period</div>')
+            +'</div>')
           : '')
         +(_collGroupMode==='customer' && entry.futurePaymentsDetail && entry.futurePaymentsDetail.length
-          ? ('<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Future Payments ('+entry.futurePaymentsDetail.length+') — dated after today, redirected here instead of inflating Ending Balance</div>'
-            +entry.futurePaymentsDetail.slice().sort(function(a,b){ return b.amount-a.amount; }).map(function(fd){
-              return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 16px 4px 40px;font-size:12px;border-bottom:1px dashed var(--line)">'
-                +'<span>#'+esc(fd.docNumber)+' · '+esc(fd.txnDate)+'</span>'
-                +'<span style="font-family:var(--mono);white-space:nowrap;color:#6a4c93">'+money(fd.amount)+'</span></div>';
-            }).join(''))
+          ? ('<div onclick="toggleReportRow(\''+rowId+'-future\')" style="cursor:pointer;display:flex;align-items:center;gap:6px;padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">'
+              +'<svg id="'+rowId+'-future-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
+              +'<span>Future Payments ('+entry.futurePaymentsDetail.length+') — dated after today, redirected here instead of inflating Ending Balance</span>'
+            +'</div>'
+            +'<div id="'+rowId+'-future" style="display:none">'
+              +entry.futurePaymentsDetail.slice().sort(function(a,b){ return b.amount-a.amount; }).map(function(fd){
+                return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 16px 4px 40px;font-size:12px;border-bottom:1px dashed var(--line)">'
+                  +'<span>#'+esc(fd.docNumber)+' · '+esc(fd.txnDate)+'</span>'
+                  +'<span style="font-family:var(--mono);white-space:nowrap;color:#6a4c93">'+money(fd.amount)+'</span></div>';
+              }).join('')
+            +'</div>')
           : '')
         +(_collGroupMode==='customer' && entry.undepositedFundsDetail && entry.undepositedFundsDetail.length
           ? ('<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Undeposited Funds ('+entry.undepositedFundsDetail.length+') — received and applied, not yet swept to the bank</div>'
@@ -4540,14 +4544,20 @@ function renderCollectionReport(){
                 +'<span>'+esc(cb.name)+(cb.unapplied>0?' <span style="color:#1565c0;font-size:11px">(+'+money(cb.unapplied)+' unapplied)</span>':'')+((cb.undepositedFunds||0)+(cb.futurePayments||0)>0?' <span style="color:#6a4c93;font-size:11px">(+'+money((cb.undepositedFunds||0)+(cb.futurePayments||0))+' undeposited/future)</span>':'')+'</span>'
                 +'<span style="font-family:var(--mono);white-space:nowrap;color:'+(cb.balance>0?'#b8460b':'var(--muted)')+'">'+money(cb.balance)+'</span></div>';
             }).join('')
-            +'<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Payments this period</div>')
+            )
           : '')
+        +'<div onclick="toggleReportRow(\''+rowId+'-payments\')" style="cursor:pointer;display:flex;align-items:center;gap:6px;padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">'
+          +'<svg id="'+rowId+'-payments-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
+          +'<span>Payments this period ('+rows.length+')</span>'
+        +'</div>'
+        +'<div id="'+rowId+'-payments" style="display:none">'
         +rows.map(function(row){
           var custPart=(_collGroupMode==='salesperson')?(' · '+esc(row.customer)):'';
           return '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 16px 7px 40px;font-size:12px;color:var(--muted);border-bottom:1px dashed var(--line)">'
             +'<span>'+esc(row.date)+custPart+(row.ref?' · Ref '+esc(row.ref):'')+'</span>'
             +'<span style="font-family:var(--mono);white-space:nowrap">'+money(row.amount)+'</span></div>';
         }).join('')
+        +'</div>'
       +'</div></div>';
   });
   html+='<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:14px 16px;background:var(--bg);border-radius:0 0 14px 14px">'

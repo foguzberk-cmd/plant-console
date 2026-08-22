@@ -2532,6 +2532,7 @@ function select(id){
 var _chatPollTimer=null;
 var _chatLastId=0;
 var _chatOnline=[];
+var _chatSeenIds={};
 var _chatInitialized=false;
 // A small, stable set of classic IRC-client nick colors, picked
 // deterministically per name (same person always gets the same color,
@@ -2543,7 +2544,7 @@ function _chatNickColor(name){
   return _CHAT_NICK_COLORS[h%_CHAT_NICK_COLORS.length];
 }
 function _chatTimeStr(iso){
-  try{ return new Date(iso).toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit'}); }
+  try{ return new Date(iso).toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
   catch(e){ return ''; }
 }
 function initRailChat(){
@@ -2567,6 +2568,8 @@ function initRailChat(){
 function stopChatPoll(){
   if(_chatPollTimer){ clearInterval(_chatPollTimer); _chatPollTimer=null; }
   _chatInitialized=false; // so logging back in (possibly as someone else) rebuilds and restarts it cleanly
+  _chatSeenIds={};
+  _chatLastId=0;
   var host=document.getElementById('railChat');
   if(host) host.innerHTML='';
 }
@@ -2592,6 +2595,13 @@ function _chatRenderOnlineLine(){
   el.textContent=others.length?('online: '+others.join(', ')):'online: (just you)';
 }
 function _chatAppendMessage(m){
+  if(m==null||m.id==null) return;
+  // A message can legitimately come back in more than one poll response
+  // (e.g. it arrives right at the edge of an afterId window, or a
+  // reconnect re-fetches recent history) — this is what actually stops it
+  // from ever being drawn twice, regardless of why the fetch repeated it.
+  if(_chatSeenIds[m.id]) return;
+  _chatSeenIds[m.id]=true;
   var log=document.getElementById('chatLog');
   if(!log) return;
   var wasAtBottom=(log.scrollHeight-log.scrollTop-log.clientHeight)<40;
@@ -2603,11 +2613,14 @@ function _chatAppendMessage(m){
   log.appendChild(row);
   if(wasAtBottom) log.scrollTop=log.scrollHeight;
 }
+var _chatSending=false;
 async function sendChatMessage(){
+  if(_chatSending) return; // guards against a second trigger (e.g. key-repeat) landing before the input is actually disabled below
   var inp=document.getElementById('chatInput');
   if(!inp) return;
   var text=inp.value.trim();
   if(!text) return;
+  _chatSending=true;
   inp.value='';
   inp.disabled=true;
   try{
@@ -2629,6 +2642,7 @@ async function sendChatMessage(){
     }
     inp.value=text; // give it back so nothing typed is lost
   }finally{
+    _chatSending=false;
     inp.disabled=false;
     inp.focus();
   }

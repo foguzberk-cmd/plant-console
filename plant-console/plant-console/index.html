@@ -4492,14 +4492,19 @@ function renderCollectionReport(){
       +'</div>'
       +'<div id="'+rowId+'" style="display:none;padding-bottom:6px">'
         +(_collGroupMode==='customer' && _collEndingDetailByQbId && _collEndingDetailByQbId[key] && _collEndingDetailByQbId[key].length
-          ? ('<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Invoices behind Ending Balance ('+_collEndingDetailByQbId[key].length+') — match these directly against QuickBooks</div>'
-            +'<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 16px 4px 40px;font-size:11px;font-weight:600;color:var(--muted)">'
-              +'<span>Invoice # / Date</span><span>Total → Current bal. → Contributes</span></div>'
-            +_collEndingDetailByQbId[key].slice().sort(function(a,b){ return b.contribution-a.contribution; }).map(function(d){
-              return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 16px 4px 40px;font-size:12px;border-bottom:1px dashed var(--line)">'
-                +'<span>#'+esc(d.docNumber)+' · '+esc(d.txnDate)+'</span>'
-                +'<span style="font-family:var(--mono);white-space:nowrap">'+money(d.totalAmt)+' → '+money(d.balance)+(d.appliedAfterTo>0.004?' + '+money(d.appliedAfterTo)+' paid-after-"To"':'')+' = <b>'+money(d.contribution)+'</b></span></div>';
-            }).join('')
+          ? ('<div onclick="toggleReportRow(\''+rowId+'-endingdetail\')" style="cursor:pointer;display:flex;align-items:center;gap:6px;padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">'
+              +'<svg id="'+rowId+'-endingdetail-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
+              +'<span>Invoices behind Ending Balance ('+_collEndingDetailByQbId[key].length+') — match these directly against QuickBooks</span>'
+            +'</div>'
+            +'<div id="'+rowId+'-endingdetail" style="display:none">'
+              +'<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 16px 4px 40px;font-size:11px;font-weight:600;color:var(--muted)">'
+                +'<span>Invoice # / Date</span><span>Total → Current bal. → Contributes</span></div>'
+              +_collEndingDetailByQbId[key].slice().sort(function(a,b){ return b.contribution-a.contribution; }).map(function(d){
+                return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 16px 4px 40px;font-size:12px;border-bottom:1px dashed var(--line)">'
+                  +'<span>#'+esc(d.docNumber)+' · '+esc(d.txnDate)+'</span>'
+                  +'<span style="font-family:var(--mono);white-space:nowrap">'+money(d.totalAmt)+' → '+money(d.balance)+(d.appliedAfterTo>0.004?' + '+money(d.appliedAfterTo)+' paid-after-"To"':'')+' = <b>'+money(d.contribution)+'</b></span></div>';
+              }).join('')
+            +'</div>'
             +'<div style="padding:8px 16px 4px 40px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Payments this period</div>')
           : '')
         +(_collGroupMode==='customer' && entry.futurePaymentsDetail && entry.futurePaymentsDetail.length

@@ -3019,13 +3019,22 @@ function _readOrderFormFields(container){
   };
 }
 async function submitNewOrder(){
+  if(_orderSaveInProgress) return;
   var fieldsWrap=document.getElementById('newOrderFields');
   var statusEl=document.getElementById('newOrderStatus');
   if(!fieldsWrap) return;
   var vals=_readOrderFormFields(fieldsWrap);
   if(!vals.customer.trim()){ if(statusEl){ statusEl.textContent='Customer is required.'; statusEl.style.color='#c0392b'; } return; }
   if(statusEl){ statusEl.textContent='Saving…'; statusEl.style.color='var(--muted)'; }
-  var saved=await saveOrder(vals);
+  var saveBtn=document.querySelector('#newOrderFormWrap button.btn-primary');
+  if(saveBtn){ saveBtn.disabled=true; saveBtn.textContent='Saving…'; }
+  _orderSaveInProgress=true;
+  var saved;
+  try{
+    saved=await saveOrder(vals);
+  } finally {
+    _orderSaveInProgress=false;
+  }
   if(saved){
     var wrap=document.getElementById('newOrderFormWrap');
     if(wrap) wrap.innerHTML='';
@@ -3033,8 +3042,10 @@ async function submitNewOrder(){
 } else if(statusEl){
     statusEl.textContent='Could not save — check your connection and try again.';
     statusEl.style.color='#c0392b';
+    if(saveBtn){ saveBtn.disabled=false; saveBtn.textContent='Save Order'; }
   }
 }
+var _orderSaveInProgress=false;
 // Saves one order (create if no id, update if it has one) through the
 // dedicated fast endpoint — same "dumb terminal" reasoning as
 // updateCustomerSalesRep and _cfSaveScheduled elsewhere: a small, targeted
@@ -3278,12 +3289,21 @@ function closeOrderDetailModal(){
 }
 window.closeOrderDetailModal=closeOrderDetailModal;
 async function submitEditOrder(id){
+  if(_orderSaveInProgress) return;
   var rowEl=document.getElementById('ordRow-'+id);
   if(!rowEl) return;
   var vals=_readOrderFormFields(rowEl);
   vals.id=id;
   if(!vals.customer.trim()){ alert('Customer is required.'); return; }
-  var saved=await saveOrder(vals);
+  var saveBtn=rowEl.querySelector('button.btn-primary');
+  if(saveBtn){ saveBtn.disabled=true; saveBtn.textContent='Saving…'; }
+  _orderSaveInProgress=true;
+  var saved;
+  try{
+    saved=await saveOrder(vals);
+  } finally {
+    _orderSaveInProgress=false;
+  }
   _ordersEditingId=null;
   if(!saved){ alert('Could not save — check your connection and try again.'); }
   _renderOrdersWeekSummary();

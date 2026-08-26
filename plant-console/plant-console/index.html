@@ -2690,17 +2690,12 @@ var _ordersEditingId=null; // id of the order currently being edited inline, or 
 // printCFWeekGroup elsewhere in the app, rather than trying to print the
 // live page (which has edit controls, chevrons, etc. that don't belong on
 // a printout).
-function printOrders(orderIds,title){
-  var idSet={}; orderIds.forEach(function(id){ idSet[id]=true; });
-  var toPrint=orders.filter(function(o){ return idSet[o.id]; });
-  if(!toPrint.length) return;
-  toPrint.sort(function(a,b){
-    if(a.date!==b.date) return a.date<b.date?-1:1;
-    return (a.customer||'')<(b.customer||'')?-1:1;
-  });
-  var w=window.open('','_blank');
-  if(!w){ alert('Please allow pop-ups for this site to print.'); return; }
-  var rowsHtml=toPrint.map(function(o){
+// Shared by printOrders and printDriverOrders — builds the per-customer
+// product tables (Product/Description/Ordered/Actual Weight/Notes), kept
+// as one function so both call sites can never drift out of sync with
+// each other.
+function _ordersProductTablesHtml(toPrint){
+  return toPrint.map(function(o){
     var lines=_orderLinesOf(o);
     var linesHtml=lines.length
       ? lines.map(function(l){
@@ -2720,25 +2715,100 @@ function printOrders(orderIds,title){
       +'</tr></thead><tbody>'+linesHtml+'</tbody></table>'
     +'</div>';
   }).join('');
+}
+var _ORDERS_PRINT_STYLE='body{font-family:Arial,sans-serif;padding:30px;color:#222}'
+  +'h1{font-size:18px;margin:0 0 4px}'
+  +'.meta{color:#666;font-size:12px;margin-bottom:20px}'
+  +'table.ordtbl{width:100%;border-collapse:collapse;font-size:12.5px;table-layout:fixed}'
+  +'table.ordtbl th,table.ordtbl td{border:1px solid #999;padding:6px 8px;text-align:left;vertical-align:top}'
+  +'table.ordtbl th{background:#f0f0f0;font-size:11px;text-transform:uppercase;letter-spacing:.03em}'
+  +'th.qty,td.qty{width:70px;text-align:right;font-weight:700}'
+  +'th.fill,td.fill{width:110px}'
+  +'td.fill{height:34px}';
+function printOrders(orderIds,title){
+  var idSet={}; orderIds.forEach(function(id){ idSet[id]=true; });
+  var toPrint=orders.filter(function(o){ return idSet[o.id]; });
+  if(!toPrint.length) return;
+  toPrint.sort(function(a,b){
+    if(a.date!==b.date) return a.date<b.date?-1:1;
+    return (a.customer||'')<(b.customer||'')?-1:1;
+  });
+  var w=window.open('','_blank');
+  if(!w){ alert('Please allow pop-ups for this site to print.'); return; }
   w.document.write('<html><head><title>'+esc(title)+'</title>'
-    +'<style>'
-      +'body{font-family:Arial,sans-serif;padding:30px;color:#222}'
-      +'h1{font-size:18px;margin:0 0 4px}'
-      +'.meta{color:#666;font-size:12px;margin-bottom:20px}'
-      +'table.ordtbl{width:100%;border-collapse:collapse;font-size:12.5px;table-layout:fixed}'
-      +'table.ordtbl th,table.ordtbl td{border:1px solid #999;padding:6px 8px;text-align:left;vertical-align:top}'
-      +'table.ordtbl th{background:#f0f0f0;font-size:11px;text-transform:uppercase;letter-spacing:.03em}'
-      +'th.qty,td.qty{width:70px;text-align:right;font-weight:700}'
-      +'th.fill,td.fill{width:110px}'
-      +'td.fill{height:34px}'
-    +'</style></head><body>'
+    +'<style>'+_ORDERS_PRINT_STYLE+'</style></head><body>'
     +'<h1>'+esc(title)+'</h1><div class="meta">'+toPrint.length+' order'+(toPrint.length!==1?'s':'')+'</div>'
-    +rowsHtml+'</body></html>');
+    +_ordersProductTablesHtml(toPrint)+'</body></html>');
   w.document.close();
   w.focus();
   setTimeout(function(){ w.print(); },250);
 }
 window.printOrders=printOrders;
+// Driver-specific print: the physical "Leader Meat Packing Corp" cold-chain
+// / deliveries-payments / returns-mispicks paper form, pre-filled with
+// today's date, the driver's name, and one row per customer on their
+// route already typed in — followed by each customer's order sheet, same
+// as printOrders. One combined print job instead of two separate ones,
+// since the driver needs both together every single route.
+function printDriverOrders(orderIds,driverName,dateStr){
+  var idSet={}; orderIds.forEach(function(id){ idSet[id]=true; });
+  var toPrint=orders.filter(function(o){ return idSet[o.id]; });
+  if(!toPrint.length) return;
+  toPrint.sort(function(a,b){ return (a.customer||'')<(b.customer||'')?-1:1; });
+  var custNames=Array.from(new Set(toPrint.map(function(o){ return o.customer||'(no customer)'; })));
+  var dateDisplay=dateStr;
+  try{ dateDisplay=new Date(dateStr+'T00:00:00').toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'numeric'}); }catch(e){}
+  var w=window.open('','_blank');
+  if(!w){ alert('Please allow pop-ups for this site to print.'); return; }
+  var deliveryRows=custNames.map(function(name){
+    return '<tr><td>'+esc(name)+'</td><td></td><td></td><td></td><td></td></tr>';
+  }).join('')
+    // A few extra blank rows in case something gets added to the route
+    // after this prints, or a stop needs to be split into two lines.
+    +'<tr><td></td><td></td><td></td><td></td><td></td></tr>'
+    +'<tr><td></td><td></td><td></td><td></td><td></td></tr>';
+  var returnRows=Array(5).fill('<tr><td></td><td></td><td></td><td></td></tr>').join('');
+  var formHtml='<div class="coldform" style="page-break-after:always">'
+    +'<div style="text-align:center;font-size:16px;font-weight:700;margin-bottom:14px">Leader Meat Packing Corp.</div>'
+    +'<table class="hdrtbl">'
+      +'<tr><td class="lbl">Date:</td><td class="val">'+esc(dateDisplay)+'</td><td class="lbl">Name:</td><td class="val">'+esc(driverName||'')+'</td></tr>'
+      +'<tr><td class="lbl">Truck#:</td><td class="val"></td><td class="lbl" colspan="2">Sanitary condition: &nbsp;&#9633; Good &nbsp;&#9633; Not good, but cleaned</td></tr>'
+      +'<tr><td class="lbl">Time (turn on the refer):</td><td class="val">&#9633; ON &nbsp;&nbsp;Setting Temp (&le;40F): ______</td>'
+        +'<td class="lbl">Time (before drive away):</td><td class="val">&#9633; ON &nbsp;&#9633; OFF / Need repair</td></tr>'
+      +'<tr><td class="lbl" colspan="4">Refer unit temp before loading (calibrated handheld thermometer, reading stabilized): ______________ &deg;F (&lt;45F)</td></tr>'
+      +'<tr><td class="lbl">Miles begin:</td><td class="val"></td><td class="lbl">Miles end:</td><td class="val"></td></tr>'
+    +'</table>'
+    +'<div class="sectiontitle">Deliveries / Payments</div>'
+    +'<table class="formtbl"><thead><tr><th>Customer</th><th>Cash $</th><th>Check #</th><th>Check $</th><th>Total $</th></tr></thead>'
+    +'<tbody>'+deliveryRows+'</tbody></table>'
+    +'<div class="sectiontitle">Returns / Mispicks</div>'
+    +'<table class="formtbl"><thead><tr><th>Customer</th><th>Item</th><th>Quantity</th><th>Cause</th></tr></thead>'
+    +'<tbody>'+returnRows+'</tbody></table>'
+    +'<div style="margin-top:24px;display:flex;gap:60px;font-size:13px">'
+      +'<div>Relinquished by: ______________________</div>'
+      +'<div>Received by: ______________________</div>'
+    +'</div>'
+  +'</div>';
+  var title=(driverName||'Driver')+' — '+dateDisplay;
+  w.document.write('<html><head><title>'+esc(title)+'</title>'
+    +'<style>'+_ORDERS_PRINT_STYLE
+      +'table.hdrtbl{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:18px;border:1px solid #333}'
+      +'table.hdrtbl td{border:1px solid #333;padding:8px}'
+      +'table.hdrtbl td.lbl{font-weight:700;white-space:nowrap}'
+      +'table.hdrtbl td.val{min-width:120px}'
+      +'.sectiontitle{text-align:center;font-size:14px;font-weight:700;margin:16px 0 8px}'
+      +'table.formtbl{width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:10px}'
+      +'table.formtbl th,table.formtbl td{border:1px solid #333;padding:7px 8px;text-align:left;height:22px}'
+      +'table.formtbl th{background:#f0f0f0}'
+    +'</style></head><body>'
+    +formHtml
+    +'<h1>'+esc(title)+'</h1><div class="meta">'+toPrint.length+' order'+(toPrint.length!==1?'s':'')+'</div>'
+    +_ordersProductTablesHtml(toPrint)+'</body></html>');
+  w.document.close();
+  w.focus();
+  setTimeout(function(){ w.print(); },250);
+}
+window.printDriverOrders=printDriverOrders;
 // A dedicated toggle for Orders, deliberately NOT reusing toggleReportRow
 // — that function only becomes available on window once the Reports page
 // has rendered at least once this session (it's defined inside that
@@ -3085,7 +3155,7 @@ function _renderOrdersWeekSummary(){
           var custKeys=Object.keys(byCust).sort();
           return '<div style="display:flex;align-items:center;gap:8px;padding:6px 14px 4px 30px;background:var(--cold-soft)">'
               +'<span style="flex:1;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold)">'+esc(dName)+' ('+driverOrders.length+')</span>'
-              +'<button title="Print this driver\'s orders" onclick="printOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+esc(dName+' — '+fmtDayOrd(dk))+'\')" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:var(--cold);font-size:13px">🖨</button>'
+              +'<button title="Print this driver\'s route (form + orders)" onclick="printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\',\''+esc(dk)+'\')" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:var(--cold);font-size:13px">🖨</button>'
             +'</div>'
             +custKeys.map(function(key,ci){
               var custOrders=byCust[key].slice().sort(function(a,b){return a.date<b.date?1:-1;});

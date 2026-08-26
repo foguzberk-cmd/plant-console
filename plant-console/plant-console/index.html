@@ -2684,6 +2684,44 @@ window.initRailChat=initRailChat;
    QuickBooks source for these — they're entered directly here. */
 var _ordersSearchQuery='';
 var _ordersEditingId=null; // id of the order currently being edited inline, or null
+// Prints any set of orders as a clean, simple document — used for a whole
+// day, one driver's route within a day, or a single order. Same
+// window.open + document.write pattern as printReportSection/
+// printCFWeekGroup elsewhere in the app, rather than trying to print the
+// live page (which has edit controls, chevrons, etc. that don't belong on
+// a printout).
+function printOrders(orderIds,title){
+  var idSet={}; orderIds.forEach(function(id){ idSet[id]=true; });
+  var toPrint=orders.filter(function(o){ return idSet[o.id]; });
+  if(!toPrint.length) return;
+  toPrint.sort(function(a,b){
+    if(a.date!==b.date) return a.date<b.date?-1:1;
+    return (a.customer||'')<(b.customer||'')?-1:1;
+  });
+  var w=window.open('','_blank');
+  if(!w){ alert('Please allow pop-ups for this site to print.'); return; }
+  var rowsHtml=toPrint.map(function(o){
+    var lines=_orderLinesOf(o);
+    var linesHtml=lines.length
+      ? lines.map(function(l){
+          return '<tr><td>'+esc(l.product||'(no product)')+(l.description?' — '+esc(l.description):'')+'</td><td style="text-align:right;font-weight:700">'+esc(l.quantity||'')+'</td></tr>';
+        }).join('')
+      : '<tr><td colspan="2" style="color:#888;font-style:italic">No products listed</td></tr>';
+    return '<div style="margin-bottom:22px;page-break-inside:avoid">'
+      +'<div style="font-size:15px;font-weight:700">'+esc(o.customer||'(no customer)')+'</div>'
+      +'<div style="font-size:12px;color:#555;margin-bottom:6px">'+esc(o.date||'')+' · Driver: '+esc(o.driver||'—')+'</div>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:13px">'+linesHtml+'</table>'
+    +'</div>';
+  }).join('<hr style="border:none;border-top:1px solid #ccc;margin:16px 0">');
+  w.document.write('<html><head><title>'+esc(title)+'</title>'
+    +'<style>body{font-family:Arial,sans-serif;padding:30px;color:#222}td{padding:3px 0}h1{font-size:18px;margin:0 0 4px}.meta{color:#666;font-size:12px;margin-bottom:20px}</style></head><body>'
+    +'<h1>'+esc(title)+'</h1><div class="meta">'+toPrint.length+' order'+(toPrint.length!==1?'s':'')+'</div>'
+    +rowsHtml+'</body></html>');
+  w.document.close();
+  w.focus();
+  setTimeout(function(){ w.print(); },250);
+}
+window.printOrders=printOrders;
 // A dedicated toggle for Orders, deliberately NOT reusing toggleReportRow
 // — that function only becomes available on window once the Reports page
 // has rendered at least once this session (it's defined inside that
@@ -2879,8 +2917,7 @@ async function submitNewOrder(){
     var wrap=document.getElementById('newOrderFormWrap');
     if(wrap) wrap.innerHTML='';
     _renderOrdersWeekSummary();
-    _renderOrdersDetail();
-  } else if(statusEl){
+} else if(statusEl){
     statusEl.textContent='Could not save — check your connection and try again.';
     statusEl.style.color='#c0392b';
   }
@@ -2959,9 +2996,12 @@ function _renderOrdersWeekSummary(){
   dayKeys.forEach(function(dk,di){
     var count=byDay[dk].length;
     var label=fmtDayOrd(dk)+' ('+count+')';
-    html+='<div onclick="toggleOrdersRow(\'ordDay-'+di+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:10px 14px;background:#fff3cd;border-bottom:1px solid #e0c56b">'
-      +'<svg id="ordDay-'+di+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#8a6d1a;flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
-      +'<span style="font-weight:700;font-size:13px;color:#5c4813">'+label+'</span>'
+    html+='<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:#fff3cd;border-bottom:1px solid #e0c56b">'
+      +'<span onclick="toggleOrdersRow(\'ordDay-'+di+'\')" style="cursor:pointer;flex:1;display:flex;align-items:center;gap:8px">'
+        +'<svg id="ordDay-'+di+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#8a6d1a;flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
+        +'<span style="font-weight:700;font-size:13px;color:#5c4813">'+label+'</span>'
+      +'</span>'
+      +'<button title="Print this day" onclick="event.stopPropagation();printOrders(['+byDay[dk].map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+esc(fmtDayOrd(dk))+'\')" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:#8a6d1a;font-size:14px">🖨</button>'
     +'</div>'
     +'<div id="ordDay-'+di+'" style="display:'+(q?'block':'none')+'">'
       +(function(){
@@ -2990,7 +3030,10 @@ function _renderOrdersWeekSummary(){
             (byCust[key]=byCust[key]||[]).push(o);
           });
           var custKeys=Object.keys(byCust).sort();
-          return '<div style="padding:6px 14px 4px 30px;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold);background:var(--cold-soft)">'+esc(dName)+' ('+driverOrders.length+')</div>'
+          return '<div style="display:flex;align-items:center;gap:8px;padding:6px 14px 4px 30px;background:var(--cold-soft)">'
+              +'<span style="flex:1;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold)">'+esc(dName)+' ('+driverOrders.length+')</span>'
+              +'<button title="Print this driver\'s orders" onclick="printOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+esc(dName+' — '+fmtDayOrd(dk))+'\')" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:var(--cold);font-size:13px">🖨</button>'
+            +'</div>'
             +custKeys.map(function(key,ci){
               var custOrders=byCust[key].slice().sort(function(a,b){return a.date<b.date?1:-1;});
               var rowId='ordDay-'+di+'-drv-'+dri+'-cust-'+ci;
@@ -3012,20 +3055,13 @@ function _renderOrdersWeekSummary(){
   html+='</div>';
   el.innerHTML=html;
 }
-function _renderOrdersDetail(){
-  // Kept as a no-op alias — the customer-grouped detail view now lives
-  // nested inside _renderOrdersWeekSummary (Day → Driver → Customer), so
-  // there's no separate flat list to render anymore. Existing call sites
-  // throughout this page still call this; harmless to leave them as-is
-  // rather than hunting down every one.
-}
 function _renderOrderRow(o){
   if(_ordersEditingId===o.id){
     return '<div id="ordRow-'+esc(o.id)+'" style="padding:10px 16px 10px 30px;border-bottom:1px dashed var(--line);background:var(--cold-soft)">'
       +_orderFormFields(o)
       +'<div style="display:flex;gap:8px;margin-top:8px">'
         +'<button class="btn btn-primary btn-sm" onclick="submitEditOrder(\''+esc(o.id)+'\')">Save</button>'
-        +'<button class="btn btn-sm" onclick="_ordersEditingId=null;_renderOrdersDetail()">Cancel</button>'
+        +'<button class="btn btn-sm" onclick="_ordersEditingId=null;_renderOrdersWeekSummary()">Cancel</button>'
       +'</div>'
     +'</div>';
   }
@@ -3044,7 +3080,8 @@ function _renderOrderRow(o){
     +'</span>'
     +'<span style="width:120px;flex-shrink:0;text-align:right;color:var(--muted);padding-top:2px">'+esc(o.driver||'—')+'</span>'
     +'<span style="flex-shrink:0;display:flex;gap:4px">'
-      +'<button title="Edit" onclick="event.stopPropagation();_ordersEditingId=\''+esc(o.id)+'\';_renderOrdersDetail()" style="border:0;background:transparent;cursor:pointer;padding:4px;color:var(--muted)">✎</button>'
+      +'<button title="Print this order" onclick="event.stopPropagation();printOrders([\''+esc(o.id)+'\'],\''+esc((o.customer||'Order')+' — '+(o.date||''))+'\')" style="border:0;background:transparent;cursor:pointer;padding:4px;color:var(--muted)">🖨</button>'
+      +'<button title="Edit" onclick="event.stopPropagation();_ordersEditingId=\''+esc(o.id)+'\';_renderOrdersWeekSummary()" style="border:0;background:transparent;cursor:pointer;padding:4px;color:var(--muted)">✎</button>'
       +'<button title="Delete" onclick="event.stopPropagation();deleteOrder(\''+esc(o.id)+'\')" style="border:0;background:transparent;cursor:pointer;padding:4px;color:#b8460b">🗑</button>'
     +'</span>'
   +'</div>';
@@ -3088,8 +3125,9 @@ function showOrderDetailModal(id){
     +'<div class="modal-footer" style="display:flex;gap:8px;justify-content:space-between">'
       +'<button class="btn" style="color:#b8460b" onclick="closeOrderDetailModal();deleteOrder(\''+esc(o.id)+'\')">🗑 Delete</button>'
       +'<div style="display:flex;gap:8px">'
+        +'<button class="btn" onclick="printOrders([\''+esc(o.id)+'\'],\''+esc((o.customer||'Order')+' — '+(o.date||''))+'\')">🖨 Print</button>'
         +'<button class="btn" onclick="closeOrderDetailModal()">Close</button>'
-        +'<button class="btn btn-primary" onclick="closeOrderDetailModal();_ordersEditingId=\''+esc(o.id)+'\';_renderOrdersDetail();var r=document.getElementById(\'ordRow-'+esc(o.id)+'\');if(r)r.scrollIntoView({behavior:\'smooth\',block:\'center\'});">✎ Edit</button>'
+        +'<button class="btn btn-primary" onclick="closeOrderDetailModal();_ordersEditingId=\''+esc(o.id)+'\';_renderOrdersWeekSummary();var r=document.getElementById(\'ordRow-'+esc(o.id)+'\');if(r)r.scrollIntoView({behavior:\'smooth\',block:\'center\'});">✎ Edit</button>'
       +'</div>'
     +'</div>'
   +'</div>';
@@ -3111,7 +3149,6 @@ async function submitEditOrder(id){
   _ordersEditingId=null;
   if(!saved){ alert('Could not save — check your connection and try again.'); }
   _renderOrdersWeekSummary();
-  _renderOrdersDetail();
 }
 window.submitEditOrder=submitEditOrder;
 // Delete — same dedicated-tombstoned-endpoint pattern as deleteScaleLog,
@@ -3125,8 +3162,7 @@ async function deleteOrder(id){
   orders=orders.filter(function(o){return o.id!==id;});
   safeSetLocal('pc_orders',JSON.stringify(orders));
   _renderOrdersWeekSummary();
-  _renderOrdersDetail();
-  try{
+try{
     var res=await fetch('/api/data/delete-order',{
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({id:id})
@@ -3140,8 +3176,7 @@ async function deleteOrder(id){
     delete _deletedOrderIds[id];
     if(removed){ orders.push(removed); safeSetLocal('pc_orders',JSON.stringify(orders)); }
     _renderOrdersWeekSummary();
-    _renderOrdersDetail();
-    alert('Could not delete — check your connection and try again.');
+alert('Could not delete — check your connection and try again.');
   }
 }
 window.deleteOrder=deleteOrder;

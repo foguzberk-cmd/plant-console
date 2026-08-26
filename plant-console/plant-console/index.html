@@ -2708,8 +2708,7 @@ function printOrders(orderIds,title){
         }).join('')
       : '<tr><td colspan="2" style="color:#888;font-style:italic">No products listed</td></tr>';
     return '<div style="margin-bottom:22px;page-break-inside:avoid">'
-      +'<div style="font-size:15px;font-weight:700">'+esc(o.customer||'(no customer)')+'</div>'
-      +'<div style="font-size:12px;color:#555;margin-bottom:6px">'+esc(o.date||'')+' · Driver: '+esc(o.driver||'—')+'</div>'
+      +'<div style="font-size:15px;font-weight:700;margin-bottom:6px">'+esc(o.customer||'(no customer)')+'</div>'
       +'<table style="width:100%;border-collapse:collapse;font-size:13px">'+linesHtml+'</table>'
     +'</div>';
   }).join('<hr style="border:none;border-top:1px solid #ccc;margin:16px 0">');

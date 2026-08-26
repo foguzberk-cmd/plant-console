@@ -2935,35 +2935,30 @@ window.showNewOrderForm=showNewOrderForm;
 function _renderOrdersWeekSummary(){
   var el=document.getElementById('ordersWeekSummary');
   if(!el) return;
-  function fmtShortOrd(dateStr){
+  function fmtDayOrd(dateStr){
     var d=new Date(dateStr+'T00:00:00');
-    return d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
   }
-  var byWeek={};
+  var byDay={};
   orders.forEach(function(o){
     if(!o.date) return;
-    var d=new Date(o.date+'T00:00:00');
-    var monday=new Date(d); monday.setDate(d.getDate()-((d.getDay()+6)%7));
-    var wk=monday.toISOString().slice(0,10);
-    (byWeek[wk]=byWeek[wk]||[]).push(o);
+    (byDay[o.date]=byDay[o.date]||[]).push(o);
   });
-  var weekKeys=Object.keys(byWeek).sort();
-  if(!weekKeys.length){ el.innerHTML=''; return; }
+  var dayKeys=Object.keys(byDay).sort();
+  if(!dayKeys.length){ el.innerHTML=''; return; }
   var html='<div style="border:1px solid var(--line);border-radius:12px;overflow:hidden">';
-  weekKeys.forEach(function(wk,wi){
-    var weekSunday=new Date(wk+'T00:00:00'); weekSunday.setDate(weekSunday.getDate()+6);
-    var count=byWeek[wk].length;
-    var label='Week '+_isoWeekNumber(wk)+' · '+fmtShortOrd(wk)+' – '+fmtShortOrd(weekSunday.toISOString().slice(0,10))+' ('+count+')';
-    html+='<div onclick="toggleOrdersRow(\'ordWeek-'+wi+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:10px 14px;background:#fff3cd;border-bottom:1px solid #e0c56b">'
-      +'<svg id="ordWeek-'+wi+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#8a6d1a;flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
+  dayKeys.forEach(function(dk,di){
+    var count=byDay[dk].length;
+    var label=fmtDayOrd(dk)+' ('+count+')';
+    html+='<div onclick="toggleOrdersRow(\'ordDay-'+di+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:10px 14px;background:#fff3cd;border-bottom:1px solid #e0c56b">'
+      +'<svg id="ordDay-'+di+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#8a6d1a;flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
       +'<span style="font-weight:700;font-size:13px;color:#5c4813">'+label+'</span>'
     +'</div>'
-    +'<div id="ordWeek-'+wi+'" style="display:none">'
-      +byWeek[wk].slice().sort(function(a,b){return a.date<b.date?-1:1;}).map(function(o){
+    +'<div id="ordDay-'+di+'" style="display:none">'
+      +byDay[dk].slice().sort(function(a,b){return (a.customer||'')<(b.customer||'')?-1:1;}).map(function(o){
         var lines=_orderLinesOf(o);
         var lineSummary=lines.length?lines.map(function(l){ return esc(l.product||'(no product)')+(l.quantity?' × '+esc(l.quantity):''); }).join(', '):'(no products)';
         return '<div onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;display:flex;gap:14px;padding:6px 14px 6px 30px;font-size:12px;border-bottom:1px dashed var(--line);color:var(--muted)">'
-          +'<span style="width:80px;flex-shrink:0">'+esc(o.date)+'</span>'
           +'<span style="width:160px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)">'+esc(o.customer)+'</span>'
           +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+lineSummary+'</span>'
           +'<span style="width:110px;flex-shrink:0;text-align:right">'+esc(o.driver||'—')+'</span>'

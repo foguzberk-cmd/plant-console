@@ -3032,6 +3032,7 @@ function _renderShippedOrdersSummary(){
           +'<span style="width:170px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">'+esc(o.customer)+'</span>'
           +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">'+lineSummary+'</span>'
           +'<span style="flex-shrink:0;font-family:var(--mono);font-size:11px;color:#1b5e2f;background:#e3f3e6;padding:2px 8px;border-radius:10px">Inv #'+esc(o.invoiceDocNumber||'?')+'</span>'
+          +'<button title="Move back to Received Orders" onclick="event.stopPropagation();toggleOrderShippedManually(\''+esc(o.id)+'\',false)" style="flex-shrink:0;border:1px solid #b9dfc0;background:#fff;border-radius:6px;cursor:pointer;padding:3px 8px;font-size:11px;color:#1b5e2f">↩ Undo</button>'
         +'</div>';
       }).join('')
     +'</div>';

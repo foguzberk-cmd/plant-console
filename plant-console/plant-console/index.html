@@ -1184,6 +1184,20 @@ function rerenderCurrentSection(){
       try{ renderScheduledPaymentsSection(); }catch(e){}
     }
   }
+  else if(currentSectionId==='orders'){
+    // Same gap as scalelog/settings had: orders synced into memory here
+    // every 1.5s just like everything else, but nothing ever told this
+    // screen to redraw — so an edit made on another device looked "stuck"
+    // until someone left the Orders tab and came back. Skipped while
+    // actively editing an order on THIS device (same reasoning as the
+    // Cash Flow guard above) — _renderOrdersWeekSummary() rebuilds the
+    // edit form fresh from stored data on every call, which would
+    // silently wipe out whatever's currently typed into it if this fired
+    // mid-edit.
+    if(!_ordersEditingId && document.getElementById('ordersWeekSummary')){
+      try{ _renderOrdersWeekSummary(); }catch(e){}
+    }
+  }
   else if(currentSectionId==='settings'){
     // Same gap as the sections above, just never plugged in for Settings:
     // a Sales Rep (or any customer field) edited on another device was

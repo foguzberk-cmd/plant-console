@@ -2875,14 +2875,58 @@ function renderOrdersPage(){
 // rest of that report's cached data, so this works even if nobody's
 // visited Customer Payments THIS session, as long as someone has recently.
 async function matchOrdersWithQuickBooks(){
-  var invoices=Object.values(_collAllInvoicesCache||{});
-  if(!invoices.length){
-    alert('No QuickBooks invoice data available yet. Visit Customer Payments and click "Pull from QuickBooks" once first — Orders reuses that same invoice data rather than fetching its own separate copy.');
+  var toCheck=orders.filter(function(o){ return !o.shipped && o.customer && o.date; });
+  if(!toCheck.length){ alert('Nothing to match — every order is already shipped.'); return; }
+  var btn=document.getElementById('matchQbBtn');
+  if(btn){ btn.disabled=true; btn.textContent='Fetching invoices…'; }
+  // CONFIRMED (Aug 2026): relying only on the existing shared invoice
+  // cache missed a same-day invoice, because that cache only updates when
+  // someone happens to pull the Customer Payments report — if nobody's
+  // done that yet today, today's invoices simply aren't in it. Fetching
+  // fresh here, scoped to just the date range these orders actually cover
+  // (plus a few days' buffer), guarantees today's invoices are included
+  // regardless of what anyone else has or hasn't done elsewhere in the app.
+  var earliestOrderDate=toCheck.reduce(function(min,o){ return (!min||o.date<min)?o.date:min; },null);
+  var fromDate=earliestOrderDate;
+  try{
+    var fd=new Date(earliestOrderDate+'T00:00:00'); fd.setDate(fd.getDate()-3);
+    fromDate=fd.toISOString().slice(0,10);
+  }catch(e){}
+  var freshInvoices=[];
+  try{
+    var base=window.location.origin;
+    var start=1, safety=0;
+    while(true){
+      safety++;
+      if(safety>200) break; // hard cap (~20k rows) — shouldn't ever get close for a date-scoped fetch
+      var r=await fetch(base+'/api/qb/documents?entity=Invoice&startposition='+start+'&from='+encodeURIComponent(fromDate));
+      if(r.status===401){ if(btn){btn.disabled=false;btn.textContent='Match with QuickBooks';} alert('QuickBooks connection expired — reconnect from the Items tab, then try again.'); return; }
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      var jd=await r.json();
+      if(jd&&jd.error) throw new Error(jd.error);
+      var rows=jd.Invoice||[];
+      freshInvoices=freshInvoices.concat(rows);
+      if(btn) btn.textContent='Fetching invoices… ('+freshInvoices.length+')';
+      if(rows.length<100) break;
+      start+=100;
+    }
+  }catch(e){
+    if(btn){ btn.disabled=false; btn.textContent='Match with QuickBooks'; }
+    alert('Could not fetch invoices from QuickBooks: '+(e&&e.message?e.message:e)+' — try again in a moment.');
     return;
   }
-  var btn=document.getElementById('matchQbBtn');
-  if(btn){ btn.disabled=true; btn.textContent='Matching…'; }
-  var toCheck=orders.filter(function(o){ return !o.shipped && o.customer && o.date; });
+  // Merge into the shared cache too (harmless, and helps the Customer
+  // Payments report stay current), but MATCH against the fresh fetch
+  // specifically, not the merged result — no reason to wait on a merge
+  // round-trip when we already have exactly what's needed in hand.
+  freshInvoices.forEach(function(inv){
+    _collAllInvoicesCache[inv.Id]={Id:inv.Id,DocNumber:inv.DocNumber||'',CustomerRef:inv.CustomerRef,TotalAmt:Number(inv.TotalAmt||0),Balance:Number(inv.Balance||0),TxnDate:(inv.TxnDate||'').slice(0,10)};
+  });
+  safeSetLocal('pc_coll_all_invoices',JSON.stringify(_collAllInvoicesCache));
+  var invoices=freshInvoices.map(function(inv){
+    return {DocNumber:inv.DocNumber||'',CustomerRef:inv.CustomerRef,TxnDate:(inv.TxnDate||'').slice(0,10)};
+  });
+  if(btn) btn.textContent='Matching…';
   var matchedCount=0;
   var diagnostics=[]; // one entry per UNMATCHED order, explaining why
   for(var i=0;i<toCheck.length;i++){
@@ -2937,7 +2981,7 @@ async function matchOrdersWithQuickBooks(){
   if(btn){ btn.disabled=false; btn.textContent='Match with QuickBooks'; }
   _renderShippedOrdersSummary();
   _renderOrdersWeekSummary();
-  var msg='Matched '+matchedCount+' of '+toCheck.length+' unshipped order'+(toCheck.length!==1?'s':'')+' to a QuickBooks invoice ('+invoices.length+' invoices loaded from cache).';
+  var msg='Matched '+matchedCount+' of '+toCheck.length+' unshipped order'+(toCheck.length!==1?'s':'')+' to a QuickBooks invoice ('+invoices.length+' invoice'+(invoices.length!==1?'s':'')+' fetched fresh, dated '+fromDate+' onward).';
   if(diagnostics.length){
     msg+='\n\nWhy the rest didn\'t match:\n'+diagnostics.slice(0,10).join('\n')+(diagnostics.length>10?'\n…and '+(diagnostics.length-10)+' more':'');
   }

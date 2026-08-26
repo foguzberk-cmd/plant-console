@@ -2707,6 +2707,7 @@ function renderOrdersPage(){
       +'<input id="ordersSearch" type="text" placeholder="Search customer, product, description, driver…" value="'+esc(_ordersSearchQuery)+'" oninput="_ordersSearchQuery=this.value;_renderOrdersWeekSummary()" style="flex:1;min-width:220px;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--panel);color:var(--ink)"/>'
     +'</div>'
     +'<div id="newOrderFormWrap"></div>'
+    +'<div style="padding:12px 16px;background:#F5EFE8;border:1px solid var(--line);border-bottom:none;border-radius:14px 14px 0 0;font-weight:700;font-size:13px;letter-spacing:.02em">Received Orders</div>'
     +'<div id="ordersWeekSummary"></div>';
   _renderOrdersWeekSummary();
 }
@@ -2954,7 +2955,7 @@ function _renderOrdersWeekSummary(){
     el.innerHTML='<div class="txn-empty"><p>'+(q?'No orders match "'+esc(_ordersSearchQuery)+'".':'No orders yet.')+'</p>'+(q?'':'<p>Click "+ New Order" above to add the first one.</p>')+'</div>';
     return;
   }
-  var html='<div style="border:1px solid var(--line);border-radius:12px;overflow:hidden">';
+  var html='<div style="border:1px solid var(--line);border-radius:0 0 12px 12px;overflow:hidden">';
   dayKeys.forEach(function(dk,di){
     var count=byDay[dk].length;
     var label=fmtDayOrd(dk)+' ('+count+')';

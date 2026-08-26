@@ -1603,14 +1603,27 @@ const server = http.createServer(async (req, res) => {
           for (const id of tombstoned) merged.delete(id);
           incoming.scaleLogs = Array.from(merged.values());
         }
-        // Orders — identical reasoning and identical shape to scaleLogs just
-        // above (a plain list of records staff add one at a time, deletable,
-        // no reason to reinvent a different merge strategy for it).
+        // Orders — similar shape to scaleLogs, but NOT the same reasoning:
+        // scaleLogs are effectively append-only (added or deleted, never
+        // edited in place), so for any given id both sides always hold
+        // identical content and a blind overwrite is harmless. Orders ARE
+        // edited in place (date, driver, products all change on the same
+        // id) — confirmed live (Aug 2026) that a blind "incoming always
+        // wins" merge here meant ANY device with a stale local copy of an
+        // order, doing a routine full-snapshot save for something
+        // completely unrelated, would silently overwrite a newer edit
+        // someone else just made through the dedicated save-order
+        // endpoint. Compare each record's own "at" timestamp and keep
+        // whichever is actually newer, instead of whichever merge call
+        // happened to run last.
         if (Array.isArray(incoming.orders)) {
           const orderTombstoned = new Set(Array.isArray(current.deletedOrderIds) ? current.deletedOrderIds : []);
           const mergedOrders = new Map((current.orders || []).map(o => [o && o.id, o]));
           for (const o of incoming.orders) {
-            if (o && !orderTombstoned.has(o.id)) mergedOrders.set(o.id, o);
+            if (!o || orderTombstoned.has(o.id)) continue;
+            const existing = mergedOrders.get(o.id);
+            if (existing && existing.at && o.at && existing.at > o.at) continue; // existing is newer — keep it
+            mergedOrders.set(o.id, o);
           }
           for (const id of orderTombstoned) mergedOrders.delete(id);
           incoming.orders = Array.from(mergedOrders.values());

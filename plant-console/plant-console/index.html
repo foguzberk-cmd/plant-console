@@ -3025,14 +3025,31 @@ function _renderShippedOrdersSummary(){
       +'<span style="font-weight:700;font-size:13px;color:#1b5e2f">'+fmtDayOrd(dk)+' ('+count+')</span>'
     +'</div>'
     +'<div id="'+rowId+'" style="display:'+((q||_ordersRowOpen[openKey])?'block':'none')+'">'
-      +custOrders.map(function(o){
+      +custOrders.map(function(o,oi){
         var lines=_orderLinesOf(o);
-        var lineSummary=lines.length?lines.map(function(l){ return esc(l.product||'(no product)')+(l.quantity?' × '+esc(l.quantity):''); }).join(', '):'(no products)';
-        return '<div onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;display:flex;align-items:center;gap:14px;padding:8px 16px 8px 30px;font-size:12.5px;border-bottom:1px dashed var(--line)">'
-          +'<span style="width:170px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">'+esc(o.customer)+'</span>'
-          +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">'+lineSummary+'</span>'
-          +'<span style="flex-shrink:0;font-family:var(--mono);font-size:11px;color:#1b5e2f;background:#e3f3e6;padding:2px 8px;border-radius:10px">Inv #'+esc(o.invoiceDocNumber||'?')+'</span>'
-          +'<button title="Move back to Received Orders" onclick="event.stopPropagation();toggleOrderShippedManually(\''+esc(o.id)+'\',false)" style="flex-shrink:0;border:1px solid #b9dfc0;background:#fff;border-radius:6px;cursor:pointer;padding:3px 8px;font-size:11px;color:#1b5e2f">↩ Undo</button>'
+        var orderOpenKey='shiporder:'+o.id;
+        var orderRowId='ordShipOrder-'+di+'-'+oi;
+        return '<div style="border-bottom:1px dashed var(--line)">'
+          +'<div style="display:flex;align-items:center;gap:10px;padding:8px 16px 8px 30px;font-size:12.5px">'
+            +'<svg onclick="toggleOrdersRow(\''+orderRowId+'\',\''+_jsStrEsc(orderOpenKey)+'\')" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="cursor:pointer;width:11px;height:11px;stroke:var(--muted);flex-shrink:0'+(_ordersRowOpen[orderOpenKey]?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
+            +'<span onclick="toggleOrdersRow(\''+orderRowId+'\',\''+_jsStrEsc(orderOpenKey)+'\')" style="cursor:pointer;width:170px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">'+esc(o.customer)+'</span>'
+            +'<span onclick="toggleOrdersRow(\''+orderRowId+'\',\''+_jsStrEsc(orderOpenKey)+'\')" style="cursor:pointer;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">'+lines.length+' product'+(lines.length!==1?'s':'')+'</span>'
+            +'<span style="flex-shrink:0;font-family:var(--mono);font-size:11px;color:#1b5e2f;background:#e3f3e6;padding:2px 8px;border-radius:10px">Inv #'+esc(o.invoiceDocNumber||'?')+'</span>'
+            +'<button title="Move the WHOLE order back to Received Orders" onclick="event.stopPropagation();toggleOrderShippedManually(\''+esc(o.id)+'\',false)" style="flex-shrink:0;border:1px solid #b9dfc0;background:#fff;border-radius:6px;cursor:pointer;padding:3px 8px;font-size:11px;color:#1b5e2f">↩ Undo</button>'
+          +'</div>'
+          +'<div id="'+orderRowId+'" style="display:'+(_ordersRowOpen[orderOpenKey]?'block':'none')+'">'
+            +'<div style="padding:2px 16px 4px 54px;font-size:10.5px;color:var(--muted)">Uncheck anything that didn\'t actually ship, then Save — those go back to Received Orders as their own order; everything still checked stays here.</div>'
+            +lines.map(function(l,li){
+              return '<div style="display:flex;align-items:center;gap:10px;padding:6px 16px 6px 54px;border-bottom:1px dashed var(--line);font-size:12.5px">'
+                +'<input type="checkbox" class="ship-line-chk" data-orderid="'+esc(o.id)+'" data-lineidx="'+li+'" checked style="flex-shrink:0;width:15px;height:15px;cursor:pointer"/>'
+                +'<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+(l.description?' — '+esc(l.description):'')+'</span>'
+                +(l.quantity?'<b style="flex-shrink:0;white-space:nowrap">'+esc(l.quantity)+'</b>':'')
+              +'</div>';
+            }).join('')
+            +'<div style="padding:8px 16px 10px 54px">'
+              +'<button class="btn btn-primary btn-sm" onclick="saveShippedOrderSplit(\''+esc(o.id)+'\')">Save</button>'
+            +'</div>'
+          +'</div>'
         +'</div>';
       }).join('')
     +'</div>';
@@ -3041,6 +3058,47 @@ function _renderShippedOrdersSummary(){
   el.innerHTML=html;
 }
 window._renderShippedOrdersSummary=_renderShippedOrdersSummary;
+// Splits a shipped order by product line: checked lines stay here
+// (shipped), unchecked lines become a NEW order back in Received Orders
+// (same date/customer/driver, not yet shipped) — for the common real-world
+// case where an invoice covers most of an order but one or two items
+// actually got held back or backordered.
+async function saveShippedOrderSplit(orderId){
+  var o=orders.find(function(x){return x.id===orderId;});
+  if(!o) return;
+  var lines=_orderLinesOf(o);
+  var checks=document.querySelectorAll('.ship-line-chk[data-orderid="'+orderId+'"]');
+  var shippedLines=[], unshippedLines=[];
+  checks.forEach(function(chk){
+    var idx=Number(chk.getAttribute('data-lineidx'));
+    if(!lines[idx]) return;
+    if(chk.checked) shippedLines.push(lines[idx]); else unshippedLines.push(lines[idx]);
+  });
+  if(!unshippedLines.length){
+    alert('Everything is still checked as shipped — nothing to move back. Uncheck whatever didn\'t actually ship first.');
+    return;
+  }
+  if(!shippedLines.length){
+    // Every line unchecked — same as a full Undo, no need to create a
+    // second, empty "shipped" order alongside it.
+    await toggleOrderShippedManually(orderId,false);
+    return;
+  }
+  var updatedShipped={
+    id:o.id, date:o.date, customer:o.customer, driver:o.driver,
+    lines:shippedLines, shipped:true, invoiceDocNumber:o.invoiceDocNumber||'', invoiceDate:o.invoiceDate||''
+  };
+  var newUnshipped={
+    date:o.date, customer:o.customer, driver:o.driver,
+    lines:unshippedLines, shipped:false
+  };
+  var saved1=await saveOrder(updatedShipped);
+  var saved2=await saveOrder(newUnshipped);
+  if(!saved1||!saved2){ alert('Could not save the split — check your connection and try again.'); }
+  _renderShippedOrdersSummary();
+  _renderOrdersWeekSummary();
+}
+window.saveShippedOrderSplit=saveShippedOrderSplit;
 function _orderDatalists(){
   var customerNames=Array.from(new Set(customers.map(function(c){return c.name;}).filter(Boolean))).sort();
   var productNames=Array.from(new Set(items.map(function(i){return i.name;}).filter(Boolean))).sort();

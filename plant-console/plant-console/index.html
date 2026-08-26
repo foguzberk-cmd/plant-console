@@ -2704,16 +2704,34 @@ function printOrders(orderIds,title){
     var lines=_orderLinesOf(o);
     var linesHtml=lines.length
       ? lines.map(function(l){
-          return '<tr><td>'+esc(l.product||'(no product)')+(l.description?' — '+esc(l.description):'')+'</td><td style="text-align:right;font-weight:700">'+esc(l.quantity||'')+'</td></tr>';
+          return '<tr>'
+            +'<td class="prod">'+esc(l.product||'(no product)')+'</td>'
+            +'<td class="desc">'+esc(l.description||'')+'</td>'
+            +'<td class="qty">'+esc(l.quantity||'')+'</td>'
+            +'<td class="fill"></td>'
+            +'<td class="fill notes"></td>'
+          +'</tr>';
         }).join('')
-      : '<tr><td colspan="2" style="color:#888;font-style:italic">No products listed</td></tr>';
-    return '<div style="margin-bottom:22px;page-break-inside:avoid">'
+      : '<tr><td colspan="5" style="color:#888;font-style:italic">No products listed</td></tr>';
+    return '<div style="margin-bottom:26px;page-break-inside:avoid">'
       +'<div style="font-size:15px;font-weight:700;margin-bottom:6px">'+esc(o.customer||'(no customer)')+'</div>'
-      +'<table style="width:100%;border-collapse:collapse;font-size:13px">'+linesHtml+'</table>'
+      +'<table class="ordtbl"><thead><tr>'
+        +'<th class="prod">Product</th><th class="desc">Description</th><th class="qty">Ordered</th><th class="fill">Actual Weight</th><th class="fill">Notes</th>'
+      +'</tr></thead><tbody>'+linesHtml+'</tbody></table>'
     +'</div>';
-  }).join('<hr style="border:none;border-top:1px solid #ccc;margin:16px 0">');
+  }).join('');
   w.document.write('<html><head><title>'+esc(title)+'</title>'
-    +'<style>body{font-family:Arial,sans-serif;padding:30px;color:#222}td{padding:3px 0}h1{font-size:18px;margin:0 0 4px}.meta{color:#666;font-size:12px;margin-bottom:20px}</style></head><body>'
+    +'<style>'
+      +'body{font-family:Arial,sans-serif;padding:30px;color:#222}'
+      +'h1{font-size:18px;margin:0 0 4px}'
+      +'.meta{color:#666;font-size:12px;margin-bottom:20px}'
+      +'table.ordtbl{width:100%;border-collapse:collapse;font-size:12.5px;table-layout:fixed}'
+      +'table.ordtbl th,table.ordtbl td{border:1px solid #999;padding:6px 8px;text-align:left;vertical-align:top}'
+      +'table.ordtbl th{background:#f0f0f0;font-size:11px;text-transform:uppercase;letter-spacing:.03em}'
+      +'th.qty,td.qty{width:70px;text-align:right;font-weight:700}'
+      +'th.fill,td.fill{width:110px}'
+      +'td.fill{height:34px}'
+    +'</style></head><body>'
     +'<h1>'+esc(title)+'</h1><div class="meta">'+toPrint.length+' order'+(toPrint.length!==1?'s':'')+'</div>'
     +rowsHtml+'</body></html>');
   w.document.close();

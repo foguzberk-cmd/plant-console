@@ -635,7 +635,8 @@ const ICON={
   scalelog:'<path d="M3 6h18l-2 13a2 2 0 0 1-2 1.7H7a2 2 0 0 1-2-1.7L3 6z"/><path d="M3 6l1.5-3h15L21 6"/><path d="M9 11h6"/>',
   reports:'<path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/>',
   settings:'<circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
-  legal:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6M9 9h1"/>'
+  legal:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6M9 9h1"/>',
+  orders:'<rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h3.5a1 1 0 0 1 .9.55L22 12v4a1 1 0 0 1-1 1h-1"/><circle cx="6" cy="18.5" r="1.8"/><circle cx="17.5" cy="18.5" r="1.8"/>'
 };
 const TYPE_ICON={
   cold:'<path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>',
@@ -702,6 +703,7 @@ const SECTIONS=[
   {id:'transactions',label:'Transactions',kicker:'Movement',title:'Transactions',lede:'Receiving, production, internal transfers, and shipments — every movement of product in and out of the plant.'},
   {id:'scalelog',label:'Scale Log',kicker:'Production',title:'Scale Log',lede:'Print product labels and log every package scaled — date, time, product, and weight captured the moment a label is printed.'},
   {id:'reports',label:'Reports',kicker:'Insight',title:'Reports',lede:'On-hand summaries, throughput, and traceability rolled up by source, product class, and storage location.',empty:['No reports built yet.','Once items and transactions exist, summaries and breakdowns will appear here.']},
+  {id:'orders',label:'Orders',kicker:'Fulfillment',title:'Orders',lede:'Customer orders — what, how much, and who\'s driving it.'},
   {id:'settings',label:'Settings',kicker:'Configuration',title:'Settings',lede:'Storage locations, users, and system configuration for the entire console.'},
   {id:'legal',label:'Legal Documents',kicker:'Compliance',title:'Legal Documents',lede:'Certificates, inspection records, HACCP plans, and licenses — stored, dated, and tracked for renewal.',empty:['No documents on file.','Upload and tag compliance records here to keep them in one place.']}
 ];
@@ -756,6 +758,7 @@ function itemHasDeptConflict(it){
   return itemSpanningDepts(it).length>1;
 }
 let scaleLogs=JSON.parse(localStorage.getItem('pc_scalelogs')||'[]');
+let orders=JSON.parse(localStorage.getItem('pc_orders')||'[]');
 let labelAllowed=JSON.parse(localStorage.getItem('pc_labelallowed')||'{}'); // { [department]: [item ids permitted to print labels for that department] }
 if(Array.isArray(labelAllowed)){
   // Migrating from the old format, where one shared list applied to every
@@ -1068,6 +1071,9 @@ var _deletedScaleLogIds={};
 // pullFromServer() below re-adds anything still in this map that the
 // server's response is missing.
 var _recentlyAddedScaleLogs={};
+// Same pair of guards, same reasoning, for Orders.
+var _deletedOrderIds={};
+var _recentlyAddedOrders={};
 // Mirrors the above, for label template/layout saves: maps department name
 // -> the just-saved template object, for a grace period after a confirmed
 // save. Protects against the same timing gap — a pull already in flight
@@ -1242,6 +1248,16 @@ async function pullFromServer(){
       });
       scaleLogs=mergedPulledLogs;
       logSync('PULL got scaleLogs: server had '+serverCount+', kept '+scaleLogs.length+' after filtering guarded ids');
+    }
+    if(Array.isArray(data.orders)&&data.orders.length){
+      // Same reasoning as scaleLogs just above — mirrors it exactly.
+      var mergedPulledOrders=data.orders.filter(function(o){ return !_deletedOrderIds[o.id]; });
+      Object.keys(_recentlyAddedOrders).forEach(function(rid){
+        if(!mergedPulledOrders.some(function(o){ return o.id===rid; })){
+          mergedPulledOrders.push(_recentlyAddedOrders[rid]);
+        }
+      });
+      orders=mergedPulledOrders;
     }
     if(data.labelAllowed && typeof data.labelAllowed==='object' && !Array.isArray(data.labelAllowed) && Object.keys(data.labelAllowed).length){
       labelAllowed=data.labelAllowed;
@@ -1428,6 +1444,8 @@ async function _pushToServerImpl(){
         if(afterUnion!==users || newUsers.length!==afterUnion.length){ users=newUsers; safeSetLocal('pc_users',JSON.stringify(users)); }
         var mergedScaleLogs=unionById(scaleLogs, smallData.scaleLogs).filter(function(l){ return !_deletedScaleLogIds[l.id]; });
         scaleLogs=mergedScaleLogs; safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs));
+        var mergedOrders=unionById(orders, smallData.orders).filter(function(o){ return !_deletedOrderIds[o.id]; });
+        orders=mergedOrders; safeSetLocal('pc_orders',JSON.stringify(orders));
         if(smallData.labelAllowed && typeof smallData.labelAllowed==='object' && !Array.isArray(smallData.labelAllowed)){
           var newLabelAllowed=Object.assign({}, smallData.labelAllowed, labelAllowed);
           if(JSON.stringify(newLabelAllowed)!==JSON.stringify(labelAllowed)){ labelAllowed=newLabelAllowed; safeSetLocal('pc_labelallowed',JSON.stringify(labelAllowed)); }
@@ -1486,7 +1504,7 @@ async function _pushToServerImpl(){
     // per-field) would let the older snapshot silently win — quietly
     // reverting the approval a few seconds after it was made. Keeping this
     // field out of this payload entirely removes that race outright.
-    var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates,vendors:vendors,vendorDepartments:_vendorDepartments});
+    var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,orders:orders,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates,vendors:vendors,vendorDepartments:_vendorDepartments});
     if(snapshot===_lastPushedSnapshot){ _lastPushFailureDetail=''; return true; } // this exact state was already confirmed sent
     // 60s (not the 10s default) — every push sends the FULL app state,
     // including every transaction, and that array has grown into the tens
@@ -2512,6 +2530,7 @@ function select(id){
   else if(id==='scalelog') renderScaleLog();
   else if(id==='dashboard') renderDashboard();
   else if(id==='reports') renderReports();
+  else if(id==='orders') renderOrdersPage();
   else view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p><div class="empty"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICON[id]}</svg></div><div><h3>${s.empty[0]}</h3><p>${s.empty[1]}</p></div></div>`;
   view.focus({preventScroll:true});
   // The section above just rendered from whatever's already local/cached, so
@@ -2649,6 +2668,276 @@ async function sendChatMessage(){
 }
 window.sendChatMessage=sendChatMessage;
 window.initRailChat=initRailChat;
+
+/* ===== ORDERS — same visual/interaction pattern as Scheduled Payments: a
+   week-grouped summary strip up top, then a detail list grouped by
+   customer below, each collapsible. Unlike bills, there's no external
+   QuickBooks source for these — they're entered directly here. */
+var _ordersSearchQuery='';
+var _ordersEditingId=null; // id of the order currently being edited inline, or null
+function renderOrdersPage(){
+  var s=SECTIONS.find(function(x){return x.id==='orders';});
+  view.innerHTML='<div class="eyebrow">'+s.kicker+'</div><h2>'+s.title+'</h2><p class="lede">'+s.lede+'</p>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">'
+      +'<button class="btn btn-primary btn-sm" onclick="showNewOrderForm()">+ New Order</button>'
+      +'<input id="ordersSearch" type="text" placeholder="Search customer, product, description, driver…" value="'+esc(_ordersSearchQuery)+'" oninput="_ordersSearchQuery=this.value;_renderOrdersDetail()" style="flex:1;min-width:220px;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--panel);color:var(--ink)"/>'
+    +'</div>'
+    +'<div id="newOrderFormWrap"></div>'
+    +'<div id="ordersWeekSummary" style="margin-bottom:18px"></div>'
+    +'<div id="ordersDetail"></div>';
+  _renderOrdersWeekSummary();
+  _renderOrdersDetail();
+}
+function _orderDatalists(){
+  var customerNames=Array.from(new Set(customers.map(function(c){return c.name;}).filter(Boolean))).sort();
+  var productNames=Array.from(new Set(items.map(function(i){return i.name;}).filter(Boolean))).sort();
+  var driverNames=Array.from(new Set(orders.map(function(o){return o.driver;}).filter(Boolean))).sort();
+  return '<datalist id="ordersCustomerList">'+customerNames.map(function(n){return '<option value="'+esc(n)+'">';}).join('')+'</datalist>'
+    +'<datalist id="ordersProductList">'+productNames.map(function(n){return '<option value="'+esc(n)+'">';}).join('')+'</datalist>'
+    +'<datalist id="ordersDriverList">'+driverNames.map(function(n){return '<option value="'+esc(n)+'">';}).join('')+'</datalist>';
+}
+function _orderFormFields(o){
+  o=o||{};
+  var today=new Date().toISOString().slice(0,10);
+  return '<div style="display:grid;grid-template-columns:130px 1fr 1fr 1.4fr 90px 1fr;gap:8px;align-items:end">'
+    +'<div><label style="display:block;font-size:10px;color:var(--muted);margin-bottom:3px">Date</label><input type="date" class="ord-f-date" value="'+esc(o.date||today)+'" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/></div>'
+    +'<div><label style="display:block;font-size:10px;color:var(--muted);margin-bottom:3px">Customer</label><input type="text" class="ord-f-customer" list="ordersCustomerList" value="'+esc(o.customer||'')+'" placeholder="Customer" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/></div>'
+    +'<div><label style="display:block;font-size:10px;color:var(--muted);margin-bottom:3px">Product</label><input type="text" class="ord-f-product" list="ordersProductList" value="'+esc(o.product||'')+'" placeholder="Product" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/></div>'
+    +'<div><label style="display:block;font-size:10px;color:var(--muted);margin-bottom:3px">Description</label><input type="text" class="ord-f-description" value="'+esc(o.description||'')+'" placeholder="Description" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/></div>'
+    +'<div><label style="display:block;font-size:10px;color:var(--muted);margin-bottom:3px">Qty</label><input type="text" class="ord-f-quantity" value="'+esc(o.quantity||'')+'" placeholder="Qty" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/></div>'
+    +'<div><label style="display:block;font-size:10px;color:var(--muted);margin-bottom:3px">Driver</label><input type="text" class="ord-f-driver" list="ordersDriverList" value="'+esc(o.driver||'')+'" placeholder="Driver" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/></div>'
+  +'</div>';
+}
+function showNewOrderForm(){
+  var wrap=document.getElementById('newOrderFormWrap');
+  if(!wrap) return;
+  wrap.innerHTML=_orderDatalists()
+    +'<div style="border:1.5px solid var(--cold);background:var(--cold-soft);border-radius:12px;padding:14px;margin-bottom:18px">'
+      +'<div style="font-weight:700;font-size:13px;margin-bottom:10px">New Order</div>'
+      +'<div id="newOrderFields">'+_orderFormFields()+'</div>'
+      +'<div style="display:flex;gap:8px;margin-top:10px;align-items:center">'
+        +'<button class="btn btn-primary btn-sm" onclick="submitNewOrder()">Save Order</button>'
+        +'<button class="btn btn-sm" onclick="document.getElementById(\'newOrderFormWrap\').innerHTML=\'\'">Cancel</button>'
+        +'<span id="newOrderStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted)"></span>'
+      +'</div>'
+    +'</div>';
+  var firstInput=wrap.querySelector('.ord-f-date');
+  if(firstInput) firstInput.focus();
+}
+function _readOrderFormFields(container){
+  return {
+    date:(container.querySelector('.ord-f-date')||{}).value||'',
+    customer:(container.querySelector('.ord-f-customer')||{}).value||'',
+    product:(container.querySelector('.ord-f-product')||{}).value||'',
+    description:(container.querySelector('.ord-f-description')||{}).value||'',
+    quantity:(container.querySelector('.ord-f-quantity')||{}).value||'',
+    driver:(container.querySelector('.ord-f-driver')||{}).value||''
+  };
+}
+async function submitNewOrder(){
+  var fieldsWrap=document.getElementById('newOrderFields');
+  var statusEl=document.getElementById('newOrderStatus');
+  if(!fieldsWrap) return;
+  var vals=_readOrderFormFields(fieldsWrap);
+  if(!vals.customer.trim()){ if(statusEl){ statusEl.textContent='Customer is required.'; statusEl.style.color='#c0392b'; } return; }
+  if(statusEl){ statusEl.textContent='Saving…'; statusEl.style.color='var(--muted)'; }
+  var saved=await saveOrder(vals);
+  if(saved){
+    var wrap=document.getElementById('newOrderFormWrap');
+    if(wrap) wrap.innerHTML='';
+    _renderOrdersWeekSummary();
+    _renderOrdersDetail();
+  } else if(statusEl){
+    statusEl.textContent='Could not save — check your connection and try again.';
+    statusEl.style.color='#c0392b';
+  }
+}
+// Saves one order (create if no id, update if it has one) through the
+// dedicated fast endpoint — same "dumb terminal" reasoning as
+// updateCustomerSalesRep and _cfSaveScheduled elsewhere: a small, targeted
+// write that completes almost immediately, rather than bundling this into
+// the whole-app snapshot push.
+async function saveOrder(orderFields){
+  var isNew=!orderFields.id;
+  var optimistic=Object.assign({},orderFields,{id:orderFields.id||('local_'+Date.now()+'_'+Math.random().toString(36).slice(2,8))});
+  if(isNew){
+    orders.push(optimistic);
+    _recentlyAddedOrders[optimistic.id]=optimistic;
+  } else {
+    var idx=orders.findIndex(function(o){return o.id===orderFields.id;});
+    if(idx>=0) orders[idx]=Object.assign({},orders[idx],orderFields);
+  }
+  safeSetLocal('pc_orders',JSON.stringify(orders));
+  try{
+    var res=await fetch('/api/data/save-order',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({order:Object.assign({},orderFields,{createdBy:(currentUser&&currentUser.name)||''})})
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    var data=await res.json();
+    if(data.order){
+      // Replace the optimistic local copy with the server's authoritative
+      // saved record (real id if this was new, real createdBy/createdAt).
+      var idx2=orders.findIndex(function(o){return o.id===optimistic.id;});
+      if(idx2>=0) orders[idx2]=data.order;
+      if(isNew){
+        delete _recentlyAddedOrders[optimistic.id];
+        _recentlyAddedOrders[data.order.id]=data.order;
+        setTimeout(function(){ delete _recentlyAddedOrders[data.order.id]; },15000);
+      }
+      safeSetLocal('pc_orders',JSON.stringify(orders));
+      return data.order;
+    }
+    return optimistic;
+  }catch(e){
+    console.error('Order save failed:',e);
+    return null;
+  }
+}
+window.saveOrder=saveOrder;
+window.submitNewOrder=submitNewOrder;
+window.showNewOrderForm=showNewOrderForm;
+
+function _renderOrdersWeekSummary(){
+  var el=document.getElementById('ordersWeekSummary');
+  if(!el) return;
+  function fmtShortOrd(dateStr){
+    var d=new Date(dateStr+'T00:00:00');
+    return d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  }
+  var byWeek={};
+  orders.forEach(function(o){
+    if(!o.date) return;
+    var d=new Date(o.date+'T00:00:00');
+    var monday=new Date(d); monday.setDate(d.getDate()-((d.getDay()+6)%7));
+    var wk=monday.toISOString().slice(0,10);
+    (byWeek[wk]=byWeek[wk]||[]).push(o);
+  });
+  var weekKeys=Object.keys(byWeek).sort();
+  if(!weekKeys.length){ el.innerHTML=''; return; }
+  var html='<div style="border:1px solid var(--line);border-radius:12px;overflow:hidden">';
+  weekKeys.forEach(function(wk,wi){
+    var weekSunday=new Date(wk+'T00:00:00'); weekSunday.setDate(weekSunday.getDate()+6);
+    var count=byWeek[wk].length;
+    var label='Week '+_isoWeekNumber(wk)+' · '+fmtShortOrd(wk)+' – '+fmtShortOrd(weekSunday.toISOString().slice(0,10))+' ('+count+')';
+    html+='<div onclick="toggleReportRow(\'ordWeek-'+wi+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:10px 14px;background:#fff3cd;border-bottom:1px solid #e0c56b">'
+      +'<svg id="ordWeek-'+wi+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#8a6d1a;flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
+      +'<span style="font-weight:700;font-size:13px;color:#5c4813">'+label+'</span>'
+    +'</div>'
+    +'<div id="ordWeek-'+wi+'" style="display:none">'
+      +byWeek[wk].slice().sort(function(a,b){return a.date<b.date?-1:1;}).map(function(o){
+        return '<div style="display:flex;gap:14px;padding:6px 14px 6px 30px;font-size:12px;border-bottom:1px dashed var(--line);color:var(--muted)">'
+          +'<span style="width:80px;flex-shrink:0">'+esc(o.date)+'</span>'
+          +'<span style="width:160px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)">'+esc(o.customer)+'</span>'
+          +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(o.product)+(o.quantity?' × '+esc(o.quantity):'')+'</span>'
+          +'<span style="width:110px;flex-shrink:0;text-align:right">'+esc(o.driver||'—')+'</span>'
+        +'</div>';
+      }).join('')
+    +'</div>';
+  });
+  html+='</div>';
+  el.innerHTML=html;
+}
+function _renderOrdersDetail(){
+  var el=document.getElementById('ordersDetail');
+  if(!el) return;
+  var q=(_ordersSearchQuery||'').trim().toLowerCase();
+  var filtered=orders.filter(function(o){
+    if(!q) return true;
+    return [o.customer,o.product,o.description,o.driver].some(function(f){ return (f||'').toLowerCase().indexOf(q)>=0; });
+  });
+  var byCust={};
+  filtered.forEach(function(o){
+    var key=o.customer||'(no customer)';
+    (byCust[key]=byCust[key]||[]).push(o);
+  });
+  var custKeys=Object.keys(byCust).sort();
+  if(!custKeys.length){
+    el.innerHTML='<div class="txn-empty"><p>'+(q?'No orders match "'+esc(_ordersSearchQuery)+'".':'No orders yet.')+'</p>'+(q?'':'<p>Click "+ New Order" above to add the first one.</p>')+'</div>';
+    return;
+  }
+  el.innerHTML=_orderDatalists()+'<div style="border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--panel)">'
+    +custKeys.map(function(key,ci){
+      var custOrders=byCust[key].slice().sort(function(a,b){return a.date<b.date?1:-1;});
+      var rowId='ordCust-'+ci;
+      return '<div style="border-bottom:1px solid var(--line)">'
+        +'<div onclick="toggleReportRow(\''+rowId+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--bg)">'
+          +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
+          +'<span style="font-weight:600;font-size:14px">'+esc(key)+'</span>'
+          +'<span style="color:var(--muted);font-family:var(--mono);font-size:12px">('+custOrders.length+' order'+(custOrders.length!==1?'s':'')+')</span>'
+        +'</div>'
+        +'<div id="'+rowId+'" style="display:'+(q?'block':'none')+'">'
+          +custOrders.map(function(o){ return _renderOrderRow(o); }).join('')
+        +'</div>'
+      +'</div>';
+    }).join('')
+  +'</div>';
+}
+function _renderOrderRow(o){
+  if(_ordersEditingId===o.id){
+    return '<div id="ordRow-'+esc(o.id)+'" style="padding:10px 16px 10px 30px;border-bottom:1px dashed var(--line);background:var(--cold-soft)">'
+      +_orderFormFields(o)
+      +'<div style="display:flex;gap:8px;margin-top:8px">'
+        +'<button class="btn btn-primary btn-sm" onclick="submitEditOrder(\''+esc(o.id)+'\')">Save</button>'
+        +'<button class="btn btn-sm" onclick="_ordersEditingId=null;_renderOrdersDetail()">Cancel</button>'
+      +'</div>'
+    +'</div>';
+  }
+  return '<div id="ordRow-'+esc(o.id)+'" style="display:flex;align-items:center;gap:14px;padding:8px 16px 8px 30px;font-size:12.5px;border-bottom:1px dashed var(--line)">'
+    +'<span style="width:80px;flex-shrink:0;color:var(--muted)">'+esc(o.date)+'</span>'
+    +'<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(o.product)+'</b>'+(o.description?' — '+esc(o.description):'')+'</span>'
+    +'<span style="width:70px;flex-shrink:0;text-align:right;color:var(--muted)">'+esc(o.quantity||'—')+'</span>'
+    +'<span style="width:120px;flex-shrink:0;text-align:right;color:var(--muted)">'+esc(o.driver||'—')+'</span>'
+    +'<span style="flex-shrink:0;display:flex;gap:4px">'
+      +'<button title="Edit" onclick="_ordersEditingId=\''+esc(o.id)+'\';_renderOrdersDetail()" style="border:0;background:transparent;cursor:pointer;padding:4px;color:var(--muted)">✎</button>'
+      +'<button title="Delete" onclick="deleteOrder(\''+esc(o.id)+'\')" style="border:0;background:transparent;cursor:pointer;padding:4px;color:#b8460b">🗑</button>'
+    +'</span>'
+  +'</div>';
+}
+async function submitEditOrder(id){
+  var rowEl=document.getElementById('ordRow-'+id);
+  if(!rowEl) return;
+  var vals=_readOrderFormFields(rowEl);
+  vals.id=id;
+  if(!vals.customer.trim()){ alert('Customer is required.'); return; }
+  var saved=await saveOrder(vals);
+  _ordersEditingId=null;
+  if(!saved){ alert('Could not save — check your connection and try again.'); }
+  _renderOrdersWeekSummary();
+  _renderOrdersDetail();
+}
+window.submitEditOrder=submitEditOrder;
+// Delete — same dedicated-tombstoned-endpoint pattern as deleteScaleLog,
+// with an optimistic local removal plus a guard so a pull that's already
+// in flight can't silently bring the deleted order back.
+async function deleteOrder(id){
+  if(!confirm('Delete this order?')) return;
+  _deletedOrderIds[id]=true;
+  var removedIdx=orders.findIndex(function(o){return o.id===id;});
+  var removed=removedIdx>=0?orders[removedIdx]:null;
+  orders=orders.filter(function(o){return o.id!==id;});
+  safeSetLocal('pc_orders',JSON.stringify(orders));
+  _renderOrdersWeekSummary();
+  _renderOrdersDetail();
+  try{
+    var res=await fetch('/api/data/delete-order',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:id})
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    setTimeout(function(){ delete _deletedOrderIds[id]; },15000);
+  }catch(e){
+    console.error('Order delete failed:',e);
+    // Put it back — the server never confirmed the delete, so treating it
+    // as gone would just be wrong the moment the next pull runs anyway.
+    delete _deletedOrderIds[id];
+    if(removed){ orders.push(removed); safeSetLocal('pc_orders',JSON.stringify(orders)); }
+    _renderOrdersWeekSummary();
+    _renderOrdersDetail();
+    alert('Could not delete — check your connection and try again.');
+  }
+}
+window.deleteOrder=deleteOrder;
 
 function renderReports(){
   const s=SECTIONS.find(x=>x.id==='reports');

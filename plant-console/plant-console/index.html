@@ -2884,13 +2884,25 @@ async function matchOrdersWithQuickBooks(){
   if(btn){ btn.disabled=true; btn.textContent='Matching…'; }
   var toCheck=orders.filter(function(o){ return !o.shipped && o.customer && o.date; });
   var matchedCount=0;
+  var diagnostics=[]; // one entry per UNMATCHED order, explaining why
   for(var i=0;i<toCheck.length;i++){
     var o=toCheck[i];
     var custNameLower=o.customer.trim().toLowerCase();
-    var candidates=invoices.filter(function(inv){
+    // Exact match first (fast, precise). If nothing, fall back to a
+    // "contains" match in both directions — QuickBooks's real DisplayName
+    // is often a compound like "Nazar Boston | Nazar Meat Corp", while the
+    // order's customer field may only have the shorter half typed in (or
+    // vice versa), so a strict equality check misses real matches that a
+    // person would obviously recognize as the same account.
+    var exactCandidates=invoices.filter(function(inv){
       var name=(inv.CustomerRef&&inv.CustomerRef.name)||'';
       return name.trim().toLowerCase()===custNameLower && inv.TxnDate && inv.TxnDate>=o.date;
-    }).sort(function(a,b){ return a.TxnDate<b.TxnDate?-1:1; });
+    });
+    var candidates=exactCandidates.length?exactCandidates:invoices.filter(function(inv){
+      var name=((inv.CustomerRef&&inv.CustomerRef.name)||'').trim().toLowerCase();
+      return name && (name.indexOf(custNameLower)>=0 || custNameLower.indexOf(name)>=0) && inv.TxnDate && inv.TxnDate>=o.date;
+    });
+    candidates=candidates.sort(function(a,b){ return a.TxnDate<b.TxnDate?-1:1; });
     if(candidates.length){
       var match=candidates[0];
       // Send the FULL existing record, not just the new fields — the
@@ -2904,13 +2916,32 @@ async function matchOrdersWithQuickBooks(){
       };
       var saved=await saveOrder(fullOrder);
       if(saved) matchedCount++;
+    } else {
+      // Diagnose WHY this one didn't match: is there an invoice for this
+      // customer at all in the cache (regardless of date), or none
+      // whatsoever? That tells us whether it's a name-matching problem or
+      // simply "not invoiced yet."
+      var anyForCustomer=invoices.filter(function(inv){
+        var name=((inv.CustomerRef&&inv.CustomerRef.name)||'').trim().toLowerCase();
+        return name && (name.indexOf(custNameLower)>=0 || custNameLower.indexOf(name)>=0);
+      });
+      if(anyForCustomer.length){
+        var closest=anyForCustomer.sort(function(a,b){ return (b.TxnDate||'')<(a.TxnDate||'')?-1:1; })[0];
+        diagnostics.push(o.customer+': found invoice #'+(closest.DocNumber||'?')+' dated '+(closest.TxnDate||'?')+' — but that\'s BEFORE the order date ('+o.date+'), so not counted as fulfilling it');
+      } else {
+        diagnostics.push(o.customer+': no invoice for this customer name found anywhere in the cache ('+invoices.length+' invoices loaded total)');
+      }
     }
     if(btn) btn.textContent='Matching… ('+(i+1)+'/'+toCheck.length+')';
   }
   if(btn){ btn.disabled=false; btn.textContent='Match with QuickBooks'; }
   _renderShippedOrdersSummary();
   _renderOrdersWeekSummary();
-  alert('Matched '+matchedCount+' of '+toCheck.length+' unshipped order'+(toCheck.length!==1?'s':'')+' to a QuickBooks invoice.'+(matchedCount<toCheck.length?' The rest don\'t have a matching invoice yet — run this again later, or mark one shipped manually from its detail view if you know it went out.':''));
+  var msg='Matched '+matchedCount+' of '+toCheck.length+' unshipped order'+(toCheck.length!==1?'s':'')+' to a QuickBooks invoice ('+invoices.length+' invoices loaded from cache).';
+  if(diagnostics.length){
+    msg+='\n\nWhy the rest didn\'t match:\n'+diagnostics.slice(0,10).join('\n')+(diagnostics.length>10?'\n…and '+(diagnostics.length-10)+' more':'');
+  }
+  alert(msg);
 }
 window.matchOrdersWithQuickBooks=matchOrdersWithQuickBooks;
 // Shipped Orders — grouped by day only (not driver — once shipped, the

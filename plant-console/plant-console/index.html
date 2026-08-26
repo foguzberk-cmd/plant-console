@@ -2746,11 +2746,23 @@ window.printOrders=printOrders;
 // relying on it meant clicking to expand silently failed with nothing
 // visibly wrong if someone opened Orders first, before ever visiting
 // Reports. This one is always defined, regardless of navigation order.
-function toggleOrdersRow(id){
-  var el=document.getElementById(id); if(!el) return;
+var _ordersRowOpen={}; // contentKey -> true if expanded — survives across re-renders, unlike relying on inline style alone
+// Escapes a string for safe embedding inside a single-quoted JS string
+// literal (e.g. inside an onclick="...('...')" attribute) — NOT the same
+// thing as esc(), which HTML-escapes for display text and does nothing
+// to stop an apostrophe from breaking out of a JS string. Customer names
+// routinely contain apostrophes ("Amir's Halal Restaurant"), so this
+// matters here in a way it hasn't needed to elsewhere in Orders so far.
+function _jsStrEsc(s){
+  return String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+}
+function toggleOrdersRow(elId,openKey){
+  openKey=openKey||elId;
+  var el=document.getElementById(elId); if(!el) return;
   var opening=el.style.display==='none';
   el.style.display=opening?'block':'none';
-  var chev=document.getElementById(id+'-chev');
+  _ordersRowOpen[openKey]=opening;
+  var chev=document.getElementById(elId+'-chev');
   if(chev) chev.style.transform=opening?'rotate(90deg)':'';
 }
 window.toggleOrdersRow=toggleOrdersRow;
@@ -3005,6 +3017,21 @@ function _renderOrdersWeekSummary(){
     return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
   }
   var q=(_ordersSearchQuery||'').trim().toLowerCase();
+  // If an order is currently being edited, force its day/customer groups
+  // open BEFORE building the HTML below — otherwise the edit form renders
+  // correctly, but sits inside groups that just collapsed back to their
+  // default closed state (every re-render used to reset every group to
+  // closed unless a search was active), making it look like the order
+  // simply vanished the moment Edit was clicked.
+  if(_ordersEditingId){
+    var editingOrder=orders.find(function(o){return o.id===_ordersEditingId;});
+    if(editingOrder){
+      _ordersRowOpen['day:'+editingOrder.date]=true;
+      var editDriverKey=editingOrder.driver||'(no driver assigned)';
+      var editCustKey=editingOrder.customer||'(no customer)';
+      _ordersRowOpen['cust:'+editingOrder.date+'|'+editDriverKey+'|'+editCustKey]=true;
+    }
+  }
   var filtered=orders.filter(function(o){
     if(!q) return true;
     var lines=_orderLinesOf(o);
@@ -3025,11 +3052,11 @@ function _renderOrdersWeekSummary(){
   dayKeys.forEach(function(dk,di){
     var count=byDay[dk].length;
     var label=fmtDayOrd(dk)+' ('+count+')';
-    html+='<div onclick="toggleOrdersRow(\'ordDay-'+di+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:10px 14px;background:#fff3cd;border-bottom:1px solid #e0c56b">'
-      +'<svg id="ordDay-'+di+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#8a6d1a;flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
+    html+='<div onclick="toggleOrdersRow(\'ordDay-'+di+'\',\'day:'+esc(dk)+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:10px 14px;background:#fff3cd;border-bottom:1px solid #e0c56b">'
+      +'<svg id="ordDay-'+di+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#8a6d1a;flex-shrink:0'+(_ordersRowOpen['day:'+dk]?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
       +'<span style="font-weight:700;font-size:13px;color:#5c4813">'+label+'</span>'
     +'</div>'
-    +'<div id="ordDay-'+di+'" style="display:'+(q?'block':'none')+'">'
+    +'<div id="ordDay-'+di+'" style="display:'+((q||_ordersRowOpen['day:'+dk])?'block':'none')+'">'
       +(function(){
         // Sub-group this day's orders by driver, so everything on one
         // driver's route for the day clusters together instead of a flat
@@ -3063,13 +3090,14 @@ function _renderOrdersWeekSummary(){
             +custKeys.map(function(key,ci){
               var custOrders=byCust[key].slice().sort(function(a,b){return a.date<b.date?1:-1;});
               var rowId='ordDay-'+di+'-drv-'+dri+'-cust-'+ci;
+              var custOpenKey='cust:'+dk+'|'+dName+'|'+key;
               return '<div style="border-bottom:1px dashed var(--line)">'
-                +'<div onclick="toggleOrdersRow(\''+rowId+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:9px 16px 9px 44px;background:var(--panel)">'
-                  +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;stroke:var(--muted);flex-shrink:0"><polyline points="9 6 15 12 9 18"/></svg>'
+                +'<div onclick="toggleOrdersRow(\''+rowId+'\',\''+_jsStrEsc(custOpenKey)+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:9px 16px 9px 44px;background:var(--panel)">'
+                  +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;stroke:var(--muted);flex-shrink:0'+(_ordersRowOpen[custOpenKey]?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
                   +'<span style="font-weight:600;font-size:13.5px">'+esc(key)+'</span>'
                   +'<span style="color:var(--muted);font-family:var(--mono);font-size:11.5px">('+custOrders.length+' order'+(custOrders.length!==1?'s':'')+')</span>'
                 +'</div>'
-                +'<div id="'+rowId+'" style="display:'+(q?'block':'none')+'">'
+                +'<div id="'+rowId+'" style="display:'+((q||_ordersRowOpen[custOpenKey])?'block':'none')+'">'
                   +custOrders.map(function(o){ return _renderOrderRow(o); }).join('')
                 +'</div>'
               +'</div>';

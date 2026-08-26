@@ -2905,7 +2905,7 @@ function _renderOrdersWeekSummary(){
       +byWeek[wk].slice().sort(function(a,b){return a.date<b.date?-1:1;}).map(function(o){
         var lines=_orderLinesOf(o);
         var lineSummary=lines.length?lines.map(function(l){ return esc(l.product||'(no product)')+(l.quantity?' × '+esc(l.quantity):''); }).join(', '):'(no products)';
-        return '<div style="display:flex;gap:14px;padding:6px 14px 6px 30px;font-size:12px;border-bottom:1px dashed var(--line);color:var(--muted)">'
+        return '<div onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;display:flex;gap:14px;padding:6px 14px 6px 30px;font-size:12px;border-bottom:1px dashed var(--line);color:var(--muted)">'
           +'<span style="width:80px;flex-shrink:0">'+esc(o.date)+'</span>'
           +'<span style="width:160px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)">'+esc(o.customer)+'</span>'
           +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+lineSummary+'</span>'
@@ -2963,7 +2963,7 @@ function _renderOrderRow(o){
     +'</div>';
   }
   var lines=_orderLinesOf(o);
-  return '<div id="ordRow-'+esc(o.id)+'" style="display:flex;align-items:flex-start;gap:14px;padding:8px 16px 8px 30px;font-size:12.5px;border-bottom:1px dashed var(--line)">'
+  return '<div id="ordRow-'+esc(o.id)+'" onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;display:flex;align-items:flex-start;gap:14px;padding:8px 16px 8px 30px;font-size:12.5px;border-bottom:1px dashed var(--line)">'
     +'<span style="width:80px;flex-shrink:0;color:var(--muted);padding-top:2px">'+esc(o.date)+'</span>'
     +'<span style="flex:1;min-width:0">'
       +(lines.length
@@ -2974,11 +2974,62 @@ function _renderOrderRow(o){
     +'</span>'
     +'<span style="width:120px;flex-shrink:0;text-align:right;color:var(--muted);padding-top:2px">'+esc(o.driver||'—')+'</span>'
     +'<span style="flex-shrink:0;display:flex;gap:4px">'
-      +'<button title="Edit" onclick="_ordersEditingId=\''+esc(o.id)+'\';_renderOrdersDetail()" style="border:0;background:transparent;cursor:pointer;padding:4px;color:var(--muted)">✎</button>'
-      +'<button title="Delete" onclick="deleteOrder(\''+esc(o.id)+'\')" style="border:0;background:transparent;cursor:pointer;padding:4px;color:#b8460b">🗑</button>'
+      +'<button title="Edit" onclick="event.stopPropagation();_ordersEditingId=\''+esc(o.id)+'\';_renderOrdersDetail()" style="border:0;background:transparent;cursor:pointer;padding:4px;color:var(--muted)">✎</button>'
+      +'<button title="Delete" onclick="event.stopPropagation();deleteOrder(\''+esc(o.id)+'\')" style="border:0;background:transparent;cursor:pointer;padding:4px;color:#b8460b">🗑</button>'
     +'</span>'
   +'</div>';
 }
+// A full detail view for one order — triggered by clicking anywhere on its
+// row (other than the edit/delete icons themselves, which stop the click
+// from reaching here). Same modal pattern used for Initiate Payment
+// elsewhere in the app.
+function showOrderDetailModal(id){
+  var o=orders.find(function(x){return x.id===id;});
+  if(!o) return;
+  var lines=_orderLinesOf(o);
+  var bg=document.createElement('div');
+  bg.className='modal-bg';
+  bg.id='orderDetailModalBg';
+  bg.setAttribute('role','dialog');
+  bg.setAttribute('aria-modal','true');
+  bg.addEventListener('mousedown',function(e){ bg._downOnBg=(e.target===bg); });
+  bg.addEventListener('mouseup',function(e){ if(bg._downOnBg && e.target===bg) closeOrderDetailModal(); bg._downOnBg=false; });
+  bg.innerHTML='<div class="modal" style="max-width:460px">'
+    +'<h3 style="margin:0 0 4px">Order Detail</h3>'
+    +'<p style="color:var(--muted);font-size:13px;margin:0 0 16px">'+esc(o.customer||'(no customer)')+' · '+esc(o.date||'')+'</p>'
+    +'<div style="display:grid;grid-template-columns:90px 1fr;gap:8px 12px;font-size:13px;margin-bottom:14px">'
+      +'<div style="color:var(--muted)">Date</div><div>'+esc(o.date||'—')+'</div>'
+      +'<div style="color:var(--muted)">Customer</div><div>'+esc(o.customer||'—')+'</div>'
+      +'<div style="color:var(--muted)">Driver</div><div>'+esc(o.driver||'—')+'</div>'
+    +'</div>'
+    +'<div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:6px;border-top:1px solid var(--line);padding-top:12px">Products ('+lines.length+')</div>'
+    +(lines.length
+        ? '<div style="border:1px solid var(--line);border-radius:9px;overflow:hidden;margin-bottom:16px">'
+          +lines.map(function(l,li){
+            return '<div style="padding:9px 12px;font-size:13px;'+(li<lines.length-1?'border-bottom:1px solid var(--line);':'')+'">'
+              +'<div style="font-weight:600">'+esc(l.product||'(no product)')+(l.quantity?' <span style="font-weight:400;color:var(--muted)">× '+esc(l.quantity)+'</span>':'')+'</div>'
+              +(l.description?'<div style="color:var(--muted);margin-top:2px">'+esc(l.description)+'</div>':'')
+            +'</div>';
+          }).join('')
+          +'</div>'
+        : '<div style="color:var(--muted);font-style:italic;margin-bottom:16px">No products listed.</div>')
+    +(o.createdBy?'<p style="color:var(--muted);font-size:11px;margin:0 0 16px">Added by '+esc(o.createdBy)+(o.createdAt?' · '+esc(o.createdAt.slice(0,10)):'')+'</p>':'')
+    +'<div class="modal-footer" style="display:flex;gap:8px;justify-content:space-between">'
+      +'<button class="btn" style="color:#b8460b" onclick="closeOrderDetailModal();deleteOrder(\''+esc(o.id)+'\')">🗑 Delete</button>'
+      +'<div style="display:flex;gap:8px">'
+        +'<button class="btn" onclick="closeOrderDetailModal()">Close</button>'
+        +'<button class="btn btn-primary" onclick="closeOrderDetailModal();_ordersEditingId=\''+esc(o.id)+'\';_renderOrdersDetail();var r=document.getElementById(\'ordRow-'+esc(o.id)+'\');if(r)r.scrollIntoView({behavior:\'smooth\',block:\'center\'});">✎ Edit</button>'
+      +'</div>'
+    +'</div>'
+  +'</div>';
+  document.body.appendChild(bg);
+}
+window.showOrderDetailModal=showOrderDetailModal;
+function closeOrderDetailModal(){
+  var bg=document.getElementById('orderDetailModalBg');
+  if(bg) bg.remove();
+}
+window.closeOrderDetailModal=closeOrderDetailModal;
 async function submitEditOrder(id){
   var rowEl=document.getElementById('ordRow-'+id);
   if(!rowEl) return;

@@ -2955,15 +2955,34 @@ function _renderOrdersWeekSummary(){
       +'<span style="font-weight:700;font-size:13px;color:#5c4813">'+label+'</span>'
     +'</div>'
     +'<div id="ordDay-'+di+'" style="display:none">'
-      +byDay[dk].slice().sort(function(a,b){return (a.customer||'')<(b.customer||'')?-1:1;}).map(function(o){
-        var lines=_orderLinesOf(o);
-        var lineSummary=lines.length?lines.map(function(l){ return esc(l.product||'(no product)')+(l.quantity?' × '+esc(l.quantity):''); }).join(', '):'(no products)';
-        return '<div onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;display:flex;gap:14px;padding:6px 14px 6px 30px;font-size:12px;border-bottom:1px dashed var(--line);color:var(--muted)">'
-          +'<span style="width:160px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)">'+esc(o.customer)+'</span>'
-          +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+lineSummary+'</span>'
-          +'<span style="width:110px;flex-shrink:0;text-align:right">'+esc(o.driver||'—')+'</span>'
-        +'</div>';
-      }).join('')
+      +(function(){
+        // Sub-group this day's orders by driver, so a driver can see (or
+        // anyone can see, for a given driver) everything on their route
+        // for the day clustered together, instead of a flat list sorted
+        // only by customer name with drivers scattered throughout.
+        var byDriver={};
+        byDay[dk].forEach(function(o){
+          var dName=o.driver||'(no driver assigned)';
+          (byDriver[dName]=byDriver[dName]||[]).push(o);
+        });
+        var driverKeys=Object.keys(byDriver).sort(function(a,b){
+          if(a==='(no driver assigned)') return 1;
+          if(b==='(no driver assigned)') return -1;
+          return a<b?-1:1;
+        });
+        return driverKeys.map(function(dName){
+          var driverOrders=byDriver[dName].slice().sort(function(a,b){return (a.customer||'')<(b.customer||'')?-1:1;});
+          return '<div style="padding:6px 14px 4px 30px;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold);background:var(--cold-soft)">'+esc(dName)+' ('+driverOrders.length+')</div>'
+            +driverOrders.map(function(o){
+              var lines=_orderLinesOf(o);
+              var lineSummary=lines.length?lines.map(function(l){ return esc(l.product||'(no product)')+(l.quantity?' × '+esc(l.quantity):''); }).join(', '):'(no products)';
+              return '<div onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;display:flex;gap:14px;padding:6px 14px 6px 44px;font-size:12px;border-bottom:1px dashed var(--line);color:var(--muted)">'
+                +'<span style="width:160px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)">'+esc(o.customer)+'</span>'
+                +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+lineSummary+'</span>'
+              +'</div>';
+            }).join('');
+        }).join('');
+      })()
     +'</div>';
   });
   html+='</div>';

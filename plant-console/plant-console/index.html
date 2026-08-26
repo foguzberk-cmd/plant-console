@@ -2949,11 +2949,24 @@ async function saveOrder(orderFields){
   var optimistic=Object.assign({},orderFields,{id:orderFields.id||('local_'+Date.now()+'_'+Math.random().toString(36).slice(2,8))});
   if(isNew){
     orders.push(optimistic);
-    _recentlyAddedOrders[optimistic.id]=optimistic;
   } else {
     var idx=orders.findIndex(function(o){return o.id===orderFields.id;});
     if(idx>=0) orders[idx]=Object.assign({},orders[idx],orderFields);
   }
+  // CRITICAL — this guard used to only apply when isNew was true. An EDIT
+  // to an existing order (e.g. changing its date) got zero protection,
+  // which is exactly what let it "bounce back": the background pull runs
+  // every 1.5s and does a full replace of the orders array from whatever
+  // the server last returned. If that pull's request was already in
+  // flight (or simply ran) before the server had caught up with this
+  // save, its response still carries the OLD date — and a plain replace
+  // would silently revert the edit right back, with no error anywhere,
+  // since nothing actually failed; a stale response just arrived at a bad
+  // moment. Same exact race class as several Cash Flow bugs fixed earlier
+  // — the fix is the same too: protect every save (new OR edited) for a
+  // grace period, not just new ones.
+  _recentlyAddedOrders[optimistic.id]=orders.find(function(o){return o.id===optimistic.id;})||optimistic;
+  var fallbackGuardTimeout=setTimeout(function(){ delete _recentlyAddedOrders[optimistic.id]; },20000);
   safeSetLocal('pc_orders',JSON.stringify(orders));
   try{
     var res=await fetch('/api/data/save-order',{
@@ -2967,11 +2980,10 @@ async function saveOrder(orderFields){
       // saved record (real id if this was new, real createdBy/createdAt).
       var idx2=orders.findIndex(function(o){return o.id===optimistic.id;});
       if(idx2>=0) orders[idx2]=data.order;
-      if(isNew){
-        delete _recentlyAddedOrders[optimistic.id];
-        _recentlyAddedOrders[data.order.id]=data.order;
-        setTimeout(function(){ delete _recentlyAddedOrders[data.order.id]; },15000);
-      }
+      clearTimeout(fallbackGuardTimeout);
+      delete _recentlyAddedOrders[optimistic.id];
+      _recentlyAddedOrders[data.order.id]=data.order;
+      setTimeout(function(){ delete _recentlyAddedOrders[data.order.id]; },15000);
       safeSetLocal('pc_orders',JSON.stringify(orders));
       return data.order;
     }

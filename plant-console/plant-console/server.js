@@ -52,7 +52,7 @@ const CASHFLOW_CACHE_FILE = path.join(DATA_DIR, 'cashflow-report-cache.json');
 // Same idea, for the Checks tab's raw QuickBooks Payment pull — see the
 // long comment on /api/checks-report-cache below for why this was missing.
 const CHECKS_CACHE_FILE = path.join(DATA_DIR, 'checks-report-cache.json');
-const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [], deletedCfSplitIds: [], chatMessages: [], orders: [], deletedOrderIds: [] };
+const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [], deletedCfSplitIds: [], chatMessages: [], orders: [], deletedOrderIds: [], drivers: [], deletedDrivers: [] };
 
 // ===== PIN HASHING =====
 // PINs are hashed with scrypt before they ever touch disk. Any user record
@@ -1178,7 +1178,9 @@ const server = http.createServer(async (req, res) => {
       cfScheduledDates: data.cfScheduledDates,
       customers: data.customers,
       orders: data.orders,
-      deletedOrderIds: data.deletedOrderIds
+      deletedOrderIds: data.deletedOrderIds,
+      drivers: data.drivers,
+      deletedDrivers: data.deletedDrivers
     }));
     return;
   }
@@ -1618,6 +1620,20 @@ const server = http.createServer(async (req, res) => {
           // endpoint below should ever add to it.
           incoming.deletedOrderIds = Array.from(orderTombstoned);
         }
+        // Drivers — a simple string list (not objects with ids), same
+        // union-plus-tombstone reasoning as orders/scaleLogs above: never
+        // let one device's routine save silently erase a driver another
+        // device just added.
+        if (Array.isArray(incoming.drivers)) {
+          const driverTombstoned = new Set(Array.isArray(current.deletedDrivers) ? current.deletedDrivers : []);
+          const mergedDrivers = new Set(Array.isArray(current.drivers) ? current.drivers : []);
+          for (const d of incoming.drivers) {
+            if (typeof d === 'string' && d && !driverTombstoned.has(d)) mergedDrivers.add(d);
+          }
+          for (const d of driverTombstoned) mergedDrivers.delete(d);
+          incoming.drivers = Array.from(mergedDrivers).sort();
+          incoming.deletedDrivers = Array.from(driverTombstoned);
+        }
         // labelTemplates is a plain object keyed by department, e.g.
         // { "Carcass Process/Retail": {...}, "Slaughter": {...} }. A blind
         // top-level replace here has the exact same problem scaleLogs did:
@@ -1802,6 +1818,61 @@ const server = http.createServer(async (req, res) => {
   // background pull land in that gap and revert the edit) plus a dedicated
   // delete endpoint that tombstones the id so no other device's stale push
   // can ever resurrect a deleted order.
+  if (url === '/api/data/add-driver' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      const name = typeof body.name === 'string' ? body.name.trim().slice(0, 100) : '';
+      if (!name) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+        res.end(JSON.stringify({ error: 'Missing name' }));
+        return;
+      }
+      let finalDrivers = [];
+      await updateSharedData(async (current) => {
+        const drivers = new Set(Array.isArray(current.drivers) ? current.drivers : []);
+        drivers.add(name);
+        finalDrivers = Array.from(drivers).sort();
+        // A fresh add always wins over a stale "this was just removed"
+        // tombstone, same reasoning as save-order/save-cf-schedule.
+        const deletedDrivers = (Array.isArray(current.deletedDrivers) ? current.deletedDrivers : []).filter(d => d !== name);
+        return { data: Object.assign({}, current, { drivers: finalDrivers, deletedDrivers }) };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, drivers: finalDrivers }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  if (url === '/api/data/delete-driver' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      const name = typeof body.name === 'string' ? body.name.trim() : '';
+      if (!name) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+        res.end(JSON.stringify({ error: 'Missing name' }));
+        return;
+      }
+      await updateSharedData(async (current) => {
+        const drivers = (Array.isArray(current.drivers) ? current.drivers : []).filter(d => d !== name);
+        const deletedDrivers = Array.isArray(current.deletedDrivers) ? current.deletedDrivers.slice() : [];
+        if (!deletedDrivers.includes(name)) deletedDrivers.push(name);
+        const capped = deletedDrivers.length > 2000 ? deletedDrivers.slice(deletedDrivers.length - 2000) : deletedDrivers;
+        return { data: Object.assign({}, current, { drivers, deletedDrivers: capped }) };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
   if (url === '/api/data/save-order' && req.method === 'POST') {
     if (!requireAuth(req, res)) return;
     try {
@@ -1817,15 +1888,27 @@ const server = http.createServer(async (req, res) => {
       await updateSharedData(async (current) => {
         const orders = Array.isArray(current.orders) ? current.orders.slice() : [];
         const id = order.id || ('order_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
+        // Multiple product lines per order — each order can now cover
+        // several products (e.g. one delivery carrying 3 different items
+        // for the same customer, same date, same driver) instead of being
+        // limited to exactly one product per order record. Falls back to
+        // wrapping legacy single product/description/quantity fields into
+        // a one-line array, so older orders saved before this change still
+        // read and re-save correctly without a separate migration step.
+        const rawLines = Array.isArray(order.lines) && order.lines.length
+          ? order.lines
+          : (order.product || order.description || order.quantity ? [{ product: order.product, description: order.description, quantity: order.quantity }] : []);
+        const lines = rawLines.map(l => ({
+          product: String((l && l.product) || '').trim().slice(0, 200),
+          description: String((l && l.description) || '').trim().slice(0, 1000),
+          quantity: String((l && l.quantity !== undefined && l.quantity !== null) ? l.quantity : '').trim().slice(0, 50)
+        })).filter(l => l.product || l.description || l.quantity);
         saved = {
           id: id,
           date: String(order.date || '').slice(0, 10),
           customer: String(order.customer || '').trim().slice(0, 200),
-          product: String(order.product || '').trim().slice(0, 200),
-          description: String(order.description || '').trim().slice(0, 1000),
-          quantity: String(order.quantity !== undefined && order.quantity !== null ? order.quantity : '').trim().slice(0, 50),
           driver: String(order.driver || '').trim().slice(0, 200),
-          createdBy: order.createdBy || (order.id ? undefined : undefined),
+          lines: lines,
           at: new Date().toISOString()
         };
         const idx = orders.findIndex(o => o && o.id === id);

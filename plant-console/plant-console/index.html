@@ -2725,17 +2725,30 @@ function _driverSelectHtml(selected){
     +'<option value="__add__">+ Add new driver…</option>'
   +'</select>';
 }
-// One product-line row (Product / Description / Qty + remove button) — an
-// order can now carry several of these, since one delivery commonly covers
-// more than one product for the same customer/date/driver.
-function _orderLineRowHtml(line){
-  line=line||{};
-  return '<div class="ord-line" style="display:grid;grid-template-columns:1fr 1.4fr 90px 28px;gap:8px;margin-bottom:6px;align-items:center">'
+// One row of the order form — for the first product line this includes
+// the order-level Date/Customer/Driver fields too, all six in one row.
+// Any additional product lines (added via "+ Add product") only show
+// Product/Description/Qty, but keep the same column widths so everything
+// still lines up underneath.
+function _orderLineRowHtml(line,isFirst,o){
+  line=line||{}; o=o||{};
+  var today=new Date().toISOString().slice(0,10);
+  return '<div class="ord-line" style="display:grid;grid-template-columns:125px 1fr 1fr 1fr 1.3fr 80px 26px;gap:8px;margin-bottom:6px;align-items:center">'
+    +(isFirst
+        ? '<input type="date" class="ord-f-date" value="'+esc(o.date||today)+'" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
+          +'<input type="text" class="ord-f-customer" list="ordersCustomerList" value="'+esc(o.customer||'')+'" placeholder="Customer" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
+          +_driverSelectHtml(o.driver||'')
+        : '<span></span><span></span><span></span>')
     +'<input type="text" class="ord-line-product" list="ordersProductList" value="'+esc(line.product||'')+'" placeholder="Product" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
     +'<input type="text" class="ord-line-description" value="'+esc(line.description||'')+'" placeholder="Description" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
     +'<input type="text" class="ord-line-quantity" value="'+esc(line.quantity||'')+'" placeholder="Qty" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
-    +'<button type="button" title="Remove this product" onclick="this.closest(\'.ord-line\').remove()" style="border:0;background:transparent;cursor:pointer;color:#b8460b;font-size:15px">✕</button>'
+    +'<button type="button" title="Remove this product" onclick="_removeOrderLine(this)" style="border:0;background:transparent;cursor:pointer;color:#b8460b;font-size:15px">✕</button>'
   +'</div>';
+}
+// A blank additional line (never the first/order-level row) — used by the
+// "+ Add product" button.
+function _orderLineRowHtmlBlank(){
+  return _orderLineRowHtml({},false,{});
 }
 function _orderLinesOf(o){
   // Backward compatible with orders saved before multi-line support — a
@@ -2747,9 +2760,42 @@ function _orderLinesOf(o){
 }
 function addOrderLineRow(btn){
   var container=btn.parentElement.querySelector('.ord-lines-container');
-  if(container) container.insertAdjacentHTML('beforeend',_orderLineRowHtml());
+  if(container) container.insertAdjacentHTML('beforeend',_orderLineRowHtmlBlank());
 }
 window.addOrderLineRow=addOrderLineRow;
+// The first line's row holds the order-level Date/Customer/Driver fields —
+// if that specific row gets removed, those fields need to move to whatever
+// line becomes first instead of disappearing. Simplest safe approach:
+// just don't allow removing the very first line if it's the only one left;
+// otherwise, promote the new first row by re-rendering the whole
+// container with the order-level values carried over.
+function _removeOrderLine(btn){
+  var lineEl=btn.closest('.ord-line');
+  var container=lineEl.parentElement;
+  var allLines=Array.prototype.slice.call(container.querySelectorAll('.ord-line'));
+  if(allLines.length<=1) return; // always keep at least one line
+  var wasFirst=allLines[0]===lineEl;
+  if(!wasFirst){ lineEl.remove(); return; }
+  // Carry the order-level fields over to the next line before removing
+  // this one, then re-mark that next line as the new first.
+  var carried={
+    date:(lineEl.querySelector('.ord-f-date')||{}).value||'',
+    customer:(lineEl.querySelector('.ord-f-customer')||{}).value||'',
+    driver:(lineEl.querySelector('.ord-f-driver')||{}).value||''
+  };
+  lineEl.remove();
+  var newFirst=container.querySelector('.ord-line');
+  var vals=_readOrderLineOnly(newFirst);
+  newFirst.outerHTML=_orderLineRowHtml(vals,true,carried);
+}
+window._removeOrderLine=_removeOrderLine;
+function _readOrderLineOnly(row){
+  return {
+    product:(row.querySelector('.ord-line-product')||{}).value||'',
+    description:(row.querySelector('.ord-line-description')||{}).value||'',
+    quantity:(row.querySelector('.ord-line-quantity')||{}).value||''
+  };
+}
 async function _promptAddDriver(selectEl){
   var name=prompt('New driver name:');
   if(!name || !name.trim()) { selectEl.value=''; return; }
@@ -2769,9 +2815,6 @@ async function _promptAddDriver(selectEl){
     console.error('Add driver failed:',e);
     if(drivers.indexOf(name)<0){ drivers.push(name); drivers.sort(); }
   }finally{
-    // Rebuild this one select in place (simplest way to refresh its option
-    // list without losing whatever else is on the page, e.g. an in-progress
-    // edit on a different row).
     var fresh=document.createElement('div');
     fresh.innerHTML=_driverSelectHtml(name);
     var newSelect=fresh.firstElementChild;
@@ -2781,25 +2824,24 @@ async function _promptAddDriver(selectEl){
 window._promptAddDriver=_promptAddDriver;
 function _orderFormFields(o){
   o=o||{};
-  var today=new Date().toISOString().slice(0,10);
   var lines=_orderLinesOf(o);
   if(!lines.length) lines=[{}];
-  return '<div style="display:grid;grid-template-columns:130px 1fr 1fr;gap:8px;align-items:end;margin-bottom:8px">'
-    +'<div><label style="display:block;font-size:10px;color:var(--muted);margin-bottom:3px">Date</label><input type="date" class="ord-f-date" value="'+esc(o.date||today)+'" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/></div>'
-    +'<div><label style="display:block;font-size:10px;color:var(--muted);margin-bottom:3px">Customer</label><input type="text" class="ord-f-customer" list="ordersCustomerList" value="'+esc(o.customer||'')+'" placeholder="Customer" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/></div>'
-    +'<div><label style="display:block;font-size:10px;color:var(--muted);margin-bottom:3px">Driver</label>'+_driverSelectHtml(o.driver||'')+'</div>'
-  +'</div>'
-  +'<div style="display:grid;grid-template-columns:1fr 1.4fr 90px 28px;gap:8px;margin-bottom:2px">'
-    +'<label style="font-size:10px;color:var(--muted)">Product</label><label style="font-size:10px;color:var(--muted)">Description</label><label style="font-size:10px;color:var(--muted)">Qty</label><span></span>'
-  +'</div>'
-  +'<div class="ord-lines-container">'+lines.map(function(l){ return _orderLineRowHtml(l); }).join('')+'</div>'
-  +'<button type="button" class="btn btn-sm" onclick="addOrderLineRow(this)" style="margin-top:2px">+ Add product</button>';
+  return _orderDatalists()
+    +'<div style="display:grid;grid-template-columns:125px 1fr 1fr 1fr 1.3fr 80px 26px;gap:8px;margin-bottom:2px">'
+      +'<label style="font-size:10px;color:var(--muted)">Date</label>'
+      +'<label style="font-size:10px;color:var(--muted)">Customer</label>'
+      +'<label style="font-size:10px;color:var(--muted)">Driver</label>'
+      +'<label style="font-size:10px;color:var(--muted)">Product</label>'
+      +'<label style="font-size:10px;color:var(--muted)">Description</label>'
+      +'<label style="font-size:10px;color:var(--muted)">Qty</label><span></span>'
+    +'</div>'
+    +'<div class="ord-lines-container">'+lines.map(function(l,li){ return _orderLineRowHtml(l,li===0,o); }).join('')+'</div>'
+    +'<button type="button" class="btn btn-sm" onclick="addOrderLineRow(this)" style="margin-top:2px">+ Add product</button>';
 }
 function showNewOrderForm(){
   var wrap=document.getElementById('newOrderFormWrap');
   if(!wrap) return;
-  wrap.innerHTML=_orderDatalists()
-    +'<div style="border:1.5px solid var(--cold);background:var(--cold-soft);border-radius:12px;padding:14px;margin-bottom:18px">'
+  wrap.innerHTML='<div style="border:1.5px solid var(--cold);background:var(--cold-soft);border-radius:12px;padding:14px;margin-bottom:18px">'
       +'<div style="font-weight:700;font-size:13px;margin-bottom:10px">New Order</div>'
       +'<div id="newOrderFields">'+_orderFormFields()+'</div>'
       +'<div style="display:flex;gap:8px;margin-top:10px;align-items:center">'
@@ -2950,7 +2992,7 @@ function _renderOrdersDetail(){
     el.innerHTML='<div class="txn-empty"><p>'+(q?'No orders match "'+esc(_ordersSearchQuery)+'".':'No orders yet.')+'</p>'+(q?'':'<p>Click "+ New Order" above to add the first one.</p>')+'</div>';
     return;
   }
-  el.innerHTML=_orderDatalists()+'<div style="border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--panel)">'
+  el.innerHTML='<div style="border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--panel)">'
     +custKeys.map(function(key,ci){
       var custOrders=byCust[key].slice().sort(function(a,b){return a.date<b.date?1:-1;});
       var rowId='ordCust-'+ci;

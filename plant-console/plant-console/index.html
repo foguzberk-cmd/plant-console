@@ -3417,10 +3417,14 @@ function _renderOrdersWeekSummary(){
             (byCust[key]=byCust[key]||[]).push(o);
           });
           var custKeys=Object.keys(byCust).sort();
+          var driverRowId='ordDay-'+di+'-drv-'+dri;
+          var driverOpenKey='drv:'+dk+'|'+dName;
           return '<div style="display:flex;align-items:center;gap:8px;padding:6px 14px 4px 30px;background:var(--cold-soft)">'
-              +'<span style="flex:1;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold)">'+esc(dName)+' ('+driverOrders.length+')</span>'
-              +'<button title="Print this driver\'s route (form + orders)" onclick="printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\',\''+esc(dk)+'\')" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:var(--cold);font-size:13px">🖨</button>'
+              +'<svg onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="cursor:pointer;width:11px;height:11px;stroke:var(--cold);flex-shrink:0'+(_ordersRowOpen[driverOpenKey]?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
+              +'<span onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" style="cursor:pointer;flex:1;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold)">'+esc(dName)+' ('+driverOrders.length+')</span>'
+              +'<button title="Print this driver\'s route (form + orders)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\',\''+esc(dk)+'\')" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:var(--cold);font-size:13px">🖨</button>'
             +'</div>'
+            +'<div id="'+driverRowId+'" style="display:'+((q||_ordersRowOpen[driverOpenKey])?'block':'none')+'">'
             +custKeys.map(function(key,ci){
               var custOrders=byCust[key].slice().sort(function(a,b){return a.date<b.date?1:-1;});
               var rowId='ordDay-'+di+'-drv-'+dri+'-cust-'+ci;
@@ -3435,7 +3439,8 @@ function _renderOrdersWeekSummary(){
                   +custOrders.map(function(o){ return _renderOrderRow(o); }).join('')
                 +'</div>'
               +'</div>';
-            }).join('');
+            }).join('')
+            +'</div>';
         }).join('');
       })()
     +'</div>';

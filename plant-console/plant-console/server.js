@@ -1930,10 +1930,28 @@ const server = http.createServer(async (req, res) => {
         if (idx >= 0) {
           saved.createdBy = orders[idx].createdBy || order.createdBy || '';
           saved.createdAt = orders[idx].createdAt || new Date().toISOString();
+          // Shipped status set by "Match with QuickBooks" — preserved
+          // across ordinary edits (date/driver/products), which never
+          // include a shipped field at all in their payload, unless THIS
+          // save explicitly provides one. Without this check, editing any
+          // detail on an already-shipped order would silently un-ship it,
+          // since order.shipped would just be undefined on that request.
+          if (order.shipped === undefined) {
+            saved.shipped = orders[idx].shipped === true;
+            saved.invoiceDocNumber = orders[idx].invoiceDocNumber || '';
+            saved.invoiceDate = orders[idx].invoiceDate || '';
+          } else {
+            saved.shipped = order.shipped === true;
+            saved.invoiceDocNumber = String(order.invoiceDocNumber || '').trim().slice(0, 100);
+            saved.invoiceDate = String(order.invoiceDate || '').slice(0, 10);
+          }
           orders[idx] = saved;
         } else {
           saved.createdBy = order.createdBy || '';
           saved.createdAt = new Date().toISOString();
+          saved.shipped = order.shipped === true;
+          saved.invoiceDocNumber = String(order.invoiceDocNumber || '').trim().slice(0, 100);
+          saved.invoiceDate = String(order.invoiceDate || '').slice(0, 10);
           orders.push(saved);
         }
         // A fresh save always wins over a stale "this was just deleted"

@@ -3020,7 +3020,10 @@ function _renderOrderRow(o){
     +'<span style="flex:1;min-width:0">'
       +(lines.length
         ? lines.map(function(l){
-            return '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+(l.description?' — '+esc(l.description):'')+(l.quantity?' <span style="color:var(--muted)">× '+esc(l.quantity)+'</span>':'')+'</div>';
+            return '<div style="display:flex;justify-content:space-between;gap:10px;overflow:hidden">'
+              +'<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+(l.description?' — '+esc(l.description):'')+'</span>'
+              +(l.quantity?'<b style="flex-shrink:0;white-space:nowrap">'+esc(l.quantity)+'</b>':'')
+            +'</div>';
           }).join('')
         : '<span style="color:var(--muted);font-style:italic">(no products listed)</span>')
     +'</span>'
@@ -3058,9 +3061,10 @@ function showOrderDetailModal(id){
     +(lines.length
         ? '<div style="border:1px solid var(--line);border-radius:9px;overflow:hidden;margin-bottom:16px">'
           +lines.map(function(l,li){
-            return '<div style="padding:9px 12px;font-size:13px;'+(li<lines.length-1?'border-bottom:1px solid var(--line);':'')+'">'
-              +'<div style="font-weight:600">'+esc(l.product||'(no product)')+(l.quantity?' <span style="font-weight:400;color:var(--muted)">× '+esc(l.quantity)+'</span>':'')+'</div>'
-              +(l.description?'<div style="color:var(--muted);margin-top:2px">'+esc(l.description)+'</div>':'')
+            return '<div style="display:flex;justify-content:space-between;gap:12px;padding:9px 12px;font-size:13px;'+(li<lines.length-1?'border-bottom:1px solid var(--line);':'')+'">'
+              +'<div style="min-width:0"><div style="font-weight:600">'+esc(l.product||'(no product)')+'</div>'
+              +(l.description?'<div style="color:var(--muted);margin-top:2px">'+esc(l.description)+'</div>':'')+'</div>'
+              +(l.quantity?'<b style="flex-shrink:0;white-space:nowrap">'+esc(l.quantity)+'</b>':'')
             +'</div>';
           }).join('')
           +'</div>'

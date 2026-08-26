@@ -759,6 +759,7 @@ function itemHasDeptConflict(it){
 }
 let scaleLogs=JSON.parse(localStorage.getItem('pc_scalelogs')||'[]');
 let orders=JSON.parse(localStorage.getItem('pc_orders')||'[]');
+let drivers=JSON.parse(localStorage.getItem('pc_drivers')||'[]');
 let labelAllowed=JSON.parse(localStorage.getItem('pc_labelallowed')||'{}'); // { [department]: [item ids permitted to print labels for that department] }
 if(Array.isArray(labelAllowed)){
   // Migrating from the old format, where one shared list applied to every
@@ -1074,6 +1075,7 @@ var _recentlyAddedScaleLogs={};
 // Same pair of guards, same reasoning, for Orders.
 var _deletedOrderIds={};
 var _recentlyAddedOrders={};
+var _deletedDrivers={};
 // Mirrors the above, for label template/layout saves: maps department name
 // -> the just-saved template object, for a grace period after a confirmed
 // save. Protects against the same timing gap — a pull already in flight
@@ -1258,6 +1260,9 @@ async function pullFromServer(){
         }
       });
       orders=mergedPulledOrders;
+    }
+    if(Array.isArray(data.drivers)&&data.drivers.length){
+      drivers=data.drivers.filter(function(d){ return !_deletedDrivers[d]; });
     }
     if(data.labelAllowed && typeof data.labelAllowed==='object' && !Array.isArray(data.labelAllowed) && Object.keys(data.labelAllowed).length){
       labelAllowed=data.labelAllowed;
@@ -1446,6 +1451,10 @@ async function _pushToServerImpl(){
         scaleLogs=mergedScaleLogs; safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs));
         var mergedOrders=unionById(orders, smallData.orders).filter(function(o){ return !_deletedOrderIds[o.id]; });
         orders=mergedOrders; safeSetLocal('pc_orders',JSON.stringify(orders));
+        if(Array.isArray(smallData.drivers)){
+          var driverSet={}; drivers.concat(smallData.drivers).forEach(function(d){ if(d && !_deletedDrivers[d]) driverSet[d]=true; });
+          drivers=Object.keys(driverSet).sort(); safeSetLocal('pc_drivers',JSON.stringify(drivers));
+        }
         if(smallData.labelAllowed && typeof smallData.labelAllowed==='object' && !Array.isArray(smallData.labelAllowed)){
           var newLabelAllowed=Object.assign({}, smallData.labelAllowed, labelAllowed);
           if(JSON.stringify(newLabelAllowed)!==JSON.stringify(labelAllowed)){ labelAllowed=newLabelAllowed; safeSetLocal('pc_labelallowed',JSON.stringify(labelAllowed)); }
@@ -1504,7 +1513,7 @@ async function _pushToServerImpl(){
     // per-field) would let the older snapshot silently win — quietly
     // reverting the approval a few seconds after it was made. Keeping this
     // field out of this payload entirely removes that race outright.
-    var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,orders:orders,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates,vendors:vendors,vendorDepartments:_vendorDepartments});
+    var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,orders:orders,drivers:drivers,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates,vendors:vendors,vendorDepartments:_vendorDepartments});
     if(snapshot===_lastPushedSnapshot){ _lastPushFailureDetail=''; return true; } // this exact state was already confirmed sent
     // 60s (not the 10s default) — every push sends the FULL app state,
     // including every transaction, and that array has grown into the tens
@@ -2691,22 +2700,85 @@ function renderOrdersPage(){
 function _orderDatalists(){
   var customerNames=Array.from(new Set(customers.map(function(c){return c.name;}).filter(Boolean))).sort();
   var productNames=Array.from(new Set(items.map(function(i){return i.name;}).filter(Boolean))).sort();
-  var driverNames=Array.from(new Set(orders.map(function(o){return o.driver;}).filter(Boolean))).sort();
   return '<datalist id="ordersCustomerList">'+customerNames.map(function(n){return '<option value="'+esc(n)+'">';}).join('')+'</datalist>'
-    +'<datalist id="ordersProductList">'+productNames.map(function(n){return '<option value="'+esc(n)+'">';}).join('')+'</datalist>'
-    +'<datalist id="ordersDriverList">'+driverNames.map(function(n){return '<option value="'+esc(n)+'">';}).join('')+'</datalist>';
+    +'<datalist id="ordersProductList">'+productNames.map(function(n){return '<option value="'+esc(n)+'">';}).join('')+'</datalist>';
 }
+function _driverSelectHtml(selected){
+  return '<select class="ord-f-driver" onchange="if(this.value===\'__add__\'){ _promptAddDriver(this); }" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)">'
+    +'<option value=""'+(!selected?' selected':'')+'>— select driver —</option>'
+    +drivers.map(function(d){ return '<option value="'+esc(d)+'"'+(d===selected?' selected':'')+'>'+esc(d)+'</option>'; }).join('')
+    +'<option value="__add__">+ Add new driver…</option>'
+  +'</select>';
+}
+// One product-line row (Product / Description / Qty + remove button) — an
+// order can now carry several of these, since one delivery commonly covers
+// more than one product for the same customer/date/driver.
+function _orderLineRowHtml(line){
+  line=line||{};
+  return '<div class="ord-line" style="display:grid;grid-template-columns:1fr 1.4fr 90px 28px;gap:8px;margin-bottom:6px;align-items:center">'
+    +'<input type="text" class="ord-line-product" list="ordersProductList" value="'+esc(line.product||'')+'" placeholder="Product" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
+    +'<input type="text" class="ord-line-description" value="'+esc(line.description||'')+'" placeholder="Description" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
+    +'<input type="text" class="ord-line-quantity" value="'+esc(line.quantity||'')+'" placeholder="Qty" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
+    +'<button type="button" title="Remove this product" onclick="this.closest(\'.ord-line\').remove()" style="border:0;background:transparent;cursor:pointer;color:#b8460b;font-size:15px">✕</button>'
+  +'</div>';
+}
+function _orderLinesOf(o){
+  // Backward compatible with orders saved before multi-line support — a
+  // legacy order has product/description/quantity directly on it instead
+  // of a lines array.
+  if(Array.isArray(o.lines) && o.lines.length) return o.lines;
+  if(o.product||o.description||o.quantity) return [{product:o.product,description:o.description,quantity:o.quantity}];
+  return [];
+}
+function addOrderLineRow(btn){
+  var container=btn.parentElement.querySelector('.ord-lines-container');
+  if(container) container.insertAdjacentHTML('beforeend',_orderLineRowHtml());
+}
+window.addOrderLineRow=addOrderLineRow;
+async function _promptAddDriver(selectEl){
+  var name=prompt('New driver name:');
+  if(!name || !name.trim()) { selectEl.value=''; return; }
+  name=name.trim();
+  selectEl.disabled=true;
+  try{
+    var res=await fetch('/api/data/add-driver',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:name})
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    var data=await res.json();
+    if(Array.isArray(data.drivers)) drivers=data.drivers;
+    else if(drivers.indexOf(name)<0) drivers.push(name);
+    safeSetLocal('pc_drivers',JSON.stringify(drivers));
+  }catch(e){
+    console.error('Add driver failed:',e);
+    if(drivers.indexOf(name)<0){ drivers.push(name); drivers.sort(); }
+  }finally{
+    // Rebuild this one select in place (simplest way to refresh its option
+    // list without losing whatever else is on the page, e.g. an in-progress
+    // edit on a different row).
+    var fresh=document.createElement('div');
+    fresh.innerHTML=_driverSelectHtml(name);
+    var newSelect=fresh.firstElementChild;
+    selectEl.replaceWith(newSelect);
+  }
+}
+window._promptAddDriver=_promptAddDriver;
 function _orderFormFields(o){
   o=o||{};
   var today=new Date().toISOString().slice(0,10);
-  return '<div style="display:grid;grid-template-columns:130px 1fr 1fr 1.4fr 90px 1fr;gap:8px;align-items:end">'
+  var lines=_orderLinesOf(o);
+  if(!lines.length) lines=[{}];
+  return '<div style="display:grid;grid-template-columns:130px 1fr 1fr;gap:8px;align-items:end;margin-bottom:8px">'
     +'<div><label style="display:block;font-size:10px;color:var(--muted);margin-bottom:3px">Date</label><input type="date" class="ord-f-date" value="'+esc(o.date||today)+'" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/></div>'
     +'<div><label style="display:block;font-size:10px;color:var(--muted);margin-bottom:3px">Customer</label><input type="text" class="ord-f-customer" list="ordersCustomerList" value="'+esc(o.customer||'')+'" placeholder="Customer" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/></div>'
-    +'<div><label style="display:block;font-size:10px;color:var(--muted);margin-bottom:3px">Product</label><input type="text" class="ord-f-product" list="ordersProductList" value="'+esc(o.product||'')+'" placeholder="Product" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/></div>'
-    +'<div><label style="display:block;font-size:10px;color:var(--muted);margin-bottom:3px">Description</label><input type="text" class="ord-f-description" value="'+esc(o.description||'')+'" placeholder="Description" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/></div>'
-    +'<div><label style="display:block;font-size:10px;color:var(--muted);margin-bottom:3px">Qty</label><input type="text" class="ord-f-quantity" value="'+esc(o.quantity||'')+'" placeholder="Qty" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/></div>'
-    +'<div><label style="display:block;font-size:10px;color:var(--muted);margin-bottom:3px">Driver</label><input type="text" class="ord-f-driver" list="ordersDriverList" value="'+esc(o.driver||'')+'" placeholder="Driver" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/></div>'
-  +'</div>';
+    +'<div><label style="display:block;font-size:10px;color:var(--muted);margin-bottom:3px">Driver</label>'+_driverSelectHtml(o.driver||'')+'</div>'
+  +'</div>'
+  +'<div style="display:grid;grid-template-columns:1fr 1.4fr 90px 28px;gap:8px;margin-bottom:2px">'
+    +'<label style="font-size:10px;color:var(--muted)">Product</label><label style="font-size:10px;color:var(--muted)">Description</label><label style="font-size:10px;color:var(--muted)">Qty</label><span></span>'
+  +'</div>'
+  +'<div class="ord-lines-container">'+lines.map(function(l){ return _orderLineRowHtml(l); }).join('')+'</div>'
+  +'<button type="button" class="btn btn-sm" onclick="addOrderLineRow(this)" style="margin-top:2px">+ Add product</button>';
 }
 function showNewOrderForm(){
   var wrap=document.getElementById('newOrderFormWrap');
@@ -2725,13 +2797,18 @@ function showNewOrderForm(){
   if(firstInput) firstInput.focus();
 }
 function _readOrderFormFields(container){
+  var lines=Array.prototype.slice.call(container.querySelectorAll('.ord-line')).map(function(row){
+    return {
+      product:(row.querySelector('.ord-line-product')||{}).value||'',
+      description:(row.querySelector('.ord-line-description')||{}).value||'',
+      quantity:(row.querySelector('.ord-line-quantity')||{}).value||''
+    };
+  }).filter(function(l){ return l.product.trim()||l.description.trim()||l.quantity.trim(); });
   return {
     date:(container.querySelector('.ord-f-date')||{}).value||'',
     customer:(container.querySelector('.ord-f-customer')||{}).value||'',
-    product:(container.querySelector('.ord-f-product')||{}).value||'',
-    description:(container.querySelector('.ord-f-description')||{}).value||'',
-    quantity:(container.querySelector('.ord-f-quantity')||{}).value||'',
-    driver:(container.querySelector('.ord-f-driver')||{}).value||''
+    driver:(container.querySelector('.ord-f-driver')||{}).value||'',
+    lines:lines
   };
 }
 async function submitNewOrder(){
@@ -2826,10 +2903,12 @@ function _renderOrdersWeekSummary(){
     +'</div>'
     +'<div id="ordWeek-'+wi+'" style="display:none">'
       +byWeek[wk].slice().sort(function(a,b){return a.date<b.date?-1:1;}).map(function(o){
+        var lines=_orderLinesOf(o);
+        var lineSummary=lines.length?lines.map(function(l){ return esc(l.product||'(no product)')+(l.quantity?' × '+esc(l.quantity):''); }).join(', '):'(no products)';
         return '<div style="display:flex;gap:14px;padding:6px 14px 6px 30px;font-size:12px;border-bottom:1px dashed var(--line);color:var(--muted)">'
           +'<span style="width:80px;flex-shrink:0">'+esc(o.date)+'</span>'
           +'<span style="width:160px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)">'+esc(o.customer)+'</span>'
-          +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(o.product)+(o.quantity?' × '+esc(o.quantity):'')+'</span>'
+          +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+lineSummary+'</span>'
           +'<span style="width:110px;flex-shrink:0;text-align:right">'+esc(o.driver||'—')+'</span>'
         +'</div>';
       }).join('')
@@ -2883,11 +2962,17 @@ function _renderOrderRow(o){
       +'</div>'
     +'</div>';
   }
-  return '<div id="ordRow-'+esc(o.id)+'" style="display:flex;align-items:center;gap:14px;padding:8px 16px 8px 30px;font-size:12.5px;border-bottom:1px dashed var(--line)">'
-    +'<span style="width:80px;flex-shrink:0;color:var(--muted)">'+esc(o.date)+'</span>'
-    +'<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(o.product)+'</b>'+(o.description?' — '+esc(o.description):'')+'</span>'
-    +'<span style="width:70px;flex-shrink:0;text-align:right;color:var(--muted)">'+esc(o.quantity||'—')+'</span>'
-    +'<span style="width:120px;flex-shrink:0;text-align:right;color:var(--muted)">'+esc(o.driver||'—')+'</span>'
+  var lines=_orderLinesOf(o);
+  return '<div id="ordRow-'+esc(o.id)+'" style="display:flex;align-items:flex-start;gap:14px;padding:8px 16px 8px 30px;font-size:12.5px;border-bottom:1px dashed var(--line)">'
+    +'<span style="width:80px;flex-shrink:0;color:var(--muted);padding-top:2px">'+esc(o.date)+'</span>'
+    +'<span style="flex:1;min-width:0">'
+      +(lines.length
+        ? lines.map(function(l){
+            return '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+(l.description?' — '+esc(l.description):'')+(l.quantity?' <span style="color:var(--muted)">× '+esc(l.quantity)+'</span>':'')+'</div>';
+          }).join('')
+        : '<span style="color:var(--muted);font-style:italic">(no products listed)</span>')
+    +'</span>'
+    +'<span style="width:120px;flex-shrink:0;text-align:right;color:var(--muted);padding-top:2px">'+esc(o.driver||'—')+'</span>'
     +'<span style="flex-shrink:0;display:flex;gap:4px">'
       +'<button title="Edit" onclick="_ordersEditingId=\''+esc(o.id)+'\';_renderOrdersDetail()" style="border:0;background:transparent;cursor:pointer;padding:4px;color:var(--muted)">✎</button>'
       +'<button title="Delete" onclick="deleteOrder(\''+esc(o.id)+'\')" style="border:0;background:transparent;cursor:pointer;padding:4px;color:#b8460b">🗑</button>'

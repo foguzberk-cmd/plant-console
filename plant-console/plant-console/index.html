@@ -1196,6 +1196,7 @@ function rerenderCurrentSection(){
     // mid-edit.
     if(!_ordersEditingId && document.getElementById('ordersWeekSummary')){
       try{ _renderOrdersWeekSummary(); }catch(e){}
+      try{ _renderShippedOrdersSummary(); }catch(e){}
     }
   }
   else if(currentSectionId==='settings'){
@@ -2855,13 +2856,115 @@ function renderOrdersPage(){
   view.innerHTML='<div class="eyebrow">'+s.kicker+'</div><h2>'+s.title+'</h2><p class="lede">'+s.lede+'</p>'
     +'<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">'
       +'<button class="btn btn-primary btn-sm" onclick="showNewOrderForm()">+ New Order</button>'
-      +'<input id="ordersSearch" type="text" placeholder="Search customer, product, description, driver…" value="'+esc(_ordersSearchQuery)+'" oninput="_ordersSearchQuery=this.value;_renderOrdersWeekSummary()" style="flex:1;min-width:220px;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--panel);color:var(--ink)"/>'
+      +'<button id="matchQbBtn" class="btn btn-sm" onclick="matchOrdersWithQuickBooks()" title="Checks each not-yet-shipped order for a matching QuickBooks Invoice (same customer, invoiced on or after the order date) and moves it to Shipped Orders">Match with QuickBooks</button>'
+      +'<input id="ordersSearch" type="text" placeholder="Search customer, product, description, driver…" value="'+esc(_ordersSearchQuery)+'" oninput="_ordersSearchQuery=this.value;_renderOrdersWeekSummary();_renderShippedOrdersSummary()" style="flex:1;min-width:220px;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--panel);color:var(--ink)"/>'
     +'</div>'
     +'<div id="newOrderFormWrap"></div>'
+    +'<div style="padding:12px 16px;background:#EAF3EC;border:1px solid var(--line);border-bottom:none;border-radius:14px 14px 0 0;font-weight:700;font-size:13px;letter-spacing:.02em;color:#1b5e2f">Shipped Orders <span style="font-weight:400;color:var(--muted)">— invoiced in QuickBooks</span></div>'
+    +'<div id="ordersShippedSummary" style="margin-bottom:22px"></div>'
     +'<div style="padding:12px 16px;background:#F5EFE8;border:1px solid var(--line);border-bottom:none;border-radius:14px 14px 0 0;font-weight:700;font-size:13px;letter-spacing:.02em">Received Orders</div>'
     +'<div id="ordersWeekSummary"></div>';
+  _renderShippedOrdersSummary();
   _renderOrdersWeekSummary();
 }
+// Checks each not-yet-shipped order against QuickBooks's Invoice data for a
+// match — same customer, invoiced on or after the order's date. Reuses the
+// EXISTING invoice cache already built and kept in sync for the Customer
+// Payments report (_collAllInvoicesCache) rather than fetching a separate
+// copy — that cache is shared across devices via the same mechanism as the
+// rest of that report's cached data, so this works even if nobody's
+// visited Customer Payments THIS session, as long as someone has recently.
+async function matchOrdersWithQuickBooks(){
+  var invoices=Object.values(_collAllInvoicesCache||{});
+  if(!invoices.length){
+    alert('No QuickBooks invoice data available yet. Visit Customer Payments and click "Pull from QuickBooks" once first — Orders reuses that same invoice data rather than fetching its own separate copy.');
+    return;
+  }
+  var btn=document.getElementById('matchQbBtn');
+  if(btn){ btn.disabled=true; btn.textContent='Matching…'; }
+  var toCheck=orders.filter(function(o){ return !o.shipped && o.customer && o.date; });
+  var matchedCount=0;
+  for(var i=0;i<toCheck.length;i++){
+    var o=toCheck[i];
+    var custNameLower=o.customer.trim().toLowerCase();
+    var candidates=invoices.filter(function(inv){
+      var name=(inv.CustomerRef&&inv.CustomerRef.name)||'';
+      return name.trim().toLowerCase()===custNameLower && inv.TxnDate && inv.TxnDate>=o.date;
+    }).sort(function(a,b){ return a.TxnDate<b.TxnDate?-1:1; });
+    if(candidates.length){
+      var match=candidates[0];
+      // Send the FULL existing record, not just the new fields — the
+      // save-order endpoint replaces date/customer/driver/lines with
+      // whatever's in this payload (empty if omitted), so a partial
+      // payload here would silently blank out the rest of the order.
+      var fullOrder={
+        id:o.id, date:o.date, customer:o.customer, driver:o.driver,
+        lines:_orderLinesOf(o),
+        shipped:true, invoiceDocNumber:match.DocNumber||'', invoiceDate:match.TxnDate||''
+      };
+      var saved=await saveOrder(fullOrder);
+      if(saved) matchedCount++;
+    }
+    if(btn) btn.textContent='Matching… ('+(i+1)+'/'+toCheck.length+')';
+  }
+  if(btn){ btn.disabled=false; btn.textContent='Match with QuickBooks'; }
+  _renderShippedOrdersSummary();
+  _renderOrdersWeekSummary();
+  alert('Matched '+matchedCount+' of '+toCheck.length+' unshipped order'+(toCheck.length!==1?'s':'')+' to a QuickBooks invoice.'+(matchedCount<toCheck.length?' The rest don\'t have a matching invoice yet — run this again later, or mark one shipped manually from its detail view if you know it went out.':''));
+}
+window.matchOrdersWithQuickBooks=matchOrdersWithQuickBooks;
+// Shipped Orders — grouped by day only (not driver — once shipped, the
+// route that carried it matters less than knowing it's invoiced and
+// accounted for). Each row shows the matched invoice # for direct
+// reference against QuickBooks.
+function _renderShippedOrdersSummary(){
+  var el=document.getElementById('ordersShippedSummary');
+  if(!el) return;
+  function fmtDayOrd(dateStr){
+    var d=new Date(dateStr+'T00:00:00');
+    return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+  }
+  var q=(_ordersSearchQuery||'').trim().toLowerCase();
+  var shipped=orders.filter(function(o){
+    if(!o.shipped) return false;
+    if(!q) return true;
+    var lines=_orderLinesOf(o);
+    if([o.customer,o.driver,o.invoiceDocNumber].some(function(f){ return (f||'').toLowerCase().indexOf(q)>=0; })) return true;
+    return lines.some(function(l){ return [l.product,l.description].some(function(f){ return (f||'').toLowerCase().indexOf(q)>=0; }); });
+  });
+  if(!shipped.length){
+    el.innerHTML='<div class="txn-empty" style="border-radius:0 0 12px 12px"><p>No shipped orders yet.</p><p>Orders move here automatically once "Match with QuickBooks" finds an invoice for them.</p></div>';
+    return;
+  }
+  var byDay={};
+  shipped.forEach(function(o){ (byDay[o.date]=byDay[o.date]||[]).push(o); });
+  var dayKeys=Object.keys(byDay).sort().reverse(); // most recently shipped first
+  var html='<div style="border:1px solid var(--line);border-radius:0 0 12px 12px;overflow:hidden">';
+  dayKeys.forEach(function(dk,di){
+    var count=byDay[dk].length;
+    var openKey='shipday:'+dk;
+    var rowId='ordShipDay-'+di;
+    var custOrders=byDay[dk].slice().sort(function(a,b){return (a.customer||'')<(b.customer||'')?-1:1;});
+    html+='<div onclick="toggleOrdersRow(\''+rowId+'\',\''+_jsStrEsc(openKey)+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:10px 14px;background:#e3f3e6;border-bottom:1px solid #b9dfc0">'
+      +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#1b5e2f;flex-shrink:0'+(_ordersRowOpen[openKey]?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
+      +'<span style="font-weight:700;font-size:13px;color:#1b5e2f">'+fmtDayOrd(dk)+' ('+count+')</span>'
+    +'</div>'
+    +'<div id="'+rowId+'" style="display:'+((q||_ordersRowOpen[openKey])?'block':'none')+'">'
+      +custOrders.map(function(o){
+        var lines=_orderLinesOf(o);
+        var lineSummary=lines.length?lines.map(function(l){ return esc(l.product||'(no product)')+(l.quantity?' × '+esc(l.quantity):''); }).join(', '):'(no products)';
+        return '<div onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;display:flex;align-items:center;gap:14px;padding:8px 16px 8px 30px;font-size:12.5px;border-bottom:1px dashed var(--line)">'
+          +'<span style="width:170px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">'+esc(o.customer)+'</span>'
+          +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">'+lineSummary+'</span>'
+          +'<span style="flex-shrink:0;font-family:var(--mono);font-size:11px;color:#1b5e2f;background:#e3f3e6;padding:2px 8px;border-radius:10px">Inv #'+esc(o.invoiceDocNumber||'?')+'</span>'
+        +'</div>';
+      }).join('')
+    +'</div>';
+  });
+  html+='</div>';
+  el.innerHTML=html;
+}
+window._renderShippedOrdersSummary=_renderShippedOrdersSummary;
 function _orderDatalists(){
   var customerNames=Array.from(new Set(customers.map(function(c){return c.name;}).filter(Boolean))).sort();
   var productNames=Array.from(new Set(items.map(function(i){return i.name;}).filter(Boolean))).sort();
@@ -3039,6 +3142,7 @@ async function submitNewOrder(){
     var wrap=document.getElementById('newOrderFormWrap');
     if(wrap) wrap.innerHTML='';
     _renderOrdersWeekSummary();
+    _renderShippedOrdersSummary();
 } else if(statusEl){
     statusEl.textContent='Could not save — check your connection and try again.';
     statusEl.style.color='#c0392b';
@@ -3128,6 +3232,7 @@ function _renderOrdersWeekSummary(){
     }
   }
   var filtered=orders.filter(function(o){
+    if(o.shipped) return false;
     if(!q) return true;
     var lines=_orderLinesOf(o);
     if([o.customer,o.driver].some(function(f){ return (f||'').toLowerCase().indexOf(q)>=0; })) return true;
@@ -3140,7 +3245,7 @@ function _renderOrdersWeekSummary(){
   });
   var dayKeys=Object.keys(byDay).sort();
   if(!dayKeys.length){
-    el.innerHTML='<div class="txn-empty"><p>'+(q?'No orders match "'+esc(_ordersSearchQuery)+'".':'No orders yet.')+'</p>'+(q?'':'<p>Click "+ New Order" above to add the first one.</p>')+'</div>';
+    el.innerHTML='<div class="txn-empty"><p>'+(q?'No received orders match "'+esc(_ordersSearchQuery)+'".':'No unshipped orders — everything on hand has been matched to a QuickBooks invoice.')+'</p>'+(q?'':'<p>Click "+ New Order" above to add a new one.</p>')+'</div>';
     return;
   }
   var html='<div style="border:1px solid var(--line);border-radius:0 0 12px 12px;overflow:hidden">';
@@ -3253,6 +3358,9 @@ function showOrderDetailModal(id){
   bg.innerHTML='<div class="modal" style="max-width:460px">'
     +'<h3 style="margin:0 0 4px">Order Detail</h3>'
     +'<p style="color:var(--muted);font-size:13px;margin:0 0 16px">'+esc(o.customer||'(no customer)')+' · '+esc(o.date||'')+'</p>'
+    +(o.shipped
+        ? '<div style="background:#e3f3e6;border:1px solid #b9dfc0;border-radius:8px;padding:8px 12px;font-size:12.5px;color:#1b5e2f;margin-bottom:14px">✓ Shipped — QuickBooks Invoice #'+esc(o.invoiceDocNumber||'?')+(o.invoiceDate?' dated '+esc(o.invoiceDate):'')+'</div>'
+        : '')
     +'<div style="display:grid;grid-template-columns:90px 1fr;gap:8px 12px;font-size:13px;margin-bottom:14px">'
       +'<div style="color:var(--muted)">Date</div><div>'+esc(o.date||'—')+'</div>'
       +'<div style="color:var(--muted)">Customer</div><div>'+esc(o.customer||'—')+'</div>'
@@ -3271,9 +3379,12 @@ function showOrderDetailModal(id){
           +'</div>'
         : '<div style="color:var(--muted);font-style:italic;margin-bottom:16px">No products listed.</div>')
     +(o.createdBy?'<p style="color:var(--muted);font-size:11px;margin:0 0 16px">Added by '+esc(o.createdBy)+(o.createdAt?' · '+esc(o.createdAt.slice(0,10)):'')+'</p>':'')
-    +'<div class="modal-footer" style="display:flex;gap:8px;justify-content:space-between">'
+    +'<div class="modal-footer" style="display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap">'
       +'<button class="btn" style="color:#b8460b" onclick="closeOrderDetailModal();deleteOrder(\''+esc(o.id)+'\')">🗑 Delete</button>'
-      +'<div style="display:flex;gap:8px">'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
+        +(o.shipped
+            ? '<button class="btn" onclick="toggleOrderShippedManually(\''+esc(o.id)+'\',false)" title="Manual override — use this if it was matched to the wrong invoice">Mark as Received</button>'
+            : '<button class="btn" onclick="toggleOrderShippedManually(\''+esc(o.id)+'\',true)" title="Manual override — use this if you know it shipped but Match with QuickBooks hasn\'t caught it yet">✓ Mark as Shipped</button>')
         +'<button class="btn" onclick="printOrders([\''+esc(o.id)+'\'],\''+esc((o.customer||'Order')+' — '+(o.date||''))+'\')">🖨 Print</button>'
         +'<button class="btn" onclick="closeOrderDetailModal()">Close</button>'
         +'<button class="btn btn-primary" onclick="closeOrderDetailModal();_ordersEditingId=\''+esc(o.id)+'\';_renderOrdersWeekSummary();var r=document.getElementById(\'ordRow-'+esc(o.id)+'\');if(r)r.scrollIntoView({behavior:\'smooth\',block:\'center\'});">✎ Edit</button>'
@@ -3283,6 +3394,28 @@ function showOrderDetailModal(id){
   document.body.appendChild(bg);
 }
 window.showOrderDetailModal=showOrderDetailModal;
+// Manual shipped/received override — for when Match with QuickBooks
+// hasn't run yet, hasn't found a real invoice yet, or (rarely) matched
+// the wrong one. Sends the FULL existing record alongside the new shipped
+// fields for the same reason matchOrdersWithQuickBooks does — save-order
+// replaces date/customer/driver/lines with whatever's in the payload.
+async function toggleOrderShippedManually(id,shipped){
+  var o=orders.find(function(x){return x.id===id;});
+  if(!o) return;
+  var fullOrder={
+    id:o.id, date:o.date, customer:o.customer, driver:o.driver,
+    lines:_orderLinesOf(o),
+    shipped:shipped,
+    invoiceDocNumber:shipped?(o.invoiceDocNumber||''):'',
+    invoiceDate:shipped?(o.invoiceDate||''):''
+  };
+  closeOrderDetailModal();
+  var saved=await saveOrder(fullOrder);
+  if(!saved){ alert('Could not save — check your connection and try again.'); }
+  _renderOrdersWeekSummary();
+  _renderShippedOrdersSummary();
+}
+window.toggleOrderShippedManually=toggleOrderShippedManually;
 function closeOrderDetailModal(){
   var bg=document.getElementById('orderDetailModalBg');
   if(bg) bg.remove();
@@ -3307,6 +3440,7 @@ async function submitEditOrder(id){
   _ordersEditingId=null;
   if(!saved){ alert('Could not save — check your connection and try again.'); }
   _renderOrdersWeekSummary();
+  _renderShippedOrdersSummary();
 }
 window.submitEditOrder=submitEditOrder;
 // Delete — same dedicated-tombstoned-endpoint pattern as deleteScaleLog,
@@ -3320,6 +3454,7 @@ async function deleteOrder(id){
   orders=orders.filter(function(o){return o.id!==id;});
   safeSetLocal('pc_orders',JSON.stringify(orders));
   _renderOrdersWeekSummary();
+  _renderShippedOrdersSummary();
 try{
     var res=await fetch('/api/data/delete-order',{
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -3334,6 +3469,7 @@ try{
     delete _deletedOrderIds[id];
     if(removed){ orders.push(removed); safeSetLocal('pc_orders',JSON.stringify(orders)); }
     _renderOrdersWeekSummary();
+    _renderShippedOrdersSummary();
 alert('Could not delete — check your connection and try again.');
   }
 }

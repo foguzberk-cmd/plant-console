@@ -52,7 +52,7 @@ const CASHFLOW_CACHE_FILE = path.join(DATA_DIR, 'cashflow-report-cache.json');
 // Same idea, for the Checks tab's raw QuickBooks Payment pull — see the
 // long comment on /api/checks-report-cache below for why this was missing.
 const CHECKS_CACHE_FILE = path.join(DATA_DIR, 'checks-report-cache.json');
-const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [], deletedCfSplitIds: [], chatMessages: [] };
+const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [], deletedCfSplitIds: [], chatMessages: [], orders: [], deletedOrderIds: [] };
 
 // ===== PIN HASHING =====
 // PINs are hashed with scrypt before they ever touch disk. Any user record
@@ -1176,7 +1176,9 @@ const server = http.createServer(async (req, res) => {
       savedReports: data.savedReports,
       customerAllowed: data.customerAllowed,
       cfScheduledDates: data.cfScheduledDates,
-      customers: data.customers
+      customers: data.customers,
+      orders: data.orders,
+      deletedOrderIds: data.deletedOrderIds
     }));
     return;
   }
@@ -1599,6 +1601,23 @@ const server = http.createServer(async (req, res) => {
           for (const id of tombstoned) merged.delete(id);
           incoming.scaleLogs = Array.from(merged.values());
         }
+        // Orders — identical reasoning and identical shape to scaleLogs just
+        // above (a plain list of records staff add one at a time, deletable,
+        // no reason to reinvent a different merge strategy for it).
+        if (Array.isArray(incoming.orders)) {
+          const orderTombstoned = new Set(Array.isArray(current.deletedOrderIds) ? current.deletedOrderIds : []);
+          const mergedOrders = new Map((current.orders || []).map(o => [o && o.id, o]));
+          for (const o of incoming.orders) {
+            if (o && !orderTombstoned.has(o.id)) mergedOrders.set(o.id, o);
+          }
+          for (const id of orderTombstoned) mergedOrders.delete(id);
+          incoming.orders = Array.from(mergedOrders.values());
+          // Same reasoning as deletedCfBillIds elsewhere in this file: never
+          // let a client's own (possibly stale) copy of the tombstone list
+          // overwrite the server's — only the dedicated delete-order
+          // endpoint below should ever add to it.
+          incoming.deletedOrderIds = Array.from(orderTombstoned);
+        }
         // labelTemplates is a plain object keyed by department, e.g.
         // { "Carcass Process/Retail": {...}, "Slaughter": {...} }. A blind
         // top-level replace here has the exact same problem scaleLogs did:
@@ -1775,6 +1794,93 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
+
+  // ===== Orders tab ===== Same "dumb terminal" reasoning as scaleLogs
+  // throughout this file: a dedicated, fast, single-record save endpoint
+  // (rather than folding every add/edit into the whole-app snapshot POST,
+  // which can take up to a minute on a slow connection and let a
+  // background pull land in that gap and revert the edit) plus a dedicated
+  // delete endpoint that tombstones the id so no other device's stale push
+  // can ever resurrect a deleted order.
+  if (url === '/api/data/save-order' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      const order = body && body.order;
+      if (!order || typeof order !== 'object') {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+        res.end(JSON.stringify({ error: 'Missing order' }));
+        return;
+      }
+      let saved = null;
+      await updateSharedData(async (current) => {
+        const orders = Array.isArray(current.orders) ? current.orders.slice() : [];
+        const id = order.id || ('order_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
+        saved = {
+          id: id,
+          date: String(order.date || '').slice(0, 10),
+          customer: String(order.customer || '').trim().slice(0, 200),
+          product: String(order.product || '').trim().slice(0, 200),
+          description: String(order.description || '').trim().slice(0, 1000),
+          quantity: String(order.quantity !== undefined && order.quantity !== null ? order.quantity : '').trim().slice(0, 50),
+          driver: String(order.driver || '').trim().slice(0, 200),
+          createdBy: order.createdBy || (order.id ? undefined : undefined),
+          at: new Date().toISOString()
+        };
+        const idx = orders.findIndex(o => o && o.id === id);
+        // Preserve the original creator/creation time across edits — only
+        // set them fresh when this is genuinely a brand-new order.
+        if (idx >= 0) {
+          saved.createdBy = orders[idx].createdBy || order.createdBy || '';
+          saved.createdAt = orders[idx].createdAt || new Date().toISOString();
+          orders[idx] = saved;
+        } else {
+          saved.createdBy = order.createdBy || '';
+          saved.createdAt = new Date().toISOString();
+          orders.push(saved);
+        }
+        // A fresh save always wins over a stale "this was just deleted"
+        // tombstone — same reasoning as save-cf-schedule elsewhere in this
+        // file: without this, re-adding an order within moments of deleting
+        // a mistaken one for the same id would be silently dropped again.
+        const tombstones = (Array.isArray(current.deletedOrderIds) ? current.deletedOrderIds : []).filter(tid => tid !== id);
+        return { data: Object.assign({}, current, { orders, deletedOrderIds: tombstones }) };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, order: saved }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  if (url === '/api/data/delete-order' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      if (!body || !body.id) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+        res.end(JSON.stringify({ error: 'Missing id' }));
+        return;
+      }
+      await updateSharedData(async (current) => {
+        const orders = (current.orders || []).filter(o => !(o && o.id === body.id));
+        const tombstones = Array.isArray(current.deletedOrderIds) ? current.deletedOrderIds.slice() : [];
+        if (!tombstones.includes(body.id)) tombstones.push(body.id);
+        const cappedTombstones = tombstones.length > 5000 ? tombstones.slice(tombstones.length - 5000) : tombstones;
+        return { data: Object.assign({}, current, { orders, deletedOrderIds: cappedTombstones }) };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
 
   // Dedicated, atomic delete for one Cash Flow bill's ENTIRE scheduled/
   // approved payment record — same reasoning as delete-scalelog above:

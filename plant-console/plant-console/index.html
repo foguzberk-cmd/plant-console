@@ -2888,6 +2888,47 @@ function printDriverOrders(orderIds,driverName,dateStr){
   setTimeout(function(){ w.print(); },250);
 }
 window.printDriverOrders=printDriverOrders;
+// Prints a "processing sheet" — just the product lines checked as needing
+// processing, across whichever set of orders is passed in (either every
+// currently-received order for the combined button, or one driver's route
+// for the per-driver icon). Grouped by customer, same visual style as the
+// other printouts, but a plain list rather than a fillable form since
+// there's no "actual weight" concept here — it's telling the processing
+// department WHAT needs doing, not confirming what was loaded.
+function printProcessingSheet(orderIds,title){
+  var idSet={}; orderIds.forEach(function(id){ idSet[id]=true; });
+  var relevant=orders.filter(function(o){ return idSet[o.id]; });
+  var rows=[]; // {customer, product, description, quantity}
+  relevant.forEach(function(o){
+    _orderLinesOf(o).forEach(function(l){
+      if(l.needsProcessing) rows.push({customer:o.customer||'(no customer)',product:l.product||'(no product)',description:l.description||'',quantity:l.quantity||''});
+    });
+  });
+  if(!rows.length){ alert('Nothing is currently checked as needing processing.'); return; }
+  rows.sort(function(a,b){ return a.customer<b.customer?-1:(a.customer>b.customer?1:0); });
+  var w=window.open('','_blank');
+  if(!w){ alert('Please allow pop-ups for this site to print.'); return; }
+  var rowsHtml=rows.map(function(r){
+    return '<tr><td>'+esc(r.customer)+'</td><td class="prod">'+esc(r.product)+'</td><td class="desc">'+esc(r.description)+'</td><td class="qty">'+esc(r.quantity)+'</td></tr>';
+  }).join('');
+  w.document.write('<html><head><title>'+esc(title)+'</title>'
+    +'<style>'
+      +'body{font-family:Arial,sans-serif;padding:30px;color:#222}'
+      +'h1{font-size:18px;margin:0 0 4px}'
+      +'.meta{color:#666;font-size:12px;margin-bottom:20px}'
+      +'table{width:100%;border-collapse:collapse;font-size:13px}'
+      +'th,td{border:1px solid #999;padding:7px 8px;text-align:left}'
+      +'th{background:#f0f0f0;font-size:11px;text-transform:uppercase;letter-spacing:.03em}'
+      +'th.qty,td.qty{width:80px;text-align:right;font-weight:700}'
+    +'</style></head><body>'
+    +'<h1>'+esc(title)+'</h1><div class="meta">'+rows.length+' item'+(rows.length!==1?'s':'')+' to process</div>'
+    +'<table><thead><tr><th>Customer</th><th class="prod">Product</th><th class="desc">Description</th><th class="qty">Qty</th></tr></thead><tbody>'+rowsHtml+'</tbody></table>'
+    +'</body></html>');
+  w.document.close();
+  w.focus();
+  setTimeout(function(){ w.print(); },250);
+}
+window.printProcessingSheet=printProcessingSheet;
 // A dedicated toggle for Orders, deliberately NOT reusing toggleReportRow
 // — that function only becomes available on window once the Reports page
 // has rendered at least once this session (it's defined inside that
@@ -2932,6 +2973,7 @@ function renderOrdersPage(){
     +'<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">'
       +'<button class="btn btn-primary btn-sm" onclick="showNewOrderForm()">+ New Order</button>'
       +'<button id="matchQbBtn" class="btn btn-sm" onclick="matchOrdersWithQuickBooks()" title="Checks each not-yet-shipped order for a matching QuickBooks Invoice (same customer, invoiced on or after the order date) and moves it to Shipped Orders">Match with QuickBooks</button>'
+      +'<button class="btn btn-sm" onclick="printProcessingSheet(orders.filter(function(o){return !o.shipped;}).map(function(o){return o.id;}),\'Processing — All Drivers\')" title="Prints every product across all Received Orders (any driver) that\'s checked as needing processing">🏭 Print processing sheet</button>'
       +'<input id="ordersSearch" type="text" placeholder="Search customer, product, description, driver…" value="'+esc(_ordersSearchQuery)+'" oninput="_ordersSearchQuery=this.value;_renderOrdersWeekSummary();_renderShippedOrdersSummary()" style="flex:1;min-width:220px;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--panel);color:var(--ink)"/>'
     +'</div>'
     +'<div id="newOrderFormWrap"></div>'
@@ -3549,6 +3591,7 @@ function _renderOrdersWeekSummary(){
               +'<svg onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="cursor:pointer;width:11px;height:11px;stroke:var(--cold);flex-shrink:0'+(_ordersRowOpen[driverOpenKey]?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
               +'<span onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" style="cursor:pointer;flex:1;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold)">'+esc(dName)+' ('+driverOrders.length+')</span>'
               +'<button title="Print this driver\'s route (form + orders)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\',\''+esc(dk)+'\')" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:var(--cold);font-size:13px">🖨</button>'
+              +'<button title="Print processing sheet for this driver only" onclick="event.stopPropagation();printProcessingSheet(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName+' — Processing')+'\')" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:#8a6d1a;font-size:13px">🏭</button>'
             +'</div>'
             +'<div id="'+driverRowId+'" style="display:'+(_ordersIsOpen(driverOpenKey,q)?'block':'none')+'">'
             +custKeys.map(function(key,ci){
@@ -3591,9 +3634,13 @@ function _renderOrderRow(o){
       +(lines.length
         ? lines.map(function(l,li){
             var stripeBg=li%2===1?'background:rgba(0,0,0,.035);':'';
-            return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 8px;margin:0 -8px;border-radius:5px;'+stripeBg+'">'
+            var procBg=l.needsProcessing?'background:#fff3cd;':stripeBg;
+            return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 8px;margin:0 -8px;border-radius:5px;'+procBg+'">'
               +'<span onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+(l.description?' — '+esc(l.description):'')+'</span>'
               +(l.quantity?'<b style="flex-shrink:0;white-space:nowrap">'+esc(l.quantity)+'</b>':'')
+              +'<label title="Needs processing" style="flex-shrink:0;display:flex;align-items:center;gap:4px;cursor:pointer;font-size:10.5px;color:#8a6d1a">'
+                +'<input type="checkbox" '+(l.needsProcessing?'checked':'')+' onchange="updateOrderLineNeedsProcessing(\''+esc(o.id)+'\','+li+',this)" style="width:14px;height:14px;cursor:pointer"/>Process'
+              +'</label>'
               +'<input type="text" value="'+esc(l.finalCount||'')+'" placeholder="Count" title="Final physical count for this product" onchange="updateOrderLineFinalCount(\''+esc(o.id)+'\','+li+',this.value)" style="width:78px;flex-shrink:0;padding:5px 6px;border:1.5px solid var(--line);border-radius:6px;font-size:12px;font-family:var(--mono);text-align:right;background:var(--bg);color:var(--ink)"/>'
             +'</div>';
           }).join('')
@@ -3888,6 +3935,25 @@ async function updateOrderLineFinalCount(id,lineIdx,value){
   if(!saved){ alert('Could not save the count — check your connection and try again.'); }
 }
 window.updateOrderLineFinalCount=updateOrderLineFinalCount;
+// Saves the "needs processing" flag for one product line — same
+// quiet-save pattern as updateOrderLineFinalCount (no full re-render,
+// which would jump scroll position while someone's working down a long
+// list). Instead, directly toggles that one line's own highlight color
+// via the checkbox's own position in the DOM.
+async function updateOrderLineNeedsProcessing(id,lineIdx,checkboxEl){
+  var checked=checkboxEl.checked;
+  var lineRow=checkboxEl.closest('div'); // the line's own flex row, two levels up from the checkbox
+  if(lineRow) lineRow.style.background=checked?'#fff3cd':(lineIdx%2===1?'rgba(0,0,0,.035)':'');
+  var o=orders.find(function(x){return x.id===id;});
+  if(!o) return;
+  var lines=_orderLinesOf(o).map(function(l){ return Object.assign({},l); });
+  if(!lines[lineIdx]) return;
+  lines[lineIdx].needsProcessing=checked;
+  var fullOrder={ id:o.id, date:o.date, customer:o.customer, driver:o.driver, lines:lines };
+  var saved=await saveOrder(fullOrder);
+  if(!saved){ alert('Could not save — check your connection and try again.'); }
+}
+window.updateOrderLineNeedsProcessing=updateOrderLineNeedsProcessing;
 function closeOrderDetailModal(){
   var bg=document.getElementById('orderDetailModalBg');
   if(bg) bg.remove();

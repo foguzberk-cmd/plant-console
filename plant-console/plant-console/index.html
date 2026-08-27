@@ -3465,22 +3465,20 @@ function _renderOrderRow(o){
     +'</div>';
   }
   var lines=_orderLinesOf(o);
-  return '<div id="ordRow-'+esc(o.id)+'" onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;display:flex;align-items:flex-start;gap:14px;padding:8px 16px 8px 30px;font-size:12.5px;border-bottom:1px dashed var(--line)">'
-    +'<span style="width:80px;flex-shrink:0;color:var(--muted);padding-top:2px">'+esc(o.date)+'</span>'
+  return '<div id="ordRow-'+esc(o.id)+'" style="display:flex;align-items:flex-start;gap:14px;padding:8px 16px 8px 30px;font-size:12.5px;border-bottom:1px dashed var(--line)">'
+    +'<span onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;width:80px;flex-shrink:0;color:var(--muted);padding-top:5px">'+esc(o.date)+'</span>'
     +'<span style="flex:1;min-width:0">'
       +(lines.length
-        ? lines.map(function(l){
-            return '<div style="display:flex;justify-content:space-between;gap:10px;overflow:hidden">'
-              +'<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+(l.description?' — '+esc(l.description):'')+'</span>'
+        ? lines.map(function(l,li){
+            return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:3px 0">'
+              +'<span onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+(l.description?' — '+esc(l.description):'')+'</span>'
               +(l.quantity?'<b style="flex-shrink:0;white-space:nowrap">'+esc(l.quantity)+'</b>':'')
+              +'<input type="text" value="'+esc(l.finalCount||'')+'" placeholder="Count" title="Final physical count for this product" onchange="updateOrderLineFinalCount(\''+esc(o.id)+'\','+li+',this.value)" style="width:78px;flex-shrink:0;padding:5px 6px;border:1.5px solid var(--line);border-radius:6px;font-size:12px;font-family:var(--mono);text-align:right;background:var(--bg);color:var(--ink)"/>'
             +'</div>';
           }).join('')
         : '<span style="color:var(--muted);font-style:italic">(no products listed)</span>')
     +'</span>'
-    +'<span onclick="event.stopPropagation()" style="width:110px;flex-shrink:0;display:flex;align-items:center;gap:4px">'
-      +'<input type="text" value="'+esc(o.finalCount||'')+'" placeholder="Count" title="Final physical count" onchange="updateOrderFinalCount(\''+esc(o.id)+'\',this.value)" style="width:100%;padding:5px 6px;border:1.5px solid var(--line);border-radius:6px;font-size:12px;font-family:var(--mono);text-align:right;background:var(--bg);color:var(--ink)"/>'
-    +'</span>'
-    +'<span style="flex-shrink:0;display:flex;gap:4px">'
+    +'<span style="flex-shrink:0;display:flex;gap:4px;padding-top:2px">'
       +'<button title="Print this order" onclick="event.stopPropagation();printOrders([\''+esc(o.id)+'\'],\''+esc((o.customer||'Order')+' — '+(o.date||''))+'\')" style="border:0;background:transparent;cursor:pointer;padding:4px;color:var(--muted)">🖨</button>'
       +'<button title="Edit" onclick="event.stopPropagation();_ordersEditingId=\''+esc(o.id)+'\';_renderOrdersWeekSummary()" style="border:0;background:transparent;cursor:pointer;padding:4px;color:var(--muted)">✎</button>'
       +'<button title="Delete" onclick="event.stopPropagation();deleteOrder(\''+esc(o.id)+'\')" style="border:0;background:transparent;cursor:pointer;padding:4px;color:#b8460b">🗑</button>'
@@ -3520,7 +3518,10 @@ function showOrderDetailModal(id){
             return '<div style="display:flex;justify-content:space-between;gap:12px;padding:9px 12px;font-size:13px;'+(li<lines.length-1?'border-bottom:1px solid var(--line);':'')+'">'
               +'<div style="min-width:0"><div style="font-weight:600">'+esc(l.product||'(no product)')+'</div>'
               +(l.description?'<div style="color:var(--muted);margin-top:2px">'+esc(l.description)+'</div>':'')+'</div>'
-              +(l.quantity?'<b style="flex-shrink:0;white-space:nowrap">'+esc(l.quantity)+'</b>':'')
+              +'<div style="flex-shrink:0;text-align:right">'
+                +(l.quantity?'<b style="white-space:nowrap">'+esc(l.quantity)+'</b>':'')
+                +(l.finalCount?'<div style="font-size:11px;color:var(--muted);white-space:nowrap">count: '+esc(l.finalCount)+'</div>':'')
+              +'</div>'
             +'</div>';
           }).join('')
           +'</div>'
@@ -3563,23 +3564,23 @@ async function toggleOrderShippedManually(id,shipped){
   _renderShippedOrdersSummary();
 }
 window.toggleOrderShippedManually=toggleOrderShippedManually;
-// Saves the final physical count typed directly into a Received Orders
-// row. Same reasoning as toggleOrderShippedManually just above: sends the
-// FULL existing record alongside the new value, since save-order replaces
-// date/customer/driver/lines with whatever's in the payload (empty if
-// omitted) — a partial payload here would silently blank out the rest of
-// the order.
-async function updateOrderFinalCount(id,value){
+// Saves the final physical count typed directly into one product line
+// within a Received Orders row. Same reasoning as toggleOrderShippedManually
+// above: sends the FULL existing record (all lines, not just the one being
+// changed) alongside the new value, since save-order replaces
+// date/customer/driver/lines with whatever's in the payload — a partial
+// payload here would silently drop the other product lines.
+async function updateOrderLineFinalCount(id,lineIdx,value){
   var o=orders.find(function(x){return x.id===id;});
   if(!o) return;
-  var fullOrder={
-    id:o.id, date:o.date, customer:o.customer, driver:o.driver,
-    lines:_orderLinesOf(o), finalCount:value
-  };
+  var lines=_orderLinesOf(o).map(function(l){ return Object.assign({},l); });
+  if(!lines[lineIdx]) return;
+  lines[lineIdx].finalCount=value;
+  var fullOrder={ id:o.id, date:o.date, customer:o.customer, driver:o.driver, lines:lines };
   var saved=await saveOrder(fullOrder);
   if(!saved){ alert('Could not save the count — check your connection and try again.'); }
 }
-window.updateOrderFinalCount=updateOrderFinalCount;
+window.updateOrderLineFinalCount=updateOrderLineFinalCount;
 function closeOrderDetailModal(){
   var bg=document.getElementById('orderDetailModalBg');
   if(bg) bg.remove();

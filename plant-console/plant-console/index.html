@@ -2606,6 +2606,40 @@ function _chatTimeStr(iso){
   try{ return new Date(iso).toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
   catch(e){ return ''; }
 }
+function _chatDateStr(iso){
+  try{ return new Date(iso).toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}); }
+  catch(e){ return ''; }
+}
+var _chatLastRenderedDate=null; // tracks the last date a separator was drawn for, so it only shows once per day of history, not on every message
+// A short, pleasant two-tone notification chime, synthesized with the Web
+// Audio API rather than loading an external sound file — keeps this
+// self-contained. Played only for messages that arrive from someone ELSE
+// during live polling, never for the initial history load (which would
+// otherwise ding once per old message every time the page loads) and
+// never for the current user's own messages (already visually confirmed
+// the instant they're sent).
+var _chatAudioCtx=null;
+function _chatPlayDing(){
+  try{
+    if(!_chatAudioCtx) _chatAudioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    if(_chatAudioCtx.state==='suspended') _chatAudioCtx.resume();
+    var ctx=_chatAudioCtx;
+    var now=ctx.currentTime;
+    [[880,0],[1318.5,0.09]].forEach(function(pair){
+      var osc=ctx.createOscillator();
+      var gain=ctx.createGain();
+      osc.type='sine';
+      osc.frequency.value=pair[0];
+      var start=now+pair[1];
+      gain.gain.setValueAtTime(0.0001,start);
+      gain.gain.exponentialRampToValueAtTime(0.16,start+0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001,start+0.35);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start+0.4);
+    });
+  }catch(e){ /* Web Audio unavailable or blocked — silently skip, chat still works fine without the sound */ }
+}
 function initRailChat(){
   if(_chatInitialized) return; // logging out and back in re-triggers this — don't double up the widget or the poll timer
   _chatInitialized=true;
@@ -2640,7 +2674,7 @@ async function _chatFetch(isInitial){
     if(!res.ok) throw new Error('HTTP '+res.status);
     var data=await res.json();
     if(statusEl){ statusEl.textContent='●'; statusEl.style.color='#7fd98f'; statusEl.title='Connected'; }
-    (data.messages||[]).forEach(function(m){ _chatAppendMessage(m); });
+    (data.messages||[]).forEach(function(m){ _chatAppendMessage(m,!isInitial); });
     if(data.lastId) _chatLastId=data.lastId;
     if(Array.isArray(data.online)){ _chatOnline=data.online; _chatRenderOnlineLine(); }
   }catch(e){
@@ -2653,7 +2687,7 @@ function _chatRenderOnlineLine(){
   var others=_chatOnline.filter(function(n){ return n!==((currentUser&&currentUser.name)||''); });
   el.textContent=others.length?('online: '+others.join(', ')):'online: (just you)';
 }
-function _chatAppendMessage(m){
+function _chatAppendMessage(m,isLive){
   if(m==null||m.id==null) return;
   // A message can legitimately come back in more than one poll response
   // (e.g. it arrives right at the edge of an afterId window, or a
@@ -2664,12 +2698,26 @@ function _chatAppendMessage(m){
   var log=document.getElementById('chatLog');
   if(!log) return;
   var wasAtBottom=(log.scrollHeight-log.scrollTop-log.clientHeight)<40;
+  var thisDate=_chatDateStr(m.at);
+  if(thisDate && thisDate!==_chatLastRenderedDate){
+    _chatLastRenderedDate=thisDate;
+    var sep=document.createElement('div');
+    sep.style.cssText='text-align:center;color:var(--sb-dim);font-size:10px;letter-spacing:.08em;text-transform:uppercase;margin:6px 0;opacity:.8';
+    sep.textContent='── '+thisDate+' ──';
+    log.appendChild(sep);
+  }
   var row=document.createElement('div');
   row.style.wordBreak='break-word';
   row.innerHTML='<span style="color:#cfe8ee">'+_chatTimeStr(m.at)+'</span> '
     +'<span style="color:'+_chatNickColor(m.user||'?')+';font-weight:700">'+esc(m.user||'?')+':</span> '
     +'<span>'+esc(m.text||'')+'</span>';
   log.appendChild(row);
+  // Only for messages arriving live (not the initial history dump) and
+  // only for messages from someone OTHER than the current user — sending
+  // your own message is already its own confirmation.
+  if(isLive && m.user && m.user!==((currentUser&&currentUser.name)||'')){
+    _chatPlayDing();
+  }
   if(wasAtBottom) log.scrollTop=log.scrollHeight;
 }
 var _chatSending=false;

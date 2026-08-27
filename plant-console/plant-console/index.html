@@ -3280,6 +3280,9 @@ async function submitNewOrder(){
   var fieldsWrap=document.getElementById('newOrderFields');
   var statusEl=document.getElementById('newOrderStatus');
   if(!fieldsWrap) return;
+  // Same iOS Safari fix as submitEditOrder — force the last-focused
+  // field's value to commit before reading the form.
+  if(document.activeElement && typeof document.activeElement.blur==='function') document.activeElement.blur();
   var vals=_readOrderFormFields(fieldsWrap);
   if(!vals.customer.trim()){ if(statusEl){ statusEl.textContent='Customer is required.'; statusEl.style.color='#c0392b'; } return; }
   if(statusEl){ statusEl.textContent='Saving…'; statusEl.style.color='var(--muted)'; }
@@ -3610,6 +3613,14 @@ async function submitEditOrder(id){
   if(_orderSaveInProgress) return;
   var rowEl=document.getElementById('ordRow-'+id);
   if(!rowEl) return;
+  // CONFIRMED on iOS Safari: tapping Save can fire before the value just
+  // typed into whatever field had focus a moment ago has actually
+  // "committed" — reading .value immediately can still see the OLD value.
+  // Since Count is almost always the last thing filled in before Save,
+  // this is exactly what made it look like Count specifically kept
+  // vanishing. Explicitly blurring the active element first forces it to
+  // commit before we read anything.
+  if(document.activeElement && typeof document.activeElement.blur==='function') document.activeElement.blur();
   var vals=_readOrderFormFields(rowEl);
   vals.id=id;
   if(!vals.customer.trim()){ alert('Customer is required.'); return; }

@@ -3217,7 +3217,7 @@ function _orderLineRowHtml(line,isFirst,o){
         : '<span></span><span></span><span></span>')
     +'<input type="text" class="ord-line-product" list="ordersProductList" value="'+esc(line.product||'')+'" placeholder="Product" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
     +'<input type="text" class="ord-line-description" value="'+esc(line.description||'')+'" placeholder="Description" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
-    +'<input type="text" class="ord-line-quantity" value="'+esc(line.quantity||'')+'" placeholder="Qty" style="padding:7px 6px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
+    +'<input type="text" class="ord-line-quantity" value="'+esc(line.quantity||'')+'" placeholder="Qty" onkeydown="if(event.key===\'Enter\'){event.preventDefault();_orderLineEnterAddsRow(this);}" style="padding:7px 6px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
     +'<input type="text" class="ord-line-finalcount" value="'+esc(line.finalCount||'')+'" placeholder="Count" title="Final physical count for this product" style="padding:7px 6px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;font-family:var(--mono);background:var(--bg);color:var(--ink)"/>'
     +'<button type="button" title="Remove this product" onclick="_removeOrderLine(this)" style="border:0;background:transparent;cursor:pointer;color:#b8460b;font-size:15px">✕</button>'
   +'</div>';
@@ -3240,6 +3240,19 @@ function addOrderLineRow(btn){
   if(container) container.insertAdjacentHTML('beforeend',_orderLineRowHtmlBlank());
 }
 window.addOrderLineRow=addOrderLineRow;
+// Pressing Enter in a Qty field adds a new blank product line right after
+// the current one and moves focus straight to its Product field — lets
+// someone entering several products in a row keep typing without ever
+// touching the "+ Add product" button.
+function _orderLineEnterAddsRow(qtyInput){
+  var container=qtyInput.closest('.ord-lines-container');
+  if(!container) return;
+  container.insertAdjacentHTML('beforeend',_orderLineRowHtmlBlank());
+  var newRow=container.lastElementChild;
+  var newProductInput=newRow&&newRow.querySelector('.ord-line-product');
+  if(newProductInput) newProductInput.focus();
+}
+window._orderLineEnterAddsRow=_orderLineEnterAddsRow;
 // The first line's row holds the order-level Date/Customer/Driver fields —
 // if that specific row gets removed, those fields need to move to whatever
 // line becomes first instead of disappearing. Simplest safe approach:

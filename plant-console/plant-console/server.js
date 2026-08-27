@@ -1950,7 +1950,12 @@ const server = http.createServer(async (req, res) => {
           // customer ordered. Kept alongside product/description/quantity
           // on each line rather than as one order-level field, since a
           // multi-product order needs a separate count per product.
-          finalCount: String((l && l.finalCount) || '').trim().slice(0, 50)
+          finalCount: String((l && l.finalCount) || '').trim().slice(0, 50),
+          // Whether this specific product needs to go through the
+          // processing department before it can ship — a per-product flag,
+          // same reasoning as finalCount: one order can easily mix
+          // products that need processing with ones that don't.
+          needsProcessing: !!(l && l.needsProcessing)
         })).filter(l => l.product || l.description || l.quantity);
         saved = {
           id: id,

@@ -3554,9 +3554,12 @@ function _renderOrdersWeekSummary(){
   dayKeys.forEach(function(dk,di){
     var count=byDay[dk].length;
     var label=fmtDayOrd(dk)+' ('+count+')';
-    html+='<div onclick="toggleOrdersRow(\'ordDay-'+di+'\',\'day:'+esc(dk)+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:10px 14px;background:#fff3cd;border-bottom:1px solid #e0c56b">'
-      +'<svg id="ordDay-'+di+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#8a6d1a;flex-shrink:0'+(_ordersIsOpen('day:'+dk,q)?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
-      +'<span style="font-weight:700;font-size:13px;color:#5c4813">'+label+'</span>'
+    html+='<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:#fff3cd;border-bottom:1px solid #e0c56b">'
+      +'<span onclick="toggleOrdersRow(\'ordDay-'+di+'\',\'day:'+esc(dk)+'\')" style="cursor:pointer;flex:1;display:flex;align-items:center;gap:8px">'
+        +'<svg id="ordDay-'+di+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#8a6d1a;flex-shrink:0'+(_ordersIsOpen('day:'+dk,q)?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
+        +'<span style="font-weight:700;font-size:13px;color:#5c4813">'+label+'</span>'
+      +'</span>'
+      +'<button title="Print processing sheet for this whole day, all drivers combined" onclick="event.stopPropagation();printProcessingSheet(['+byDay[dk].map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(fmtDayOrd(dk)+' — Processing (All Drivers)')+'\')" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:#8a6d1a;font-size:14px">🏭</button>'
     +'</div>'
     +'<div id="ordDay-'+di+'" style="display:'+(_ordersIsOpen('day:'+dk,q)?'block':'none')+'">'
       +(function(){

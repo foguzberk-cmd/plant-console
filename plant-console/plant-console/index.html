@@ -8079,11 +8079,28 @@ function closeCFProcessModal(){
 window.closeCFProcessModal=closeCFProcessModal;
 
 function cfProcessConfirm(billId,splitId,method,checkNumber){
-  var rec=_cfScheduledDates[billId];
-  var split=rec&&rec.splits.find(function(s){return s.id===splitId;});
-  if(split){
-    split.inProcess={method:method,checkNumber:(method==='check'?(checkNumber||''):undefined),by:(currentUser&&currentUser.name)||'Unknown user',at:new Date().toISOString()};
-    _cfSaveScheduled(billId);
+  // CONFIRMED live (Aug 2026): clicking a payment method here did
+  // absolutely nothing — no error shown, modal stayed open, nothing
+  // selectable. The cause: `rec.splits.find(...)` throws a TypeError if
+  // rec.splits isn't a valid array for any reason, and that throw happens
+  // BEFORE closeCFProcessModal()/renderCashFlowReport() ever run — so the
+  // whole click silently aborts with the modal frozen exactly where it
+  // was, no matter which button was pressed. Guarding the array check and
+  // wrapping in try/catch means a real problem now surfaces as an actual
+  // message instead of a modal that just never responds, and the modal
+  // always closes either way so it's never stuck open.
+  try{
+    var rec=_cfScheduledDates[billId];
+    var split=(rec && Array.isArray(rec.splits)) ? rec.splits.find(function(s){return s.id===splitId;}) : null;
+    if(split){
+      split.inProcess={method:method,checkNumber:(method==='check'?(checkNumber||''):undefined),by:(currentUser&&currentUser.name)||'Unknown user',at:new Date().toISOString()};
+      _cfSaveScheduled(billId);
+    } else {
+      alert('Could not find this payment to update — it may have changed on another device in the meantime. Please try again after the page refreshes.');
+    }
+  }catch(e){
+    console.error('cfProcessConfirm failed:',e);
+    alert('Something went wrong confirming this payment method: '+(e&&e.message?e.message:e)+'. Please try again — if it keeps happening, note which bill this was and let support know.');
   }
   closeCFProcessModal();
   renderCashFlowReport();

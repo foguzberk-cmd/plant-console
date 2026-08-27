@@ -1914,7 +1914,13 @@ const server = http.createServer(async (req, res) => {
         const lines = rawLines.map(l => ({
           product: String((l && l.product) || '').trim().slice(0, 200),
           description: String((l && l.description) || '').trim().slice(0, 1000),
-          quantity: String((l && l.quantity !== undefined && l.quantity !== null) ? l.quantity : '').trim().slice(0, 50)
+          quantity: String((l && l.quantity !== undefined && l.quantity !== null) ? l.quantity : '').trim().slice(0, 50),
+          // Final physical count — entered per-product directly in the
+          // Received Orders row while loading, not part of what the
+          // customer ordered. Kept alongside product/description/quantity
+          // on each line rather than as one order-level field, since a
+          // multi-product order needs a separate count per product.
+          finalCount: String((l && l.finalCount) || '').trim().slice(0, 50)
         })).filter(l => l.product || l.description || l.quantity);
         saved = {
           id: id,
@@ -1945,12 +1951,6 @@ const server = http.createServer(async (req, res) => {
             saved.invoiceDocNumber = String(order.invoiceDocNumber || '').trim().slice(0, 100);
             saved.invoiceDate = String(order.invoiceDate || '').slice(0, 10);
           }
-          // Final physical count — entered directly in the Received
-          // Orders row while loading. Same preserve-unless-explicit
-          // reasoning as shipped status: the regular edit form never
-          // sends this field at all, so it must never be wiped out by an
-          // unrelated date/driver/product edit.
-          saved.finalCount = order.finalCount === undefined ? (orders[idx].finalCount || '') : String(order.finalCount || '').trim().slice(0, 50);
           orders[idx] = saved;
         } else {
           saved.createdBy = order.createdBy || '';
@@ -1958,7 +1958,6 @@ const server = http.createServer(async (req, res) => {
           saved.shipped = order.shipped === true;
           saved.invoiceDocNumber = String(order.invoiceDocNumber || '').trim().slice(0, 100);
           saved.invoiceDate = String(order.invoiceDate || '').slice(0, 10);
-          saved.finalCount = String(order.finalCount || '').trim().slice(0, 50);
           orders.push(saved);
         }
         // A fresh save always wins over a stale "this was just deleted"

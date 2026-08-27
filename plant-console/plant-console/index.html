@@ -3544,7 +3544,8 @@ function _renderOrderRow(o){
     +'<span style="flex:1;min-width:0">'
       +(lines.length
         ? lines.map(function(l,li){
-            return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:3px 0">'
+            var stripeBg=li%2===1?'background:rgba(0,0,0,.035);':'';
+            return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 8px;margin:0 -8px;border-radius:5px;'+stripeBg+'">'
               +'<span onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+(l.description?' — '+esc(l.description):'')+'</span>'
               +(l.quantity?'<b style="flex-shrink:0;white-space:nowrap">'+esc(l.quantity)+'</b>':'')
               +'<input type="text" value="'+esc(l.finalCount||'')+'" placeholder="Count" title="Final physical count for this product" onchange="updateOrderLineFinalCount(\''+esc(o.id)+'\','+li+',this.value)" style="width:78px;flex-shrink:0;padding:5px 6px;border:1.5px solid var(--line);border-radius:6px;font-size:12px;font-family:var(--mono);text-align:right;background:var(--bg);color:var(--ink)"/>'

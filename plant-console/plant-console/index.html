@@ -3059,7 +3059,10 @@ function _renderShippedOrdersSummary(){
               return '<div style="display:flex;align-items:center;gap:10px;padding:6px 16px 6px 54px;border-bottom:1px dashed var(--line);font-size:12.5px">'
                 +'<input type="checkbox" class="ship-line-chk" data-orderid="'+esc(o.id)+'" data-lineidx="'+li+'" checked style="flex-shrink:0;width:15px;height:15px;cursor:pointer"/>'
                 +'<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+(l.description?' — '+esc(l.description):'')+'</span>'
-                +(l.quantity?'<b style="flex-shrink:0;white-space:nowrap">'+esc(l.quantity)+'</b>':'')
+                +'<span style="flex-shrink:0;text-align:right;min-width:60px">'
+                  +(l.quantity?'<b style="white-space:nowrap">'+esc(l.quantity)+'</b>':'')
+                  +(l.finalCount?'<div style="font-size:10.5px;color:var(--muted);white-space:nowrap">count: '+esc(l.finalCount)+'</div>':'')
+                +'</span>'
               +'</div>';
             }).join('')
             +'<div style="padding:8px 16px 10px 54px">'

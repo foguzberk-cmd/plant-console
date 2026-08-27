@@ -7288,6 +7288,15 @@ function _initCashFlowColumnResize(){
   });
 }
 
+// CONFIRMED live (Aug 2026): plain unchecked-by-default checkboxes here
+// looked completely broken — this table re-renders from scratch on every
+// background sync tick (every 1.5s), same as the rest of Cash Flow, and a
+// fresh render with no memory of what was checked resets every box back
+// to unchecked almost instantly. Same root cause and same fix as the
+// Orders expand/collapse state and the iOS Count-field focus issue
+// earlier this session: track the actual state outside the DOM and have
+// every render restore it, rather than trying to prevent re-renders.
+var _cfSchedSelected={}; // 'billId|splitId' -> true if checked
 // Pinned section at the top of Cash Flow — every bill that has a
 // Scheduled Date set, grouped by that date (soonest first), pulled out of
 // the main vendor list below so each bill only shows up in one place.
@@ -7407,7 +7416,7 @@ function renderScheduledPaymentsSection(){
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;white-space:nowrap">'
             +'<span title="'+pinTitle+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#ffd54f;border:1px solid #c9a227;border-radius:2px;font-size:9px;margin-right:4px;cursor:help;transform:rotate(-4deg)">📌</span>'
             +'<button onclick="event.stopPropagation();showCFRowMenu(this,\'scheduled\',\''+esc(billId)+'\',\''+esc(split.id)+'\')" class="btn btn-sm cf-menu-trigger" style="padding:2px 7px;font-size:13px;line-height:1">⋮</button>'
-            +(hasPerm('cfApprovePayment')?'<input type="checkbox" class="cf-sched-select" data-billid="'+esc(billId)+'" data-splitid="'+esc(split.id)+'" onchange="updateCFSchedBulkBar()" style="cursor:pointer;margin-left:6px;vertical-align:middle"/>':'')
+            +(hasPerm('cfApprovePayment')?'<input type="checkbox" class="cf-sched-select" data-billid="'+esc(billId)+'" data-splitid="'+esc(split.id)+'" '+(_cfSchedSelected[billId+'|'+split.id]?'checked':'')+' onchange="cfSchedToggleSelect(this,\''+esc(billId)+'\',\''+esc(split.id)+'\')" style="cursor:pointer;margin-left:6px;vertical-align:middle"/>':'')
           +'</td>'
         +'</tr>';
       });
@@ -7423,8 +7432,12 @@ function renderScheduledPaymentsSection(){
   +'</tr>';
   html+='</tbody></table></div>';
   el.innerHTML=html;
+  // Restore the bulk-action bar's visibility/count to match whatever's
+  // still selected after this render — without this, checkboxes would
+  // correctly show as checked again (see _cfSchedSelected above) but the
+  // bar itself would stay hidden until the next click.
+  if(document.getElementById('cfSchedBulkBar')) updateCFSchedBulkBar();
 }
-
 // Approved Payments — the same locked-snapshot idea as Scheduled Payments,
 // but for splits that have been approved (see approveCFPayment). Sits
 // above Scheduled Payments since these are further along: an authorized
@@ -7802,8 +7815,21 @@ window.updateCFPaidBulkBar=updateCFPaidBulkBar;
 // Bulk-select for Scheduled Payments — lets many payments be approved at
 // once instead of one at a time via the row menu. Same pattern as the
 // Paid section's bulk-select just above.
+// Called by each row's checkbox onchange — keeps the persisted selection
+// state in sync with what was just clicked, which is what actually
+// survives the next background re-render (see _cfSchedSelected above).
+function cfSchedToggleSelect(cb,billId,splitId){
+  var key=billId+'|'+splitId;
+  if(cb.checked) _cfSchedSelected[key]=true; else delete _cfSchedSelected[key];
+  updateCFSchedBulkBar();
+}
+window.cfSchedToggleSelect=cfSchedToggleSelect;
 function toggleCFSchedSelectAll(checked){
-  document.querySelectorAll('.cf-sched-select').forEach(function(cb){ cb.checked=checked; });
+  document.querySelectorAll('.cf-sched-select').forEach(function(cb){
+    cb.checked=checked;
+    var key=cb.getAttribute('data-billid')+'|'+cb.getAttribute('data-splitid');
+    if(checked) _cfSchedSelected[key]=true; else delete _cfSchedSelected[key];
+  });
   updateCFSchedBulkBar();
 }
 window.toggleCFSchedSelectAll=toggleCFSchedSelectAll;
@@ -7825,6 +7851,7 @@ function updateCFSchedBulkBar(){
 window.updateCFSchedBulkBar=updateCFSchedBulkBar;
 function clearCFSchedSelection(){
   document.querySelectorAll('.cf-sched-select').forEach(function(cb){ cb.checked=false; });
+  _cfSchedSelected={};
   updateCFSchedBulkBar();
 }
 window.clearCFSchedSelection=clearCFSchedSelection;

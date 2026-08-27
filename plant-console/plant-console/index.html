@@ -3710,7 +3710,16 @@ function _findQbCustomerMatch(name){
 function _findQbItemMatch(name){
   if(!name) return null;
   var nameLower=name.trim().toLowerCase();
-  return items.find(function(i){ return i.qbId && (i.name||'').trim().toLowerCase()===nameLower; })||null;
+  // CONFIRMED live (Aug 2026): QuickBooks flatly rejects an invoice line
+  // whose Item is set up as a "Category" — that's a grouping/organizational
+  // node used to nest other items under it in QuickBooks's own item list,
+  // not something that can actually be sold or billed. Matching against
+  // one here would let the review screen show a real-looking price and
+  // total, only for the whole invoice to fail at the QuickBooks step with
+  // a cryptic "Invalid Reference Id" error. Treating a Category match as
+  // no match at all surfaces the real problem immediately, in the same
+  // place as every other unmatched-line warning.
+  return items.find(function(i){ return i.qbId && i.type!=='Category' && (i.name||'').trim().toLowerCase()===nameLower; })||null;
 }
 function _buildInvoicePreviewData(o){
   var customerMatch=_findQbCustomerMatch(o.customer);
@@ -3765,8 +3774,11 @@ function _renderInvoicePreviewLines(){
   var el=document.getElementById('invoicePreviewLines');
   if(!el||!_invoicePreviewData) return;
   el.innerHTML=_invoicePreviewData.lines.map(function(ld,li){
+    var categoryExists=!ld.itemMatch && items.some(function(i){ return i.type==='Category' && (i.name||'').trim().toLowerCase()===(ld.line.product||'').trim().toLowerCase(); });
     var problem=!ld.itemMatch
-      ? 'No matching QuickBooks item for "'+esc(ld.line.product||'(no product)')+'"'
+      ? (categoryExists
+          ? '"'+esc(ld.line.product||'')+'" exists in QuickBooks but as a Category (a grouping folder, not a sellable item) — QuickBooks won\'t allow billing against it. Pick the specific product underneath it instead.'
+          : 'No matching QuickBooks item for "'+esc(ld.line.product||'(no product)')+'"')
       : (ld.qtyNum==null?'Could not read a number from "'+esc(ld.qtySource||'')+'"':'');
     var lineTotal=ld.matched?(ld.qtyNum*ld.unitPrice):0;
     return '<div style="padding:9px 12px;border-bottom:1px solid var(--line);opacity:'+(ld.matched?'1':'.55')+'">'

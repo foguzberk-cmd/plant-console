@@ -2055,7 +2055,7 @@ function saveVendors(){
 // the server, so this actually syncs across users/devices instead of
 // only ever living in whichever browser made the change.
 function _saveVendorDepartments(){
-  localStorage.setItem('pc_vendor_departments',JSON.stringify(_vendorDepartments));
+  safeSetLocal('pc_vendor_departments',JSON.stringify(_vendorDepartments));
   var keys=Object.keys(_vendorDepartments);
   keys.forEach(function(k){ _recentlySavedVendorDepartments[k]=_vendorDepartments[k]; });
   (function(ks){
@@ -4269,7 +4269,7 @@ var JE_FILTER_VERSION='12'; // v12: promoted the customer-scoped netting from v1
 if(localStorage.getItem('pc_coll_je_filter_version')!==JE_FILTER_VERSION){
   _collJournalEntryCache={};
   _collJournalEntryLastSync=null;
-  localStorage.setItem('pc_coll_je_filter_version',JE_FILTER_VERSION);
+  safeSetLocal('pc_coll_je_filter_version',JE_FILTER_VERSION);
 }
 var _collRange=null;      // {from,to} for the cached fetch
 var _collGroupMode='customer'; // 'customer' | 'salesperson'
@@ -4318,7 +4318,7 @@ var _COLL_COL_DEFAULTS={name:220,sales:120,collected:110,future:110,ending:130,d
 var _collColWidths=(function(){
   try{
     if(localStorage.getItem('pc_coll_col_widths_v')!=='3'){
-      localStorage.setItem('pc_coll_col_widths_v','3');
+      safeSetLocal('pc_coll_col_widths_v','3');
       return Object.assign({},_COLL_COL_DEFAULTS);
     }
     var v=JSON.parse(localStorage.getItem('pc_coll_col_widths')||'null');
@@ -4343,7 +4343,7 @@ function collColResizeStart(e,colKey){
   function onUp(){
     document.removeEventListener('mousemove',onMove);
     document.removeEventListener('mouseup',onUp);
-    localStorage.setItem('pc_coll_col_widths',JSON.stringify(_collColWidths));
+    safeSetLocal('pc_coll_col_widths',JSON.stringify(_collColWidths));
   }
   document.addEventListener('mousemove',onMove);
   document.addEventListener('mouseup',onUp);
@@ -4363,7 +4363,7 @@ var _COLL_COL_ORDER_DEFAULT=['dun','sales','collectedFuture','ending','actions']
 var _collColOrder=(function(){
   try{
     if(localStorage.getItem('pc_coll_col_order_v')!=='5'){
-      localStorage.setItem('pc_coll_col_order_v','5');
+      safeSetLocal('pc_coll_col_order_v','5');
       return _COLL_COL_ORDER_DEFAULT.slice();
     }
     var v=JSON.parse(localStorage.getItem('pc_coll_col_order')||'null');
@@ -4392,7 +4392,7 @@ function collColDrop(e,targetKey){
   if(from<0 || to<0) return;
   _collColOrder.splice(from,1);
   _collColOrder.splice(to,0,dragKey);
-  localStorage.setItem('pc_coll_col_order',JSON.stringify(_collColOrder));
+  safeSetLocal('pc_coll_col_order',JSON.stringify(_collColOrder));
   if(_collPayments) renderCollectionReport();
 }
 window.collColDragStart=collColDragStart;
@@ -4441,7 +4441,7 @@ function setCashFlowStartBalance(v){
   var n=Number(v);
   _cashFlowStartBalance=isNaN(n)?null:n;
   if(_cashFlowStartBalance===null) localStorage.removeItem('pc_cf_start_balance');
-  else localStorage.setItem('pc_cf_start_balance',String(_cashFlowStartBalance));
+  else safeSetLocal('pc_cf_start_balance',String(_cashFlowStartBalance));
   if(_cashFlowInvoices||_cashFlowBills) renderCashFlowReport();
 }
 window.setCashFlowStartBalance=setCashFlowStartBalance;
@@ -6327,7 +6327,19 @@ function _cfEnqueueForBill(billId,fn){
   return thisOp;
 }
 function _cfSaveScheduled(billId){
-  localStorage.setItem('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates));
+  // CONFIRMED live (Aug 2026): this was calling raw localStorage.setItem
+  // instead of the app's own safeSetLocal wrapper that every other large
+  // localStorage write already uses specifically to survive
+  // QuotaExceededError. When this browser's localStorage genuinely filled
+  // up, that raw call threw synchronously — and since this function runs
+  // FIRST, before anything else in _cfSaveScheduled or its callers (like
+  // cfProcessConfirm), the throw aborted the ENTIRE calling action before
+  // it ever reached the code that closes a modal or shows a result. That's
+  // exactly why clicking Wire (or Check, or Zelle, or Card — any of them
+  // would have hit this identically) looked like it silently did nothing:
+  // the actual server save never even got a chance to run, and the modal
+  // was left frozen mid-click with no error surfaced anywhere.
+  safeSetLocal('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates));
   if(billId){
     return _cfEnqueueForBill(billId,function(){ return _cfSaveScheduledNow(billId); });
   } else {
@@ -6958,7 +6970,7 @@ function removeCFSplit(billId,splitId){
     _cfMarkDeleted(billId); // whole-bill tombstone path — unaffected by this change
     wholeRecordDeleted=true;
   }
-  localStorage.setItem('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates));
+  safeSetLocal('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates));
   // CRITICAL: this used to call _cfSaveScheduled(billId) here — a resave of
   // the whole record with this one split left out. That NEVER actually
   // deleted anything server-side (see the long comment on
@@ -7101,7 +7113,7 @@ document.addEventListener('click',function(e){
 var _sectionCollapsed=(function(){ try{ return JSON.parse(localStorage.getItem('pc_section_collapsed')||'{}'); }catch(e){ return {}; } })();
 function toggleSectionCollapse(key){
   _sectionCollapsed[key]=!_sectionCollapsed[key];
-  localStorage.setItem('pc_section_collapsed',JSON.stringify(_sectionCollapsed));
+  safeSetLocal('pc_section_collapsed',JSON.stringify(_sectionCollapsed));
   var fns={
     cfScheduled: function(){ if(typeof renderScheduledPaymentsSection==='function') renderScheduledPaymentsSection(); },
     cfApproved: function(){ if(typeof renderApprovedPaymentsSection==='function') renderApprovedPaymentsSection(); },
@@ -7988,9 +8000,9 @@ function findLikelyBadPaidEntries(){
   var searchEl=document.getElementById('cf-search');
   if(searchEl && searchEl.value){ searchEl.value=''; _cfSearchQuery=''; }
   _sectionCollapsed.cfPaid=false;
-  try{ localStorage.setItem('pc_section_collapsed',JSON.stringify(_sectionCollapsed)); }catch(e){}
+  try{ safeSetLocal('pc_section_collapsed',JSON.stringify(_sectionCollapsed)); }catch(e){}
   Object.keys(_weekCollapsed).forEach(function(k){ if(k.indexOf('cfPaid_')===0) delete _weekCollapsed[k]; });
-  try{ localStorage.setItem('pc_week_collapsed',JSON.stringify(_weekCollapsed)); }catch(e){}
+  try{ safeSetLocal('pc_week_collapsed',JSON.stringify(_weekCollapsed)); }catch(e){}
   renderPaidPaymentsSection();
   setTimeout(function(){
     var foundCount=0;
@@ -8413,7 +8425,7 @@ window.buildCashFlowTableShell=buildCashFlowTableShell;
 var _weekCollapsed=(function(){ try{ return JSON.parse(localStorage.getItem('pc_week_collapsed')||'{}'); }catch(e){ return {}; } })();
 function toggleCFWeekGroup(weekKey,rowClass){
   _weekCollapsed[weekKey]=!_weekCollapsed[weekKey];
-  localStorage.setItem('pc_week_collapsed',JSON.stringify(_weekCollapsed));
+  safeSetLocal('pc_week_collapsed',JSON.stringify(_weekCollapsed));
   var collapsed=!!_weekCollapsed[weekKey];
   document.querySelectorAll('.'+rowClass).forEach(function(r){ r.style.display=collapsed?'none':'table-row'; });
   var chev=document.getElementById('wk-chev-'+rowClass);
@@ -8447,7 +8459,7 @@ var _checksDeposited=(function(){ try{ return JSON.parse(localStorage.getItem('p
     }
   });
   if(removed>0){
-    try{ localStorage.setItem('pc_checks_deposited',JSON.stringify(_checksDeposited)); }catch(e){}
+    try{ safeSetLocal('pc_checks_deposited',JSON.stringify(_checksDeposited)); }catch(e){}
   }
 })();
 // Same "pull once, everyone else loads it instantly" pattern as Customer
@@ -8484,7 +8496,7 @@ async function _checksTryLoadSharedCache(){
     return _checksRestoreSharedCacheBundle(bundle);
   }catch(e){ return false; }
 }
-function _checksSaveDeposited(){ localStorage.setItem('pc_checks_deposited',JSON.stringify(_checksDeposited)); }
+function _checksSaveDeposited(){ safeSetLocal('pc_checks_deposited',JSON.stringify(_checksDeposited)); }
 
 async function runChecksReport(){
   var statusEl=document.getElementById('chk-status');

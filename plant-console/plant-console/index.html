@@ -3136,15 +3136,16 @@ function _driverSelectHtml(selected){
 function _orderLineRowHtml(line,isFirst,o){
   line=line||{}; o=o||{};
   var today=new Date().toISOString().slice(0,10);
-  return '<div class="ord-line" style="display:grid;grid-template-columns:125px 1fr 1fr 1fr 1.3fr 80px 26px;gap:8px;margin-bottom:6px;align-items:center">'
+  return '<div class="ord-line" style="display:grid;grid-template-columns:110px 1fr 90px 1fr 1.2fr 70px 78px 24px;gap:6px;margin-bottom:6px;align-items:center">'
     +(isFirst
-        ? '<input type="date" class="ord-f-date" value="'+esc(o.date||today)+'" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
+        ? '<input type="date" class="ord-f-date" value="'+esc(o.date||today)+'" style="padding:7px 6px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink)"/>'
           +'<input type="text" class="ord-f-customer" list="ordersCustomerList" value="'+esc(o.customer||'')+'" placeholder="Customer" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
           +_driverSelectHtml(o.driver||'')
         : '<span></span><span></span><span></span>')
     +'<input type="text" class="ord-line-product" list="ordersProductList" value="'+esc(line.product||'')+'" placeholder="Product" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
     +'<input type="text" class="ord-line-description" value="'+esc(line.description||'')+'" placeholder="Description" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
-    +'<input type="text" class="ord-line-quantity" value="'+esc(line.quantity||'')+'" placeholder="Qty" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
+    +'<input type="text" class="ord-line-quantity" value="'+esc(line.quantity||'')+'" placeholder="Qty" style="padding:7px 6px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
+    +'<input type="text" class="ord-line-finalcount" value="'+esc(line.finalCount||'')+'" placeholder="Count" title="Final physical count for this product" style="padding:7px 6px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;font-family:var(--mono);background:var(--bg);color:var(--ink)"/>'
     +'<button type="button" title="Remove this product" onclick="_removeOrderLine(this)" style="border:0;background:transparent;cursor:pointer;color:#b8460b;font-size:15px">✕</button>'
   +'</div>';
 }
@@ -3196,7 +3197,8 @@ function _readOrderLineOnly(row){
   return {
     product:(row.querySelector('.ord-line-product')||{}).value||'',
     description:(row.querySelector('.ord-line-description')||{}).value||'',
-    quantity:(row.querySelector('.ord-line-quantity')||{}).value||''
+    quantity:(row.querySelector('.ord-line-quantity')||{}).value||'',
+    finalCount:(row.querySelector('.ord-line-finalcount')||{}).value||''
   };
 }
 async function _promptAddDriver(selectEl){
@@ -3230,13 +3232,14 @@ function _orderFormFields(o){
   var lines=_orderLinesOf(o);
   if(!lines.length) lines=[{}];
   return _orderDatalists()
-    +'<div style="display:grid;grid-template-columns:125px 1fr 1fr 1fr 1.3fr 80px 26px;gap:8px;margin-bottom:2px">'
+    +'<div style="display:grid;grid-template-columns:110px 1fr 90px 1fr 1.2fr 70px 78px 24px;gap:6px;margin-bottom:2px">'
       +'<label style="font-size:10px;color:var(--muted)">Date</label>'
       +'<label style="font-size:10px;color:var(--muted)">Customer</label>'
       +'<label style="font-size:10px;color:var(--muted)">Driver</label>'
       +'<label style="font-size:10px;color:var(--muted)">Product</label>'
       +'<label style="font-size:10px;color:var(--muted)">Description</label>'
-      +'<label style="font-size:10px;color:var(--muted)">Qty</label><span></span>'
+      +'<label style="font-size:10px;color:var(--muted)">Qty</label>'
+      +'<label style="font-size:10px;color:var(--muted)">Count</label><span></span>'
     +'</div>'
     +'<div class="ord-lines-container">'+lines.map(function(l,li){ return _orderLineRowHtml(l,li===0,o); }).join('')+'</div>'
     +'<button type="button" class="btn btn-sm" onclick="addOrderLineRow(this)" style="margin-top:2px">+ Add product</button>';
@@ -3261,9 +3264,10 @@ function _readOrderFormFields(container){
     return {
       product:(row.querySelector('.ord-line-product')||{}).value||'',
       description:(row.querySelector('.ord-line-description')||{}).value||'',
-      quantity:(row.querySelector('.ord-line-quantity')||{}).value||''
+      quantity:(row.querySelector('.ord-line-quantity')||{}).value||'',
+      finalCount:(row.querySelector('.ord-line-finalcount')||{}).value||''
     };
-  }).filter(function(l){ return l.product.trim()||l.description.trim()||l.quantity.trim(); });
+  }).filter(function(l){ return l.product.trim()||l.description.trim()||l.quantity.trim()||l.finalCount.trim(); });
   return {
     date:(container.querySelector('.ord-f-date')||{}).value||'',
     customer:(container.querySelector('.ord-f-customer')||{}).value||'',

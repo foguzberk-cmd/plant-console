@@ -1194,7 +1194,23 @@ function rerenderCurrentSection(){
     // edit form fresh from stored data on every call, which would
     // silently wipe out whatever's currently typed into it if this fired
     // mid-edit.
-    if(!_ordersEditingId && document.getElementById('ordersWeekSummary')){
+    //
+    // ALSO skipped whenever any input on this page currently has focus —
+    // confirmed live (iOS) that this was blocking the keyboard from
+    // appearing at all on the per-line "Count" fields. Those aren't part
+    // of the pencil-edit form (they save inline, no edit mode needed), so
+    // the _ordersEditingId guard alone didn't cover them: a re-render
+    // landing in the same instant as a tap destroys and rebuilds that
+    // exact input before iOS finishes bringing up the keyboard for it,
+    // which reads as "the keyboard just doesn't pop up" with no error
+    // anywhere, because nothing failed — the input was simply replaced by
+    // an identical-looking but unfocused twin a fraction of a second
+    // later.
+    var ordersHasFocusedInput=document.activeElement
+      && (document.activeElement.tagName==='INPUT' || document.activeElement.tagName==='SELECT' || document.activeElement.tagName==='TEXTAREA')
+      && document.activeElement.closest
+      && document.activeElement.closest('#ordersWeekSummary,#ordersShippedSummary,#newOrderFormWrap');
+    if(!_ordersEditingId && !ordersHasFocusedInput && document.getElementById('ordersWeekSummary')){
       try{ _renderOrdersWeekSummary(); }catch(e){}
       try{ _renderShippedOrdersSummary(); }catch(e){}
     }

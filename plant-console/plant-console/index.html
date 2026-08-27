@@ -7343,15 +7343,20 @@ function renderScheduledPaymentsSection(){
   var grandTotal=0;
   var html=_collapsibleHeader('cfScheduled','📌 Scheduled Payments',totalCount,'cf-scheduled-section','Scheduled Payments')
     +'<div style="display:'+(collapsed?'none':'block')+'">'
+    +'<div id="cfSchedBulkBar" style="display:none;align-items:center;gap:10px;padding:8px 10px;margin-bottom:8px;background:#fff3cd;border:1px solid #e0c56b;border-radius:8px;font-size:12.5px">'
+      +'<span id="cfSchedBulkCount">0 selected</span>'
+      +(hasPerm('cfApprovePayment')?'<button id="cfSchedApproveSelectedBtn" class="btn btn-sm" onclick="bulkApproveCFScheduledSelected()" style="font-weight:700">✓ Approve selected</button>':'')
+      +'<button class="btn btn-sm" onclick="clearCFSchedSelection()">Clear selection</button>'
+    +'</div>'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#fffdf5;color:#000;border:1px solid #e0c56b">'
-    +'<colgroup><col style="width:130px"><col style="width:220px"><col style="width:100px"><col style="width:140px"><col style="width:150px"><col style="width:44px"></colgroup>'
+    +'<colgroup><col style="width:130px"><col style="width:220px"><col style="width:100px"><col style="width:140px"><col style="width:150px"><col style="width:64px"></colgroup>'
     +'<thead><tr>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Scheduled Date</th>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Vendor</th>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Bill #</th>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Payment Date (QB)</th>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:right;font-weight:700">Balance</th>'
-      +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px"></th>'
+      +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:center">'+(hasPerm('cfApprovePayment')?'<input type="checkbox" id="cfSchedSelectAll" onchange="toggleCFSchedSelectAll(this.checked)" title="Select all" style="cursor:pointer"/>':'')+'</th>'
     +'</tr></thead><tbody>';
 
   if(!dateKeys.length){
@@ -7399,9 +7404,10 @@ function renderScheduledPaymentsSection(){
           +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(row.docNum||'')+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(row.due?fmtDateUS(row.due):'—')+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
-          +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right">'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;white-space:nowrap">'
             +'<span title="'+pinTitle+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#ffd54f;border:1px solid #c9a227;border-radius:2px;font-size:9px;margin-right:4px;cursor:help;transform:rotate(-4deg)">📌</span>'
             +'<button onclick="event.stopPropagation();showCFRowMenu(this,\'scheduled\',\''+esc(billId)+'\',\''+esc(split.id)+'\')" class="btn btn-sm cf-menu-trigger" style="padding:2px 7px;font-size:13px;line-height:1">⋮</button>'
+            +(hasPerm('cfApprovePayment')?'<input type="checkbox" class="cf-sched-select" data-billid="'+esc(billId)+'" data-splitid="'+esc(split.id)+'" onchange="updateCFSchedBulkBar()" style="cursor:pointer;margin-left:6px;vertical-align:middle"/>':'')
           +'</td>'
         +'</tr>';
       });
@@ -7792,6 +7798,67 @@ function updateCFPaidBulkBar(){
   if(selectAllBox) selectAllBox.checked=all.length>0 && checked.length===all.length;
 }
 window.updateCFPaidBulkBar=updateCFPaidBulkBar;
+
+// Bulk-select for Scheduled Payments — lets many payments be approved at
+// once instead of one at a time via the row menu. Same pattern as the
+// Paid section's bulk-select just above.
+function toggleCFSchedSelectAll(checked){
+  document.querySelectorAll('.cf-sched-select').forEach(function(cb){ cb.checked=checked; });
+  updateCFSchedBulkBar();
+}
+window.toggleCFSchedSelectAll=toggleCFSchedSelectAll;
+function updateCFSchedBulkBar(){
+  var checked=document.querySelectorAll('.cf-sched-select:checked');
+  var bar=document.getElementById('cfSchedBulkBar');
+  var countEl=document.getElementById('cfSchedBulkCount');
+  if(!bar||!countEl) return;
+  if(checked.length){
+    bar.style.display='flex';
+    countEl.textContent=checked.length+' selected';
+  } else {
+    bar.style.display='none';
+  }
+  var all=document.querySelectorAll('.cf-sched-select');
+  var selectAllBox=document.getElementById('cfSchedSelectAll');
+  if(selectAllBox) selectAllBox.checked=all.length>0 && checked.length===all.length;
+}
+window.updateCFSchedBulkBar=updateCFSchedBulkBar;
+function clearCFSchedSelection(){
+  document.querySelectorAll('.cf-sched-select').forEach(function(cb){ cb.checked=false; });
+  updateCFSchedBulkBar();
+}
+window.clearCFSchedSelection=clearCFSchedSelection;
+// Approves every checked payment in one action. Marks each selected
+// split's `initiated` field exactly like approveCFPayment does for a
+// single row, then saves each — _cfSaveScheduled already queues saves
+// per-bill (see _cfEnqueueForBill), so firing these together is safe even
+// when two selected payments happen to belong to the same bill; they
+// won't race each other.
+async function bulkApproveCFScheduledSelected(){
+  if(!hasPerm('cfApprovePayment')){ alert('You don\'t have permission to approve payments.'); return; }
+  var checked=Array.prototype.slice.call(document.querySelectorAll('.cf-sched-select:checked'));
+  if(!checked.length) return;
+  if(!confirm('Approve these '+checked.length+' selected payment'+(checked.length!==1?'s':'')+'?')) return;
+  var btn=document.getElementById('cfSchedApproveSelectedBtn');
+  if(btn){ btn.disabled=true; btn.textContent='Approving…'; }
+  var who=(currentUser&&currentUser.name)||'Unknown user';
+  var now=new Date().toISOString();
+  var saves=[];
+  checked.forEach(function(cb){
+    var billId=cb.getAttribute('data-billid');
+    var splitId=cb.getAttribute('data-splitid');
+    var rec=_cfScheduledDates[billId];
+    if(!rec) return;
+    var split=rec.splits.find(function(s){return s.id===splitId;});
+    if(!split) return;
+    split.initiated={by:who,at:now};
+    saves.push(_cfSaveScheduled(billId));
+  });
+  await Promise.all(saves);
+  if(btn){ btn.disabled=false; btn.textContent='✓ Approve selected'; }
+  renderCashFlowReport();
+}
+window.bulkApproveCFScheduledSelected=bulkApproveCFScheduledSelected;
 function clearCFPaidSelection(){
   document.querySelectorAll('.cf-paid-select').forEach(function(cb){ cb.checked=false; });
   updateCFPaidBulkBar();

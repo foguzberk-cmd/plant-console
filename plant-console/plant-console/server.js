@@ -1945,6 +1945,12 @@ const server = http.createServer(async (req, res) => {
             saved.invoiceDocNumber = String(order.invoiceDocNumber || '').trim().slice(0, 100);
             saved.invoiceDate = String(order.invoiceDate || '').slice(0, 10);
           }
+          // Final physical count — entered directly in the Received
+          // Orders row while loading. Same preserve-unless-explicit
+          // reasoning as shipped status: the regular edit form never
+          // sends this field at all, so it must never be wiped out by an
+          // unrelated date/driver/product edit.
+          saved.finalCount = order.finalCount === undefined ? (orders[idx].finalCount || '') : String(order.finalCount || '').trim().slice(0, 50);
           orders[idx] = saved;
         } else {
           saved.createdBy = order.createdBy || '';
@@ -1952,6 +1958,7 @@ const server = http.createServer(async (req, res) => {
           saved.shipped = order.shipped === true;
           saved.invoiceDocNumber = String(order.invoiceDocNumber || '').trim().slice(0, 100);
           saved.invoiceDate = String(order.invoiceDate || '').slice(0, 10);
+          saved.finalCount = String(order.finalCount || '').trim().slice(0, 50);
           orders.push(saved);
         }
         // A fresh save always wins over a stale "this was just deleted"

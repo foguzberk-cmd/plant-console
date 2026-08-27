@@ -2895,7 +2895,18 @@ window.printDriverOrders=printDriverOrders;
 // relying on it meant clicking to expand silently failed with nothing
 // visibly wrong if someone opened Orders first, before ever visiting
 // Reports. This one is always defined, regardless of navigation order.
-var _ordersRowOpen={}; // contentKey -> true if expanded — survives across re-renders, unlike relying on inline style alone
+var _ordersRowOpen={}; // contentKey -> true/false once a user has EXPLICITLY toggled it; absent means "never touched, use the search-based default"
+// CONFIRMED live (Aug 2026): a plain `(q || _ordersRowOpen[key])` check
+// meant that while a search was active, a group was FORCED open on every
+// render no matter what — including the automatic background re-render
+// that fires every 1.5s. So collapsing a group while searching worked for
+// a fraction of a second, then silently reopened itself on the very next
+// background refresh, making it look like clicking to collapse just
+// didn't work at all. An explicit user toggle must always win over the
+// search default, not just until the next re-render.
+function _ordersIsOpen(key,q){
+  return _ordersRowOpen[key]!==undefined ? _ordersRowOpen[key] : !!q;
+}
 // Escapes a string for safe embedding inside a single-quoted JS string
 // literal (e.g. inside an onclick="...('...')" attribute) — NOT the same
 // thing as esc(), which HTML-escapes for display text and does nothing
@@ -3087,7 +3098,7 @@ function _renderShippedOrdersSummary(){
       +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#1b5e2f;flex-shrink:0'+(_ordersRowOpen[openKey]?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
       +'<span style="font-weight:700;font-size:13px;color:#1b5e2f">'+fmtDayOrd(dk)+' ('+count+')</span>'
     +'</div>'
-    +'<div id="'+rowId+'" style="display:'+((q||_ordersRowOpen[openKey])?'block':'none')+'">'
+    +'<div id="'+rowId+'" style="display:'+(_ordersIsOpen(openKey,q)?'block':'none')+'">'
       +(function(){
         var byDriver={};
         byDay[dk].forEach(function(o){
@@ -3104,10 +3115,10 @@ function _renderShippedOrdersSummary(){
           var driverRowId='ordShipDay-'+di+'-drv-'+dri;
           var driverOpenKey='shipdrv:'+dk+'|'+dName;
           return '<div style="display:flex;align-items:center;gap:8px;padding:6px 14px 4px 30px;background:var(--cold-soft)">'
-              +'<svg onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="cursor:pointer;width:11px;height:11px;stroke:var(--cold);flex-shrink:0'+((q||_ordersRowOpen[driverOpenKey])?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
+              +'<svg onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="cursor:pointer;width:11px;height:11px;stroke:var(--cold);flex-shrink:0'+(_ordersIsOpen(driverOpenKey,q)?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
               +'<span onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" style="cursor:pointer;flex:1;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold)">'+esc(dName)+' ('+driverOrders.length+')</span>'
             +'</div>'
-            +'<div id="'+driverRowId+'" style="display:'+((q||_ordersRowOpen[driverOpenKey])?'block':'none')+'">'
+            +'<div id="'+driverRowId+'" style="display:'+(_ordersIsOpen(driverOpenKey,q)?'block':'none')+'">'
             +driverOrders.map(function(o,oi){
         var lines=_orderLinesOf(o);
         var orderOpenKey='shiporder:'+o.id;
@@ -3502,10 +3513,10 @@ function _renderOrdersWeekSummary(){
     var count=byDay[dk].length;
     var label=fmtDayOrd(dk)+' ('+count+')';
     html+='<div onclick="toggleOrdersRow(\'ordDay-'+di+'\',\'day:'+esc(dk)+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:10px 14px;background:#fff3cd;border-bottom:1px solid #e0c56b">'
-      +'<svg id="ordDay-'+di+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#8a6d1a;flex-shrink:0'+(_ordersRowOpen['day:'+dk]?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
+      +'<svg id="ordDay-'+di+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#8a6d1a;flex-shrink:0'+(_ordersIsOpen('day:'+dk,q)?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
       +'<span style="font-weight:700;font-size:13px;color:#5c4813">'+label+'</span>'
     +'</div>'
-    +'<div id="ordDay-'+di+'" style="display:'+((q||_ordersRowOpen['day:'+dk])?'block':'none')+'">'
+    +'<div id="ordDay-'+di+'" style="display:'+(_ordersIsOpen('day:'+dk,q)?'block':'none')+'">'
       +(function(){
         // Sub-group this day's orders by driver, so everything on one
         // driver's route for the day clusters together instead of a flat
@@ -3539,18 +3550,18 @@ function _renderOrdersWeekSummary(){
               +'<span onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" style="cursor:pointer;flex:1;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold)">'+esc(dName)+' ('+driverOrders.length+')</span>'
               +'<button title="Print this driver\'s route (form + orders)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\',\''+esc(dk)+'\')" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:var(--cold);font-size:13px">🖨</button>'
             +'</div>'
-            +'<div id="'+driverRowId+'" style="display:'+((q||_ordersRowOpen[driverOpenKey])?'block':'none')+'">'
+            +'<div id="'+driverRowId+'" style="display:'+(_ordersIsOpen(driverOpenKey,q)?'block':'none')+'">'
             +custKeys.map(function(key,ci){
               var custOrders=byCust[key].slice().sort(function(a,b){return a.date<b.date?1:-1;});
               var rowId='ordDay-'+di+'-drv-'+dri+'-cust-'+ci;
               var custOpenKey='cust:'+dk+'|'+dName+'|'+key;
               return '<div style="border-bottom:1px dashed var(--line)">'
                 +'<div onclick="toggleOrdersRow(\''+rowId+'\',\''+_jsStrEsc(custOpenKey)+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:9px 16px 9px 44px;background:var(--panel)">'
-                  +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;stroke:var(--muted);flex-shrink:0'+(_ordersRowOpen[custOpenKey]?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
+                  +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;stroke:var(--muted);flex-shrink:0'+(_ordersIsOpen(custOpenKey,q)?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
                   +'<span style="font-weight:600;font-size:13.5px">'+esc(key)+'</span>'
                   +'<span style="color:var(--muted);font-family:var(--mono);font-size:11.5px">('+custOrders.length+' order'+(custOrders.length!==1?'s':'')+')</span>'
                 +'</div>'
-                +'<div id="'+rowId+'" style="display:'+((q||_ordersRowOpen[custOpenKey])?'block':'none')+'">'
+                +'<div id="'+rowId+'" style="display:'+(_ordersIsOpen(custOpenKey,q)?'block':'none')+'">'
                   +custOrders.map(function(o){ return _renderOrderRow(o); }).join('')
                 +'</div>'
               +'</div>';
@@ -3642,7 +3653,8 @@ function showOrderDetailModal(id){
       +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
         +(o.shipped
             ? '<button class="btn" onclick="toggleOrderShippedManually(\''+esc(o.id)+'\',false)" title="Manual override — use this if it was matched to the wrong invoice">Mark as Received</button>'
-            : '<button class="btn" onclick="toggleOrderShippedManually(\''+esc(o.id)+'\',true)" title="Manual override — use this if you know it shipped but Match with QuickBooks hasn\'t caught it yet">✓ Mark as Shipped</button>')
+            : ('<button class="btn" onclick="toggleOrderShippedManually(\''+esc(o.id)+'\',true)" title="Manual override — use this if you know it shipped but Match with QuickBooks hasn\'t caught it yet">✓ Mark as Shipped</button>'
+              +'<button class="btn" style="background:var(--cold);color:#fff;border-color:var(--cold)" onclick="closeOrderDetailModal();showCreateInvoiceModal(\''+esc(o.id)+'\')" title="Bills the customer directly in QuickBooks, using the Final Count you entered for each product">🧾 Create Invoice</button>'))
         +'<button class="btn" onclick="printOrders([\''+esc(o.id)+'\'],\''+esc((o.customer||'Order')+' — '+(o.date||''))+'\')">🖨 Print</button>'
         +'<button class="btn" onclick="closeOrderDetailModal()">Close</button>'
         +'<button class="btn btn-primary" onclick="closeOrderDetailModal();_ordersEditingId=\''+esc(o.id)+'\';_renderOrdersWeekSummary();var r=document.getElementById(\'ordRow-'+esc(o.id)+'\');if(r)r.scrollIntoView({behavior:\'smooth\',block:\'center\'});">✎ Edit</button>'
@@ -3674,6 +3686,178 @@ async function toggleOrderShippedManually(id,shipped){
   _renderShippedOrdersSummary();
 }
 window.toggleOrderShippedManually=toggleOrderShippedManually;
+/* ===== Push an order to QuickBooks as a real Invoice =====
+   Matches each product line to a synced QuickBooks Item (by name) and the
+   order's customer to a synced QuickBooks Customer (by name), using the
+   FINAL PHYSICAL COUNT as the billed quantity wherever one was entered
+   (falling back to the originally ordered quantity otherwise). Shows a
+   review screen — nothing is sent to QuickBooks until explicitly
+   confirmed there, since this creates a real financial document. */
+// Quantity fields here are free text that usually includes a unit ("2
+// BOX", "150 LB") — QuickBooks needs a plain number, so this pulls out
+// just the numeric part.
+function _parseQtyNumber(str){
+  if(!str) return null;
+  var m=String(str).match(/-?\d+(\.\d+)?/);
+  return m?parseFloat(m[0]):null;
+}
+function _findQbCustomerMatch(name){
+  if(!name) return null;
+  var nameLower=name.trim().toLowerCase();
+  return customers.find(function(c){ return c.qbId && (c.name||'').trim().toLowerCase()===nameLower; })||null;
+}
+function _findQbItemMatch(name){
+  if(!name) return null;
+  var nameLower=name.trim().toLowerCase();
+  return items.find(function(i){ return i.qbId && (i.name||'').trim().toLowerCase()===nameLower; })||null;
+}
+function _buildInvoicePreviewData(o){
+  var customerMatch=_findQbCustomerMatch(o.customer);
+  var lines=_orderLinesOf(o).map(function(l){
+    var itemMatch=_findQbItemMatch(l.product);
+    var qtySource=l.finalCount||l.quantity||'';
+    var qtyNum=_parseQtyNumber(qtySource);
+    var unitPrice=itemMatch?Number(itemMatch.price||0):0;
+    return {
+      line:l,
+      itemMatch:itemMatch,
+      qtySource:qtySource,
+      qtyNum:qtyNum,
+      unitPrice:unitPrice,
+      matched:!!(itemMatch && qtyNum!=null && qtyNum>0)
+    };
+  });
+  return {customerMatch:customerMatch, lines:lines};
+}
+var _invoicePreviewData=null;
+var _invoicePreviewOrderId=null;
+function showCreateInvoiceModal(orderId){
+  var o=orders.find(function(x){return x.id===orderId;});
+  if(!o) return;
+  if(o.shipped){ alert('This order is already marked Shipped. If you need to re-invoice it, click "↩ Undo" on it in Shipped Orders first.'); return; }
+  _invoicePreviewOrderId=orderId;
+  _invoicePreviewData=_buildInvoicePreviewData(o);
+  var bg=document.createElement('div');
+  bg.className='modal-bg';
+  bg.id='createInvoiceModalBg';
+  bg.addEventListener('mousedown',function(e){ bg._downOnBg=(e.target===bg); });
+  bg.addEventListener('mouseup',function(e){ if(bg._downOnBg && e.target===bg) closeCreateInvoiceModal(); bg._downOnBg=false; });
+  bg.innerHTML='<div class="modal" style="max-width:560px">'
+    +'<h3 style="margin:0 0 4px">Create QuickBooks Invoice</h3>'
+    +'<p style="color:var(--muted);font-size:13px;margin:0 0 14px">'+esc(o.customer||'(no customer)')+' · '+esc(o.date||'')+'</p>'
+    +(!_invoicePreviewData.customerMatch
+        ? '<div style="background:#fdecea;border:1px solid #f0b3ac;border-radius:8px;padding:10px 12px;font-size:12.5px;color:#a4302a;margin-bottom:14px">⚠ No matching QuickBooks customer found for "'+esc(o.customer||'')+'". Sync Customers in Settings, or check the name matches exactly, before this can be invoiced.</div>'
+        : '')
+    +'<div id="invoicePreviewLines" style="border:1px solid var(--line);border-radius:9px;overflow:hidden;margin-bottom:10px"></div>'
+    +'<div style="display:flex;justify-content:flex-end;font-size:14px;font-weight:700;margin-bottom:16px">Total: <span id="invoicePreviewTotal" style="margin-left:6px">$0.00</span></div>'
+    +'<p style="font-size:11px;color:var(--muted);margin:0 0 16px">Quantity billed uses the Final Count you entered where available, otherwise the originally ordered quantity. Price comes from each item\'s default QuickBooks price. Unchecked/greyed-out lines are excluded — nothing is sent to QuickBooks until you click Create below.</p>'
+    +'<div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end">'
+      +'<button class="btn" onclick="closeCreateInvoiceModal()">Cancel</button>'
+      +'<button id="createInvoiceConfirmBtn" class="btn btn-primary" onclick="confirmCreateInvoice()">Create Invoice</button>'
+    +'</div>'
+  +'</div>';
+  document.body.appendChild(bg);
+  _renderInvoicePreviewLines();
+}
+window.showCreateInvoiceModal=showCreateInvoiceModal;
+function _renderInvoicePreviewLines(){
+  var el=document.getElementById('invoicePreviewLines');
+  if(!el||!_invoicePreviewData) return;
+  el.innerHTML=_invoicePreviewData.lines.map(function(ld,li){
+    var problem=!ld.itemMatch
+      ? 'No matching QuickBooks item for "'+esc(ld.line.product||'(no product)')+'"'
+      : (ld.qtyNum==null?'Could not read a number from "'+esc(ld.qtySource||'')+'"':'');
+    var lineTotal=ld.matched?(ld.qtyNum*ld.unitPrice):0;
+    return '<div style="padding:9px 12px;border-bottom:1px solid var(--line);opacity:'+(ld.matched?'1':'.55')+'">'
+      +'<div style="display:flex;align-items:center;gap:10px">'
+        +'<input type="checkbox" class="inv-line-chk" data-idx="'+li+'" '+(ld.matched?'checked':'disabled')+' onchange="_updateInvoicePreviewTotal()" style="flex-shrink:0;width:15px;height:15px"/>'
+        +'<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">'+esc(ld.line.product||'(no product)')+(ld.line.description?' — '+esc(ld.line.description):'')+'</div>'
+        +'<div style="flex-shrink:0;font-family:var(--mono);font-size:12px;text-align:right;min-width:70px">'+(ld.qtyNum!=null?ld.qtyNum:'—')+' × $'+ld.unitPrice.toFixed(2)+'</div>'
+        +'<div class="inv-line-total" style="flex-shrink:0;font-weight:700;min-width:60px;text-align:right">'+(ld.matched?'$'+lineTotal.toFixed(2):'—')+'</div>'
+      +'</div>'
+      +(problem?'<div style="color:#c0392b;font-size:11px;margin:4px 0 0 25px">⚠ '+problem+'</div>':'')
+    +'</div>';
+  }).join('');
+  _updateInvoicePreviewTotal();
+}
+function _updateInvoicePreviewTotal(){
+  if(!_invoicePreviewData) return;
+  var total=0;
+  document.querySelectorAll('.inv-line-chk:checked').forEach(function(chk){
+    var idx=Number(chk.getAttribute('data-idx'));
+    var ld=_invoicePreviewData.lines[idx];
+    if(ld&&ld.matched) total+=ld.qtyNum*ld.unitPrice;
+  });
+  var totalEl=document.getElementById('invoicePreviewTotal');
+  if(totalEl) totalEl.textContent='$'+total.toFixed(2);
+  var confirmBtn=document.getElementById('createInvoiceConfirmBtn');
+  if(confirmBtn) confirmBtn.disabled=!_invoicePreviewData.customerMatch||total<=0;
+}
+window._updateInvoicePreviewTotal=_updateInvoicePreviewTotal;
+function closeCreateInvoiceModal(){
+  var bg=document.getElementById('createInvoiceModalBg');
+  if(bg) bg.remove();
+  _invoicePreviewData=null;
+  _invoicePreviewOrderId=null;
+}
+window.closeCreateInvoiceModal=closeCreateInvoiceModal;
+async function confirmCreateInvoice(){
+  var o=orders.find(function(x){return x.id===_invoicePreviewOrderId;});
+  if(!o||!_invoicePreviewData||!_invoicePreviewData.customerMatch) return;
+  var checked=Array.prototype.slice.call(document.querySelectorAll('.inv-line-chk:checked'));
+  var qbLines=[]; var total=0;
+  checked.forEach(function(chk){
+    var idx=Number(chk.getAttribute('data-idx'));
+    var ld=_invoicePreviewData.lines[idx];
+    if(!ld||!ld.matched) return;
+    var amount=Math.round(ld.qtyNum*ld.unitPrice*100)/100;
+    total+=amount;
+    qbLines.push({
+      Amount:amount,
+      DetailType:'SalesItemLineDetail',
+      Description:ld.line.description||undefined,
+      SalesItemLineDetail:{ ItemRef:{value:ld.itemMatch.qbId}, Qty:ld.qtyNum, UnitPrice:ld.unitPrice }
+    });
+  });
+  if(!qbLines.length){ alert('No valid product lines selected — nothing to invoice.'); return; }
+  if(!confirm('Create a QuickBooks invoice for '+o.customer+' totaling $'+total.toFixed(2)+'?\n\nThis creates a REAL invoice in QuickBooks — it cannot be undone from here once created (you\'d need to void or delete it in QuickBooks directly).')) return;
+  var btn=document.getElementById('createInvoiceConfirmBtn');
+  if(btn){ btn.disabled=true; btn.textContent='Creating…'; }
+  try{
+    var res=await fetch('/api/qb/create-invoice',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({invoice:{
+        CustomerRef:{value:_invoicePreviewData.customerMatch.qbId},
+        TxnDate:o.date,
+        Line:qbLines
+      }})
+    });
+    var data=await res.json();
+    if(!res.ok||data.error){
+      alert('Could not create invoice: '+(data.needsReconnect?'QuickBooks connection expired — reconnect from the Items tab.':(data.error||res.status)));
+      if(btn){ btn.disabled=false; btn.textContent='Create Invoice'; }
+      return;
+    }
+    var inv=data.invoice;
+    var orderIdToShip=o.id;
+    closeCreateInvoiceModal();
+    var fullOrder={
+      id:orderIdToShip, date:o.date, customer:o.customer, driver:o.driver,
+      lines:_orderLinesOf(o),
+      shipped:true,
+      invoiceDocNumber:(inv&&inv.DocNumber)||'',
+      invoiceDate:(inv&&inv.TxnDate)||o.date
+    };
+    await saveOrder(fullOrder);
+    _renderOrdersWeekSummary();
+    _renderShippedOrdersSummary();
+    alert('Invoice #'+((inv&&inv.DocNumber)||'?')+' created in QuickBooks. This order has been moved to Shipped Orders.');
+  }catch(e){
+    alert('Could not create invoice: '+(e&&e.message?e.message:e));
+    if(btn){ btn.disabled=false; btn.textContent='Create Invoice'; }
+  }
+}
+window.confirmCreateInvoice=confirmCreateInvoice;
 // Saves the final physical count typed directly into one product line
 // within a Received Orders row. Same reasoning as toggleOrderShippedManually
 // above: sends the FULL existing record (all lines, not just the one being

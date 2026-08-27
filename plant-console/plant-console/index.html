@@ -3291,44 +3291,50 @@ var _orderSaveInProgress=false;
 // the whole-app snapshot push.
 async function saveOrder(orderFields){
   var isNew=!orderFields.id;
-  var optimistic=Object.assign({},orderFields,{id:orderFields.id||('local_'+Date.now()+'_'+Math.random().toString(36).slice(2,8))});
+  // CRITICAL FIX (confirmed live, Aug 2026): this used to generate a
+  // temporary "local_..." id for new orders, save it under that id, then
+  // swap it for the server's own freshly-minted "order_..." id once the
+  // save confirmed. That swap created a real window — between "the server
+  // now has this order under its new id" and "this browser has finished
+  // relabeling its local copy to match" — where the background pull
+  // (every 1.5s) could land, see the order under its NEW id in the
+  // server's response, but ALSO still see the OLD "local_..." id sitting
+  // in the recently-added guard (not yet cleaned up), and re-insert that
+  // stale guard copy alongside the real one: a genuine duplicate, with no
+  // double-click or double-submit involved at all. Generating the id here
+  // upfront and sending it to the server means the id is identical before
+  // and after the save — there is no migration step left to race.
+  var finalId=orderFields.id||('order_'+Date.now()+'_'+Math.random().toString(36).slice(2,8));
+  var optimistic=Object.assign({},orderFields,{id:finalId});
   if(isNew){
     orders.push(optimistic);
   } else {
     var idx=orders.findIndex(function(o){return o.id===orderFields.id;});
     if(idx>=0) orders[idx]=Object.assign({},orders[idx],orderFields);
   }
-  // CRITICAL — this guard used to only apply when isNew was true. An EDIT
-  // to an existing order (e.g. changing its date) got zero protection,
-  // which is exactly what let it "bounce back": the background pull runs
-  // every 1.5s and does a full replace of the orders array from whatever
-  // the server last returned. If that pull's request was already in
-  // flight (or simply ran) before the server had caught up with this
-  // save, its response still carries the OLD date — and a plain replace
-  // would silently revert the edit right back, with no error anywhere,
-  // since nothing actually failed; a stale response just arrived at a bad
-  // moment. Same exact race class as several Cash Flow bugs fixed earlier
-  // — the fix is the same too: protect every save (new OR edited) for a
-  // grace period, not just new ones.
-  _recentlyAddedOrders[optimistic.id]=orders.find(function(o){return o.id===optimistic.id;})||optimistic;
-  var fallbackGuardTimeout=setTimeout(function(){ delete _recentlyAddedOrders[optimistic.id]; },20000);
+  // Protects every save (new OR edited) from being reverted by a
+  // background pull that happens to land moments before the server has
+  // caught up — same reasoning as the earlier Cash Flow race-condition
+  // fixes. Since the id never changes now, this guard never needs to be
+  // re-keyed mid-flight either.
+  _recentlyAddedOrders[finalId]=orders.find(function(o){return o.id===finalId;})||optimistic;
+  var fallbackGuardTimeout=setTimeout(function(){ delete _recentlyAddedOrders[finalId]; },20000);
   safeSetLocal('pc_orders',JSON.stringify(orders));
   try{
     var res=await fetch('/api/data/save-order',{
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({order:Object.assign({},orderFields,{createdBy:(currentUser&&currentUser.name)||''})})
+      body:JSON.stringify({order:Object.assign({},orderFields,{id:finalId,createdBy:(currentUser&&currentUser.name)||''})})
     });
     if(!res.ok) throw new Error('HTTP '+res.status);
     var data=await res.json();
     if(data.order){
-      // Replace the optimistic local copy with the server's authoritative
-      // saved record (real id if this was new, real createdBy/createdAt).
-      var idx2=orders.findIndex(function(o){return o.id===optimistic.id;});
+      // Same id throughout — just refresh with the server's authoritative
+      // copy (real createdBy/createdAt/etc), no id lookup-and-swap needed.
+      var idx2=orders.findIndex(function(o){return o.id===finalId;});
       if(idx2>=0) orders[idx2]=data.order;
       clearTimeout(fallbackGuardTimeout);
-      delete _recentlyAddedOrders[optimistic.id];
-      _recentlyAddedOrders[data.order.id]=data.order;
-      setTimeout(function(){ delete _recentlyAddedOrders[data.order.id]; },15000);
+      _recentlyAddedOrders[finalId]=data.order;
+      setTimeout(function(){ delete _recentlyAddedOrders[finalId]; },15000);
       safeSetLocal('pc_orders',JSON.stringify(orders));
       return data.order;
     }

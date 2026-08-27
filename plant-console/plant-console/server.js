@@ -724,7 +724,37 @@ async function fetchQBEntityById(entity, id, retry) {
   return data[entity] || null; // QB wraps the single record under its entity name, e.g. {"Customer": {...}}
 }
 
-// ===== QUICKBOOKS WEBHOOKS =====
+// ===== QUICKBOOKS WRITES ===== Everything above this point only ever
+// READS from QuickBooks. This is the first function that WRITES to it —
+// creating a real Invoice from an Order in Plant Console, once someone has
+// reviewed and confirmed exactly what's being billed (see
+// /api/qb/create-invoice below). Same auth/retry pattern as every read
+// function above, just a POST with a JSON body instead of a GET.
+async function createQBInvoice(invoicePayload, retry) {
+  if (!retry) await ensureFreshToken();
+  const bodyStr = JSON.stringify(invoicePayload);
+  const reqPath = `/v3/company/${activeRealm}/invoice?minorversion=75`;
+  const res = await httpsRequest({
+    hostname: 'quickbooks.api.intuit.com',
+    path: reqPath,
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + accessToken,
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(bodyStr)
+    }
+  }, bodyStr);
+  if (res.status === 401 && !retry) {
+    const ok = await refreshAccessToken();
+    if (ok) return createQBInvoice(invoicePayload, true);
+    throw new Error('NEEDS_RECONNECT');
+  }
+  if (res.status !== 200) throw new Error('QB API error ' + res.status + ' creating invoice: ' + res.body);
+  const data = JSON.parse(res.body);
+  return data.Invoice || null;
+}
+
 // Verifies that an incoming webhook payload genuinely came from Intuit.
 // Per Intuit's documented scheme: HMAC-SHA256 of the RAW request body
 // (bytes, not a re-serialized/re-parsed copy — re-stringifying JSON can
@@ -2547,6 +2577,46 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(data));
     } catch (err) {
       console.error('QB fetch error:', err.message);
+      const needsReconnect = err.message === 'NEEDS_RECONNECT';
+      res.writeHead(needsReconnect ? 401 : 500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({
+        error: needsReconnect ? 'QuickBooks connection expired. Please reconnect.' : err.message,
+        needsReconnect: needsReconnect
+      }));
+    }
+    return;
+  }
+
+  // Creates a REAL invoice in QuickBooks from an Order in Plant Console.
+  // The client builds the actual invoice payload (it already has the
+  // customer/item QuickBooks-id matching data loaded locally, and shows the
+  // person a review screen before this ever fires) — this endpoint's job is
+  // just to authenticate the write and do basic sanity checks, not to
+  // reconstruct or second-guess what was already reviewed and confirmed.
+  if (url === '/api/qb/create-invoice' && req.method === 'POST') {
+    const session = requireAuth(req, res);
+    if (!session) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      const invoice = body && body.invoice;
+      if (!invoice || !invoice.CustomerRef || !invoice.CustomerRef.value) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+        res.end(JSON.stringify({ error: 'Missing invoice or CustomerRef' }));
+        return;
+      }
+      if (!Array.isArray(invoice.Line) || !invoice.Line.length) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+        res.end(JSON.stringify({ error: 'Invoice has no line items' }));
+        return;
+      }
+      console.log('Creating QuickBooks invoice — requested by ' + session.name + ', customer ref ' + invoice.CustomerRef.value + ', ' + invoice.Line.length + ' line(s)');
+      const created = await createQBInvoice(invoice);
+      console.log('QuickBooks invoice created: #' + (created && created.DocNumber) + ' (Id ' + (created && created.Id) + ')');
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, invoice: created }));
+    } catch (err) {
+      console.error('QB invoice creation error:', err.message);
       const needsReconnect = err.message === 'NEEDS_RECONNECT';
       res.writeHead(needsReconnect ? 401 : 500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({

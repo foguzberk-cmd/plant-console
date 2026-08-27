@@ -3477,7 +3477,9 @@ function _renderOrderRow(o){
           }).join('')
         : '<span style="color:var(--muted);font-style:italic">(no products listed)</span>')
     +'</span>'
-    +'<span style="width:120px;flex-shrink:0;text-align:right;color:var(--muted);padding-top:2px">'+esc(o.driver||'—')+'</span>'
+    +'<span onclick="event.stopPropagation()" style="width:110px;flex-shrink:0;display:flex;align-items:center;gap:4px">'
+      +'<input type="text" value="'+esc(o.finalCount||'')+'" placeholder="Count" title="Final physical count" onchange="updateOrderFinalCount(\''+esc(o.id)+'\',this.value)" style="width:100%;padding:5px 6px;border:1.5px solid var(--line);border-radius:6px;font-size:12px;font-family:var(--mono);text-align:right;background:var(--bg);color:var(--ink)"/>'
+    +'</span>'
     +'<span style="flex-shrink:0;display:flex;gap:4px">'
       +'<button title="Print this order" onclick="event.stopPropagation();printOrders([\''+esc(o.id)+'\'],\''+esc((o.customer||'Order')+' — '+(o.date||''))+'\')" style="border:0;background:transparent;cursor:pointer;padding:4px;color:var(--muted)">🖨</button>'
       +'<button title="Edit" onclick="event.stopPropagation();_ordersEditingId=\''+esc(o.id)+'\';_renderOrdersWeekSummary()" style="border:0;background:transparent;cursor:pointer;padding:4px;color:var(--muted)">✎</button>'
@@ -3561,6 +3563,23 @@ async function toggleOrderShippedManually(id,shipped){
   _renderShippedOrdersSummary();
 }
 window.toggleOrderShippedManually=toggleOrderShippedManually;
+// Saves the final physical count typed directly into a Received Orders
+// row. Same reasoning as toggleOrderShippedManually just above: sends the
+// FULL existing record alongside the new value, since save-order replaces
+// date/customer/driver/lines with whatever's in the payload (empty if
+// omitted) — a partial payload here would silently blank out the rest of
+// the order.
+async function updateOrderFinalCount(id,value){
+  var o=orders.find(function(x){return x.id===id;});
+  if(!o) return;
+  var fullOrder={
+    id:o.id, date:o.date, customer:o.customer, driver:o.driver,
+    lines:_orderLinesOf(o), finalCount:value
+  };
+  var saved=await saveOrder(fullOrder);
+  if(!saved){ alert('Could not save the count — check your connection and try again.'); }
+}
+window.updateOrderFinalCount=updateOrderFinalCount;
 function closeOrderDetailModal(){
   var bg=document.getElementById('orderDetailModalBg');
   if(bg) bg.remove();

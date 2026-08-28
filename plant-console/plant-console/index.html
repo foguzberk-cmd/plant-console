@@ -9666,6 +9666,16 @@ function renderPurchaseReport(){
       +'<td style="'+tdStyle+';font-weight:700">'+(grid?_purchMoney(rowTotalRlz):'<span style="color:var(--muted)">—</span>')+'</td></tr>';
   }
   products.forEach(function(it){
+    // Skip products with zero activity — no realized purchase this week
+    // AND no average purchase over the 13-week lookback, from any vendor.
+    // Nothing to hide, no data lost: still fully visible again the moment
+    // there's an actual bill for it.
+    if(grid){
+      var hasActivity=vendorIds.some(function(vid){
+        return ((grid[it.qbId]&&grid[it.qbId][vid])||0)!==0 || ((estGrid&&estGrid[it.qbId]&&estGrid[it.qbId][vid])||0)!==0;
+      });
+      if(!hasActivity) return;
+    }
     html+=renderRow(it.qbId,it.name,it.cost,true);
   });
   // One row per DISTINCT unmatched bill description — not a single lumped

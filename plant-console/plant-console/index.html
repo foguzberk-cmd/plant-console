@@ -9275,6 +9275,33 @@ function _purchAddDays(dateStr,n){
   return d.toISOString().slice(0,10);
 }
 // Called once when the Purchasing tab is opened.
+// Seeded from Fikret's original Weekly Purchase Estimate sheet — gives the
+// Purchasing tab a real starting product list instead of an empty one.
+// itemIds start empty; each row still needs its QuickBooks Item(s) picked
+// via "Manage products" before REALIZED will populate for it (until then
+// its purchases show under "Uncategorized").
+var PURCHASE_PRODUCT_SEED=[
+  {name:'TOP ROUND HALAL',unitPrice:4.60},
+  {name:'TOP ROUND NON HALAL',unitPrice:4.10},
+  {name:'LAMB CHOPS BIG SIZE',unitPrice:17.49},
+  {name:'LAMB CHOPS AFFCO',unitPrice:14.85},
+  {name:'HANGING TENDERS',unitPrice:6.59},
+  {name:'CHICKEN FRESH PROD',unitPrice:0},
+  {name:'CHICKEN LEG MEAT',unitPrice:1.58},
+  {name:'RIB EYE BONE IN',unitPrice:7.50},
+  {name:'RIB EYE BONELESS',unitPrice:7.99},
+  {name:'OTHER FROZEN PRODUCT',unitPrice:0},
+  {name:'BEEF HINDSHANK',unitPrice:3.00},
+  {name:'CHUCKROLL',unitPrice:4.69},
+  {name:'STRIP LOIN',unitPrice:6.49},
+  {name:'LAMB LEG FRESH B/I',unitPrice:5.85},
+  {name:'TOP SIRLOIN BUTT',unitPrice:5.89},
+  {name:'VEAL LIVERS',unitPrice:11.99},
+  {name:'BEEF OXTAIL',unitPrice:6.40},
+  {name:'FLAT IRON',unitPrice:5.99},
+  {name:'SKIRT STEAK',unitPrice:9.99},
+  {name:'OMAHA BEEF',unitPrice:0}
+];
 function initPurchaseReportTab(){
   var weekIds=_purchSortedWeekIds();
   if(!weekIds.length){
@@ -9291,6 +9318,13 @@ function initPurchaseReportTab(){
     purchaseConfig.weeks[wid]={startDate:startDate,endDate:endDate};
     savePurchaseConfig();
     weekIds=[wid];
+  }
+  if(!Object.keys(purchaseConfig.products||{}).length){
+    PURCHASE_PRODUCT_SEED.forEach(function(p,i){
+      var pid='prod_seed_'+i;
+      purchaseConfig.products[pid]={name:p.name,unitPrice:p.unitPrice,itemIds:[]};
+    });
+    savePurchaseConfig();
   }
   var sel=document.getElementById('purch-week');
   if(sel){

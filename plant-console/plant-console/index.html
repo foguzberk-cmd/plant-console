@@ -4189,7 +4189,7 @@ function renderReports(){
           +'<select id="purch-week" onchange="onPurchaseWeekChange()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);min-width:170px"></select></div>'
           +'<button class="btn" onclick="addPurchaseWeek()" title="Add the next week (defaults to 7 days after the current one)">+ Add week</button>'
           +'<button class="btn btn-primary" onclick="runPurchaseReport()">Pull from QuickBooks</button>'
-          +'<button class="btn" style="margin-left:auto" onclick="togglePurchaseMappingPanel()">⚙ Manage products &amp; vendors</button>'
+          +'<button class="btn" style="margin-left:auto" onclick="togglePurchaseMappingPanel()">⚙ Manage products</button>'
         +'</div>'
         +'<div id="purch-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
         +'<div id="purch-mapping-panel" style="display:none;margin-bottom:20px"></div>'
@@ -9257,7 +9257,8 @@ function switchReportTab(tab){
 // locally; it's recomputed from a fresh Bill pull each time and only cached
 // server-side (per week) so other terminals don't have to repeat the pull.
 function _purchMoney(n){ return '$'+Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
-var _purchRealized=null; // {weekId, computedAt, grid:{productId:{vendorColId:amount}}, uncategorized, unmappedVendorTotal, billCount}
+var _purchRealized=null; // {weekId, computedAt, grid:{rowKey:{vendorId:amount}}, vendors:{vendorId:name}, billCount} — rowKey is a productId or '_uncat'
+var _purchVendorNameCache=JSON.parse(localStorage.getItem('pc_purchase_vendor_names')||'{}'); // qbVendorId -> display name, local-only convenience cache (not synced)
 
 function _purchSortedWeekIds(){
   return Object.keys(purchaseConfig.weeks||{}).sort(function(a,b){
@@ -9380,6 +9381,10 @@ async function _purchTryLoadSharedCache(weekId){
     var bundle=await res.json();
     if(!bundle||!bundle.weeks||!bundle.weeks[weekId]) return false;
     _purchRealized=bundle.weeks[weekId];
+    if(_purchRealized.vendors){
+      Object.assign(_purchVendorNameCache,_purchRealized.vendors);
+      safeSetLocal('pc_purchase_vendor_names',JSON.stringify(_purchVendorNameCache));
+    }
     return true;
   }catch(e){ return false; }
 }
@@ -9391,12 +9396,6 @@ async function runPurchaseReport(){
   var week=weekId&&purchaseConfig.weeks[weekId];
   if(!week){ if(statusEl){ statusEl.textContent='Pick or add a week first.'; statusEl.style.color='#c0392b'; } return; }
   var products=Object.keys(purchaseConfig.products||{});
-  var vendorCols=Object.keys(purchaseConfig.vendorCols||{});
-  if(!products.length||!vendorCols.length){
-    if(statusEl){ statusEl.textContent='Add at least one product and one vendor column first — click "Manage products & vendors."'; statusEl.style.color='#c0392b'; }
-    togglePurchaseMappingPanel(true);
-    return;
-  }
   var base=window.location.origin;
   var bills=[];
   var startPos=1;
@@ -9436,31 +9435,36 @@ async function runPurchaseReport(){
       if(!itemIdToProduct[iid]) itemIdToProduct[iid]=pid;
     });
   });
-  var vendorQbIdToCol={};
-  vendorCols.forEach(function(vcid){
-    var qv=purchaseConfig.vendorCols[vcid].qbVendorId;
-    if(qv) vendorQbIdToCol[qv]=vcid;
-  });
 
-  var grid={}; // productId -> vendorColId -> amount
-  products.forEach(function(pid){ grid[pid]={}; vendorCols.forEach(function(vcid){ grid[pid][vcid]=0; }); });
-  var uncategorized=0; // bills from a MAPPED vendor, lines that matched no product
-  var unmappedVendorTotal=0; // bills from a vendor with no matching column at all
+  // Vendor columns are no longer configured by hand — they're whatever
+  // vendors actually show up on this week's Bills, discovered fresh on
+  // every pull. '_novendor' covers the rare Bill with no VendorRef at all.
+  var vendorNames={}; // qbVendorId -> display name, this pull only
+  bills.forEach(function(bill){
+    var vqid=(bill.VendorRef&&bill.VendorRef.value)||'_novendor';
+    var vname=(bill.VendorRef&&bill.VendorRef.name)||'No vendor on file';
+    if(!vendorNames[vqid]) vendorNames[vqid]=vname;
+  });
+  var vendorIds=Object.keys(vendorNames);
+
+  // Rows: every configured product, PLUS an always-present "Uncategorized"
+  // row that catches anything that didn't match a product's mapped Item —
+  // including everything, if no products are configured at all yet. That
+  // means the report is useful immediately (one row per vendor, total
+  // realized) even before any product mapping exists.
+  var grid={}; // rowKey -> vendorId -> amount ('_uncat' is the catch-all row)
+  var rowKeys=products.concat(['_uncat']);
+  rowKeys.forEach(function(rk){ grid[rk]={}; vendorIds.forEach(function(vid){ grid[rk][vid]=0; }); });
 
   bills.forEach(function(bill){
-    var vqid=bill.VendorRef&&bill.VendorRef.value;
-    var vcid=vqid?vendorQbIdToCol[vqid]:null;
+    var vqid=(bill.VendorRef&&bill.VendorRef.value)||'_novendor';
     var lines=Array.isArray(bill.Line)?bill.Line:[];
-    if(!vcid){
-      lines.forEach(function(ln){ unmappedVendorTotal+=Number(ln.Amount||0); });
-      return;
-    }
     lines.forEach(function(ln){
       var amt=Number(ln.Amount||0);
       var itemId=ln.ItemBasedExpenseLineDetail&&ln.ItemBasedExpenseLineDetail.ItemRef&&ln.ItemBasedExpenseLineDetail.ItemRef.value;
       var pid=itemId?itemIdToProduct[itemId]:null;
-      if(pid){ grid[pid][vcid]=(grid[pid][vcid]||0)+amt; }
-      else { uncategorized+=amt; }
+      var rowKey=pid||'_uncat';
+      grid[rowKey][vqid]=(grid[rowKey][vqid]||0)+amt;
     });
   });
 
@@ -9468,15 +9472,19 @@ async function runPurchaseReport(){
     weekId:weekId,
     computedAt:new Date().toISOString(),
     grid:grid,
-    uncategorized:uncategorized,
-    unmappedVendorTotal:unmappedVendorTotal,
+    vendors:vendorNames,
     billCount:bills.length
   };
+  // Cache vendor display names locally (not synced — just so column headers
+  // still show a real name, not a raw QuickBooks id, for a week whose
+  // estimates were typed in earlier but hasn't been re-pulled this session).
+  Object.assign(_purchVendorNameCache,vendorNames);
+  safeSetLocal('pc_purchase_vendor_names',JSON.stringify(_purchVendorNameCache));
   if(statusEl){
-    statusEl.textContent=bills.length+' bill(s) pulled for '+_purchWeekLabel(week)+'.'
-      +(uncategorized?' '+_purchMoney(uncategorized)+' in mapped-vendor lines didn\'t match any product — check the mapping.':'')
-      +(unmappedVendorTotal?' '+_purchMoney(unmappedVendorTotal)+' from vendor(s) not mapped to a column.':'');
-    statusEl.style.color=(uncategorized||unmappedVendorTotal)?'#8a6d1a':'#1a7a3c';
+    var uncatTotal=vendorIds.reduce(function(s,vid){ return s+(grid._uncat[vid]||0); },0);
+    statusEl.textContent=bills.length+' bill(s) across '+vendorIds.length+' vendor(s) pulled for '+_purchWeekLabel(week)+'.'
+      +(uncatTotal&&products.length?' '+_purchMoney(uncatTotal)+' didn\'t match a mapped product — see "Uncategorized" below.':'');
+    statusEl.style.color=(uncatTotal&&products.length)?'#8a6d1a':'#1a7a3c';
   }
   renderPurchaseReport();
   _purchPushSharedCache(weekId);
@@ -9500,18 +9508,39 @@ function onPurchEstInput(el,productId,vendorColId){
 }
 window.onPurchEstInput=onPurchEstInput;
 
+// Vendor columns to show for the active week: whichever vendors were in
+// the most recent pull for THIS week, unioned with any vendor that has a
+// saved EST. for this week (so a typed-in estimate never just disappears
+// from view because a fresh pull hasn't run yet this session).
+function _purchVendorIdsForWeek(weekId){
+  var ids={};
+  if(_purchRealized&&_purchRealized.weekId===weekId){
+    Object.keys(_purchRealized.vendors||{}).forEach(function(id){ ids[id]=true; });
+  }
+  var estForWeek=purchaseEstimates[weekId]||{};
+  Object.keys(estForWeek).forEach(function(pid){
+    Object.keys(estForWeek[pid]||{}).forEach(function(vid){ ids[vid]=true; });
+  });
+  return Object.keys(ids);
+}
+function _purchVendorLabel(vid){
+  if(_purchRealized&&_purchRealized.vendors&&_purchRealized.vendors[vid]) return _purchRealized.vendors[vid];
+  if(_purchVendorNameCache[vid]) return _purchVendorNameCache[vid];
+  return vid==='_novendor'?'No vendor on file':vid;
+}
 function renderPurchaseTotalsRow(){
   var weekId=_purchActiveWeekId;
-  var vendorCols=Object.keys(purchaseConfig.vendorCols||{});
-  vendorCols.forEach(function(vcid){
+  var vendorIds=_purchVendorIdsForWeek(weekId);
+  var rowKeys=Object.keys(purchaseConfig.products||{}).concat(['_uncat']);
+  vendorIds.forEach(function(vid){
     var estSum=0;
-    Object.keys(purchaseConfig.products||{}).forEach(function(pid){ estSum+=purchGetEst(weekId,pid,vcid); });
-    var el=document.getElementById('purch-tot-est-'+vcid);
+    rowKeys.forEach(function(rk){ estSum+=purchGetEst(weekId,rk,vid); });
+    var el=document.getElementById('purch-tot-est-'+vid);
     if(el) el.textContent=_purchMoney(estSum);
   });
-  var grandEst=0, grandRlz=0;
-  Object.keys(purchaseConfig.products||{}).forEach(function(pid){
-    vendorCols.forEach(function(vcid){ grandEst+=purchGetEst(weekId,pid,vcid); });
+  var grandEst=0;
+  rowKeys.forEach(function(rk){
+    vendorIds.forEach(function(vid){ grandEst+=purchGetEst(weekId,rk,vid); });
   });
   var grandEstEl=document.getElementById('purch-grand-est');
   if(grandEstEl) grandEstEl.textContent=_purchMoney(grandEst);
@@ -9521,74 +9550,92 @@ function renderPurchaseReport(){
   var body=document.getElementById('purch-body');
   if(!body) return;
   var weekId=_purchActiveWeekId;
-  var products=Object.keys(purchaseConfig.products||{});
-  var vendorCols=Object.keys(purchaseConfig.vendorCols||{});
-  if(!products.length||!vendorCols.length){
-    body.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No products or vendor columns set up yet. Click "Manage products &amp; vendors" above to add them.</div>';
+  var week=purchaseConfig.weeks[weekId];
+  if(!week){
+    body.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">Pick or add a week above.</div>';
     return;
   }
-  var grid=(_purchRealized&&_purchRealized.weekId===weekId)?_purchRealized.grid:null;
+  var vendorIds=_purchVendorIdsForWeek(weekId);
+  var pulledThisWeek=_purchRealized&&_purchRealized.weekId===weekId;
+  if(!vendorIds.length){
+    body.innerHTML='<div style="margin-bottom:10px;font-size:12px;color:var(--muted)">'+esc(_purchWeekLabel(week))+' <a href="#" onclick="editPurchaseWeekDates(\''+weekId+'\');return false" style="color:var(--brand);margin-left:6px">edit dates</a></div>'
+      +'<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No bills pulled for this week yet. Click "Pull from QuickBooks" above — any vendor with a bill in this date range will show up as its own column automatically.</div>';
+    return;
+  }
+  var products=Object.keys(purchaseConfig.products||{});
+  var rowKeys=products.concat(['_uncat']);
+  var grid=pulledThisWeek?_purchRealized.grid:null;
+  // Order columns by realized total (busiest vendor first) when we have a
+  // pull to sort by; otherwise (estimates typed in before any pull yet)
+  // alphabetical by name.
+  vendorIds.sort(function(a,b){
+    if(grid){
+      var ta=rowKeys.reduce(function(s,rk){ return s+((grid[rk]&&grid[rk][a])||0); },0);
+      var tb=rowKeys.reduce(function(s,rk){ return s+((grid[rk]&&grid[rk][b])||0); },0);
+      if(tb!==ta) return tb-ta;
+    }
+    return _purchVendorLabel(a).localeCompare(_purchVendorLabel(b));
+  });
   var thStyle='padding:8px 10px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:center;border-bottom:1px solid var(--line)';
   var tdStyle='padding:6px 8px;font-size:12.5px;text-align:right;border-bottom:1px solid var(--line)';
   var html='<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;min-width:900px">';
   html+='<thead><tr><th style="'+thStyle+';text-align:left" rowspan="2">Product</th><th style="'+thStyle+'" rowspan="2">Unit price</th>';
-  vendorCols.forEach(function(vcid){
-    var vc=purchaseConfig.vendorCols[vcid];
-    html+='<th style="'+thStyle+'" colspan="2">'+esc(vc.label||'Vendor')+'</th>';
+  vendorIds.forEach(function(vid){
+    html+='<th style="'+thStyle+'" colspan="2">'+esc(_purchVendorLabel(vid))+'</th>';
   });
   html+='<th style="'+thStyle+'" rowspan="2">Total Est.</th><th style="'+thStyle+'" rowspan="2">Total Rlz.</th></tr><tr>';
-  vendorCols.forEach(function(){
+  vendorIds.forEach(function(){
     html+='<th style="'+thStyle+'">Est.</th><th style="'+thStyle+'">Realized</th>';
   });
   html+='</tr></thead><tbody>';
-  products.forEach(function(pid){
-    var p=purchaseConfig.products[pid];
+  function renderRow(rk,label,unitPrice){
     var rowTotalEst=0, rowTotalRlz=0;
     var cellsHtml='';
-    vendorCols.forEach(function(vcid){
-      var est=purchGetEst(weekId,pid,vcid);
-      var rlz=grid?(grid[pid][vcid]||0):null;
+    vendorIds.forEach(function(vid){
+      var est=purchGetEst(weekId,rk,vid);
+      var rlz=grid?(grid[rk][vid]||0):null;
       rowTotalEst+=est;
       if(rlz!=null) rowTotalRlz+=rlz;
-      cellsHtml+='<td style="'+tdStyle+'"><input type="number" step="0.01" value="'+est+'" oninput="onPurchEstInput(this,\''+pid+'\',\''+vcid+'\')" style="width:78px;text-align:right;border:1px solid var(--line);border-radius:6px;padding:3px 5px;font-size:12.5px"/></td>';
+      cellsHtml+='<td style="'+tdStyle+'"><input type="number" step="0.01" value="'+est+'" oninput="onPurchEstInput(this,\''+rk+'\',\''+vid+'\')" style="width:78px;text-align:right;border:1px solid var(--line);border-radius:6px;padding:3px 5px;font-size:12.5px"/></td>';
       cellsHtml+='<td style="'+tdStyle+'">'+(rlz!=null?_purchMoney(rlz):'<span style="color:var(--muted)">—</span>')+'</td>';
     });
-    html+='<tr><td style="'+tdStyle+';text-align:left;font-weight:600">'+esc(p.name)+'</td>'
-      +'<td style="'+tdStyle+'">'+(p.unitPrice?_purchMoney(p.unitPrice):'—')+'</td>'
+    return '<tr><td style="'+tdStyle+';text-align:left;font-weight:600">'+esc(label)+'</td>'
+      +'<td style="'+tdStyle+'">'+(unitPrice?_purchMoney(unitPrice):'—')+'</td>'
       +cellsHtml
       +'<td style="'+tdStyle+';font-weight:700">'+_purchMoney(rowTotalEst)+'</td>'
       +'<td style="'+tdStyle+';font-weight:700">'+(grid?_purchMoney(rowTotalRlz):'<span style="color:var(--muted)">—</span>')+'</td></tr>';
+  }
+  products.forEach(function(pid){
+    var p=purchaseConfig.products[pid];
+    html+=renderRow(pid,p.name,p.unitPrice);
   });
+  // "Uncategorized" always shows — it's every purchase that isn't (yet)
+  // matched to a configured product's QuickBooks Item. With zero products
+  // configured, this row IS the whole report: total realized per vendor.
+  html+=renderRow('_uncat',products.length?'Uncategorized':'All purchases',null);
   // Totals row
   html+='<tr style="background:var(--panel)"><td style="'+tdStyle+';text-align:left;font-weight:700">TOTAL</td><td style="'+tdStyle+'"></td>';
   var grandEst=0, grandRlz=0;
-  vendorCols.forEach(function(vcid){
+  vendorIds.forEach(function(vid){
     var colEst=0, colRlz=0;
-    products.forEach(function(pid){
-      colEst+=purchGetEst(weekId,pid,vcid);
-      if(grid) colRlz+=(grid[pid][vcid]||0);
+    rowKeys.forEach(function(rk){
+      colEst+=purchGetEst(weekId,rk,vid);
+      if(grid) colRlz+=(grid[rk][vid]||0);
     });
     grandEst+=colEst; grandRlz+=colRlz;
-    html+='<td id="purch-tot-est-'+vcid+'" style="'+tdStyle+';font-weight:700">'+_purchMoney(colEst)+'</td>'
+    html+='<td id="purch-tot-est-'+vid+'" style="'+tdStyle+';font-weight:700">'+_purchMoney(colEst)+'</td>'
       +'<td style="'+tdStyle+';font-weight:700">'+(grid?_purchMoney(colRlz):'—')+'</td>';
   });
   html+='<td id="purch-grand-est" style="'+tdStyle+';font-weight:700">'+_purchMoney(grandEst)+'</td>'
     +'<td style="'+tdStyle+';font-weight:700">'+(grid?_purchMoney(grandRlz):'—')+'</td></tr>';
   html+='</tbody></table></div>';
-  if(_purchRealized&&_purchRealized.weekId===weekId&&(_purchRealized.uncategorized||_purchRealized.unmappedVendorTotal)){
-    html+='<div style="margin-top:14px;padding:12px 14px;background:#fdf6e3;border:1px solid #e8d9a0;border-radius:9px;font-size:12.5px;color:#7a5c10">';
-    if(_purchRealized.uncategorized) html+='<div>'+_purchMoney(_purchRealized.uncategorized)+' in bill lines from mapped vendors didn\'t match any product\'s QuickBooks Item — check the product mapping.</div>';
-    if(_purchRealized.unmappedVendorTotal) html+='<div>'+_purchMoney(_purchRealized.unmappedVendorTotal)+' in bills from vendors not mapped to any column — check the vendor mapping, or that vendor may just not belong on this sheet.</div>';
-    html+='</div>';
-  }
-  var week=purchaseConfig.weeks[weekId];
-  if(week){
-    html='<div style="margin-bottom:10px;font-size:12px;color:var(--muted)">'+esc(_purchWeekLabel(week))+' <a href="#" onclick="editPurchaseWeekDates(\''+weekId+'\');return false" style="color:var(--brand);margin-left:6px">edit dates</a></div>'+html;
-  }
+  html='<div style="margin-bottom:10px;font-size:12px;color:var(--muted)">'+esc(_purchWeekLabel(week))+' <a href="#" onclick="editPurchaseWeekDates(\''+weekId+'\');return false" style="color:var(--brand);margin-left:6px">edit dates</a></div>'+html;
   body.innerHTML=html;
 }
 
-// ---- Mapping panel: products (→ QB Items) and vendor columns (→ QB Vendors) ----
+// ---- Mapping panel: products only (→ QB Items). Vendor columns are no
+// longer configured by hand — they're discovered automatically from
+// whichever vendors actually appear on each week's pulled Bills. ----
 function togglePurchaseMappingPanel(forceOpen){
   var panel=document.getElementById('purch-mapping-panel');
   if(!panel) return;
@@ -9602,27 +9649,12 @@ function renderPurchaseMappingPanel(){
   var panel=document.getElementById('purch-mapping-panel');
   if(!panel) return;
   var qbItems=items.filter(function(it){ return it.qbId && it.type!=='Category'; }).sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
-  var qbVendors=vendors.filter(function(v){ return v.qbId; }).sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
   var wrap='padding:16px;background:var(--panel);border:1px solid var(--line);border-radius:12px';
   var lbl='display:block;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:10px';
 
   var html='<div style="'+wrap+'">';
-  html+='<div style="'+lbl+'">Vendor columns</div>';
-  html+='<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:18px">';
-  Object.keys(purchaseConfig.vendorCols||{}).forEach(function(vcid){
-    var vc=purchaseConfig.vendorCols[vcid];
-    html+='<div style="display:flex;gap:8px;align-items:center">'
-      +'<input type="text" value="'+esc(vc.label||'')+'" placeholder="Column label" oninput="purchUpdateVendorCol(\''+vcid+'\',\'label\',this.value)" style="flex:1;max-width:180px;padding:7px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:13px"/>'
-      +'<select onchange="purchUpdateVendorCol(\''+vcid+'\',\'qbVendorId\',this.value)" style="flex:1;padding:7px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:13px">'
-      +'<option value="">— pick QuickBooks vendor —</option>'
-      +qbVendors.map(function(v){ return '<option value="'+esc(v.qbId)+'"'+(v.qbId===vc.qbVendorId?' selected':'')+'>'+esc(v.name)+'</option>'; }).join('')
-      +'</select>'
-      +'<button class="btn btn-sm" onclick="purchRemoveVendorCol(\''+vcid+'\')" title="Remove this column">✕</button>'
-      +'</div>';
-  });
-  html+='</div><button class="btn btn-sm" onclick="purchAddVendorCol()">+ Add vendor column</button>';
-
-  html+='<div style="'+lbl+';margin-top:22px">Products</div>';
+  html+='<div style="'+lbl+'">Products</div>';
+  html+='<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Vendor columns need no setup — every vendor with a bill in the selected week shows up as its own column automatically. Map products here only if you want purchases broken out by cut (otherwise everything shows under "All purchases").</div>';
   html+='<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">';
   Object.keys(purchaseConfig.products||{}).forEach(function(pid){
     var p=purchaseConfig.products[pid];
@@ -9641,29 +9673,6 @@ function renderPurchaseMappingPanel(){
   html+='</div>';
   panel.innerHTML=html;
 }
-function purchAddVendorCol(){
-  var vcid='vcol_'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
-  purchaseConfig.vendorCols[vcid]={label:'',qbVendorId:''};
-  savePurchaseConfig();
-  renderPurchaseMappingPanel();
-  renderPurchaseReport();
-}
-window.purchAddVendorCol=purchAddVendorCol;
-function purchRemoveVendorCol(vcid){
-  if(!confirm('Remove this vendor column? Its EST. numbers for every week will no longer be shown (they stay saved).')) return;
-  delete purchaseConfig.vendorCols[vcid];
-  savePurchaseConfig();
-  renderPurchaseMappingPanel();
-  renderPurchaseReport();
-}
-window.purchRemoveVendorCol=purchRemoveVendorCol;
-function purchUpdateVendorCol(vcid,field,value){
-  if(!purchaseConfig.vendorCols[vcid]) return;
-  purchaseConfig.vendorCols[vcid][field]=value;
-  savePurchaseConfig();
-  renderPurchaseReport();
-}
-window.purchUpdateVendorCol=purchUpdateVendorCol;
 function purchAddProduct(){
   var pid='prod_'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
   purchaseConfig.products[pid]={name:'',unitPrice:0,itemIds:[]};

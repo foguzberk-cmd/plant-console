@@ -55,6 +55,14 @@ const CHECKS_CACHE_FILE = path.join(DATA_DIR, 'checks-report-cache.json');
 // Same idea, for the new Purchasing report tab's weekly Bill-pull-and-match
 // results — see the long comment on /api/purchase-report-cache below.
 const PURCHASE_CACHE_FILE = path.join(DATA_DIR, 'purchase-report-cache.json');
+// Sessions used to be in-memory only, which meant ANY server restart —
+// a crash, a redeploy, Render recycling the instance — silently logged
+// every single person out at once, with no warning: the next request from
+// their still-open tab would 401, because the token their browser was
+// holding no longer matched anything in a freshly empty Map. Persisting to
+// disk (same DATA_DIR the rest of the shared data already lives on) means a
+// restart is invisible to whoever's already logged in.
+const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [], deletedCfSplitIds: [], chatMessages: [], orders: [], deletedOrderIds: [], drivers: [], deletedDrivers: [],
   // Weekly Purchase Report (Reports → Purchasing): purchaseConfig holds the
   // admin-configured row/column definitions (which products, which vendor
@@ -294,11 +302,37 @@ function maybeAutoBackup() {
 }
 
 // ===== SESSIONS =====
-// Minimal in-memory session store backed by an HttpOnly cookie. Sessions are
-// lost on server restart (acceptable for this app's scale) — that's a plain
-// re-login, not data loss, since real data lives in the shared data file.
+// Session store backed by an HttpOnly cookie, persisted to disk (see
+// SESSIONS_FILE above) so a server restart doesn't force everyone to log
+// back in. Kept in memory as the source of truth during normal operation
+// (every lookup is a plain Map.get — no disk I/O on the hot path); the file
+// is only written on session create/destroy and read once at startup.
 const SESSIONS = new Map(); // token -> { userId, role, name, email, expires }
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+// Best-effort — a failure here means sessions won't survive a restart
+// (the old behavior), not that login itself breaks.
+function persistSessions() {
+  const obj = {};
+  for (const [token, s] of SESSIONS.entries()) obj[token] = s;
+  fs.writeFile(SESSIONS_FILE, JSON.stringify(obj), (err) => {
+    if (err) console.error('Failed to persist sessions:', err.message);
+  });
+}
+async function loadSessionsFromDisk() {
+  try {
+    const raw = await fs.promises.readFile(SESSIONS_FILE, 'utf8');
+    const obj = JSON.parse(raw);
+    const now = Date.now();
+    for (const token of Object.keys(obj)) {
+      const s = obj[token];
+      if (s && s.expires > now) SESSIONS.set(token, s); // drop anything already expired
+    }
+  } catch (e) {
+    // No file yet (first run) or unreadable — start with an empty session
+    // table, same as the old in-memory-only behavior. Not fatal.
+  }
+}
 
 function createSession(user) {
   const token = crypto.randomBytes(32).toString('hex');
@@ -309,17 +343,18 @@ function createSession(user) {
     email: user.email,
     expires: Date.now() + SESSION_TTL_MS
   });
+  persistSessions();
   return token;
 }
 function getSession(token) {
   if (!token) return null;
   const s = SESSIONS.get(token);
   if (!s) return null;
-  if (Date.now() > s.expires) { SESSIONS.delete(token); return null; }
+  if (Date.now() > s.expires) { SESSIONS.delete(token); persistSessions(); return null; }
   return s;
 }
 function destroySession(token) {
-  if (token) SESSIONS.delete(token);
+  if (token) { SESSIONS.delete(token); persistSessions(); }
 }
 function parseCookies(req) {
   const header = req.headers.cookie || '';
@@ -1080,6 +1115,21 @@ async function diagnose(retry) {
     sampleError: (item1000.status !== 200 ? item1000.body : (item100.status !== 200 ? item100.body : ''))
   };
 }
+
+// A bug in any single request handler shouldn't be able to take the whole
+// process down for everyone else who's mid-session — without this, one
+// uncaught exception or rejected promise anywhere (even in code that looks
+// unrelated to the request currently being handled) crashes the entire
+// server, which is exactly the kind of restart that used to force every
+// logged-in person out at once (see the SESSIONS persistence comment
+// above). This logs the failure instead of dying, so at minimum everyone
+// else's session and in-flight work survives one bad request.
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception (server stayed up):', err && err.stack || err);
+});
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejection (server stayed up):', err && err.stack || err);
+});
 
 const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -2854,15 +2904,18 @@ const server = http.createServer(async (req, res) => {
   res.writeHead(404); res.end('Not found');
 });
 
-server.listen(PORT, () => {
-  console.log('Plant Console running on port ' + PORT);
-  // Apply the (possibly just-lowered) BACKUP_KEEP_MAX to whatever's already
-  // on disk right away, instead of waiting for the next backup to be taken
-  // (which could be up to an hour away) to trim down existing excess files.
-  pruneOldBackups().catch(e => console.error('Could not prune old backups on startup:', e.message));
-  // First background Customers/Vendors sync shortly after boot (not
-  // immediately — give the server a moment to finish settling first),
-  // then on the regular interval after that.
-  setTimeout(() => { runBackgroundSync().catch(e => console.error('Background sync error:', e.message)); }, 15000);
-  setInterval(() => { runBackgroundSync().catch(e => console.error('Background sync error:', e.message)); }, BACKGROUND_SYNC_INTERVAL_MS);
-});
+(async () => {
+  await loadSessionsFromDisk(); // restore sessions BEFORE accepting any requests, so nobody gets a spurious 401 right after a restart
+  server.listen(PORT, () => {
+    console.log('Plant Console running on port ' + PORT);
+    // Apply the (possibly just-lowered) BACKUP_KEEP_MAX to whatever's already
+    // on disk right away, instead of waiting for the next backup to be taken
+    // (which could be up to an hour away) to trim down existing excess files.
+    pruneOldBackups().catch(e => console.error('Could not prune old backups on startup:', e.message));
+    // First background Customers/Vendors sync shortly after boot (not
+    // immediately — give the server a moment to finish settling first),
+    // then on the regular interval after that.
+    setTimeout(() => { runBackgroundSync().catch(e => console.error('Background sync error:', e.message)); }, 15000);
+    setInterval(() => { runBackgroundSync().catch(e => console.error('Background sync error:', e.message)); }, BACKGROUND_SYNC_INTERVAL_MS);
+  });
+})();

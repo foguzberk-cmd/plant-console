@@ -52,7 +52,21 @@ const CASHFLOW_CACHE_FILE = path.join(DATA_DIR, 'cashflow-report-cache.json');
 // Same idea, for the Checks tab's raw QuickBooks Payment pull — see the
 // long comment on /api/checks-report-cache below for why this was missing.
 const CHECKS_CACHE_FILE = path.join(DATA_DIR, 'checks-report-cache.json');
-const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [], deletedCfSplitIds: [], chatMessages: [], orders: [], deletedOrderIds: [], drivers: [], deletedDrivers: [] };
+// Same idea, for the new Purchasing report tab's weekly Bill-pull-and-match
+// results — see the long comment on /api/purchase-report-cache below.
+const PURCHASE_CACHE_FILE = path.join(DATA_DIR, 'purchase-report-cache.json');
+const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [], deletedCfSplitIds: [], chatMessages: [], orders: [], deletedOrderIds: [], drivers: [], deletedDrivers: [],
+  // Weekly Purchase Report (Reports → Purchasing): purchaseConfig holds the
+  // admin-configured row/column definitions (which products, which vendor
+  // columns, which weeks exist) — small, rarely-changed, keyed by id so it
+  // merges the same way labelTemplates does. purchaseEstimates holds the
+  // manually-typed EST. numbers, keyed [weekId][productId][vendorColId] —
+  // REALIZED numbers are never stored here; they're computed fresh from
+  // QuickBooks Bills on demand and only cached separately (see
+  // PURCHASE_CACHE_FILE) since they're derived data, not source-of-truth.
+  purchaseConfig: { products: {}, vendorCols: {}, weeks: {} },
+  purchaseEstimates: {}
+};
 
 // ===== PIN HASHING =====
 // PINs are hashed with scrypt before they ever touch disk. Any user record
@@ -672,11 +686,17 @@ async function fetchQBCustomers(retry) {
 // Generic paginated query for any QB entity (Bill, Invoice, SalesReceipt, CreditMemo)
 // `since`: only records changed at/after this timestamp (incremental).
 // `from`:  only records with TxnDate on/after this date (inventory start floor).
-async function fetchQBEntityPage(entity, startPosition, retry, since, from) {
+// `to`:    only records with TxnDate on/before this date — added for the
+//          Purchasing report's per-week Bill pulls (e.g. "5/4/2026 to
+//          5/9/2026"), which need a closed range, not just an open-ended
+//          floor. Optional and backward-compatible: existing callers that
+//          never pass it are unaffected.
+async function fetchQBEntityPage(entity, startPosition, retry, since, from, to) {
   if (!retry) await ensureFreshToken(); // keep token alive during long paged syncs
   const clauses = [];
   if (since) clauses.push(`MetaData.LastUpdatedTime >= '${since}'`);
   if (from)  clauses.push(`TxnDate >= '${from}'`);
+  if (to)    clauses.push(`TxnDate <= '${to}'`);
   const where = clauses.length ? (' WHERE ' + clauses.join(' AND ')) : '';
   const query = `SELECT * FROM ${entity}${where} STARTPOSITION ${startPosition} MAXRESULTS 100`;
   const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
@@ -688,19 +708,19 @@ async function fetchQBEntityPage(entity, startPosition, retry, since, from) {
   });
   if (res.status === 401 && !retry) {
     const ok = await refreshAccessToken();
-    if (ok) return fetchQBEntityPage(entity, startPosition, true, since, from);
+    if (ok) return fetchQBEntityPage(entity, startPosition, true, since, from, to);
     throw new Error('NEEDS_RECONNECT');
   }
   if (res.status !== 200) throw new Error('QB API error ' + res.status + ' on ' + entity + ': ' + res.body);
   return JSON.parse(res.body);
 }
 
-async function fetchQBEntity(entity, since, from) {
+async function fetchQBEntity(entity, since, from, to) {
   let all = [];
   let start = 1;
   const pageSize = 100;
   while (true) {
-    const data = await fetchQBEntityPage(entity, start, false, since, from);
+    const data = await fetchQBEntityPage(entity, start, false, since, from, to);
     const rows = (data.QueryResponse && data.QueryResponse[entity]) || [];
     all = all.concat(rows);
     if (rows.length < pageSize) break;
@@ -1507,6 +1527,51 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
+  // Purchasing report cache — same "pull once, everyone else loads it
+  // instantly" pattern as Customer Payments/Scheduled Payments/Checks above.
+  // The client pulls that week's Bills from QuickBooks and does the
+  // product/vendor matching itself (see runPurchaseReport() client-side),
+  // then POSTs the finished grid here so the next person to open that same
+  // week doesn't have to repeat the pull. Keyed by weekId so multiple
+  // weeks' cached results can coexist — see the shape built in
+  // _purchBuildSharedCacheBundle() client-side.
+  if (url === '/api/purchase-report-cache' && req.method === 'GET') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const raw = await fs.promises.readFile(PURCHASE_CACHE_FILE, 'utf8');
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(raw);
+    } catch (e) {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ weeks: {} }));
+    }
+    return;
+  }
+  if (url === '/api/purchase-report-cache' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      const incoming = JSON.parse(bodyStr || '{}');
+      // Merge by weekId rather than blindly overwriting the whole file, so
+      // one terminal caching THIS week's pull can't wipe out another
+      // terminal's still-fresh cached result for a DIFFERENT week.
+      let merged;
+      try {
+        const raw = await fs.promises.readFile(PURCHASE_CACHE_FILE, 'utf8');
+        const current = JSON.parse(raw);
+        merged = { weeks: Object.assign({}, (current && current.weeks) || {}, incoming.weeks || {}) };
+      } catch (e) {
+        merged = { weeks: incoming.weeks || {} };
+      }
+      await fs.promises.writeFile(PURCHASE_CACHE_FILE, JSON.stringify(merged), 'utf8');
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
   // Same "dumb terminal" pattern as customers/salesrep — updates ONLY this
   // one vendor's Purch Rep field, nothing else touched.
   if (url.startsWith('/api/vendors/') && url.endsWith('/purchrep') && req.method === 'POST') {
@@ -1723,6 +1788,34 @@ const server = http.createServer(async (req, res) => {
         // survive regardless of what order pushes happen to land in.
         if (incoming.labelTemplates && typeof incoming.labelTemplates === 'object') {
           incoming.labelTemplates = Object.assign({}, current.labelTemplates || {}, incoming.labelTemplates);
+        }
+        // purchaseConfig (Reports → Purchasing row/column definitions) — same
+        // merge-not-replace reasoning as labelTemplates, one level deeper:
+        // each of products/vendorCols/weeks is itself keyed by id, so two
+        // people editing different rows (e.g. one adding a product while
+        // another renames a vendor column) on different devices can't
+        // silently erase each other.
+        if (incoming.purchaseConfig && typeof incoming.purchaseConfig === 'object') {
+          const curPC = (current.purchaseConfig && typeof current.purchaseConfig === 'object') ? current.purchaseConfig : { products: {}, vendorCols: {}, weeks: {} };
+          const incPC = incoming.purchaseConfig;
+          incoming.purchaseConfig = {
+            products: Object.assign({}, curPC.products || {}, incPC.products || {}),
+            vendorCols: Object.assign({}, curPC.vendorCols || {}, incPC.vendorCols || {}),
+            weeks: Object.assign({}, curPC.weeks || {}, incPC.weeks || {})
+          };
+        }
+        // purchaseEstimates is keyed [weekId][productId] -> {vendorColId:
+        // amount}. Merged at the productId level within each week (not a
+        // blind per-week replace) so one device saving one product's EST.
+        // numbers for a week can't wipe out another product's numbers for
+        // that same week that a different device just saved.
+        if (incoming.purchaseEstimates && typeof incoming.purchaseEstimates === 'object') {
+          const curPE = (current.purchaseEstimates && typeof current.purchaseEstimates === 'object') ? current.purchaseEstimates : {};
+          const mergedPE = Object.assign({}, curPE);
+          for (const weekId of Object.keys(incoming.purchaseEstimates)) {
+            mergedPE[weekId] = Object.assign({}, curPE[weekId] || {}, incoming.purchaseEstimates[weekId] || {});
+          }
+          incoming.purchaseEstimates = mergedPE;
         }
         // customers (holding per-customer fields like salesRep, edited via
         // Settings → Customers) had NO merge protection at all — a blind
@@ -2552,18 +2645,21 @@ const server = http.createServer(async (req, res) => {
   // ?entity=Invoice&startposition=1  -> fetch ONE page (100 rows) starting at N
   //                                     (client drives pagination = no timeouts)
   // &since=ISO                       -> only records changed since that time
+  // &to=YYYY-MM-DD                   -> only records with TxnDate on/before that date
+  //                                     (used by the Purchasing report to pull one week at a time)
   if (url === '/api/qb/documents') {
     if (!requireAuth(req, res)) return;
     try {
       const ent = queryParams.entity;
       const since = queryParams.since || null;
       const from = queryParams.from || null;
+      const to = queryParams.to || null;
       const startPos = queryParams.startposition ? parseInt(queryParams.startposition, 10) : null;
       if (ent && ['Bill','Invoice','SalesReceipt','CreditMemo','VendorCredit','Payment','Vendor','JournalEntry','Account','Deposit'].indexOf(ent) >= 0) {
         if (!accessToken) await refreshAccessToken();
         // Single-page mode: return just one page so each HTTP request is fast.
         if (startPos !== null && !isNaN(startPos)) {
-          const data = await fetchQBEntityPage(ent, startPos, false, since, from);
+          const data = await fetchQBEntityPage(ent, startPos, false, since, from, to);
           const rows = (data.QueryResponse && data.QueryResponse[ent]) || [];
           res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
           const out = {}; out[ent] = rows; out.pageSize = 100; out.startPosition = startPos;
@@ -2571,7 +2667,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         // Fetch-all mode (kept for small types)
-        const rows = await fetchQBEntity(ent, since, from);
+        const rows = await fetchQBEntity(ent, since, from, to);
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
         const out = {}; out[ent] = rows;
         res.end(JSON.stringify(out));

@@ -4189,10 +4189,8 @@ function renderReports(){
           +'<select id="purch-week" onchange="onPurchaseWeekChange()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);min-width:170px"></select></div>'
           +'<button class="btn" onclick="addPurchaseWeek()" title="Add the next week (defaults to 7 days after the current one)">+ Add week</button>'
           +'<button class="btn btn-primary" onclick="runPurchaseReport()">Pull from QuickBooks</button>'
-          +'<button class="btn" style="margin-left:auto" onclick="togglePurchaseMappingPanel()">⚙ Manage products</button>'
         +'</div>'
         +'<div id="purch-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
-        +'<div id="purch-mapping-panel" style="display:none;margin-bottom:20px"></div>'
       +'</div>'
       +'<div id="purch-body"></div>'
     +'</div>';
@@ -9251,13 +9249,17 @@ function switchReportTab(tab){
 // Mirrors the weekly purchase-estimate sheet: rows are products, columns are
 // grouped by vendor with an EST. (typed in, manually) and REALIZED (pulled
 // live from QuickBooks Bills) sub-column each, plus Total Est./Total Rlz.
-// Matching is by formal QuickBooks Item — each product row is mapped to one
-// or more Item ids, each vendor column to one QuickBooks Vendor id (see
-// togglePurchaseMappingPanel()). REALIZED is never stored as source-of-truth
-// locally; it's recomputed from a fresh Bill pull each time and only cached
-// server-side (per week) so other terminals don't have to repeat the pull.
+// Both rows and columns are fully automatic now — no manual mapping step
+// anywhere. Vendor columns are whichever vendors show up on that week's
+// Bills (see runPurchaseReport). Product rows are the QuickBooks Item
+// catalog itself (see _purchProductRows) — the row IS the QuickBooks
+// product, by its own Item id, so matching a Bill line to a row is exact,
+// not a hand-picked mapping that can drift out of sync with QuickBooks.
+// REALIZED is never stored as source-of-truth locally; it's recomputed from
+// a fresh Bill pull each time and only cached server-side (per week) so
+// other terminals don't have to repeat the pull.
 function _purchMoney(n){ return '$'+Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
-var _purchRealized=null; // {weekId, computedAt, grid:{productId:{vendorId:amount}}, uncatByDesc:{descKey:{vendorId:amount}}, uncatLabels:{descKey:descriptionText}, vendors:{vendorId:name}, billCount}
+var _purchRealized=null; // {weekId, computedAt, grid:{itemId:{vendorId:amount}}, uncatByDesc:{descKey:{vendorId:amount}}, uncatLabels:{descKey:descriptionText}, vendors:{vendorId:name}, billCount}
 var _purchVendorNameCache=JSON.parse(localStorage.getItem('pc_purchase_vendor_names')||'{}'); // qbVendorId -> display name, local-only convenience cache (not synced)
 
 function _purchSortedWeekIds(){
@@ -9274,34 +9276,16 @@ function _purchAddDays(dateStr,n){
   d.setDate(d.getDate()+n);
   return d.toISOString().slice(0,10);
 }
-// Called once when the Purchasing tab is opened.
-// Seeded from Fikret's original Weekly Purchase Estimate sheet — gives the
-// Purchasing tab a real starting product list instead of an empty one.
-// itemIds start empty; each row still needs its QuickBooks Item(s) picked
-// via "Manage products" before REALIZED will populate for it (until then
-// its purchases show under "Uncategorized").
-var PURCHASE_PRODUCT_SEED=[
-  {name:'TOP ROUND HALAL',unitPrice:4.60},
-  {name:'TOP ROUND NON HALAL',unitPrice:4.10},
-  {name:'LAMB CHOPS BIG SIZE',unitPrice:17.49},
-  {name:'LAMB CHOPS AFFCO',unitPrice:14.85},
-  {name:'HANGING TENDERS',unitPrice:6.59},
-  {name:'CHICKEN FRESH PROD',unitPrice:0},
-  {name:'CHICKEN LEG MEAT',unitPrice:1.58},
-  {name:'RIB EYE BONE IN',unitPrice:7.50},
-  {name:'RIB EYE BONELESS',unitPrice:7.99},
-  {name:'OTHER FROZEN PRODUCT',unitPrice:0},
-  {name:'BEEF HINDSHANK',unitPrice:3.00},
-  {name:'CHUCKROLL',unitPrice:4.69},
-  {name:'STRIP LOIN',unitPrice:6.49},
-  {name:'LAMB LEG FRESH B/I',unitPrice:5.85},
-  {name:'TOP SIRLOIN BUTT',unitPrice:5.89},
-  {name:'VEAL LIVERS',unitPrice:11.99},
-  {name:'BEEF OXTAIL',unitPrice:6.40},
-  {name:'FLAT IRON',unitPrice:5.99},
-  {name:'SKIRT STEAK',unitPrice:9.99},
-  {name:'OMAHA BEEF',unitPrice:0}
-];
+// The product row list, straight from QuickBooks' own Item catalog (synced
+// into the app's existing `items` array — same data Settings → Items and
+// the label printer already use). Excludes Category "items" (they're
+// folders, not products) and Service items (this report is products only).
+// No separate list is kept or edited anywhere — this always reflects
+// whatever QuickBooks currently has.
+function _purchProductRows(){
+  return items.filter(function(it){ return it.qbId && it.type!=='Category' && it.type!=='Service'; })
+    .sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
+}
 function initPurchaseReportTab(){
   var weekIds=_purchSortedWeekIds();
   if(!weekIds.length){
@@ -9318,13 +9302,6 @@ function initPurchaseReportTab(){
     purchaseConfig.weeks[wid]={startDate:startDate,endDate:endDate};
     savePurchaseConfig();
     weekIds=[wid];
-  }
-  if(!Object.keys(purchaseConfig.products||{}).length){
-    PURCHASE_PRODUCT_SEED.forEach(function(p,i){
-      var pid='prod_seed_'+i;
-      purchaseConfig.products[pid]={name:p.name,unitPrice:p.unitPrice,itemIds:[]};
-    });
-    savePurchaseConfig();
   }
   var sel=document.getElementById('purch-week');
   if(sel){
@@ -9429,7 +9406,8 @@ async function runPurchaseReport(){
   var weekId=_purchActiveWeekId;
   var week=weekId&&purchaseConfig.weeks[weekId];
   if(!week){ if(statusEl){ statusEl.textContent='Pick or add a week first.'; statusEl.style.color='#c0392b'; } return; }
-  var products=Object.keys(purchaseConfig.products||{});
+  var productRows=_purchProductRows(); // straight from QuickBooks' own Item catalog
+  var productItemIds={}; productRows.forEach(function(it){ productItemIds[it.qbId]=true; });
   var base=window.location.origin;
   var bills=[];
   var startPos=1;
@@ -9460,19 +9438,11 @@ async function runPurchaseReport(){
     startPos+=pageSize;
   }
 
-  // Build lookup: QB Item id -> product id (a formal Item should only ever
-  // be mapped to one product row; if mapped to more than one, the first
-  // match found wins and is left as-is rather than double counted).
-  var itemIdToProduct={};
-  products.forEach(function(pid){
-    (purchaseConfig.products[pid].itemIds||[]).forEach(function(iid){
-      if(!itemIdToProduct[iid]) itemIdToProduct[iid]=pid;
-    });
-  });
   // Item id -> QuickBooks Item type (Inventory/NonInventory/Service/…), so
   // Service-type items can be excluded entirely — this report is products
   // only, so a line billed under a Service item never counts here, not even
-  // as "Uncategorized."
+  // as "Uncategorized." (Only known for items already synced locally — see
+  // the fallback note below.)
   var itemIdToType={};
   items.forEach(function(it){ if(it.qbId) itemIdToType[it.qbId]=it.type||''; });
   var itemIdToName={};
@@ -9489,12 +9459,13 @@ async function runPurchaseReport(){
   });
   var vendorIds=Object.keys(vendorNames);
 
-  var grid={}; // productId -> vendorId -> amount (configured products only)
-  products.forEach(function(pid){ grid[pid]={}; vendorIds.forEach(function(vid){ grid[pid][vid]=0; }); });
-  // Anything that's a real product line (not a Service item) but didn't
-  // match a configured product's mapped Item gets its own row, labeled
-  // with the EXACT description text from the bill — not lumped into one
-  // generic "Uncategorized" bucket — so it's obvious what's still unmapped.
+  var grid={}; // itemId -> vendorId -> amount (rows are QuickBooks' own Item catalog)
+  productRows.forEach(function(it){ grid[it.qbId]={}; vendorIds.forEach(function(vid){ grid[it.qbId][vid]=0; }); });
+  // A line whose Item isn't in the local product catalog at all (not yet
+  // synced from QuickBooks, or genuinely a Service item this device hasn't
+  // cached the type for yet) gets its own row, labeled with the EXACT
+  // description text from the bill — not lumped into one generic
+  // "Uncategorized" bucket — so it's obvious what's still unaccounted for.
   var uncatByDesc={}; // description -> vendorId -> amount
   var uncatLabels={}; // rowKey -> original description text (for display)
 
@@ -9507,9 +9478,8 @@ async function runPurchaseReport(){
       if(!itemId) return; // no formal Item on this line (e.g. a plain expense/account line) — not a product, skip entirely
       if(itemIdToType[itemId]==='Service') return; // services never count in a products-only report
       var amt=Number(ln.Amount||0);
-      var pid=itemIdToProduct[itemId];
-      if(pid){
-        grid[pid][vqid]=(grid[pid][vqid]||0)+amt;
+      if(productItemIds[itemId]){
+        grid[itemId][vqid]=(grid[itemId][vqid]||0)+amt;
         return;
       }
       // Exact wording as it appears on the bill — falls back to the
@@ -9540,8 +9510,8 @@ async function runPurchaseReport(){
   if(statusEl){
     var uncatTotal=Object.keys(uncatByDesc).reduce(function(s,rk){ return s+vendorIds.reduce(function(s2,vid){ return s2+(uncatByDesc[rk][vid]||0); },0); },0);
     statusEl.textContent=bills.length+' bill(s) across '+vendorIds.length+' vendor(s) pulled for '+_purchWeekLabel(week)+'.'
-      +(uncatTotal&&products.length?' '+_purchMoney(uncatTotal)+' didn\'t match a mapped product — see the rows below "Uncategorized."':'');
-    statusEl.style.color=(uncatTotal&&products.length)?'#8a6d1a':'#1a7a3c';
+      +(uncatTotal?' '+_purchMoney(uncatTotal)+' didn\'t match a known QuickBooks product — see the rows below.':'');
+    statusEl.style.color=uncatTotal?'#8a6d1a':'#1a7a3c';
   }
   renderPurchaseReport();
   _purchPushSharedCache(weekId);
@@ -9605,14 +9575,15 @@ function _purchCombinedGrid(){
   return combined;
 }
 function _purchAllRowKeys(weekId){
-  var rowKeys=Object.keys(purchaseConfig.products||{});
+  var rowKeys=_purchProductRows().map(function(it){ return it.qbId; });
   if(_purchRealized&&_purchRealized.weekId===weekId){
     rowKeys=rowKeys.concat(Object.keys(_purchRealized.uncatByDesc||{}));
   }
   return rowKeys;
 }
 function _purchRowLabel(rk){
-  if(purchaseConfig.products[rk]) return purchaseConfig.products[rk].name;
+  var it=items.find(function(x){ return x.qbId===rk; });
+  if(it) return it.name;
   if(_purchRealized&&_purchRealized.uncatLabels&&_purchRealized.uncatLabels[rk]) return 'Uncategorized: '+_purchRealized.uncatLabels[rk];
   return rk;
 }
@@ -9650,9 +9621,9 @@ function renderPurchaseReport(){
       +'<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No bills pulled for this week yet. Click "Pull from QuickBooks" above — any vendor with a bill in this date range will show up as its own column automatically.</div>';
     return;
   }
-  var products=Object.keys(purchaseConfig.products||{});
+  var products=_purchProductRows();
   var uncatKeys=pulledThisWeek?Object.keys(_purchRealized.uncatByDesc||{}):[];
-  var rowKeys=products.concat(uncatKeys);
+  var rowKeys=products.map(function(it){ return it.qbId; }).concat(uncatKeys);
   var grid=pulledThisWeek?_purchCombinedGrid():null;
   // Order columns by realized total (busiest vendor first) when we have a
   // pull to sort by; otherwise (estimates typed in before any pull yet)
@@ -9701,9 +9672,8 @@ function renderPurchaseReport(){
       +'<td style="'+tdStyle+';font-weight:700">'+_purchMoney(rowTotalEst)+'</td>'
       +'<td style="'+tdStyle+';font-weight:700">'+(grid?_purchMoney(rowTotalRlz):'<span style="color:var(--muted)">—</span>')+'</td></tr>';
   }
-  products.forEach(function(pid){
-    var p=purchaseConfig.products[pid];
-    html+=renderRow(pid,p.name,p.unitPrice);
+  products.forEach(function(it){
+    html+=renderRow(it.qbId,it.name,it.cost);
   });
   // One row per DISTINCT unmatched bill description — not a single lumped
   // "Uncategorized" total — so it's clear exactly what's still unmapped,
@@ -9731,77 +9701,6 @@ function renderPurchaseReport(){
   html='<div style="margin-bottom:10px;font-size:12px;color:var(--muted)">'+esc(_purchWeekLabel(week))+' <a href="#" onclick="editPurchaseWeekDates(\''+weekId+'\');return false" style="color:var(--brand);margin-left:6px">edit dates</a></div>'+html;
   body.innerHTML=html;
 }
-
-// ---- Mapping panel: products only (→ QB Items). Vendor columns are no
-// longer configured by hand — they're discovered automatically from
-// whichever vendors actually appear on each week's pulled Bills. ----
-function togglePurchaseMappingPanel(forceOpen){
-  var panel=document.getElementById('purch-mapping-panel');
-  if(!panel) return;
-  var willShow=forceOpen||panel.style.display==='none';
-  panel.style.display=willShow?'block':'none';
-  if(willShow) renderPurchaseMappingPanel();
-}
-window.togglePurchaseMappingPanel=togglePurchaseMappingPanel;
-
-function renderPurchaseMappingPanel(){
-  var panel=document.getElementById('purch-mapping-panel');
-  if(!panel) return;
-  var qbItems=items.filter(function(it){ return it.qbId && it.type!=='Category' && it.type!=='Service'; }).sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
-  var wrap='padding:16px;background:var(--panel);border:1px solid var(--line);border-radius:12px';
-  var lbl='display:block;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:10px';
-
-  var html='<div style="'+wrap+'">';
-  html+='<div style="'+lbl+'">Products</div>';
-  html+='<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Vendor columns need no setup — every vendor with a bill in the selected week shows up as its own column automatically. Map products here only if you want purchases broken out by cut (otherwise everything shows under "All purchases").</div>';
-  html+='<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">';
-  Object.keys(purchaseConfig.products||{}).forEach(function(pid){
-    var p=purchaseConfig.products[pid];
-    var selectedItemIds=p.itemIds||[];
-    html+='<div style="display:flex;gap:8px;align-items:center">'
-      +'<input type="text" value="'+esc(p.name||'')+'" placeholder="Product name" oninput="purchUpdateProduct(\''+pid+'\',\'name\',this.value)" style="width:180px;padding:7px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:13px"/>'
-      +'<input type="number" step="0.01" value="'+(p.unitPrice||'')+'" placeholder="Unit $" oninput="purchUpdateProduct(\''+pid+'\',\'unitPrice\',parseFloat(this.value)||0)" style="width:80px;padding:7px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:13px"/>'
-      +'<select multiple onchange="purchUpdateProductItems(\''+pid+'\',this)" style="flex:1;min-height:34px;padding:4px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px">'
-      +qbItems.map(function(it){ return '<option value="'+esc(it.qbId)+'"'+(selectedItemIds.indexOf(it.qbId)>=0?' selected':'')+'>'+esc(it.name)+'</option>'; }).join('')
-      +'</select>'
-      +'<button class="btn btn-sm" onclick="purchRemoveProduct(\''+pid+'\')" title="Remove this row">✕</button>'
-      +'</div>';
-  });
-  html+='</div><button class="btn btn-sm" onclick="purchAddProduct()">+ Add product</button>';
-  html+='<div style="margin-top:10px;font-size:11.5px;color:var(--muted)">Hold Ctrl/Cmd to select more than one QuickBooks Item for a product (e.g. if the same cut is billed under two different item names).</div>';
-  html+='</div>';
-  panel.innerHTML=html;
-}
-function purchAddProduct(){
-  var pid='prod_'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
-  purchaseConfig.products[pid]={name:'',unitPrice:0,itemIds:[]};
-  savePurchaseConfig();
-  renderPurchaseMappingPanel();
-  renderPurchaseReport();
-}
-window.purchAddProduct=purchAddProduct;
-function purchRemoveProduct(pid){
-  if(!confirm('Remove this product row? Its EST. numbers for every week will no longer be shown (they stay saved).')) return;
-  delete purchaseConfig.products[pid];
-  savePurchaseConfig();
-  renderPurchaseMappingPanel();
-  renderPurchaseReport();
-}
-window.purchRemoveProduct=purchRemoveProduct;
-function purchUpdateProduct(pid,field,value){
-  if(!purchaseConfig.products[pid]) return;
-  purchaseConfig.products[pid][field]=value;
-  savePurchaseConfig();
-  renderPurchaseReport();
-}
-window.purchUpdateProduct=purchUpdateProduct;
-function purchUpdateProductItems(pid,selectEl){
-  if(!purchaseConfig.products[pid]) return;
-  var ids=Array.prototype.slice.call(selectEl.selectedOptions).map(function(o){return o.value;});
-  purchaseConfig.products[pid].itemIds=ids;
-  savePurchaseConfig();
-}
-window.purchUpdateProductItems=purchUpdateProductItems;
 
 
 // Freezes the currently rendered report (exact numbers, breakdowns, and

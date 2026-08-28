@@ -4189,6 +4189,7 @@ function renderReports(){
           +'<select id="purch-week" onchange="onPurchaseWeekChange()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);min-width:170px"></select></div>'
           +'<button class="btn" onclick="addPurchaseWeek()" title="Add the next week (defaults to 7 days after the current one)">+ Add week</button>'
           +'<button class="btn btn-primary" onclick="runPurchaseReport()">Pull from QuickBooks</button>'
+          +'<button class="btn" onclick="togglePurchAllGroups()" title="Expand or collapse every product category at once">Expand/Collapse all</button>'
         +'</div>'
         +'<div id="purch-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'</div>'
@@ -9344,6 +9345,22 @@ function initPurchaseReportTab(){
   });
 }
 var _purchActiveWeekId=null;
+// Which product-category groups are currently rolled up (collapsed) in the
+// table — page-level UI state only, not persisted/synced, same as any
+// other expand/collapse toggle in this app. Keyed by group name.
+var _purchCollapsedGroups={};
+function togglePurchGroup(groupName){
+  _purchCollapsedGroups[groupName]=!_purchCollapsedGroups[groupName];
+  renderPurchaseReport();
+}
+window.togglePurchGroup=togglePurchGroup;
+function togglePurchAllGroups(){
+  var groups=_purchProductGroups();
+  var anyExpanded=groups.some(function(g){ return !_purchCollapsedGroups[g.name]; });
+  groups.forEach(function(g){ _purchCollapsedGroups[g.name]=anyExpanded; });
+  renderPurchaseReport();
+}
+window.togglePurchAllGroups=togglePurchAllGroups;
 function onPurchaseWeekChange(){
   var sel=document.getElementById('purch-week');
   if(!sel) return;
@@ -9684,8 +9701,8 @@ function renderPurchaseReport(){
       +'<td style="'+tdStyle+';font-weight:700">'+(grid?_purchMoney(rowTotalRlz):'<span style="color:var(--muted)">—</span>')+'</td></tr>';
   }
   var totalCols=4+vendorIds.length*2;
-  var groupHeaderStyle='padding:10px 8px 6px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:left;border-bottom:1px solid var(--line);background:var(--panel)';
-  _purchProductGroups().forEach(function(grp){
+  var groupHeadTdStyle='padding:8px 8px;font-size:12.5px;text-align:right;border-bottom:1px solid var(--line);background:var(--panel);font-weight:700';
+  _purchProductGroups().forEach(function(grp,gi){
     // Skip products with zero activity — no realized purchase this week
     // AND no average purchase over the 13-week lookback, from any vendor.
     // Nothing to hide, no data lost: still fully visible again the moment
@@ -9698,10 +9715,37 @@ function renderPurchaseReport(){
       });
     });
     if(!visibleItems.length) return;
-    html+='<tr><td colspan="'+totalCols+'" style="'+groupHeaderStyle+'">'+esc(grp.name)+'</td></tr>';
-    visibleItems.forEach(function(it){
-      html+=renderRow(it.qbId,it.name,it.cost,true);
+    var groupId='purchgrp-'+gi;
+    var collapsed=!!_purchCollapsedGroups[grp.name];
+    // Subtotal cells — the group header row IS a real totals row (same
+    // column shape as every product row below it), not just a label, so
+    // the rolled-up numbers are visible whether or not it's expanded.
+    var groupTotalEst=0, groupTotalRlz=0;
+    var groupCellsHtml='';
+    vendorIds.forEach(function(vid){
+      var colEst=0, colRlz=0;
+      visibleItems.forEach(function(it){
+        colEst+=(estGrid&&estGrid[it.qbId]&&estGrid[it.qbId][vid])||0;
+        colRlz+=(grid&&grid[it.qbId]&&grid[it.qbId][vid])||0;
+      });
+      groupTotalEst+=colEst; groupTotalRlz+=colRlz;
+      groupCellsHtml+='<td style="'+groupHeadTdStyle+'">'+_purchMoney(colEst)+'</td>'
+        +'<td style="'+groupHeadTdStyle+'">'+(grid?_purchMoney(colRlz):'—')+'</td>';
     });
+    html+='<tr onclick="togglePurchGroup(\''+esc(grp.name).replace(/'/g,"\\'")+'\')" style="cursor:pointer">'
+      +'<td style="'+groupHeadTdStyle+';text-align:left;text-transform:uppercase;letter-spacing:.05em;font-size:11.5px">'
+        +'<span style="display:inline-flex;align-items:center;gap:6px">'
+          +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;stroke:var(--muted);flex-shrink:0;transform:rotate('+(collapsed?'0':'90')+'deg);transition:transform .15s"><polyline points="9 6 15 12 9 18"/></svg>'
+          +esc(grp.name)+'</span></td>'
+      +'<td style="'+groupHeadTdStyle+'"></td>'
+      +groupCellsHtml
+      +'<td style="'+groupHeadTdStyle+'">'+_purchMoney(groupTotalEst)+'</td>'
+      +'<td style="'+groupHeadTdStyle+'">'+(grid?_purchMoney(groupTotalRlz):'—')+'</td></tr>';
+    if(!collapsed){
+      visibleItems.forEach(function(it){
+        html+=renderRow(it.qbId,it.name,it.cost,true);
+      });
+    }
   });
   // One row per DISTINCT unmatched bill description — not a single lumped
   // "Uncategorized" total — so it's clear exactly what's still unmapped,

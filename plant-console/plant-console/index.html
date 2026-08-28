@@ -6294,6 +6294,7 @@ async function _fetchAllOpenQBEntity(entity,onProgress){
       pageRows=(jd&&jd[entity])?jd[entity]:[];
     }catch(e){
       clearTimeout(timer);
+      if(e&&e.name==='AbortError') throw new Error('QuickBooks took too long to respond (timed out at row '+startPos+') — try again.');
       throw e;
     }
     rows=rows.concat(pageRows);

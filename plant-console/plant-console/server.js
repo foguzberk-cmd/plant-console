@@ -1053,21 +1053,11 @@ async function runBackgroundSync() {
   _backgroundSyncInFlight = false;
 }
 
-// Fetch all purchase/sales documents that move inventory
-async function fetchQBDocuments() {
-  // Refresh once up front
-  if (!accessToken) await refreshAccessToken();
-  const result = { Bill: [], Invoice: [], SalesReceipt: [], CreditMemo: [], VendorCredit: [], errors: {} };
-  const entities = ['Bill', 'Invoice', 'SalesReceipt', 'CreditMemo', 'VendorCredit'];
-  for (const entity of entities) {
-    try {
-      result[entity] = await fetchQBEntity(entity);
-    } catch (e) {
-      result.errors[entity] = e.message;
-    }
-  }
-  return result;
-}
+// NOTE: the whole-history, all-5-entity-types, no-date-bound
+// fetchQBDocuments() function that used to live here was removed — see the
+// long comment at the /api/qb/documents route (search "V8's own
+// out-of-memory abort") for why. Every real caller now fetches one entity
+// type, one page at a time, via fetchQBEntity/fetchQBEntityPage above.
 
 
 // Diagnostic: run a minimal query and report exactly what QB says
@@ -2723,9 +2713,23 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify(out));
         return;
       }
-      const data = await fetchQBDocuments();
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
-      res.end(JSON.stringify(data));
+      // A request with NO entity param (or an unrecognized one) used to fall
+      // through to fetchQBDocuments(), which pulled Bill+Invoice+
+      // SalesReceipt+CreditMemo+VendorCredit's ENTIRE history — every record
+      // that has ever existed in QuickBooks, no date bound at all — into one
+      // in-memory object, then JSON.stringified the whole thing into a
+      // single HTTP response. On a company file with any real transaction
+      // history, that is enough to exhaust this instance's 512MB and abort
+      // the whole Node process (exit code 134 — V8's own out-of-memory
+      // abort). No current frontend code calls this endpoint without an
+      // entity param (every real caller specifies one and pages through
+      // results 100 at a time instead) — so this path is unreachable by
+      // anything in the app today and only ever fires from a stray/stale
+      // request. Rather than leave a whole-history-in-one-response bomb
+      // sitting there for whatever hits it next, this now just rejects the
+      // request outright.
+      res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: 'entity parameter required' }));
     } catch (err) {
       const needsReconnect = err.message === 'NEEDS_RECONNECT';
       res.writeHead(needsReconnect ? 401 : 500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });

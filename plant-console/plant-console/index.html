@@ -9279,11 +9279,12 @@ function _purchAddDays(dateStr,n){
 // The product row list, straight from QuickBooks' own Item catalog (synced
 // into the app's existing `items` array — same data Settings → Items and
 // the label printer already use). Excludes Category "items" (they're
-// folders, not products) and Service items (this report is products only).
+// folders, not products), Service items (this report is products only),
+// and inactive/deleted items (no longer purchasable, just clutter here).
 // No separate list is kept or edited anywhere — this always reflects
 // whatever QuickBooks currently has.
 function _purchProductRows(){
-  return items.filter(function(it){ return it.qbId && it.type!=='Category' && it.type!=='Service'; })
+  return items.filter(function(it){ return it.qbId && it.type!=='Category' && it.type!=='Service' && it.active!==false; })
     .sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
 }
 function initPurchaseReportTab(){

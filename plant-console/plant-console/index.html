@@ -9257,7 +9257,7 @@ function switchReportTab(tab){
 // locally; it's recomputed from a fresh Bill pull each time and only cached
 // server-side (per week) so other terminals don't have to repeat the pull.
 function _purchMoney(n){ return '$'+Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
-var _purchRealized=null; // {weekId, computedAt, grid:{rowKey:{vendorId:amount}}, vendors:{vendorId:name}, billCount} — rowKey is a productId or '_uncat'
+var _purchRealized=null; // {weekId, computedAt, grid:{productId:{vendorId:amount}}, uncatByDesc:{descKey:{vendorId:amount}}, uncatLabels:{descKey:descriptionText}, vendors:{vendorId:name}, billCount}
 var _purchVendorNameCache=JSON.parse(localStorage.getItem('pc_purchase_vendor_names')||'{}'); // qbVendorId -> display name, local-only convenience cache (not synced)
 
 function _purchSortedWeekIds(){
@@ -9469,6 +9469,14 @@ async function runPurchaseReport(){
       if(!itemIdToProduct[iid]) itemIdToProduct[iid]=pid;
     });
   });
+  // Item id -> QuickBooks Item type (Inventory/NonInventory/Service/…), so
+  // Service-type items can be excluded entirely — this report is products
+  // only, so a line billed under a Service item never counts here, not even
+  // as "Uncategorized."
+  var itemIdToType={};
+  items.forEach(function(it){ if(it.qbId) itemIdToType[it.qbId]=it.type||''; });
+  var itemIdToName={};
+  items.forEach(function(it){ if(it.qbId) itemIdToName[it.qbId]=it.name||''; });
 
   // Vendor columns are no longer configured by hand — they're whatever
   // vendors actually show up on this week's Bills, discovered fresh on
@@ -9481,24 +9489,37 @@ async function runPurchaseReport(){
   });
   var vendorIds=Object.keys(vendorNames);
 
-  // Rows: every configured product, PLUS an always-present "Uncategorized"
-  // row that catches anything that didn't match a product's mapped Item —
-  // including everything, if no products are configured at all yet. That
-  // means the report is useful immediately (one row per vendor, total
-  // realized) even before any product mapping exists.
-  var grid={}; // rowKey -> vendorId -> amount ('_uncat' is the catch-all row)
-  var rowKeys=products.concat(['_uncat']);
-  rowKeys.forEach(function(rk){ grid[rk]={}; vendorIds.forEach(function(vid){ grid[rk][vid]=0; }); });
+  var grid={}; // productId -> vendorId -> amount (configured products only)
+  products.forEach(function(pid){ grid[pid]={}; vendorIds.forEach(function(vid){ grid[pid][vid]=0; }); });
+  // Anything that's a real product line (not a Service item) but didn't
+  // match a configured product's mapped Item gets its own row, labeled
+  // with the EXACT description text from the bill — not lumped into one
+  // generic "Uncategorized" bucket — so it's obvious what's still unmapped.
+  var uncatByDesc={}; // description -> vendorId -> amount
+  var uncatLabels={}; // rowKey -> original description text (for display)
 
   bills.forEach(function(bill){
     var vqid=(bill.VendorRef&&bill.VendorRef.value)||'_novendor';
     var lines=Array.isArray(bill.Line)?bill.Line:[];
     lines.forEach(function(ln){
+      var itemRef=ln.ItemBasedExpenseLineDetail&&ln.ItemBasedExpenseLineDetail.ItemRef;
+      var itemId=itemRef&&itemRef.value;
+      if(!itemId) return; // no formal Item on this line (e.g. a plain expense/account line) — not a product, skip entirely
+      if(itemIdToType[itemId]==='Service') return; // services never count in a products-only report
       var amt=Number(ln.Amount||0);
-      var itemId=ln.ItemBasedExpenseLineDetail&&ln.ItemBasedExpenseLineDetail.ItemRef&&ln.ItemBasedExpenseLineDetail.ItemRef.value;
-      var pid=itemId?itemIdToProduct[itemId]:null;
-      var rowKey=pid||'_uncat';
-      grid[rowKey][vqid]=(grid[rowKey][vqid]||0)+amt;
+      var pid=itemIdToProduct[itemId];
+      if(pid){
+        grid[pid][vqid]=(grid[pid][vqid]||0)+amt;
+        return;
+      }
+      // Exact wording as it appears on the bill — falls back to the
+      // QuickBooks Item's own name only if the line itself has no
+      // description text.
+      var desc=(ln.Description&&ln.Description.trim())||itemIdToName[itemId]||itemRef.name||'(no description)';
+      var rk='desc_'+_purchHash(desc);
+      uncatLabels[rk]=desc;
+      if(!uncatByDesc[rk]){ uncatByDesc[rk]={}; vendorIds.forEach(function(vid){ uncatByDesc[rk][vid]=0; }); }
+      uncatByDesc[rk][vqid]=(uncatByDesc[rk][vqid]||0)+amt;
     });
   });
 
@@ -9506,6 +9527,8 @@ async function runPurchaseReport(){
     weekId:weekId,
     computedAt:new Date().toISOString(),
     grid:grid,
+    uncatByDesc:uncatByDesc,
+    uncatLabels:uncatLabels,
     vendors:vendorNames,
     billCount:bills.length
   };
@@ -9515,15 +9538,23 @@ async function runPurchaseReport(){
   Object.assign(_purchVendorNameCache,vendorNames);
   safeSetLocal('pc_purchase_vendor_names',JSON.stringify(_purchVendorNameCache));
   if(statusEl){
-    var uncatTotal=vendorIds.reduce(function(s,vid){ return s+(grid._uncat[vid]||0); },0);
+    var uncatTotal=Object.keys(uncatByDesc).reduce(function(s,rk){ return s+vendorIds.reduce(function(s2,vid){ return s2+(uncatByDesc[rk][vid]||0); },0); },0);
     statusEl.textContent=bills.length+' bill(s) across '+vendorIds.length+' vendor(s) pulled for '+_purchWeekLabel(week)+'.'
-      +(uncatTotal&&products.length?' '+_purchMoney(uncatTotal)+' didn\'t match a mapped product — see "Uncategorized" below.':'');
+      +(uncatTotal&&products.length?' '+_purchMoney(uncatTotal)+' didn\'t match a mapped product — see the rows below "Uncategorized."':'');
     statusEl.style.color=(uncatTotal&&products.length)?'#8a6d1a':'#1a7a3c';
   }
   renderPurchaseReport();
   _purchPushSharedCache(weekId);
 }
 window.runPurchaseReport=runPurchaseReport;
+// Small stable string hash (djb2) — turns an arbitrary bill description into
+// a short, safe row-key (no quotes/backslashes to worry about in onclick
+// handlers). Collisions are effectively a non-issue at this data volume.
+function _purchHash(s){
+  var h=5381;
+  for(var i=0;i<s.length;i++){ h=((h*33)^s.charCodeAt(i))>>>0; }
+  return h.toString(36);
+}
 
 function purchGetEst(weekId,productId,vendorColId){
   return ((purchaseEstimates[weekId]||{})[productId]||{})[vendorColId]||0;
@@ -9562,10 +9593,33 @@ function _purchVendorLabel(vid){
   if(_purchVendorNameCache[vid]) return _purchVendorNameCache[vid];
   return vid==='_novendor'?'No vendor on file':vid;
 }
+// Merges the configured-product grid with the per-description uncategorized
+// buckets into one lookup, so totals/sorting/rendering don't need to know
+// which bucket a row key came from. Row keys are either a productId or a
+// 'desc_<hash>' key from uncatByDesc.
+function _purchCombinedGrid(){
+  if(!_purchRealized) return null;
+  var combined={};
+  Object.keys(_purchRealized.grid||{}).forEach(function(rk){ combined[rk]=_purchRealized.grid[rk]; });
+  Object.keys(_purchRealized.uncatByDesc||{}).forEach(function(rk){ combined[rk]=_purchRealized.uncatByDesc[rk]; });
+  return combined;
+}
+function _purchAllRowKeys(weekId){
+  var rowKeys=Object.keys(purchaseConfig.products||{});
+  if(_purchRealized&&_purchRealized.weekId===weekId){
+    rowKeys=rowKeys.concat(Object.keys(_purchRealized.uncatByDesc||{}));
+  }
+  return rowKeys;
+}
+function _purchRowLabel(rk){
+  if(purchaseConfig.products[rk]) return purchaseConfig.products[rk].name;
+  if(_purchRealized&&_purchRealized.uncatLabels&&_purchRealized.uncatLabels[rk]) return 'Uncategorized: '+_purchRealized.uncatLabels[rk];
+  return rk;
+}
 function renderPurchaseTotalsRow(){
   var weekId=_purchActiveWeekId;
   var vendorIds=_purchVendorIdsForWeek(weekId);
-  var rowKeys=Object.keys(purchaseConfig.products||{}).concat(['_uncat']);
+  var rowKeys=_purchAllRowKeys(weekId);
   vendorIds.forEach(function(vid){
     var estSum=0;
     rowKeys.forEach(function(rk){ estSum+=purchGetEst(weekId,rk,vid); });
@@ -9597,8 +9651,9 @@ function renderPurchaseReport(){
     return;
   }
   var products=Object.keys(purchaseConfig.products||{});
-  var rowKeys=products.concat(['_uncat']);
-  var grid=pulledThisWeek?_purchRealized.grid:null;
+  var uncatKeys=pulledThisWeek?Object.keys(_purchRealized.uncatByDesc||{}):[];
+  var rowKeys=products.concat(uncatKeys);
+  var grid=pulledThisWeek?_purchCombinedGrid():null;
   // Order columns by realized total (busiest vendor first) when we have a
   // pull to sort by; otherwise (estimates typed in before any pull yet)
   // alphabetical by name.
@@ -9609,6 +9664,13 @@ function renderPurchaseReport(){
       if(tb!==ta) return tb-ta;
     }
     return _purchVendorLabel(a).localeCompare(_purchVendorLabel(b));
+  });
+  // Uncategorized rows sorted biggest-first so the most significant unmapped
+  // purchases surface at the top instead of being buried alphabetically.
+  uncatKeys.sort(function(a,b){
+    var ta=vendorIds.reduce(function(s,vid){ return s+((grid[a]&&grid[a][vid])||0); },0);
+    var tb=vendorIds.reduce(function(s,vid){ return s+((grid[b]&&grid[b][vid])||0); },0);
+    return tb-ta;
   });
   var thStyle='padding:8px 10px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:center;border-bottom:1px solid var(--line)';
   var tdStyle='padding:6px 8px;font-size:12.5px;text-align:right;border-bottom:1px solid var(--line)';
@@ -9627,7 +9689,7 @@ function renderPurchaseReport(){
     var cellsHtml='';
     vendorIds.forEach(function(vid){
       var est=purchGetEst(weekId,rk,vid);
-      var rlz=grid?(grid[rk][vid]||0):null;
+      var rlz=grid?((grid[rk]&&grid[rk][vid])||0):null;
       rowTotalEst+=est;
       if(rlz!=null) rowTotalRlz+=rlz;
       cellsHtml+='<td style="'+tdStyle+'"><input type="number" step="0.01" value="'+est+'" oninput="onPurchEstInput(this,\''+rk+'\',\''+vid+'\')" style="width:78px;text-align:right;border:1px solid var(--line);border-radius:6px;padding:3px 5px;font-size:12.5px"/></td>';
@@ -9643,10 +9705,13 @@ function renderPurchaseReport(){
     var p=purchaseConfig.products[pid];
     html+=renderRow(pid,p.name,p.unitPrice);
   });
-  // "Uncategorized" always shows — it's every purchase that isn't (yet)
-  // matched to a configured product's QuickBooks Item. With zero products
-  // configured, this row IS the whole report: total realized per vendor.
-  html+=renderRow('_uncat',products.length?'Uncategorized':'All purchases',null);
+  // One row per DISTINCT unmatched bill description — not a single lumped
+  // "Uncategorized" total — so it's clear exactly what's still unmapped,
+  // in QuickBooks' own wording. Service-type lines never reach here at all
+  // (excluded during the pull); this is products only.
+  uncatKeys.forEach(function(rk){
+    html+=renderRow(rk,_purchRowLabel(rk),null);
+  });
   // Totals row
   html+='<tr style="background:var(--panel)"><td style="'+tdStyle+';text-align:left;font-weight:700">TOTAL</td><td style="'+tdStyle+'"></td>';
   var grandEst=0, grandRlz=0;
@@ -9654,7 +9719,7 @@ function renderPurchaseReport(){
     var colEst=0, colRlz=0;
     rowKeys.forEach(function(rk){
       colEst+=purchGetEst(weekId,rk,vid);
-      if(grid) colRlz+=(grid[rk][vid]||0);
+      if(grid) colRlz+=((grid[rk]&&grid[rk][vid])||0);
     });
     grandEst+=colEst; grandRlz+=colRlz;
     html+='<td id="purch-tot-est-'+vid+'" style="'+tdStyle+';font-weight:700">'+_purchMoney(colEst)+'</td>'
@@ -9682,7 +9747,7 @@ window.togglePurchaseMappingPanel=togglePurchaseMappingPanel;
 function renderPurchaseMappingPanel(){
   var panel=document.getElementById('purch-mapping-panel');
   if(!panel) return;
-  var qbItems=items.filter(function(it){ return it.qbId && it.type!=='Category'; }).sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
+  var qbItems=items.filter(function(it){ return it.qbId && it.type!=='Category' && it.type!=='Service'; }).sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
   var wrap='padding:16px;background:var(--panel);border:1px solid var(--line);border-radius:12px';
   var lbl='display:block;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:10px';
 

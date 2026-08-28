@@ -9409,20 +9409,31 @@ async function runPurchaseReport(){
   if(!week){ if(statusEl){ statusEl.textContent='Pick or add a week first.'; statusEl.style.color='#c0392b'; } return; }
   var productRows=_purchProductRows(); // straight from QuickBooks' own Item catalog
   var productItemIds={}; productRows.forEach(function(it){ productItemIds[it.qbId]=true; });
+
+  // EST. is no longer typed in — it's the average weekly spend per
+  // product/vendor over the trailing 13 weeks (91 days) before this week,
+  // computed fresh from QuickBooks every pull. One combined fetch covers
+  // both this week AND the 13-week lookback, then each Bill is sorted into
+  // whichever bucket its TxnDate actually falls in.
+  var ESTIMATE_LOOKBACK_WEEKS=13;
+  var estWindowStart=_purchAddDays(week.startDate,-ESTIMATE_LOOKBACK_WEEKS*7);
+  var fetchFrom=estWindowStart;
+  var fetchTo=week.endDate;
+
   var base=window.location.origin;
   var bills=[];
   var startPos=1;
   var pageSize=100;
   var safety=0;
-  if(statusEl){ statusEl.textContent='Fetching bills from QuickBooks…'; statusEl.style.color=''; }
+  if(statusEl){ statusEl.textContent='Fetching bills from QuickBooks (this week + last '+ESTIMATE_LOOKBACK_WEEKS+' weeks for the average)…'; statusEl.style.color=''; }
   while(true){
     safety++;
-    if(safety>500) break; // hard cap (~50k rows) — a single week should never come close
+    if(safety>2000) break; // hard cap (~200k rows) — 13 weeks + 1 week should never come close
     var ctrl=new AbortController();
     var timer=setTimeout(function(){ctrl.abort();},60000);
     var pageRows=null;
     try{
-      var r=await fetch(base+'/api/qb/documents?entity=Bill&startposition='+startPos+'&from='+encodeURIComponent(week.startDate)+'&to='+encodeURIComponent(week.endDate),{signal:ctrl.signal});
+      var r=await fetch(base+'/api/qb/documents?entity=Bill&startposition='+startPos+'&from='+encodeURIComponent(fetchFrom)+'&to='+encodeURIComponent(fetchTo),{signal:ctrl.signal});
       clearTimeout(timer);
       if(r.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
       var jd=await r.json();
@@ -9449,10 +9460,11 @@ async function runPurchaseReport(){
   var itemIdToName={};
   items.forEach(function(it){ if(it.qbId) itemIdToName[it.qbId]=it.name||''; });
 
-  // Vendor columns are no longer configured by hand — they're whatever
-  // vendors actually show up on this week's Bills, discovered fresh on
-  // every pull. '_novendor' covers the rare Bill with no VendorRef at all.
-  var vendorNames={}; // qbVendorId -> display name, this pull only
+  // Vendor columns are whichever vendors show up ANYWHERE in the fetched
+  // range — this week's actual bills OR the 13-week lookback — so a
+  // vendor with a historical average still gets a column even if nothing's
+  // been bought from them yet this particular week.
+  var vendorNames={}; // qbVendorId -> display name
   bills.forEach(function(bill){
     var vqid=(bill.VendorRef&&bill.VendorRef.value)||'_novendor';
     var vname=(bill.VendorRef&&bill.VendorRef.name)||'No vendor on file';
@@ -9460,18 +9472,28 @@ async function runPurchaseReport(){
   });
   var vendorIds=Object.keys(vendorNames);
 
-  var grid={}; // itemId -> vendorId -> amount (rows are QuickBooks' own Item catalog)
-  productRows.forEach(function(it){ grid[it.qbId]={}; vendorIds.forEach(function(vid){ grid[it.qbId][vid]=0; }); });
+  var grid={}; // itemId -> vendorId -> amount, THIS WEEK only
+  var estTotals={}; // itemId -> vendorId -> summed amount over the lookback window
+  productRows.forEach(function(it){
+    grid[it.qbId]={}; estTotals[it.qbId]={};
+    vendorIds.forEach(function(vid){ grid[it.qbId][vid]=0; estTotals[it.qbId][vid]=0; });
+  });
   // A line whose Item isn't in the local product catalog at all (not yet
   // synced from QuickBooks, or genuinely a Service item this device hasn't
   // cached the type for yet) gets its own row, labeled with the EXACT
   // description text from the bill — not lumped into one generic
   // "Uncategorized" bucket — so it's obvious what's still unaccounted for.
+  // Only tracked for the current week (the lookback window isn't broken out
+  // this way — its unmatched lines simply aren't averaged into anything).
   var uncatByDesc={}; // description -> vendorId -> amount
   var uncatLabels={}; // rowKey -> original description text (for display)
 
   bills.forEach(function(bill){
     var vqid=(bill.VendorRef&&bill.VendorRef.value)||'_novendor';
+    var txnDate=bill.TxnDate||'';
+    var inCurrentWeek=txnDate>=week.startDate&&txnDate<=week.endDate;
+    var inLookback=txnDate>=estWindowStart&&txnDate<week.startDate;
+    if(!inCurrentWeek&&!inLookback) return; // shouldn't happen given the fetch range, but be safe
     var lines=Array.isArray(bill.Line)?bill.Line:[];
     lines.forEach(function(ln){
       var itemRef=ln.ItemBasedExpenseLineDetail&&ln.ItemBasedExpenseLineDetail.ItemRef;
@@ -9480,9 +9502,11 @@ async function runPurchaseReport(){
       if(itemIdToType[itemId]==='Service') return; // services never count in a products-only report
       var amt=Number(ln.Amount||0);
       if(productItemIds[itemId]){
-        grid[itemId][vqid]=(grid[itemId][vqid]||0)+amt;
+        if(inCurrentWeek) grid[itemId][vqid]=(grid[itemId][vqid]||0)+amt;
+        if(inLookback) estTotals[itemId][vqid]=(estTotals[itemId][vqid]||0)+amt;
         return;
       }
+      if(!inCurrentWeek) return; // only break out unmatched lines for the current week
       // Exact wording as it appears on the bill — falls back to the
       // QuickBooks Item's own name only if the line itself has no
       // description text.
@@ -9494,10 +9518,18 @@ async function runPurchaseReport(){
     });
   });
 
+  var estGrid={}; // itemId -> vendorId -> average weekly $ over the lookback window
+  productRows.forEach(function(it){
+    estGrid[it.qbId]={};
+    vendorIds.forEach(function(vid){ estGrid[it.qbId][vid]=estTotals[it.qbId][vid]/ESTIMATE_LOOKBACK_WEEKS; });
+  });
+
   _purchRealized={
     weekId:weekId,
     computedAt:new Date().toISOString(),
     grid:grid,
+    estGrid:estGrid,
+    estLookbackWeeks:ESTIMATE_LOOKBACK_WEEKS,
     uncatByDesc:uncatByDesc,
     uncatLabels:uncatLabels,
     vendors:vendorNames,
@@ -9510,8 +9542,8 @@ async function runPurchaseReport(){
   safeSetLocal('pc_purchase_vendor_names',JSON.stringify(_purchVendorNameCache));
   if(statusEl){
     var uncatTotal=Object.keys(uncatByDesc).reduce(function(s,rk){ return s+vendorIds.reduce(function(s2,vid){ return s2+(uncatByDesc[rk][vid]||0); },0); },0);
-    statusEl.textContent=bills.length+' bill(s) across '+vendorIds.length+' vendor(s) pulled for '+_purchWeekLabel(week)+'.'
-      +(uncatTotal?' '+_purchMoney(uncatTotal)+' didn\'t match a known QuickBooks product — see the rows below.':'');
+    statusEl.textContent=bills.length+' bill(s) across '+vendorIds.length+' vendor(s) — this week plus the '+ESTIMATE_LOOKBACK_WEEKS+'-week average window.'
+      +(uncatTotal?' '+_purchMoney(uncatTotal)+' this week didn\'t match a known QuickBooks product — see the rows below.':'');
     statusEl.style.color=uncatTotal?'#8a6d1a':'#1a7a3c';
   }
   renderPurchaseReport();
@@ -9527,37 +9559,14 @@ function _purchHash(s){
   return h.toString(36);
 }
 
-function purchGetEst(weekId,productId,vendorColId){
-  return ((purchaseEstimates[weekId]||{})[productId]||{})[vendorColId]||0;
-}
-function purchSetEst(weekId,productId,vendorColId,value){
-  if(!purchaseEstimates[weekId]) purchaseEstimates[weekId]={};
-  if(!purchaseEstimates[weekId][productId]) purchaseEstimates[weekId][productId]={};
-  purchaseEstimates[weekId][productId][vendorColId]=value;
-  savePurchaseEstimatesWeek(weekId);
-}
-function onPurchEstInput(el,productId,vendorColId){
-  var v=parseFloat(el.value);
-  if(isNaN(v)) v=0;
-  purchSetEst(_purchActiveWeekId,productId,vendorColId,v);
-  renderPurchaseTotalsRow();
-}
-window.onPurchEstInput=onPurchEstInput;
-
-// Vendor columns to show for the active week: whichever vendors were in
-// the most recent pull for THIS week, unioned with any vendor that has a
-// saved EST. for this week (so a typed-in estimate never just disappears
-// from view because a fresh pull hasn't run yet this session).
+// Vendor columns to show for the active week: whichever vendors showed up
+// anywhere in the most recent pull for THIS week (current week's bills OR
+// the lookback window used for the average).
 function _purchVendorIdsForWeek(weekId){
-  var ids={};
   if(_purchRealized&&_purchRealized.weekId===weekId){
-    Object.keys(_purchRealized.vendors||{}).forEach(function(id){ ids[id]=true; });
+    return Object.keys(_purchRealized.vendors||{});
   }
-  var estForWeek=purchaseEstimates[weekId]||{};
-  Object.keys(estForWeek).forEach(function(pid){
-    Object.keys(estForWeek[pid]||{}).forEach(function(vid){ ids[vid]=true; });
-  });
-  return Object.keys(ids);
+  return [];
 }
 function _purchVendorLabel(vid){
   if(_purchRealized&&_purchRealized.vendors&&_purchRealized.vendors[vid]) return _purchRealized.vendors[vid];
@@ -9588,23 +9597,6 @@ function _purchRowLabel(rk){
   if(_purchRealized&&_purchRealized.uncatLabels&&_purchRealized.uncatLabels[rk]) return 'Uncategorized: '+_purchRealized.uncatLabels[rk];
   return rk;
 }
-function renderPurchaseTotalsRow(){
-  var weekId=_purchActiveWeekId;
-  var vendorIds=_purchVendorIdsForWeek(weekId);
-  var rowKeys=_purchAllRowKeys(weekId);
-  vendorIds.forEach(function(vid){
-    var estSum=0;
-    rowKeys.forEach(function(rk){ estSum+=purchGetEst(weekId,rk,vid); });
-    var el=document.getElementById('purch-tot-est-'+vid);
-    if(el) el.textContent=_purchMoney(estSum);
-  });
-  var grandEst=0;
-  rowKeys.forEach(function(rk){
-    vendorIds.forEach(function(vid){ grandEst+=purchGetEst(weekId,rk,vid); });
-  });
-  var grandEstEl=document.getElementById('purch-grand-est');
-  if(grandEstEl) grandEstEl.textContent=_purchMoney(grandEst);
-}
 
 function renderPurchaseReport(){
   var body=document.getElementById('purch-body');
@@ -9619,16 +9611,16 @@ function renderPurchaseReport(){
   var pulledThisWeek=_purchRealized&&_purchRealized.weekId===weekId;
   if(!vendorIds.length){
     body.innerHTML='<div style="margin-bottom:10px;font-size:12px;color:var(--muted)">'+esc(_purchWeekLabel(week))+' <a href="#" onclick="editPurchaseWeekDates(\''+weekId+'\');return false" style="color:var(--brand);margin-left:6px">edit dates</a></div>'
-      +'<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No bills pulled for this week yet. Click "Pull from QuickBooks" above — any vendor with a bill in this date range will show up as its own column automatically.</div>';
+      +'<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No bills pulled for this week yet. Click "Pull from QuickBooks" above — any vendor with a bill in this week or the trailing 13 weeks will show up as its own column automatically.</div>';
     return;
   }
   var products=_purchProductRows();
   var uncatKeys=pulledThisWeek?Object.keys(_purchRealized.uncatByDesc||{}):[];
   var rowKeys=products.map(function(it){ return it.qbId; }).concat(uncatKeys);
   var grid=pulledThisWeek?_purchCombinedGrid():null;
+  var estGrid=pulledThisWeek?_purchRealized.estGrid:null;
   // Order columns by realized total (busiest vendor first) when we have a
-  // pull to sort by; otherwise (estimates typed in before any pull yet)
-  // alphabetical by name.
+  // pull to sort by; otherwise (before any pull yet) alphabetical by name.
   vendorIds.sort(function(a,b){
     if(grid){
       var ta=rowKeys.reduce(function(s,rk){ return s+((grid[rk]&&grid[rk][a])||0); },0);
@@ -9653,50 +9645,51 @@ function renderPurchaseReport(){
   });
   html+='<th style="'+thStyle+'" rowspan="2">Total Est.</th><th style="'+thStyle+'" rowspan="2">Total Rlz.</th></tr><tr>';
   vendorIds.forEach(function(){
-    html+='<th style="'+thStyle+'">Est.</th><th style="'+thStyle+'">Realized</th>';
+    html+='<th style="'+thStyle+'" title="Average weekly purchase over the trailing 13 weeks — calculated, not typed">Avg. Est.</th><th style="'+thStyle+'">Realized</th>';
   });
   html+='</tr></thead><tbody>';
-  function renderRow(rk,label,unitPrice){
+  function renderRow(rk,label,unitPrice,hasEst){
     var rowTotalEst=0, rowTotalRlz=0;
     var cellsHtml='';
     vendorIds.forEach(function(vid){
-      var est=purchGetEst(weekId,rk,vid);
+      var est=(hasEst&&estGrid&&estGrid[rk])?(estGrid[rk][vid]||0):null;
       var rlz=grid?((grid[rk]&&grid[rk][vid])||0):null;
-      rowTotalEst+=est;
+      if(est!=null) rowTotalEst+=est;
       if(rlz!=null) rowTotalRlz+=rlz;
-      cellsHtml+='<td style="'+tdStyle+'"><input type="number" step="0.01" value="'+est+'" oninput="onPurchEstInput(this,\''+rk+'\',\''+vid+'\')" style="width:78px;text-align:right;border:1px solid var(--line);border-radius:6px;padding:3px 5px;font-size:12.5px"/></td>';
+      cellsHtml+='<td style="'+tdStyle+'">'+(est!=null?_purchMoney(est):'<span style="color:var(--muted)">—</span>')+'</td>';
       cellsHtml+='<td style="'+tdStyle+'">'+(rlz!=null?_purchMoney(rlz):'<span style="color:var(--muted)">—</span>')+'</td>';
     });
     return '<tr><td style="'+tdStyle+';text-align:left;font-weight:600">'+esc(label)+'</td>'
       +'<td style="'+tdStyle+'">'+(unitPrice?_purchMoney(unitPrice):'—')+'</td>'
       +cellsHtml
-      +'<td style="'+tdStyle+';font-weight:700">'+_purchMoney(rowTotalEst)+'</td>'
+      +'<td style="'+tdStyle+';font-weight:700">'+(hasEst?_purchMoney(rowTotalEst):'<span style="color:var(--muted)">—</span>')+'</td>'
       +'<td style="'+tdStyle+';font-weight:700">'+(grid?_purchMoney(rowTotalRlz):'<span style="color:var(--muted)">—</span>')+'</td></tr>';
   }
   products.forEach(function(it){
-    html+=renderRow(it.qbId,it.name,it.cost);
+    html+=renderRow(it.qbId,it.name,it.cost,true);
   });
   // One row per DISTINCT unmatched bill description — not a single lumped
   // "Uncategorized" total — so it's clear exactly what's still unmapped,
   // in QuickBooks' own wording. Service-type lines never reach here at all
-  // (excluded during the pull); this is products only.
+  // (excluded during the pull); this is products only. No average is
+  // computed for these (their identity isn't stable week to week).
   uncatKeys.forEach(function(rk){
-    html+=renderRow(rk,_purchRowLabel(rk),null);
+    html+=renderRow(rk,_purchRowLabel(rk),null,false);
   });
   // Totals row
   html+='<tr style="background:var(--panel)"><td style="'+tdStyle+';text-align:left;font-weight:700">TOTAL</td><td style="'+tdStyle+'"></td>';
   var grandEst=0, grandRlz=0;
   vendorIds.forEach(function(vid){
     var colEst=0, colRlz=0;
+    products.forEach(function(it){ colEst+=(estGrid&&estGrid[it.qbId]&&estGrid[it.qbId][vid])||0; });
     rowKeys.forEach(function(rk){
-      colEst+=purchGetEst(weekId,rk,vid);
       if(grid) colRlz+=((grid[rk]&&grid[rk][vid])||0);
     });
     grandEst+=colEst; grandRlz+=colRlz;
-    html+='<td id="purch-tot-est-'+vid+'" style="'+tdStyle+';font-weight:700">'+_purchMoney(colEst)+'</td>'
+    html+='<td style="'+tdStyle+';font-weight:700">'+_purchMoney(colEst)+'</td>'
       +'<td style="'+tdStyle+';font-weight:700">'+(grid?_purchMoney(colRlz):'—')+'</td>';
   });
-  html+='<td id="purch-grand-est" style="'+tdStyle+';font-weight:700">'+_purchMoney(grandEst)+'</td>'
+  html+='<td style="'+tdStyle+';font-weight:700">'+_purchMoney(grandEst)+'</td>'
     +'<td style="'+tdStyle+';font-weight:700">'+(grid?_purchMoney(grandRlz):'—')+'</td></tr>';
   html+='</tbody></table></div>';
   html='<div style="margin-bottom:10px;font-size:12px;color:var(--muted)">'+esc(_purchWeekLabel(week))+' <a href="#" onclick="editPurchaseWeekDates(\''+weekId+'\');return false" style="color:var(--brand);margin-left:6px">edit dates</a></div>'+html;

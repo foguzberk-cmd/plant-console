@@ -661,6 +661,7 @@ const PERMISSIONS=[
   {id:'viewReportsChecks',     label:'— Checks',             desc:'View the Checks report',group:'Reports'},
   {id:'viewReportsInventory',  label:'— Inventory Statement',desc:'View the Inventory Statement report',group:'Reports'},
   {id:'viewReportsAudit',      label:'— Audit',              desc:'View the Audit report',group:'Reports'},
+  {id:'viewReportsPurchasing', label:'— Purchasing',         desc:'View the Weekly Purchase report',group:'Reports'},
   {id:'cfSchedulePayment',label:'Schedule payments',   desc:'Pick a date to schedule a vendor bill for payment, full or partial',group:'Reports'},
   {id:'cfApprovePayment', label:'Approve payments',    desc:'Approve a scheduled payment as ready to pay',group:'Reports'},
   {id:'cfInitiatePayment',label:'Initiate payments',   desc:'Mark an approved payment as sent by wire or check',group:'Reports'},
@@ -681,7 +682,7 @@ const PERMISSIONS=[
 // shipped, since none of them have ever had these specific keys set
 // before. They only actually restrict someone once an admin explicitly
 // unchecks the box for them in the new Permissions Matrix.
-const VIEW_PERMS_DEFAULT_ALLOW=['viewItems','viewTxns','viewScaleLog','viewReports','viewReportsCollection','viewReportsCashflow','viewReportsChecks','viewReportsInventory','viewReportsAudit','viewSettings','viewLegal'];
+const VIEW_PERMS_DEFAULT_ALLOW=['viewItems','viewTxns','viewScaleLog','viewReports','viewReportsCollection','viewReportsCashflow','viewReportsChecks','viewReportsInventory','viewReportsAudit','viewReportsPurchasing','viewSettings','viewLegal'];
 function hasViewPerm(permId){
   if(!currentUser) return false;
   if(currentUser.role==='admin') return true;
@@ -781,6 +782,13 @@ if(Array.isArray(customerAllowed)){
   DEPARTMENTS.forEach(function(d){ customerAllowed[d]=_oldFlatCustomerAllowed.slice(); });
 }
 let labelTemplates=JSON.parse(localStorage.getItem('pc_labeltemplates')||'{}'); // { [department]: {companyName, addressText, estNumber, keepText, safeHandlingText} } — per-department label text overrides
+// Weekly Purchase Report (Reports → Purchasing). purchaseConfig holds the
+// admin-defined rows/columns/weeks; purchaseEstimates holds the manually
+// typed EST. numbers. REALIZED numbers are never stored locally long-term —
+// they're computed fresh from QuickBooks Bills (see runPurchaseReport()) and
+// only cached server-side per week via /api/purchase-report-cache.
+let purchaseConfig=JSON.parse(localStorage.getItem('pc_purchase_config')||'{"products":{},"vendorCols":{},"weeks":{}}');
+let purchaseEstimates=JSON.parse(localStorage.getItem('pc_purchase_estimates')||'{}'); // { [weekId]: { [productId]: { [vendorColId]: amount } } }
 // Baseline label content — what prints if a department has no override set yet.
 var DEFAULT_LABEL_TEMPLATE={
   companyName:'LEADER MEAT PACKING',
@@ -874,6 +882,18 @@ function saveCustomers(){
 }
 function saveCustomerAllowed(){safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed));pushToServer();}
 function saveLabelTemplates(){safeSetLocal('pc_labeltemplates',JSON.stringify(labelTemplates));pushToServer();}
+function savePurchaseConfig(){
+  safeSetLocal('pc_purchase_config',JSON.stringify(purchaseConfig));
+  _recentlySavedPurchaseConfig=purchaseConfig;
+  setTimeout(function(){ if(_recentlySavedPurchaseConfig===purchaseConfig) _recentlySavedPurchaseConfig=null; },8000);
+  pushToServer();
+}
+function savePurchaseEstimatesWeek(weekId){
+  safeSetLocal('pc_purchase_estimates',JSON.stringify(purchaseEstimates));
+  _recentlySavedPurchaseEstimateWeeks[weekId]=purchaseEstimates[weekId];
+  setTimeout(function(){ delete _recentlySavedPurchaseEstimateWeeks[weekId]; },8000);
+  pushToServer();
+}
 let users=JSON.parse(localStorage.getItem('pc_users')||'[]');
 let savedReports=JSON.parse(localStorage.getItem('pc_savedreports')||'[]'); // frozen report snapshots for later viewing/printing
 let currentUser=null;
@@ -1083,6 +1103,8 @@ var _deletedDrivers={};
 // response would otherwise silently revert the change back to whatever it
 // was before, right on the device that just made it.
 var _recentlySavedLabelTemplates={};
+var _recentlySavedPurchaseConfig=null; // grace-window guard: this device's own just-saved purchaseConfig, or null
+var _recentlySavedPurchaseEstimateWeeks={}; // { [weekId]: purchaseEstimates[weekId] } for weeks saved very recently by this device
 // Same idea, for per-department product allow-lists (labelAllowed).
 var _recentlySavedLabelAllowed={};
 // Same idea, for per-department customer allow-lists.
@@ -1342,6 +1364,31 @@ async function pullFromServer(){
         else vendors.push(_recentlySavedVendors[id]);
       });
     }
+    if(data.purchaseConfig && typeof data.purchaseConfig==='object'){
+      var pcHasContent=(data.purchaseConfig.products&&Object.keys(data.purchaseConfig.products).length)
+        || (data.purchaseConfig.vendorCols&&Object.keys(data.purchaseConfig.vendorCols).length)
+        || (data.purchaseConfig.weeks&&Object.keys(data.purchaseConfig.weeks).length);
+      if(pcHasContent){
+        purchaseConfig={
+          products: data.purchaseConfig.products||{},
+          vendorCols: data.purchaseConfig.vendorCols||{},
+          weeks: data.purchaseConfig.weeks||{}
+        };
+        // Same timing-gap protection as labelTemplates: a pull already in
+        // flight before this device's own config save began has no way to
+        // know about it, and its stale response would otherwise silently
+        // revert that save right back.
+        if(_recentlySavedPurchaseConfig){
+          purchaseConfig=_recentlySavedPurchaseConfig;
+        }
+      }
+    }
+    if(data.purchaseEstimates && typeof data.purchaseEstimates==='object' && Object.keys(data.purchaseEstimates).length){
+      purchaseEstimates=data.purchaseEstimates;
+      Object.keys(_recentlySavedPurchaseEstimateWeeks).forEach(function(weekId){
+        purchaseEstimates[weekId]=_recentlySavedPurchaseEstimateWeeks[weekId];
+      });
+    }
     if(data.vendorDepartments && typeof data.vendorDepartments==='object' && !Array.isArray(data.vendorDepartments) && Object.keys(data.vendorDepartments).length){
       _vendorDepartments=data.vendorDepartments;
       Object.keys(_recentlySavedVendorDepartments).forEach(function(k){
@@ -1373,6 +1420,8 @@ async function pullFromServer(){
     safeSetLocal('pc_savedreports',JSON.stringify(savedReports));
     safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed));
     safeSetLocal('pc_labeltemplates',JSON.stringify(labelTemplates));
+    safeSetLocal('pc_purchase_config',JSON.stringify(purchaseConfig));
+    safeSetLocal('pc_purchase_estimates',JSON.stringify(purchaseEstimates));
     safeSetLocal('pc_customers',JSON.stringify(customers));
     safeSetLocal('pc_vendors',JSON.stringify(vendors));
     safeSetLocal('pc_vendor_departments',JSON.stringify(_vendorDepartments));
@@ -1400,7 +1449,8 @@ async function pullFromServer(){
       (Array.isArray(data.customers)&&!data.customers.length&&customers.length) ||
       (data.customerAllowed && typeof data.customerAllowed==='object' && !Array.isArray(data.customerAllowed) && !Object.keys(data.customerAllowed).length && Object.keys(customerAllowed).length) ||
       (Array.isArray(data.vendors)&&!data.vendors.length&&vendors.length) ||
-      (data.vendorDepartments && typeof data.vendorDepartments==='object' && !Array.isArray(data.vendorDepartments) && !Object.keys(data.vendorDepartments).length && Object.keys(_vendorDepartments).length);
+      (data.vendorDepartments && typeof data.vendorDepartments==='object' && !Array.isArray(data.vendorDepartments) && !Object.keys(data.vendorDepartments).length && Object.keys(_vendorDepartments).length) ||
+      (data.purchaseConfig && typeof data.purchaseConfig==='object' && !Object.keys(data.purchaseConfig.products||{}).length && Object.keys(purchaseConfig.products||{}).length);
     if(serverIsMissingData){
       _lastPushedSnapshot=''; // force the next push through even if nothing local changed
       pushToServer();
@@ -1544,7 +1594,7 @@ async function _pushToServerImpl(){
     // per-field) would let the older snapshot silently win — quietly
     // reverting the approval a few seconds after it was made. Keeping this
     // field out of this payload entirely removes that race outright.
-    var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,orders:orders,drivers:drivers,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates,vendors:vendors,vendorDepartments:_vendorDepartments});
+    var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,orders:orders,drivers:drivers,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates,vendors:vendors,vendorDepartments:_vendorDepartments,purchaseConfig:purchaseConfig,purchaseEstimates:purchaseEstimates});
     if(snapshot===_lastPushedSnapshot){ _lastPushFailureDetail=''; return true; } // this exact state was already confirmed sent
     // 60s (not the 10s default) — every push sends the FULL app state,
     // including every transaction, and that array has grown into the tens
@@ -4044,6 +4094,7 @@ function renderReports(){
       +(hasViewPerm('viewReportsChecks')?'<button id="rpt-tab-checks" class="btn" onclick="switchReportTab(\'checks\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Checks</button>':'')
       +(hasViewPerm('viewReportsInventory')?'<button id="rpt-tab-inventory" class="btn" onclick="switchReportTab(\'inventory\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Inventory Statement</button>':'')
       +(hasViewPerm('viewReportsAudit')?'<button id="rpt-tab-audit" class="btn" onclick="switchReportTab(\'audit\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Audit</button>':'')
+      +(hasViewPerm('viewReportsPurchasing')?'<button id="rpt-tab-purchasing" class="btn" onclick="switchReportTab(\'purchasing\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Purchasing</button>':'')
     +'</div>'
   +'</div>'
   +'<span id="rpt-header-anchor" style="display:none"></span>'
@@ -4130,6 +4181,20 @@ function renderReports(){
     +'<div id="rpt-panel-audit" style="display:none">'
       +'<div id="audit-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)"></div>'
       +'<div id="audit-body"></div>'
+    +'</div>'
+    +'<div id="rpt-panel-purchasing" style="display:none">'
+      +'<div id="purch-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
+        +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:14px">'
+          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Week</label>'
+          +'<select id="purch-week" onchange="onPurchaseWeekChange()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);min-width:170px"></select></div>'
+          +'<button class="btn" onclick="addPurchaseWeek()" title="Add the next week (defaults to 7 days after the current one)">+ Add week</button>'
+          +'<button class="btn btn-primary" onclick="runPurchaseReport()">Pull from QuickBooks</button>'
+          +'<button class="btn" style="margin-left:auto" onclick="togglePurchaseMappingPanel()">⚙ Manage products &amp; vendors</button>'
+        +'</div>'
+        +'<div id="purch-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
+        +'<div id="purch-mapping-panel" style="display:none;margin-bottom:20px"></div>'
+      +'</div>'
+      +'<div id="purch-body"></div>'
     +'</div>';
   buildBalanceReport();
   buildCashFlowTableShell();
@@ -4141,8 +4206,8 @@ function renderReports(){
   // why), so it needs to actually run once here even though nothing was
   // clicked, or the sticky header would only work after manually clicking
   // away and back to this tab.
-  var _defaultReportTab=['collection','cashflow','checks','inventory','audit'].find(function(t){
-    return hasViewPerm('viewReports'+({collection:'Collection',cashflow:'Cashflow',checks:'Checks',inventory:'Inventory',audit:'Audit'}[t]));
+  var _defaultReportTab=['collection','cashflow','checks','inventory','audit','purchasing'].find(function(t){
+    return hasViewPerm('viewReports'+({collection:'Collection',cashflow:'Cashflow',checks:'Checks',inventory:'Inventory',audit:'Audit',purchasing:'Purchasing'}[t]));
   })||'collection';
   switchReportTab(_defaultReportTab);
   // Same fix as Cash Flow's shell: navigating away from Reports and back
@@ -4515,7 +4580,8 @@ function _reportToolbarIdForTab(tab){
     collection:'coll-toolbar-sticky',
     cashflow:'cf-toolbar-sticky',
     checks:'chk-toolbar-sticky',
-    audit:'audit-toolbar-sticky'
+    audit:'audit-toolbar-sticky',
+    purchasing:'purch-toolbar-sticky'
   }[tab]||null;
 }
 function _reportPanelIdForTab(tab){
@@ -4524,7 +4590,8 @@ function _reportPanelIdForTab(tab){
     collection:'rpt-panel-collection',
     cashflow:'rpt-panel-cashflow',
     checks:'rpt-panel-checks',
-    audit:'rpt-panel-audit'
+    audit:'rpt-panel-audit',
+    purchasing:'rpt-panel-purchasing'
   }[tab]||null;
 }
 var _reportActiveTab='collection';
@@ -9073,7 +9140,7 @@ function undepositCheck(paymentId){
 window.undepositCheck=undepositCheck;
 
 function switchReportTab(tab){
-  var _tabPermMap={collection:'viewReportsCollection',cashflow:'viewReportsCashflow',checks:'viewReportsChecks',inventory:'viewReportsInventory',audit:'viewReportsAudit'};
+  var _tabPermMap={collection:'viewReportsCollection',cashflow:'viewReportsCashflow',checks:'viewReportsChecks',inventory:'viewReportsInventory',audit:'viewReportsAudit',purchasing:'viewReportsPurchasing'};
   if(_tabPermMap[tab] && !hasViewPerm(_tabPermMap[tab])){
     var fallback=Object.keys(_tabPermMap).find(function(t){ return hasViewPerm(_tabPermMap[t]); });
     if(!fallback) return; // no report tab at all is visible to this user
@@ -9084,18 +9151,22 @@ function switchReportTab(tab){
   var cfPanel=document.getElementById('rpt-panel-cashflow');
   var chkPanel=document.getElementById('rpt-panel-checks');
   var auditPanel=document.getElementById('rpt-panel-audit');
+  var purchPanel=document.getElementById('rpt-panel-purchasing');
   var invTab=document.getElementById('rpt-tab-inventory');
   var collTab=document.getElementById('rpt-tab-collection');
   var cfTab=document.getElementById('rpt-tab-cashflow');
   var chkTab=document.getElementById('rpt-tab-checks');
   var auditTab=document.getElementById('rpt-tab-audit');
-  if(!invPanel||!collPanel||!cfPanel||!chkPanel||!auditPanel) return;
+  var purchTab=document.getElementById('rpt-tab-purchasing');
+  if(!invPanel||!collPanel||!cfPanel||!chkPanel||!auditPanel||!purchPanel) return;
   invPanel.style.display=(tab==='inventory')?'block':'none';
   collPanel.style.display=(tab==='collection')?'block':'none';
   cfPanel.style.display=(tab==='cashflow')?'block':'none';
   chkPanel.style.display=(tab==='checks')?'block':'none';
   auditPanel.style.display=(tab==='audit')?'block':'none';
-  [[invTab,'inventory'],[collTab,'collection'],[cfTab,'cashflow'],[chkTab,'checks'],[auditTab,'audit']].forEach(function(pair){
+  purchPanel.style.display=(tab==='purchasing')?'block':'none';
+  if(tab==='purchasing') initPurchaseReportTab();
+  [[invTab,'inventory'],[collTab,'collection'],[cfTab,'cashflow'],[chkTab,'checks'],[auditTab,'audit'],[purchTab,'purchasing']].forEach(function(pair){
     var active=(tab===pair[1]);
     pair[0].style.background=active?'#fff':'var(--bg)';
     pair[0].style.fontWeight=active?'700':'400';
@@ -9175,6 +9246,455 @@ function switchReportTab(tab){
   }
   if(tab==='audit' && typeof renderAuditReport==='function' && _collPayments) renderAuditReport();
 }
+
+// ===== Purchasing report (Reports → Purchasing) =====
+// Mirrors the weekly purchase-estimate sheet: rows are products, columns are
+// grouped by vendor with an EST. (typed in, manually) and REALIZED (pulled
+// live from QuickBooks Bills) sub-column each, plus Total Est./Total Rlz.
+// Matching is by formal QuickBooks Item — each product row is mapped to one
+// or more Item ids, each vendor column to one QuickBooks Vendor id (see
+// togglePurchaseMappingPanel()). REALIZED is never stored as source-of-truth
+// locally; it's recomputed from a fresh Bill pull each time and only cached
+// server-side (per week) so other terminals don't have to repeat the pull.
+function _purchMoney(n){ return '$'+Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+var _purchRealized=null; // {weekId, computedAt, grid:{productId:{vendorColId:amount}}, uncategorized, unmappedVendorTotal, billCount}
+
+function _purchSortedWeekIds(){
+  return Object.keys(purchaseConfig.weeks||{}).sort(function(a,b){
+    return ((purchaseConfig.weeks[a]||{}).startDate||'').localeCompare((purchaseConfig.weeks[b]||{}).startDate||'');
+  });
+}
+function _purchWeekLabel(w){
+  if(!w||!w.startDate||!w.endDate) return (w&&w.label)||'Week';
+  return fmtDateUS(w.startDate)+'–'+fmtDateUS(w.endDate);
+}
+function _purchAddDays(dateStr,n){
+  var d=new Date(dateStr+'T00:00:00');
+  d.setDate(d.getDate()+n);
+  return d.toISOString().slice(0,10);
+}
+// Called once when the Purchasing tab is opened.
+function initPurchaseReportTab(){
+  var weekIds=_purchSortedWeekIds();
+  if(!weekIds.length){
+    // First-ever visit to this tab on this install — seed one starter week
+    // so the tab isn't empty. Defaults to the current week (Mon–Sat);
+    // fully editable afterward via "+ Add week".
+    var today=new Date();
+    var day=today.getDay(); // 0=Sun..6=Sat
+    var mondayOffset=(day===0)?-6:(1-day);
+    var monday=new Date(today); monday.setDate(today.getDate()+mondayOffset);
+    var startDate=monday.toISOString().slice(0,10);
+    var endDate=_purchAddDays(startDate,5); // Mon–Sat
+    var wid='week_'+Date.now().toString(36);
+    purchaseConfig.weeks[wid]={startDate:startDate,endDate:endDate};
+    savePurchaseConfig();
+    weekIds=[wid];
+  }
+  var sel=document.getElementById('purch-week');
+  if(sel){
+    sel.innerHTML=weekIds.map(function(wid){
+      var w=purchaseConfig.weeks[wid];
+      return '<option value="'+esc(wid)+'">'+esc(_purchWeekLabel(w))+'</option>';
+    }).join('');
+    if(!_purchActiveWeekId || !purchaseConfig.weeks[_purchActiveWeekId]) _purchActiveWeekId=weekIds[weekIds.length-1];
+    sel.value=_purchActiveWeekId;
+  }
+  renderPurchaseReport();
+  var statusEl=document.getElementById('purch-status');
+  if(statusEl) statusEl.textContent='Checking for a recent shared pull…';
+  _purchTryLoadSharedCache(_purchActiveWeekId).then(function(loaded){
+    if(loaded){
+      renderPurchaseReport();
+      if(statusEl){ statusEl.textContent='Showing '+_purchRealized.billCount+' bill(s) pulled '+new Date(_purchRealized.computedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})+'.'; statusEl.style.color='#1a7a3c'; }
+    } else if(statusEl && statusEl.textContent==='Checking for a recent shared pull…'){
+      statusEl.textContent='No shared pull for this week yet — click "Pull from QuickBooks."';
+    }
+  });
+}
+var _purchActiveWeekId=null;
+function onPurchaseWeekChange(){
+  var sel=document.getElementById('purch-week');
+  if(!sel) return;
+  _purchActiveWeekId=sel.value;
+  _purchRealized=null;
+  renderPurchaseReport();
+  var statusEl=document.getElementById('purch-status');
+  if(statusEl) statusEl.textContent='Checking for a recent shared pull…';
+  _purchTryLoadSharedCache(_purchActiveWeekId).then(function(loaded){
+    if(loaded){
+      renderPurchaseReport();
+      if(statusEl){ statusEl.textContent='Showing '+_purchRealized.billCount+' bill(s) pulled '+new Date(_purchRealized.computedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})+'.'; statusEl.style.color='#1a7a3c'; }
+    } else if(statusEl){
+      statusEl.textContent='No shared pull for this week yet — click "Pull from QuickBooks."';
+    }
+  });
+}
+window.onPurchaseWeekChange=onPurchaseWeekChange;
+function addPurchaseWeek(){
+  var weekIds=_purchSortedWeekIds();
+  var last=weekIds.length?purchaseConfig.weeks[weekIds[weekIds.length-1]]:null;
+  var startDate=last?_purchAddDays(last.endDate,2):new Date().toISOString().slice(0,10); // skip Sunday, same cadence as the existing sheet
+  var endDate=_purchAddDays(startDate,5);
+  var wid='week_'+Date.now().toString(36);
+  purchaseConfig.weeks[wid]={startDate:startDate,endDate:endDate};
+  savePurchaseConfig();
+  _purchActiveWeekId=wid;
+  _purchRealized=null;
+  initPurchaseReportTab();
+}
+window.addPurchaseWeek=addPurchaseWeek;
+function editPurchaseWeekDates(wid){
+  var w=purchaseConfig.weeks[wid];
+  if(!w) return;
+  var newStart=prompt('Start date (YYYY-MM-DD):',w.startDate);
+  if(newStart===null) return;
+  var newEnd=prompt('End date (YYYY-MM-DD):',w.endDate);
+  if(newEnd===null) return;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(newStart)||!/^\d{4}-\d{2}-\d{2}$/.test(newEnd)){ alert('Please use YYYY-MM-DD for both dates.'); return; }
+  purchaseConfig.weeks[wid]={startDate:newStart,endDate:newEnd};
+  savePurchaseConfig();
+  _purchRealized=null;
+  initPurchaseReportTab();
+}
+window.editPurchaseWeekDates=editPurchaseWeekDates;
+
+// ---- Shared cache (per-week, so multiple weeks' results can coexist) ----
+function _purchBuildSharedCacheBundle(weekId){
+  var weeks={}; weeks[weekId]=_purchRealized;
+  return {weeks:weeks};
+}
+async function _purchPushSharedCache(weekId){
+  try{
+    await fetch('/api/purchase-report-cache',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(_purchBuildSharedCacheBundle(weekId))
+    });
+  }catch(e){ /* best-effort — this device's own view is already correct regardless of whether the share succeeds */ }
+}
+async function _purchTryLoadSharedCache(weekId){
+  try{
+    var res=await fetch('/api/purchase-report-cache',{cache:'no-store'});
+    if(!res.ok) return false;
+    var bundle=await res.json();
+    if(!bundle||!bundle.weeks||!bundle.weeks[weekId]) return false;
+    _purchRealized=bundle.weeks[weekId];
+    return true;
+  }catch(e){ return false; }
+}
+
+// ---- Pull from QuickBooks + match to product/vendor mapping ----
+async function runPurchaseReport(){
+  var statusEl=document.getElementById('purch-status');
+  var weekId=_purchActiveWeekId;
+  var week=weekId&&purchaseConfig.weeks[weekId];
+  if(!week){ if(statusEl){ statusEl.textContent='Pick or add a week first.'; statusEl.style.color='#c0392b'; } return; }
+  var products=Object.keys(purchaseConfig.products||{});
+  var vendorCols=Object.keys(purchaseConfig.vendorCols||{});
+  if(!products.length||!vendorCols.length){
+    if(statusEl){ statusEl.textContent='Add at least one product and one vendor column first — click "Manage products & vendors."'; statusEl.style.color='#c0392b'; }
+    togglePurchaseMappingPanel(true);
+    return;
+  }
+  var base=window.location.origin;
+  var bills=[];
+  var startPos=1;
+  var pageSize=100;
+  var safety=0;
+  if(statusEl){ statusEl.textContent='Fetching bills from QuickBooks…'; statusEl.style.color=''; }
+  while(true){
+    safety++;
+    if(safety>500) break; // hard cap (~50k rows) — a single week should never come close
+    var ctrl=new AbortController();
+    var timer=setTimeout(function(){ctrl.abort();},60000);
+    var pageRows=null;
+    try{
+      var r=await fetch(base+'/api/qb/documents?entity=Bill&startposition='+startPos+'&from='+encodeURIComponent(week.startDate)+'&to='+encodeURIComponent(week.endDate),{signal:ctrl.signal});
+      clearTimeout(timer);
+      if(r.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
+      var jd=await r.json();
+      if(jd&&jd.error){ if(statusEl){ statusEl.textContent='Error: '+jd.error; statusEl.style.color='#c0392b'; } return; }
+      pageRows=(jd&&jd.Bill)?jd.Bill:[];
+    }catch(e){
+      clearTimeout(timer);
+      if(statusEl){ statusEl.textContent='Network error while fetching bills — try again.'; statusEl.style.color='#c0392b'; }
+      return;
+    }
+    bills=bills.concat(pageRows);
+    if(statusEl) statusEl.textContent='Fetched '+bills.length+' bill(s) so far…';
+    if(pageRows.length<pageSize) break;
+    startPos+=pageSize;
+  }
+
+  // Build lookup: QB Item id -> product id (a formal Item should only ever
+  // be mapped to one product row; if mapped to more than one, the first
+  // match found wins and is left as-is rather than double counted).
+  var itemIdToProduct={};
+  products.forEach(function(pid){
+    (purchaseConfig.products[pid].itemIds||[]).forEach(function(iid){
+      if(!itemIdToProduct[iid]) itemIdToProduct[iid]=pid;
+    });
+  });
+  var vendorQbIdToCol={};
+  vendorCols.forEach(function(vcid){
+    var qv=purchaseConfig.vendorCols[vcid].qbVendorId;
+    if(qv) vendorQbIdToCol[qv]=vcid;
+  });
+
+  var grid={}; // productId -> vendorColId -> amount
+  products.forEach(function(pid){ grid[pid]={}; vendorCols.forEach(function(vcid){ grid[pid][vcid]=0; }); });
+  var uncategorized=0; // bills from a MAPPED vendor, lines that matched no product
+  var unmappedVendorTotal=0; // bills from a vendor with no matching column at all
+
+  bills.forEach(function(bill){
+    var vqid=bill.VendorRef&&bill.VendorRef.value;
+    var vcid=vqid?vendorQbIdToCol[vqid]:null;
+    var lines=Array.isArray(bill.Line)?bill.Line:[];
+    if(!vcid){
+      lines.forEach(function(ln){ unmappedVendorTotal+=Number(ln.Amount||0); });
+      return;
+    }
+    lines.forEach(function(ln){
+      var amt=Number(ln.Amount||0);
+      var itemId=ln.ItemBasedExpenseLineDetail&&ln.ItemBasedExpenseLineDetail.ItemRef&&ln.ItemBasedExpenseLineDetail.ItemRef.value;
+      var pid=itemId?itemIdToProduct[itemId]:null;
+      if(pid){ grid[pid][vcid]=(grid[pid][vcid]||0)+amt; }
+      else { uncategorized+=amt; }
+    });
+  });
+
+  _purchRealized={
+    weekId:weekId,
+    computedAt:new Date().toISOString(),
+    grid:grid,
+    uncategorized:uncategorized,
+    unmappedVendorTotal:unmappedVendorTotal,
+    billCount:bills.length
+  };
+  if(statusEl){
+    statusEl.textContent=bills.length+' bill(s) pulled for '+_purchWeekLabel(week)+'.'
+      +(uncategorized?' '+_purchMoney(uncategorized)+' in mapped-vendor lines didn\'t match any product — check the mapping.':'')
+      +(unmappedVendorTotal?' '+_purchMoney(unmappedVendorTotal)+' from vendor(s) not mapped to a column.':'');
+    statusEl.style.color=(uncategorized||unmappedVendorTotal)?'#8a6d1a':'#1a7a3c';
+  }
+  renderPurchaseReport();
+  _purchPushSharedCache(weekId);
+}
+window.runPurchaseReport=runPurchaseReport;
+
+function purchGetEst(weekId,productId,vendorColId){
+  return ((purchaseEstimates[weekId]||{})[productId]||{})[vendorColId]||0;
+}
+function purchSetEst(weekId,productId,vendorColId,value){
+  if(!purchaseEstimates[weekId]) purchaseEstimates[weekId]={};
+  if(!purchaseEstimates[weekId][productId]) purchaseEstimates[weekId][productId]={};
+  purchaseEstimates[weekId][productId][vendorColId]=value;
+  savePurchaseEstimatesWeek(weekId);
+}
+function onPurchEstInput(el,productId,vendorColId){
+  var v=parseFloat(el.value);
+  if(isNaN(v)) v=0;
+  purchSetEst(_purchActiveWeekId,productId,vendorColId,v);
+  renderPurchaseTotalsRow();
+}
+window.onPurchEstInput=onPurchEstInput;
+
+function renderPurchaseTotalsRow(){
+  var weekId=_purchActiveWeekId;
+  var vendorCols=Object.keys(purchaseConfig.vendorCols||{});
+  vendorCols.forEach(function(vcid){
+    var estSum=0;
+    Object.keys(purchaseConfig.products||{}).forEach(function(pid){ estSum+=purchGetEst(weekId,pid,vcid); });
+    var el=document.getElementById('purch-tot-est-'+vcid);
+    if(el) el.textContent=_purchMoney(estSum);
+  });
+  var grandEst=0, grandRlz=0;
+  Object.keys(purchaseConfig.products||{}).forEach(function(pid){
+    vendorCols.forEach(function(vcid){ grandEst+=purchGetEst(weekId,pid,vcid); });
+  });
+  var grandEstEl=document.getElementById('purch-grand-est');
+  if(grandEstEl) grandEstEl.textContent=_purchMoney(grandEst);
+}
+
+function renderPurchaseReport(){
+  var body=document.getElementById('purch-body');
+  if(!body) return;
+  var weekId=_purchActiveWeekId;
+  var products=Object.keys(purchaseConfig.products||{});
+  var vendorCols=Object.keys(purchaseConfig.vendorCols||{});
+  if(!products.length||!vendorCols.length){
+    body.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No products or vendor columns set up yet. Click "Manage products &amp; vendors" above to add them.</div>';
+    return;
+  }
+  var grid=(_purchRealized&&_purchRealized.weekId===weekId)?_purchRealized.grid:null;
+  var thStyle='padding:8px 10px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:center;border-bottom:1px solid var(--line)';
+  var tdStyle='padding:6px 8px;font-size:12.5px;text-align:right;border-bottom:1px solid var(--line)';
+  var html='<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;min-width:900px">';
+  html+='<thead><tr><th style="'+thStyle+';text-align:left" rowspan="2">Product</th><th style="'+thStyle+'" rowspan="2">Unit price</th>';
+  vendorCols.forEach(function(vcid){
+    var vc=purchaseConfig.vendorCols[vcid];
+    html+='<th style="'+thStyle+'" colspan="2">'+esc(vc.label||'Vendor')+'</th>';
+  });
+  html+='<th style="'+thStyle+'" rowspan="2">Total Est.</th><th style="'+thStyle+'" rowspan="2">Total Rlz.</th></tr><tr>';
+  vendorCols.forEach(function(){
+    html+='<th style="'+thStyle+'">Est.</th><th style="'+thStyle+'">Realized</th>';
+  });
+  html+='</tr></thead><tbody>';
+  products.forEach(function(pid){
+    var p=purchaseConfig.products[pid];
+    var rowTotalEst=0, rowTotalRlz=0;
+    var cellsHtml='';
+    vendorCols.forEach(function(vcid){
+      var est=purchGetEst(weekId,pid,vcid);
+      var rlz=grid?(grid[pid][vcid]||0):null;
+      rowTotalEst+=est;
+      if(rlz!=null) rowTotalRlz+=rlz;
+      cellsHtml+='<td style="'+tdStyle+'"><input type="number" step="0.01" value="'+est+'" oninput="onPurchEstInput(this,\''+pid+'\',\''+vcid+'\')" style="width:78px;text-align:right;border:1px solid var(--line);border-radius:6px;padding:3px 5px;font-size:12.5px"/></td>';
+      cellsHtml+='<td style="'+tdStyle+'">'+(rlz!=null?_purchMoney(rlz):'<span style="color:var(--muted)">—</span>')+'</td>';
+    });
+    html+='<tr><td style="'+tdStyle+';text-align:left;font-weight:600">'+esc(p.name)+'</td>'
+      +'<td style="'+tdStyle+'">'+(p.unitPrice?_purchMoney(p.unitPrice):'—')+'</td>'
+      +cellsHtml
+      +'<td style="'+tdStyle+';font-weight:700">'+_purchMoney(rowTotalEst)+'</td>'
+      +'<td style="'+tdStyle+';font-weight:700">'+(grid?_purchMoney(rowTotalRlz):'<span style="color:var(--muted)">—</span>')+'</td></tr>';
+  });
+  // Totals row
+  html+='<tr style="background:var(--panel)"><td style="'+tdStyle+';text-align:left;font-weight:700">TOTAL</td><td style="'+tdStyle+'"></td>';
+  var grandEst=0, grandRlz=0;
+  vendorCols.forEach(function(vcid){
+    var colEst=0, colRlz=0;
+    products.forEach(function(pid){
+      colEst+=purchGetEst(weekId,pid,vcid);
+      if(grid) colRlz+=(grid[pid][vcid]||0);
+    });
+    grandEst+=colEst; grandRlz+=colRlz;
+    html+='<td id="purch-tot-est-'+vcid+'" style="'+tdStyle+';font-weight:700">'+_purchMoney(colEst)+'</td>'
+      +'<td style="'+tdStyle+';font-weight:700">'+(grid?_purchMoney(colRlz):'—')+'</td>';
+  });
+  html+='<td id="purch-grand-est" style="'+tdStyle+';font-weight:700">'+_purchMoney(grandEst)+'</td>'
+    +'<td style="'+tdStyle+';font-weight:700">'+(grid?_purchMoney(grandRlz):'—')+'</td></tr>';
+  html+='</tbody></table></div>';
+  if(_purchRealized&&_purchRealized.weekId===weekId&&(_purchRealized.uncategorized||_purchRealized.unmappedVendorTotal)){
+    html+='<div style="margin-top:14px;padding:12px 14px;background:#fdf6e3;border:1px solid #e8d9a0;border-radius:9px;font-size:12.5px;color:#7a5c10">';
+    if(_purchRealized.uncategorized) html+='<div>'+_purchMoney(_purchRealized.uncategorized)+' in bill lines from mapped vendors didn\'t match any product\'s QuickBooks Item — check the product mapping.</div>';
+    if(_purchRealized.unmappedVendorTotal) html+='<div>'+_purchMoney(_purchRealized.unmappedVendorTotal)+' in bills from vendors not mapped to any column — check the vendor mapping, or that vendor may just not belong on this sheet.</div>';
+    html+='</div>';
+  }
+  var week=purchaseConfig.weeks[weekId];
+  if(week){
+    html='<div style="margin-bottom:10px;font-size:12px;color:var(--muted)">'+esc(_purchWeekLabel(week))+' <a href="#" onclick="editPurchaseWeekDates(\''+weekId+'\');return false" style="color:var(--brand);margin-left:6px">edit dates</a></div>'+html;
+  }
+  body.innerHTML=html;
+}
+
+// ---- Mapping panel: products (→ QB Items) and vendor columns (→ QB Vendors) ----
+function togglePurchaseMappingPanel(forceOpen){
+  var panel=document.getElementById('purch-mapping-panel');
+  if(!panel) return;
+  var willShow=forceOpen||panel.style.display==='none';
+  panel.style.display=willShow?'block':'none';
+  if(willShow) renderPurchaseMappingPanel();
+}
+window.togglePurchaseMappingPanel=togglePurchaseMappingPanel;
+
+function renderPurchaseMappingPanel(){
+  var panel=document.getElementById('purch-mapping-panel');
+  if(!panel) return;
+  var qbItems=items.filter(function(it){ return it.qbId && it.type!=='Category'; }).sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
+  var qbVendors=vendors.filter(function(v){ return v.qbId; }).sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
+  var wrap='padding:16px;background:var(--panel);border:1px solid var(--line);border-radius:12px';
+  var lbl='display:block;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:10px';
+
+  var html='<div style="'+wrap+'">';
+  html+='<div style="'+lbl+'">Vendor columns</div>';
+  html+='<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:18px">';
+  Object.keys(purchaseConfig.vendorCols||{}).forEach(function(vcid){
+    var vc=purchaseConfig.vendorCols[vcid];
+    html+='<div style="display:flex;gap:8px;align-items:center">'
+      +'<input type="text" value="'+esc(vc.label||'')+'" placeholder="Column label" oninput="purchUpdateVendorCol(\''+vcid+'\',\'label\',this.value)" style="flex:1;max-width:180px;padding:7px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:13px"/>'
+      +'<select onchange="purchUpdateVendorCol(\''+vcid+'\',\'qbVendorId\',this.value)" style="flex:1;padding:7px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:13px">'
+      +'<option value="">— pick QuickBooks vendor —</option>'
+      +qbVendors.map(function(v){ return '<option value="'+esc(v.qbId)+'"'+(v.qbId===vc.qbVendorId?' selected':'')+'>'+esc(v.name)+'</option>'; }).join('')
+      +'</select>'
+      +'<button class="btn btn-sm" onclick="purchRemoveVendorCol(\''+vcid+'\')" title="Remove this column">✕</button>'
+      +'</div>';
+  });
+  html+='</div><button class="btn btn-sm" onclick="purchAddVendorCol()">+ Add vendor column</button>';
+
+  html+='<div style="'+lbl+';margin-top:22px">Products</div>';
+  html+='<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">';
+  Object.keys(purchaseConfig.products||{}).forEach(function(pid){
+    var p=purchaseConfig.products[pid];
+    var selectedItemIds=p.itemIds||[];
+    html+='<div style="display:flex;gap:8px;align-items:center">'
+      +'<input type="text" value="'+esc(p.name||'')+'" placeholder="Product name" oninput="purchUpdateProduct(\''+pid+'\',\'name\',this.value)" style="width:180px;padding:7px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:13px"/>'
+      +'<input type="number" step="0.01" value="'+(p.unitPrice||'')+'" placeholder="Unit $" oninput="purchUpdateProduct(\''+pid+'\',\'unitPrice\',parseFloat(this.value)||0)" style="width:80px;padding:7px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:13px"/>'
+      +'<select multiple onchange="purchUpdateProductItems(\''+pid+'\',this)" style="flex:1;min-height:34px;padding:4px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px">'
+      +qbItems.map(function(it){ return '<option value="'+esc(it.qbId)+'"'+(selectedItemIds.indexOf(it.qbId)>=0?' selected':'')+'>'+esc(it.name)+'</option>'; }).join('')
+      +'</select>'
+      +'<button class="btn btn-sm" onclick="purchRemoveProduct(\''+pid+'\')" title="Remove this row">✕</button>'
+      +'</div>';
+  });
+  html+='</div><button class="btn btn-sm" onclick="purchAddProduct()">+ Add product</button>';
+  html+='<div style="margin-top:10px;font-size:11.5px;color:var(--muted)">Hold Ctrl/Cmd to select more than one QuickBooks Item for a product (e.g. if the same cut is billed under two different item names).</div>';
+  html+='</div>';
+  panel.innerHTML=html;
+}
+function purchAddVendorCol(){
+  var vcid='vcol_'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+  purchaseConfig.vendorCols[vcid]={label:'',qbVendorId:''};
+  savePurchaseConfig();
+  renderPurchaseMappingPanel();
+  renderPurchaseReport();
+}
+window.purchAddVendorCol=purchAddVendorCol;
+function purchRemoveVendorCol(vcid){
+  if(!confirm('Remove this vendor column? Its EST. numbers for every week will no longer be shown (they stay saved).')) return;
+  delete purchaseConfig.vendorCols[vcid];
+  savePurchaseConfig();
+  renderPurchaseMappingPanel();
+  renderPurchaseReport();
+}
+window.purchRemoveVendorCol=purchRemoveVendorCol;
+function purchUpdateVendorCol(vcid,field,value){
+  if(!purchaseConfig.vendorCols[vcid]) return;
+  purchaseConfig.vendorCols[vcid][field]=value;
+  savePurchaseConfig();
+  renderPurchaseReport();
+}
+window.purchUpdateVendorCol=purchUpdateVendorCol;
+function purchAddProduct(){
+  var pid='prod_'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+  purchaseConfig.products[pid]={name:'',unitPrice:0,itemIds:[]};
+  savePurchaseConfig();
+  renderPurchaseMappingPanel();
+  renderPurchaseReport();
+}
+window.purchAddProduct=purchAddProduct;
+function purchRemoveProduct(pid){
+  if(!confirm('Remove this product row? Its EST. numbers for every week will no longer be shown (they stay saved).')) return;
+  delete purchaseConfig.products[pid];
+  savePurchaseConfig();
+  renderPurchaseMappingPanel();
+  renderPurchaseReport();
+}
+window.purchRemoveProduct=purchRemoveProduct;
+function purchUpdateProduct(pid,field,value){
+  if(!purchaseConfig.products[pid]) return;
+  purchaseConfig.products[pid][field]=value;
+  savePurchaseConfig();
+  renderPurchaseReport();
+}
+window.purchUpdateProduct=purchUpdateProduct;
+function purchUpdateProductItems(pid,selectEl){
+  if(!purchaseConfig.products[pid]) return;
+  var ids=Array.prototype.slice.call(selectEl.selectedOptions).map(function(o){return o.value;});
+  purchaseConfig.products[pid].itemIds=ids;
+  savePurchaseConfig();
+}
+window.purchUpdateProductItems=purchUpdateProductItems;
+
 
 // Freezes the currently rendered report (exact numbers, breakdowns, and
 // formatting as displayed) into a saved snapshot, so it can be viewed or

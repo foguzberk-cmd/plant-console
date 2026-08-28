@@ -9287,6 +9287,24 @@ function _purchProductRows(){
   return items.filter(function(it){ return it.qbId && it.type!=='Category' && it.type!=='Service' && it.active!==false; })
     .sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
 }
+// Same category grouping as Settings → Items and the label printer —
+// groupName comes from the Item's QuickBooks parent category
+// (FullyQualifiedName's first segment), so this mirrors QuickBooks' own
+// item hierarchy rather than inventing a different grouping.
+function _purchProductGroups(){
+  var groups={};
+  _purchProductRows().forEach(function(it){
+    var g=it.groupName||'Ungrouped';
+    if(!groups[g]) groups[g]=[];
+    groups[g].push(it);
+  });
+  var groupNames=Object.keys(groups).sort(function(a,b){
+    if(a==='Ungrouped') return 1;
+    if(b==='Ungrouped') return -1;
+    return a.localeCompare(b);
+  });
+  return groupNames.map(function(g){ return {name:g,items:groups[g]}; });
+}
 function initPurchaseReportTab(){
   var weekIds=_purchSortedWeekIds();
   if(!weekIds.length){
@@ -9665,18 +9683,25 @@ function renderPurchaseReport(){
       +'<td style="'+tdStyle+';font-weight:700">'+(hasEst?_purchMoney(rowTotalEst):'<span style="color:var(--muted)">—</span>')+'</td>'
       +'<td style="'+tdStyle+';font-weight:700">'+(grid?_purchMoney(rowTotalRlz):'<span style="color:var(--muted)">—</span>')+'</td></tr>';
   }
-  products.forEach(function(it){
+  var totalCols=4+vendorIds.length*2;
+  var groupHeaderStyle='padding:10px 8px 6px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:left;border-bottom:1px solid var(--line);background:var(--panel)';
+  _purchProductGroups().forEach(function(grp){
     // Skip products with zero activity — no realized purchase this week
     // AND no average purchase over the 13-week lookback, from any vendor.
     // Nothing to hide, no data lost: still fully visible again the moment
-    // there's an actual bill for it.
-    if(grid){
-      var hasActivity=vendorIds.some(function(vid){
+    // there's an actual bill for it. If that empties out a whole group,
+    // skip the group header too rather than showing an empty category.
+    var visibleItems=grp.items.filter(function(it){
+      if(!grid) return true;
+      return vendorIds.some(function(vid){
         return ((grid[it.qbId]&&grid[it.qbId][vid])||0)!==0 || ((estGrid&&estGrid[it.qbId]&&estGrid[it.qbId][vid])||0)!==0;
       });
-      if(!hasActivity) return;
-    }
-    html+=renderRow(it.qbId,it.name,it.cost,true);
+    });
+    if(!visibleItems.length) return;
+    html+='<tr><td colspan="'+totalCols+'" style="'+groupHeaderStyle+'">'+esc(grp.name)+'</td></tr>';
+    visibleItems.forEach(function(it){
+      html+=renderRow(it.qbId,it.name,it.cost,true);
+    });
   });
   // One row per DISTINCT unmatched bill description — not a single lumped
   // "Uncategorized" total — so it's clear exactly what's still unmapped,

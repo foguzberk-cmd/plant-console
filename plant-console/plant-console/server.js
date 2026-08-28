@@ -143,7 +143,18 @@ async function _readSharedDataUnlocked() {
 
 async function _writeSharedDataRawUnlocked(data) {
   await ensureDataFile();
-  await fs.promises.writeFile(DATA_FILE, JSON.stringify(data, null, 2));
+  // Write atomically: write the full contents to a temp file first, then
+  // rename it over the real data file. A plain writeFile() to DATA_FILE
+  // truncates it before the new bytes are written, so a crash/restart/OOM
+  // kill mid-write (Render can do any of these) can leave a truncated or
+  // corrupt JSON file — the next read would then fail to parse and fall
+  // back to an empty default state in memory. rename() on the same
+  // filesystem is a single atomic operation: the file on disk is always
+  // either the old complete version or the new complete version, never a
+  // partial one.
+  const tmpFile = DATA_FILE + '.tmp-' + process.pid + '-' + Date.now();
+  await fs.promises.writeFile(tmpFile, JSON.stringify(data, null, 2));
+  await fs.promises.rename(tmpFile, DATA_FILE);
 }
 
 async function _writeSharedDataUnlocked(data) {
@@ -1594,7 +1605,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (url === '/api/data' && req.method === 'POST') {
-    if (!requireAuth(req, res)) return;
+    const _dataPostSession = requireAuth(req, res);
+    if (!_dataPostSession) return;
     try {
       const bodyStr = await readRequestBody(req);
       const incoming = JSON.parse(bodyStr || '{}');
@@ -1609,6 +1621,28 @@ const server = http.createServer(async (req, res) => {
               if (existing) return Object.assign({}, u, { pinHash: existing.pinHash, pin: existing.pin });
             }
             return u;
+          });
+        }
+        // SECURITY: this is a general sync endpoint reachable by any logged-in
+        // user (not just admins), because staff devices need to push their own
+        // routine local edits here. Without this guard, a non-admin session
+        // could hand-craft a `users` payload that promotes itself (or anyone)
+        // to role:'admin' with full perms — there's no other check standing
+        // between this merge and the permissions matrix. Only an admin
+        // session may change a user's role or perms through this route; for
+        // anyone else, every incoming user record's role/perms are forced
+        // back to whatever the server currently has on file (or safe
+        // defaults for a brand-new user id the server doesn't know yet).
+        // Admin-driven role/perm changes should go through this same route
+        // from an admin-logged-in device, which is unaffected by this guard.
+        if (Array.isArray(incoming.users) && _dataPostSession.role !== 'admin') {
+          incoming.users = incoming.users.map(u => {
+            if (!u) return u;
+            const existing = current.users.find(x => x.id === u.id);
+            return Object.assign({}, u, {
+              role: existing ? existing.role : 'staff',
+              perms: existing ? (existing.perms || {}) : {}
+            });
           });
         }
         // scaleLogs uses UNION semantics server-side, not a blind replace.

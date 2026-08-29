@@ -3340,22 +3340,36 @@ function _ordRecencyStyle(daysAgo){
   if(daysAgo<=90) return {color:'#4a9c4a',label:Math.round(daysAgo/7)+' weeks ago'};
   return {color:'#3a7ca5',label:Math.round(daysAgo/30)+' months ago'};
 }
-function _ordCloseAllProductDropdowns(exceptBox){
-  // Defensive cleanup: no matter how a stale dropdown ended up still in the
-  // DOM (a removed line whose cleanup didn't fire in time, a leftover from
-  // a previous render, etc.), only the box for the field currently being
-  // typed in should ever be visible. Closing every other one before
-  // opening this one guarantees at most one is ever on screen at once.
-  document.querySelectorAll('.ord-prod-suggest').forEach(function(b){
-    if(b!==exceptBox){ b.style.display='none'; b.innerHTML=''; }
-  });
+// A single shared dropdown, created once and appended directly to <body> —
+// not nested inside any order-line row at all. This is what actually fixes
+// the "part of it renders underneath the page" problem: as long as it lived
+// inside the row's own DOM subtree, it was still subject to that subtree's
+// ancestors, and switching to position:fixed on its own wasn't enough to
+// escape every possible stacking context above it (a transform, filter, or
+// z-index anywhere in that ancestor chain can still trap a fixed-position
+// descendant). A direct child of <body> has no such ancestors to worry
+// about. Reused for every product field; _ordActiveProdInput tracks which
+// one it's currently open for.
+var _ordActiveProdInput=null;
+function _ordGetSuggestBox(){
+  var box=document.getElementById('_ordSharedProdSuggest');
+  if(!box){
+    box=document.createElement('div');
+    box.id='_ordSharedProdSuggest';
+    box.style.cssText='display:none;position:fixed;z-index:999999;background:#fff;border:1.5px solid var(--line);border-radius:8px;max-height:420px;overflow-y:auto;box-shadow:0 6px 18px rgba(0,0,0,.25)';
+    document.body.appendChild(box);
+  }
+  return box;
+}
+function _ordCloseAllProductDropdowns(){
+  var box=document.getElementById('_ordSharedProdSuggest');
+  if(box){ box.style.display='none'; box.innerHTML=''; }
+  _ordActiveProdInput=null;
 }
 function _ordProdInput(inputEl){
   if(!_ordItemLastPurchaseMap) _ordComputeLastPurchaseMap();
-  var wrap=inputEl.parentElement;
-  var box=wrap&&wrap.querySelector('.ord-prod-suggest');
-  if(!box) return;
-  _ordCloseAllProductDropdowns(box);
+  var box=_ordGetSuggestBox();
+  _ordActiveProdInput=inputEl;
   var q=(inputEl.value||'').trim().toLowerCase();
   if(!q){ box.style.display='none'; box.innerHTML=''; return; } // don't show anything until they've actually typed something
   var today=new Date().toISOString().slice(0,10);
@@ -3387,13 +3401,9 @@ function _ordProdInput(inputEl){
   }).join('');
   box.style.display='block';
   box.scrollTop=0;
-  // Fixed positioning (viewport-relative, not anchored to any ancestor) so
-  // nothing else on the page can ever end up stacked on top of part of it —
-  // that's what was happening before: a chunk of this box was rendering
-  // underneath a later section of the page instead of above it. Position is
-  // computed fresh every time it opens, directly from the input's own
-  // current on-screen location, so it tracks correctly however far down
-  // the page this particular order-line row happens to sit.
+  // Position is computed fresh every time, straight from the input's own
+  // current on-screen location — correct no matter how far down the page
+  // this particular order-line row happens to sit.
   var r=inputEl.getBoundingClientRect();
   box.style.left=r.left+'px';
   box.style.top=(r.bottom+2)+'px';
@@ -3405,12 +3415,12 @@ function _ordProdInput(inputEl){
 }
 window._ordProdInput=_ordProdInput;
 function _ordSelectProduct(rowEl){
-  var wrap=rowEl.closest('.ord-prod-wrap');
-  var input=wrap&&wrap.querySelector('.ord-line-product');
+  var input=_ordActiveProdInput;
   if(input){ input.value=rowEl.getAttribute('data-name'); }
   var box=rowEl.parentElement;
   box.style.display='none';
   box.innerHTML='';
+  _ordActiveProdInput=null;
   if(input) input.focus();
 }
 window._ordSelectProduct=_ordSelectProduct;
@@ -3419,15 +3429,12 @@ function _ordProdBlur(inputEl){
   // preventDefault) before this blur does, so a click-to-select still
   // works — this just closes the dropdown for every other way of leaving
   // the field (Tab, clicking elsewhere).
-  var wrap=inputEl.parentElement;
-  var box=wrap&&wrap.querySelector('.ord-prod-suggest');
-  if(box){ box.style.display='none'; }
+  if(_ordActiveProdInput===inputEl) _ordCloseAllProductDropdowns();
 }
 window._ordProdBlur=_ordProdBlur;
 function _ordProdKeydown(e,inputEl){
-  var wrap=inputEl.parentElement;
-  var box=wrap&&wrap.querySelector('.ord-prod-suggest');
-  if(!box||box.style.display==='none') return;
+  var box=document.getElementById('_ordSharedProdSuggest');
+  if(!box||box.style.display==='none'||_ordActiveProdInput!==inputEl) return;
   var rows=Array.prototype.slice.call(box.querySelectorAll('.ord-prod-suggest-row'));
   if(!rows.length) return;
   var curIdx=rows.findIndex(function(r){ return r.classList.contains('ord-prod-hl'); });
@@ -3469,10 +3476,7 @@ function _orderLineRowHtml(line,isFirst,o){
           +'<input type="text" class="ord-f-customer" list="ordersCustomerList" value="'+esc(o.customer||'')+'" placeholder="Customer" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
           +_driverSelectHtml(o.driver||'')
         : '<span></span><span></span><span></span>')
-    +'<div class="ord-prod-wrap" style="position:relative">'
-      +'<input type="text" class="ord-line-product" autocomplete="off" value="'+esc(line.product||'')+'" placeholder="Product" oninput="_ordProdInput(this)" onfocus="_ordProdInput(this)" onkeydown="_ordProdKeydown(event,this)" onblur="_ordProdBlur(this)" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
-      +'<div class="ord-prod-suggest" style="display:none;position:fixed;z-index:99999;background:#fff;border:1.5px solid var(--line);border-radius:8px;max-height:420px;overflow-y:auto;box-shadow:0 6px 18px rgba(0,0,0,.25)"></div>'
-    +'</div>'
+    +'<input type="text" class="ord-line-product" autocomplete="off" value="'+esc(line.product||'')+'" placeholder="Product" oninput="_ordProdInput(this)" onfocus="_ordProdInput(this)" onkeydown="_ordProdKeydown(event,this)" onblur="_ordProdBlur(this)" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
     +'<input type="text" class="ord-line-description" value="'+esc(line.description||'')+'" placeholder="Description" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
     +'<input type="text" class="ord-line-quantity" value="'+esc(line.quantity||'')+'" placeholder="Qty" onkeydown="if(event.key===\'Enter\'){event.preventDefault();_orderLineEnterAddsRow(this);}" style="padding:7px 6px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
     +'<input type="text" class="ord-line-finalcount" value="'+esc(line.finalCount||'')+'" placeholder="Count" title="Final physical count for this product" style="padding:7px 6px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;font-family:var(--mono);background:var(--bg);color:var(--ink)"/>'

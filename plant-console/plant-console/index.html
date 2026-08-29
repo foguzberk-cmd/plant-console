@@ -2879,7 +2879,12 @@ window.printOrders=printOrders;
 // route already typed in — followed by each customer's order sheet, same
 // as printOrders. One combined print job instead of two separate ones,
 // since the driver needs both together every single route.
-function printDriverOrders(orderIds,driverName,dateStr){
+// formOnly=true prints JUST the one-page cold-chain/deliveries form, with
+// none of the per-order product sheets after it — used from Shipped
+// Orders, where the picking/product sheets are no longer relevant (the
+// order already shipped) and all that's still needed is the same form for
+// tracking cash/check collected and any returns on the way back.
+function printDriverOrders(orderIds,driverName,dateStr,formOnly){
   var idSet={}; orderIds.forEach(function(id){ idSet[id]=true; });
   var toPrint=orders.filter(function(o){ return idSet[o.id]; });
   if(!toPrint.length) return;
@@ -2897,7 +2902,7 @@ function printDriverOrders(orderIds,driverName,dateStr){
     +'<tr><td></td><td></td><td></td><td></td><td></td></tr>'
     +'<tr><td></td><td></td><td></td><td></td><td></td></tr>';
   var returnRows=Array(5).fill('<tr><td></td><td></td><td></td><td></td></tr>').join('');
-  var formHtml='<div class="coldform" style="page-break-after:always">'
+  var formHtml='<div class="coldform"'+(formOnly?'':' style="page-break-after:always"')+'>'
     +'<div style="text-align:center;font-size:16px;font-weight:700;margin-bottom:14px">Leader Meat Packing Corp.</div>'
     +'<table class="hdrtbl">'
       +'<tr><td class="lbl">Date:</td><td class="val">'+esc(dateDisplay)+'</td><td class="lbl">Name:</td><td class="val">'+esc(driverName||'')+'</td></tr>'
@@ -2931,8 +2936,8 @@ function printDriverOrders(orderIds,driverName,dateStr){
       +'table.formtbl th{background:#f0f0f0}'
     +'</style></head><body>'
     +formHtml
-    +'<h1>'+esc(title)+'</h1><div class="meta">'+toPrint.length+' order'+(toPrint.length!==1?'s':'')+'</div>'
-    +_ordersProductTablesHtml(toPrint)+'</body></html>');
+    +(formOnly?'':('<h1>'+esc(title)+'</h1><div class="meta">'+toPrint.length+' order'+(toPrint.length!==1?'s':'')+'</div>'+_ordersProductTablesHtml(toPrint)))
+    +'</body></html>');
   w.document.close();
   w.focus();
   setTimeout(function(){ w.print(); },250);
@@ -3209,6 +3214,7 @@ function _renderShippedOrdersSummary(){
           return '<div style="display:flex;align-items:center;gap:8px;padding:6px 14px 4px 30px;background:var(--cold-soft)">'
               +'<svg onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="cursor:pointer;width:11px;height:11px;stroke:var(--cold);flex-shrink:0'+(_ordersIsOpen(driverOpenKey,q)?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
               +'<span onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" style="cursor:pointer;flex:1;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold)">'+esc(dName)+' ('+driverOrders.length+')</span>'
+              +'<button title="Print this driver\'s route form only (deliveries/payments + returns — no product sheets, since these already shipped)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\',\''+esc(dk)+'\',true)" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:var(--cold);font-size:13px">🖨</button>'
             +'</div>'
             +'<div id="'+driverRowId+'" style="display:'+(_ordersIsOpen(driverOpenKey,q)?'block':'none')+'">'
             +driverOrders.map(function(o,oi){

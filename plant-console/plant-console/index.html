@@ -9735,8 +9735,12 @@ function renderPurchaseReport(){
   // row background).
   var vendorBand={};
   vendorIds.forEach(function(vid,vi){ vendorBand[vid]=(vi%2===1); });
+  // Same shade for header AND body cells (not a lighter one for the body)
+  // so the band reads as one continuous stripe for the whole column,
+  // header through the TOTAL row — a lighter body tint made it look like
+  // only the header was shaded and the banding stopped there.
   function vendorThBg(vid){ return vendorBand[vid]?';background:var(--line)':''; }
-  function vendorTdBg(vid){ return vendorBand[vid]?';background:var(--bg)':''; }
+  function vendorTdBg(vid){ return vendorBand[vid]?';background:var(--line)':''; }
   // First-cell (Product name) styles per row type — each needs its own
   // opaque background matching that row's normal background, or the rows
   // scrolling past underneath would show through while this cell is

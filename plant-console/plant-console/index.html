@@ -9703,10 +9703,16 @@ function renderPurchaseReport(){
     var tb=vendorIds.reduce(function(s,vid){ return s+((grid[b]&&grid[b][vid])||0); },0);
     return tb-ta;
   });
-  var thStyle='padding:8px 10px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:center;border-bottom:1px solid var(--line)';
+  var thStyle='padding:8px 10px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:center;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5';
+  var thCornerStyle=thStyle+';left:0;z-index:6'; // the "Product" header cell: sticky on BOTH axes (it's the corner), so it needs to sit above every other sticky cell in both directions
   var tdStyle='padding:6px 8px;font-size:12.5px;text-align:right;border-bottom:1px solid var(--line)';
-  var html='<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;min-width:900px">';
-  html+='<thead><tr><th style="'+thStyle+';text-align:left" rowspan="2">Product</th><th style="'+thStyle+'" rowspan="2">Unit price</th>';
+  // First-cell (Product name) styles per row type — each needs its own
+  // opaque background matching that row's normal background, or the rows
+  // scrolling past underneath would show through while this cell is
+  // pinned during horizontal scroll.
+  var stickyColPlain=tdStyle+';text-align:left;font-weight:600;position:sticky;left:0;z-index:1;background:#fff';
+  var html='<div style="overflow:auto;max-height:65vh"><table style="border-collapse:collapse;width:100%;min-width:900px">';
+  html+='<thead><tr><th style="'+thCornerStyle+';text-align:left" rowspan="2">Product</th><th style="'+thStyle+'" rowspan="2">Unit price</th>';
   vendorIds.forEach(function(vid){
     html+='<th style="'+thStyle+'" colspan="2">'+esc(_purchVendorLabel(vid))+'</th>';
   });
@@ -9726,7 +9732,7 @@ function renderPurchaseReport(){
       cellsHtml+='<td style="'+tdStyle+'">'+(est!=null?_purchMoney(est):'<span style="color:var(--muted)">—</span>')+'</td>';
       cellsHtml+='<td style="'+tdStyle+'">'+(rlz!=null?_purchMoney(rlz):'<span style="color:var(--muted)">—</span>')+'</td>';
     });
-    return '<tr><td style="'+tdStyle+';text-align:left;font-weight:600">'+esc(label)+'</td>'
+    return '<tr><td style="'+stickyColPlain+'">'+esc(label)+'</td>'
       +'<td style="'+tdStyle+'">'+(unitPrice?_purchMoney(unitPrice):'—')+'</td>'
       +cellsHtml
       +'<td style="'+tdStyle+';font-weight:700">'+(hasEst?_purchMoney(rowTotalEst):'<span style="color:var(--muted)">—</span>')+'</td>'
@@ -9734,6 +9740,8 @@ function renderPurchaseReport(){
   }
   var totalCols=4+vendorIds.length*2;
   var groupHeadTdStyle='padding:8px 8px;font-size:12.5px;text-align:right;border-bottom:1px solid var(--line);background:var(--panel);font-weight:700';
+  var stickyColGroup=groupHeadTdStyle+';position:sticky;left:0;z-index:1';
+  var stickyColTotal=tdStyle+';text-align:left;font-weight:700;background:var(--panel);position:sticky;left:0;z-index:1';
   var allGroups=_purchProductGroups();
   var singleCategory=_purchActiveCategory!=='ALL';
   var groupsToShow=singleCategory?allGroups.filter(function(g){ return g.name===_purchActiveCategory; }):allGroups;
@@ -9777,7 +9785,7 @@ function renderPurchaseReport(){
         +'<td style="'+groupHeadTdStyle+'">'+(grid?_purchMoney(colRlz):'—')+'</td>';
     });
     html+='<tr onclick="togglePurchGroup(\''+esc(grp.name).replace(/'/g,"\\'")+'\')" style="cursor:pointer">'
-      +'<td style="'+groupHeadTdStyle+';text-align:left;text-transform:uppercase;letter-spacing:.05em;font-size:11.5px">'
+      +'<td style="'+stickyColGroup+';text-align:left;text-transform:uppercase;letter-spacing:.05em;font-size:11.5px">'
         +'<span style="display:inline-flex;align-items:center;gap:6px">'
           +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;stroke:var(--muted);flex-shrink:0;transform:rotate('+(collapsed?'0':'90')+'deg);transition:transform .15s"><polyline points="9 6 15 12 9 18"/></svg>'
           +esc(grp.name)+'</span></td>'
@@ -9800,7 +9808,7 @@ function renderPurchaseReport(){
     html+=renderRow(rk,_purchRowLabel(rk),null,false);
   });
   // Totals row
-  html+='<tr style="background:var(--panel)"><td style="'+tdStyle+';text-align:left;font-weight:700">TOTAL</td><td style="'+tdStyle+'"></td>';
+  html+='<tr style="background:var(--panel)"><td style="'+stickyColTotal+'">TOTAL</td><td style="'+tdStyle+'"></td>';
   var grandEst=0, grandRlz=0;
   vendorIds.forEach(function(vid){
     var colEst=0, colRlz=0;

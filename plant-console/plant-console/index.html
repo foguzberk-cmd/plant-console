@@ -4097,10 +4097,10 @@ function renderReports(){
     +'<div id="rpt-tabs-bar" style="display:flex;gap:8px;margin:6px 0 18px;border-bottom:1px solid var(--line);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none">'
       +(hasViewPerm('viewReportsCollection')?'<button id="rpt-tab-collection" class="btn" onclick="switchReportTab(\'collection\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:#fff;font-weight:700;color:var(--brand);border-top:3px solid var(--brand);border-left:1.5px solid var(--line);border-right:1.5px solid var(--line)">Customer Payments</button>':'')
       +(hasViewPerm('viewReportsCashflow')?'<button id="rpt-tab-cashflow" class="btn" onclick="switchReportTab(\'cashflow\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Scheduled Payments</button>':'')
+      +(hasViewPerm('viewReportsPurchasing')?'<button id="rpt-tab-purchasing" class="btn" onclick="switchReportTab(\'purchasing\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Purchasing</button>':'')
       +(hasViewPerm('viewReportsChecks')?'<button id="rpt-tab-checks" class="btn" onclick="switchReportTab(\'checks\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Checks</button>':'')
       +(hasViewPerm('viewReportsInventory')?'<button id="rpt-tab-inventory" class="btn" onclick="switchReportTab(\'inventory\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Inventory Statement</button>':'')
       +(hasViewPerm('viewReportsAudit')?'<button id="rpt-tab-audit" class="btn" onclick="switchReportTab(\'audit\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Audit</button>':'')
-      +(hasViewPerm('viewReportsPurchasing')?'<button id="rpt-tab-purchasing" class="btn" onclick="switchReportTab(\'purchasing\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Purchasing</button>':'')
     +'</div>'
   +'</div>'
   +'<span id="rpt-header-anchor" style="display:none"></span>'
@@ -4211,7 +4211,7 @@ function renderReports(){
   // why), so it needs to actually run once here even though nothing was
   // clicked, or the sticky header would only work after manually clicking
   // away and back to this tab.
-  var _defaultReportTab=['collection','cashflow','checks','inventory','audit','purchasing'].find(function(t){
+  var _defaultReportTab=['collection','cashflow','purchasing','checks','inventory','audit'].find(function(t){
     return hasViewPerm('viewReports'+({collection:'Collection',cashflow:'Cashflow',checks:'Checks',inventory:'Inventory',audit:'Audit',purchasing:'Purchasing'}[t]));
   })||'collection';
   switchReportTab(_defaultReportTab);

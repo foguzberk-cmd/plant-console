@@ -1820,6 +1820,11 @@ async function doSync(incremental){
   showSyncProgress(98,'Step 3 of 3 — recalculating quantities…');
   recalcQuantities();
   showSyncProgress(100,'Sync complete');
+  // New bills may have just come in — the order form's "last purchased"
+  // product ordering/coloring is cached (rescanning every transaction on
+  // every keystroke would be wasteful), so drop that cache here rather
+  // than leave it stale until a page reload.
+  _ordItemLastPurchaseMap=null;
 
   // Record the sync time so the next incremental knows where to resume
   safeSetLocal('pc_lastSync', syncStartedAt);
@@ -3299,10 +3304,123 @@ async function saveShippedOrderSplit(orderId){
 window.saveShippedOrderSplit=saveShippedOrderSplit;
 function _orderDatalists(){
   var customerNames=Array.from(new Set(customers.map(function(c){return c.name;}).filter(Boolean))).sort();
-  var productNames=Array.from(new Set(items.map(function(i){return i.name;}).filter(Boolean))).sort();
-  return '<datalist id="ordersCustomerList">'+customerNames.map(function(n){return '<option value="'+esc(n)+'">';}).join('')+'</datalist>'
-    +'<datalist id="ordersProductList">'+productNames.map(function(n){return '<option value="'+esc(n)+'">';}).join('')+'</datalist>';
+  // Product suggestions are no longer a native <datalist> — see
+  // _ordProdInput/_ordRenderProdSuggestions below. A native datalist can't
+  // be sorted by last-purchase-date or color-coded per option (browsers
+  // give zero styling control over datalist options), which is exactly
+  // what's needed for "show me what came in most recently first, and let
+  // me see at a glance how old each one is" — so the product field now
+  // has its own custom-built, JS-driven suggestion dropdown instead.
+  return '<datalist id="ordersCustomerList">'+customerNames.map(function(n){return '<option value="'+esc(n)+'">';}).join('')+'</datalist>';
 }
+// ===== Product suggestions for order lines — sorted by last-purchased
+// date (most recent first), with a color cue for how long ago that was.
+// You operate first-in-first-out on the shelf but LAST-in-FIRST when
+// picking what to key in — the product you most recently received is the
+// one someone's most likely to be typing about right now, so it goes at
+// the top instead of alphabetical order making them hunt for it.
+var _ordItemLastPurchaseMap=null; // itemId -> most recent 'receive' transaction date (yyyy-mm-dd)
+function _ordComputeLastPurchaseMap(){
+  var map={};
+  transactions.forEach(function(t){
+    if(t.type==='receive'&&t.itemId&&t.date){
+      if(!map[t.itemId]||t.date>map[t.itemId]) map[t.itemId]=t.date;
+    }
+  });
+  _ordItemLastPurchaseMap=map;
+}
+// Recency -> color. Hot (recently received) through cool (old stock or
+// never purchased) — a left-border stripe plus a plain-language "X days
+// ago" label, so it doesn't rely on color alone to be understood.
+function _ordRecencyStyle(daysAgo){
+  if(daysAgo==null) return {color:'#9AA0A6',label:'no purchase on file'};
+  if(daysAgo<=3) return {color:'#c0392b',label:daysAgo===0?'received today':(daysAgo===1?'1 day ago':daysAgo+' days ago')};
+  if(daysAgo<=14) return {color:'#e07b1f',label:daysAgo+' days ago'};
+  if(daysAgo<=30) return {color:'#d4a017',label:daysAgo+' days ago'};
+  if(daysAgo<=90) return {color:'#4a9c4a',label:Math.round(daysAgo/7)+' weeks ago'};
+  return {color:'#3a7ca5',label:Math.round(daysAgo/30)+' months ago'};
+}
+function _ordProdInput(inputEl){
+  if(!_ordItemLastPurchaseMap) _ordComputeLastPurchaseMap();
+  var wrap=inputEl.parentElement;
+  var box=wrap&&wrap.querySelector('.ord-prod-suggest');
+  if(!box) return;
+  var q=(inputEl.value||'').trim().toLowerCase();
+  var today=new Date().toISOString().slice(0,10);
+  var todayMs=new Date(today+'T00:00:00').getTime();
+  var candidates=items.filter(function(it){ return it.name && it.active!==false && (!q || it.name.toLowerCase().indexOf(q)>=0); });
+  candidates.forEach(function(it){
+    var d=_ordItemLastPurchaseMap[it.id];
+    it.__lastPurchDate=d||null;
+    it.__daysAgo=d?Math.round((todayMs-new Date(d+'T00:00:00').getTime())/86400000):null;
+  });
+  candidates.sort(function(a,b){
+    if(a.__daysAgo==null&&b.__daysAgo==null) return a.name.localeCompare(b.name);
+    if(a.__daysAgo==null) return 1; // never-purchased items sink to the bottom
+    if(b.__daysAgo==null) return -1;
+    if(a.__daysAgo!==b.__daysAgo) return a.__daysAgo-b.__daysAgo; // fewest days ago (most recent) first
+    return a.name.localeCompare(b.name);
+  });
+  candidates=candidates.slice(0,40); // cap the DOM size — typing narrows this fast anyway
+  if(!candidates.length){ box.style.display='none'; box.innerHTML=''; return; }
+  box.innerHTML=candidates.map(function(it,i){
+    var st=_ordRecencyStyle(it.__daysAgo);
+    return '<div class="ord-prod-suggest-row" data-name="'+esc(it.name).replace(/"/g,'&quot;')+'" data-idx="'+i+'" '
+      +'onmousedown="event.preventDefault();_ordSelectProduct(this)" '
+      +'style="display:flex;align-items:center;gap:8px;padding:7px 10px;cursor:pointer;border-left:4px solid '+st.color+';font-size:12.5px" '
+      +'onmouseenter="this.style.background=\'var(--bg)\'" onmouseleave="if(!this.classList.contains(\'ord-prod-hl\'))this.style.background=\'\'">'
+      +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(it.name)+'</span>'
+      +'<span style="flex-shrink:0;font-family:var(--mono);font-size:10.5px;color:var(--muted)">'+esc(st.label)+'</span>'
+    +'</div>';
+  }).join('');
+  box.style.display='block';
+  box.scrollTop=0;
+}
+window._ordProdInput=_ordProdInput;
+function _ordSelectProduct(rowEl){
+  var wrap=rowEl.closest('.ord-prod-wrap');
+  var input=wrap&&wrap.querySelector('.ord-line-product');
+  if(input){ input.value=rowEl.getAttribute('data-name'); }
+  var box=rowEl.parentElement;
+  box.style.display='none';
+  box.innerHTML='';
+  if(input) input.focus();
+}
+window._ordSelectProduct=_ordSelectProduct;
+function _ordProdBlur(inputEl){
+  // The suggestion row's onmousedown already fires (and calls
+  // preventDefault) before this blur does, so a click-to-select still
+  // works — this just closes the dropdown for every other way of leaving
+  // the field (Tab, clicking elsewhere).
+  var wrap=inputEl.parentElement;
+  var box=wrap&&wrap.querySelector('.ord-prod-suggest');
+  if(box){ box.style.display='none'; }
+}
+window._ordProdBlur=_ordProdBlur;
+function _ordProdKeydown(e,inputEl){
+  var wrap=inputEl.parentElement;
+  var box=wrap&&wrap.querySelector('.ord-prod-suggest');
+  if(!box||box.style.display==='none') return;
+  var rows=Array.prototype.slice.call(box.querySelectorAll('.ord-prod-suggest-row'));
+  if(!rows.length) return;
+  var curIdx=rows.findIndex(function(r){ return r.classList.contains('ord-prod-hl'); });
+  if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+    e.preventDefault();
+    if(curIdx>=0){ rows[curIdx].classList.remove('ord-prod-hl'); rows[curIdx].style.background=''; }
+    var nextIdx=e.key==='ArrowDown'?(curIdx+1)%rows.length:(curIdx-1+rows.length)%rows.length;
+    rows[nextIdx].classList.add('ord-prod-hl');
+    rows[nextIdx].style.background='var(--bg)';
+    rows[nextIdx].scrollIntoView({block:'nearest'});
+  } else if(e.key==='Enter'){
+    if(curIdx>=0){ e.preventDefault(); _ordSelectProduct(rows[curIdx]); }
+    // No row highlighted yet — let Enter behave normally (e.g. submitting
+    // nothing, since this isn't a button) rather than force-picking the
+    // top match the person may not have looked at.
+  } else if(e.key==='Escape'){
+    box.style.display='none';
+  }
+}
+window._ordProdKeydown=_ordProdKeydown;
 function _driverSelectHtml(selected){
   return '<select class="ord-f-driver" onchange="if(this.value===\'__add__\'){ _promptAddDriver(this); }" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)">'
     +'<option value=""'+(!selected?' selected':'')+'>— select driver —</option>'
@@ -3324,7 +3442,10 @@ function _orderLineRowHtml(line,isFirst,o){
           +'<input type="text" class="ord-f-customer" list="ordersCustomerList" value="'+esc(o.customer||'')+'" placeholder="Customer" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
           +_driverSelectHtml(o.driver||'')
         : '<span></span><span></span><span></span>')
-    +'<input type="text" class="ord-line-product" list="ordersProductList" value="'+esc(line.product||'')+'" placeholder="Product" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
+    +'<div class="ord-prod-wrap" style="position:relative">'
+      +'<input type="text" class="ord-line-product" autocomplete="off" value="'+esc(line.product||'')+'" placeholder="Product" oninput="_ordProdInput(this)" onfocus="_ordProdInput(this)" onkeydown="_ordProdKeydown(event,this)" onblur="_ordProdBlur(this)" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
+      +'<div class="ord-prod-suggest" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:40;background:#fff;border:1.5px solid var(--line);border-radius:8px;margin-top:2px;max-height:260px;overflow-y:auto;box-shadow:0 6px 18px rgba(0,0,0,.15)"></div>'
+    +'</div>'
     +'<input type="text" class="ord-line-description" value="'+esc(line.description||'')+'" placeholder="Description" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
     +'<input type="text" class="ord-line-quantity" value="'+esc(line.quantity||'')+'" placeholder="Qty" onkeydown="if(event.key===\'Enter\'){event.preventDefault();_orderLineEnterAddsRow(this);}" style="padding:7px 6px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
     +'<input type="text" class="ord-line-finalcount" value="'+esc(line.finalCount||'')+'" placeholder="Count" title="Final physical count for this product" style="padding:7px 6px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;font-family:var(--mono);background:var(--bg);color:var(--ink)"/>'

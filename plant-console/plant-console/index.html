@@ -9703,29 +9703,30 @@ function renderPurchaseReport(){
   var visibleRowKeys=Object.keys(visibleProductIds).concat(uncatKeys);
   var grid=pulledThisWeek?_purchCombinedGrid():null;
   var estGrid=pulledThisWeek?_purchRealized.estGrid:null;
-  // Checkbox list only lists categories with real activity this week or in
-  // the lookback window — once there's a pull to check against — instead
-  // of every category name that has ever existed in the item catalog, most
-  // of which would never actually show a row here anyway.
+  // Checkbox list only lists categories with a REAL purchase this week —
+  // not just a historical average with nothing actually bought in this
+  // date range — instead of every category name that has ever existed in
+  // the item catalog, most of which would never actually show a row here.
   var groupsForChecks=grid?allGroups.filter(function(g){
     return g.items.some(function(it){
       return vendorIds.some(function(vid){
-        return ((grid[it.qbId]&&grid[it.qbId][vid])||0)!==0 || ((estGrid&&estGrid[it.qbId]&&estGrid[it.qbId][vid])||0)!==0;
+        return ((grid[it.qbId]&&grid[it.qbId][vid])||0)!==0;
       });
     });
   }):allGroups;
-  // Drop any vendor column with zero activity across every currently-
-  // VISIBLE product row (checked-on categories + Uncategorized) — this is
-  // what filters out pure-service vendors (waste hauling, equipment
-  // repair, etc.), since Service-type items never get counted in
-  // grid/estGrid in the first place (see runPurchaseReport). It's also
-  // what makes a vendor disappear when the only category they sold you
-  // gets unchecked: their activity still exists in the data, it's just all
-  // in a hidden category now, so nothing counts toward them here anymore.
+  // Drop any vendor column with zero REALIZED purchases this week across
+  // every currently-VISIBLE product row (checked-on categories +
+  // Uncategorized) — "activity" here means an actual purchase in the
+  // selected date range, not just a nonzero 13-week average. A vendor with
+  // a real average but nothing bought THIS week (e.g. Tim Baumert with a
+  // historical average but no order in this date range) is exactly what
+  // this is meant to drop — the average still displays on any row that
+  // stays visible for some other reason, it just doesn't keep a vendor
+  // (or a product row, or a whole category) visible on its own anymore.
   if(grid){
     vendorIds=vendorIds.filter(function(vid){
       return visibleRowKeys.some(function(rk){
-        return ((grid[rk]&&grid[rk][vid])||0)!==0 || ((estGrid&&estGrid[rk]&&estGrid[rk][vid])||0)!==0;
+        return ((grid[rk]&&grid[rk][vid])||0)!==0;
       });
     });
   }
@@ -9813,15 +9814,16 @@ function renderPurchaseReport(){
   // groupsToShow entirely, rows and all.
   var groupsToShow=visibleGroups;
   groupsToShow.forEach(function(grp,gi){
-    // Skip products with zero activity — no realized purchase this week
-    // AND no average purchase over the 13-week lookback, from any vendor.
-    // Nothing to hide, no data lost: still fully visible again the moment
-    // there's an actual bill for it. If that empties out a whole group,
-    // skip the group header too rather than showing an empty category.
+    // Skip products with no REALIZED purchase this week from any vendor —
+    // a nonzero 13-week average alone no longer keeps a row visible (same
+    // reasoning as the vendor filter above). Nothing to hide, no data
+    // lost: still fully visible again the moment there's an actual bill
+    // for it. If that empties out a whole group, skip the group header
+    // too rather than showing an empty category.
     var visibleItems=grp.items.filter(function(it){
       if(!grid) return true;
       return vendorIds.some(function(vid){
-        return ((grid[it.qbId]&&grid[it.qbId][vid])||0)!==0 || ((estGrid&&estGrid[it.qbId]&&estGrid[it.qbId][vid])||0)!==0;
+        return ((grid[it.qbId]&&grid[it.qbId][vid])||0)!==0;
       });
     });
     if(!visibleItems.length) return;

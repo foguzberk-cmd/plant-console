@@ -9686,6 +9686,25 @@ function renderPurchaseReport(){
   var rowKeys=products.map(function(it){ return it.qbId; }).concat(uncatKeys);
   var grid=pulledThisWeek?_purchCombinedGrid():null;
   var estGrid=pulledThisWeek?_purchRealized.estGrid:null;
+  // Drop any vendor column with zero activity across every product row —
+  // this is what actually filters out pure-service vendors (waste hauling,
+  // equipment repair, etc.): since Service-type items never get counted in
+  // grid/estGrid in the first place (see runPurchaseReport), a vendor whose
+  // bills are ALL services ends up with nothing but zeros here and gets
+  // hidden. A vendor that sells both products and services still shows,
+  // with only their product $ counted — which is correct, not a bug.
+  if(grid){
+    vendorIds=vendorIds.filter(function(vid){
+      return rowKeys.some(function(rk){
+        return ((grid[rk]&&grid[rk][vid])||0)!==0 || ((estGrid&&estGrid[rk]&&estGrid[rk][vid])||0)!==0;
+      });
+    });
+  }
+  if(!vendorIds.length){
+    body.innerHTML='<div style="margin-bottom:10px;font-size:12px;color:var(--muted)">'+headerLabel+' <a href="#" onclick="editPurchaseWeekDates(\''+weekId+'\');return false" style="color:var(--brand);margin-left:6px">edit dates</a></div>'
+      +'<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No product/merchandise purchases found for this week or the trailing 13 weeks — every vendor on the pulled bills was service-only or had no activity.</div>';
+    return;
+  }
   // Order columns by realized total (busiest vendor first) when we have a
   // pull to sort by; otherwise (before any pull yet) alphabetical by name.
   vendorIds.sort(function(a,b){

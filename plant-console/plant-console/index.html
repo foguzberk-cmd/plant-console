@@ -3340,11 +3340,22 @@ function _ordRecencyStyle(daysAgo){
   if(daysAgo<=90) return {color:'#4a9c4a',label:Math.round(daysAgo/7)+' weeks ago'};
   return {color:'#3a7ca5',label:Math.round(daysAgo/30)+' months ago'};
 }
+function _ordCloseAllProductDropdowns(exceptBox){
+  // Defensive cleanup: no matter how a stale dropdown ended up still in the
+  // DOM (a removed line whose cleanup didn't fire in time, a leftover from
+  // a previous render, etc.), only the box for the field currently being
+  // typed in should ever be visible. Closing every other one before
+  // opening this one guarantees at most one is ever on screen at once.
+  document.querySelectorAll('.ord-prod-suggest').forEach(function(b){
+    if(b!==exceptBox){ b.style.display='none'; b.innerHTML=''; }
+  });
+}
 function _ordProdInput(inputEl){
   if(!_ordItemLastPurchaseMap) _ordComputeLastPurchaseMap();
   var wrap=inputEl.parentElement;
   var box=wrap&&wrap.querySelector('.ord-prod-suggest');
   if(!box) return;
+  _ordCloseAllProductDropdowns(box);
   var q=(inputEl.value||'').trim().toLowerCase();
   if(!q){ box.style.display='none'; box.innerHTML=''; return; } // don't show anything until they've actually typed something
   var today=new Date().toISOString().slice(0,10);
@@ -3495,6 +3506,7 @@ function _removeOrderLine(btn){
   var container=lineEl.parentElement;
   var allLines=Array.prototype.slice.call(container.querySelectorAll('.ord-line'));
   if(allLines.length<=1) return; // always keep at least one line
+  _ordCloseAllProductDropdowns(); // safety net — don't let this row's open dropdown linger past its own removal
   var wasFirst=allLines[0]===lineEl;
   if(!wasFirst){ lineEl.remove(); return; }
   // Carry the order-level fields over to the next line before removing

@@ -3346,9 +3346,10 @@ function _ordProdInput(inputEl){
   var box=wrap&&wrap.querySelector('.ord-prod-suggest');
   if(!box) return;
   var q=(inputEl.value||'').trim().toLowerCase();
+  if(!q){ box.style.display='none'; box.innerHTML=''; return; } // don't show anything until they've actually typed something
   var today=new Date().toISOString().slice(0,10);
   var todayMs=new Date(today+'T00:00:00').getTime();
-  var candidates=items.filter(function(it){ return it.name && it.active!==false && (!q || it.name.toLowerCase().indexOf(q)>=0); });
+  var candidates=items.filter(function(it){ return it.name && it.active!==false && it.name.toLowerCase().indexOf(q)>=0; });
   candidates.forEach(function(it){
     var d=_ordItemLastPurchaseMap[it.id];
     it.__lastPurchDate=d||null;

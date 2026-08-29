@@ -9693,6 +9693,14 @@ function renderPurchaseReport(){
   var products=_purchProductRows();
   var uncatKeys=pulledThisWeek?Object.keys(_purchRealized.uncatByDesc||{}):[];
   var rowKeys=products.map(function(it){ return it.qbId; }).concat(uncatKeys);
+  // Product ids belonging to a currently-CHECKED category, plus
+  // Uncategorized (which isn't tied to any category checkbox, so it's
+  // always counted). Used below so unchecking a category doesn't just hide
+  // its rows — a vendor whose only purchases were in that category now
+  // disappears too, instead of sticking around as an all-zeros column.
+  var visibleProductIds={};
+  visibleGroups.forEach(function(g){ g.items.forEach(function(it){ visibleProductIds[it.qbId]=true; }); });
+  var visibleRowKeys=Object.keys(visibleProductIds).concat(uncatKeys);
   var grid=pulledThisWeek?_purchCombinedGrid():null;
   var estGrid=pulledThisWeek?_purchRealized.estGrid:null;
   // Checkbox list only lists categories with real activity this week or in
@@ -9706,16 +9714,17 @@ function renderPurchaseReport(){
       });
     });
   }):allGroups;
-  // Drop any vendor column with zero activity across every product row —
-  // this is what actually filters out pure-service vendors (waste hauling,
-  // equipment repair, etc.): since Service-type items never get counted in
-  // grid/estGrid in the first place (see runPurchaseReport), a vendor whose
-  // bills are ALL services ends up with nothing but zeros here and gets
-  // hidden. A vendor that sells both products and services still shows,
-  // with only their product $ counted — which is correct, not a bug.
+  // Drop any vendor column with zero activity across every currently-
+  // VISIBLE product row (checked-on categories + Uncategorized) — this is
+  // what filters out pure-service vendors (waste hauling, equipment
+  // repair, etc.), since Service-type items never get counted in
+  // grid/estGrid in the first place (see runPurchaseReport). It's also
+  // what makes a vendor disappear when the only category they sold you
+  // gets unchecked: their activity still exists in the data, it's just all
+  // in a hidden category now, so nothing counts toward them here anymore.
   if(grid){
     vendorIds=vendorIds.filter(function(vid){
-      return rowKeys.some(function(rk){
+      return visibleRowKeys.some(function(rk){
         return ((grid[rk]&&grid[rk][vid])||0)!==0 || ((estGrid&&estGrid[rk]&&estGrid[rk][vid])||0)!==0;
       });
     });
@@ -9723,15 +9732,16 @@ function renderPurchaseReport(){
   if(!vendorIds.length){
     body.innerHTML=_purchCategoryChecksHtml(groupsForChecks)
       +'<div style="margin-bottom:10px;font-size:12px;color:var(--muted)">'+headerLabel+' <a href="#" onclick="editPurchaseWeekDates(\''+weekId+'\');return false" style="color:var(--brand);margin-left:6px">edit dates</a></div>'
-      +'<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No product/merchandise purchases found for this week or the trailing 13 weeks — every vendor on the pulled bills was service-only or had no activity.</div>';
+      +'<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No product/merchandise purchases found for this week or the trailing 13 weeks in the checked categories — every vendor here was service-only, had no activity, or only sold you an unchecked category.</div>';
     return;
   }
-  // Order columns by realized total (busiest vendor first) when we have a
-  // pull to sort by; otherwise (before any pull yet) alphabetical by name.
+  // Order columns by realized total among VISIBLE categories (busiest
+  // vendor first) when we have a pull to sort by; otherwise (before any
+  // pull yet) alphabetical by name.
   vendorIds.sort(function(a,b){
     if(grid){
-      var ta=rowKeys.reduce(function(s,rk){ return s+((grid[rk]&&grid[rk][a])||0); },0);
-      var tb=rowKeys.reduce(function(s,rk){ return s+((grid[rk]&&grid[rk][b])||0); },0);
+      var ta=visibleRowKeys.reduce(function(s,rk){ return s+((grid[rk]&&grid[rk][a])||0); },0);
+      var tb=visibleRowKeys.reduce(function(s,rk){ return s+((grid[rk]&&grid[rk][b])||0); },0);
       if(tb!==ta) return tb-ta;
     }
     return _purchVendorLabel(a).localeCompare(_purchVendorLabel(b));
@@ -9802,8 +9812,6 @@ function renderPurchaseReport(){
   // group header/subtotal — unchecking a category just drops it from
   // groupsToShow entirely, rows and all.
   var groupsToShow=visibleGroups;
-  var visibleProductIdSet={};
-  visibleGroups.forEach(function(g){ g.items.forEach(function(it){ visibleProductIdSet[it.qbId]=true; }); });
   groupsToShow.forEach(function(grp,gi){
     // Skip products with zero activity — no realized purchase this week
     // AND no average purchase over the 13-week lookback, from any vendor.
@@ -9860,10 +9868,9 @@ function renderPurchaseReport(){
   // Totals row
   html+='<tr style="background:var(--panel)"><td style="'+stickyColTotal+'">TOTAL</td><td style="'+tdStyle+'"></td>';
   var grandEst=0, grandRlz=0;
-  var visibleRowKeys=Object.keys(visibleProductIdSet).concat(uncatKeys);
   vendorIds.forEach(function(vid){
     var colEst=0, colRlz=0;
-    products.forEach(function(it){ if(visibleProductIdSet[it.qbId]) colEst+=(estGrid&&estGrid[it.qbId]&&estGrid[it.qbId][vid])||0; });
+    products.forEach(function(it){ if(visibleProductIds[it.qbId]) colEst+=(estGrid&&estGrid[it.qbId]&&estGrid[it.qbId][vid])||0; });
     visibleRowKeys.forEach(function(rk){
       if(grid) colRlz+=((grid[rk]&&grid[rk][vid])||0);
     });

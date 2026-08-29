@@ -9825,6 +9825,20 @@ function renderPurchaseReport(){
   html+='</tbody></table></div>';
   html='<div style="margin-bottom:10px;font-size:12px;color:var(--muted)">'+headerLabel+' <a href="#" onclick="editPurchaseWeekDates(\''+weekId+'\');return false" style="color:var(--brand);margin-left:6px">edit dates</a></div>'+html;
   body.innerHTML=html;
+  // The two header rows both stick with top:0 in the HTML above, which
+  // stacks them exactly on top of each other rather than one below the
+  // other — the vendor-name row (row 1) can wrap onto 2-3 lines for long
+  // names, so its actual height isn't knowable until it's rendered, which
+  // rules out a fixed CSS offset for row 2. Measuring row 1's real height
+  // right after render and pushing row 2 down by that amount is what
+  // actually stacks them instead of row 2 sticking right over row 1's text
+  // (which is what made vendor names look like they'd vanished — they were
+  // just hidden underneath the Avg. Est./Realized row).
+  var theadRows=body.querySelectorAll('thead tr');
+  if(theadRows.length===2){
+    var row1Height=theadRows[0].getBoundingClientRect().height;
+    theadRows[1].querySelectorAll('th').forEach(function(th){ th.style.top=row1Height+'px'; });
+  }
 }
 
 

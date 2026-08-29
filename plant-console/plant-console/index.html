@@ -3387,6 +3387,21 @@ function _ordProdInput(inputEl){
   }).join('');
   box.style.display='block';
   box.scrollTop=0;
+  // Fixed positioning (viewport-relative, not anchored to any ancestor) so
+  // nothing else on the page can ever end up stacked on top of part of it —
+  // that's what was happening before: a chunk of this box was rendering
+  // underneath a later section of the page instead of above it. Position is
+  // computed fresh every time it opens, directly from the input's own
+  // current on-screen location, so it tracks correctly however far down
+  // the page this particular order-line row happens to sit.
+  var r=inputEl.getBoundingClientRect();
+  box.style.left=r.left+'px';
+  box.style.top=(r.bottom+2)+'px';
+  box.style.width=r.width+'px';
+  // Fixed elements don't move when the page scrolls, so a stale box would
+  // otherwise drift away from the field it belongs to — simplest correct
+  // behavior is to just close it the moment scrolling starts.
+  window.addEventListener('scroll',function(){ _ordCloseAllProductDropdowns(); },{capture:true,once:true});
 }
 window._ordProdInput=_ordProdInput;
 function _ordSelectProduct(rowEl){
@@ -3456,7 +3471,7 @@ function _orderLineRowHtml(line,isFirst,o){
         : '<span></span><span></span><span></span>')
     +'<div class="ord-prod-wrap" style="position:relative">'
       +'<input type="text" class="ord-line-product" autocomplete="off" value="'+esc(line.product||'')+'" placeholder="Product" oninput="_ordProdInput(this)" onfocus="_ordProdInput(this)" onkeydown="_ordProdKeydown(event,this)" onblur="_ordProdBlur(this)" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
-      +'<div class="ord-prod-suggest" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:40;background:#fff;border:1.5px solid var(--line);border-radius:8px;margin-top:2px;max-height:420px;overflow-y:auto;box-shadow:0 6px 18px rgba(0,0,0,.15)"></div>'
+      +'<div class="ord-prod-suggest" style="display:none;position:fixed;z-index:99999;background:#fff;border:1.5px solid var(--line);border-radius:8px;max-height:420px;overflow-y:auto;box-shadow:0 6px 18px rgba(0,0,0,.25)"></div>'
     +'</div>'
     +'<input type="text" class="ord-line-description" value="'+esc(line.description||'')+'" placeholder="Description" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
     +'<input type="text" class="ord-line-quantity" value="'+esc(line.quantity||'')+'" placeholder="Qty" onkeydown="if(event.key===\'Enter\'){event.preventDefault();_orderLineEnterAddsRow(this);}" style="padding:7px 6px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'

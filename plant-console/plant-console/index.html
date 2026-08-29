@@ -4193,8 +4193,8 @@ function renderReports(){
         +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:14px">'
           +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Week</label>'
           +'<select id="purch-week" onchange="onPurchaseWeekChange()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);min-width:170px"></select></div>'
-          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Category</label>'
-          +'<select id="purch-category" onchange="onPurchaseCategoryChange()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);min-width:170px"></select></div>'
+          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Categories</label>'
+          +'<div id="purch-category-checks" style="display:flex;flex-wrap:wrap;gap:12px;padding:9px 2px"></div></div>'
           +'<button class="btn" onclick="addPurchaseWeek()" title="Add the next week (defaults to 7 days after the current one)">+ Add week</button>'
           +'<button class="btn btn-primary" onclick="runPurchaseReport()">Pull from QuickBooks</button>'
           +'<button class="btn" onclick="togglePurchAllGroups()" title="Expand or collapse every product category at once">Expand/Collapse all</button>'
@@ -9341,7 +9341,7 @@ function initPurchaseReportTab(){
     if(!_purchActiveWeekId || !purchaseConfig.weeks[_purchActiveWeekId]) _purchActiveWeekId=weekIds[weekIds.length-1];
     sel.value=_purchActiveWeekId;
   }
-  _purchPopulateCategorySelect();
+  _purchRenderCategoryChecks();
   renderPurchaseReport();
   var statusEl=document.getElementById('purch-status');
   if(statusEl) statusEl.textContent='Checking for a recent shared pull…';
@@ -9355,27 +9355,29 @@ function initPurchaseReportTab(){
   });
 }
 var _purchActiveWeekId=null;
-// Which single product category to show as its own separate report —
-// 'ALL' shows every category together (with rollup subtotals, as before);
-// picking one shows ONLY that category's products, as a standalone report
-// with its own TOTAL row. Page-level UI state only, not persisted/synced.
-var _purchActiveCategory='ALL';
-function _purchPopulateCategorySelect(){
-  var sel=document.getElementById('purch-category');
-  if(!sel) return;
+// Which categories are checked ON — every category defaults to visible;
+// unchecking one hides it (and its rows) entirely, independent of any
+// other category's checkbox — so any combination can be shown at once,
+// not just one-at-a-time. Page-level UI state only, not persisted/synced.
+var _purchHiddenCategories={};
+function _purchRenderCategoryChecks(){
+  var wrap=document.getElementById('purch-category-checks');
+  if(!wrap) return;
   var groups=_purchProductGroups();
-  sel.innerHTML='<option value="ALL">All categories</option>'
-    +groups.map(function(g){ return '<option value="'+esc(g.name)+'">'+esc(g.name)+'</option>'; }).join('');
-  if(!groups.some(function(g){ return g.name===_purchActiveCategory; })) _purchActiveCategory='ALL';
-  sel.value=_purchActiveCategory;
+  wrap.innerHTML=groups.map(function(g){
+    var checked=!_purchHiddenCategories[g.name];
+    var boxId='purch-cat-chk-'+g.name.replace(/[^a-z0-9]/gi,'_');
+    return '<label for="'+boxId+'" style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">'
+      +'<input type="checkbox" id="'+boxId+'" '+(checked?'checked':'')+' onchange="onPurchaseCategoryCheckChange(\''+esc(g.name).replace(/'/g,"\\'")+'\',this.checked)" style="width:15px;height:15px;cursor:pointer"/>'
+      +esc(g.name)+'</label>';
+  }).join('');
 }
-function onPurchaseCategoryChange(){
-  var sel=document.getElementById('purch-category');
-  if(!sel) return;
-  _purchActiveCategory=sel.value;
+function onPurchaseCategoryCheckChange(name,checked){
+  if(checked) delete _purchHiddenCategories[name];
+  else _purchHiddenCategories[name]=true;
   renderPurchaseReport();
 }
-window.onPurchaseCategoryChange=onPurchaseCategoryChange;
+window.onPurchaseCategoryCheckChange=onPurchaseCategoryCheckChange;
 // Which product-category groups are currently rolled up (collapsed) in the
 // table — page-level UI state only, not persisted/synced, same as any
 // other expand/collapse toggle in this app. Keyed by group name.
@@ -9675,7 +9677,9 @@ function renderPurchaseReport(){
   }
   var vendorIds=_purchVendorIdsForWeek(weekId);
   var pulledThisWeek=_purchRealized&&_purchRealized.weekId===weekId;
-  var headerLabel=(_purchActiveCategory!=='ALL'?esc(_purchActiveCategory)+' — ':'')+esc(_purchWeekLabel(week));
+  var allGroups=_purchProductGroups();
+  var visibleGroups=allGroups.filter(function(g){ return !_purchHiddenCategories[g.name]; });
+  var headerLabel=(visibleGroups.length===1&&allGroups.length>1?esc(visibleGroups[0].name)+' — ':'')+esc(_purchWeekLabel(week));
   if(!vendorIds.length){
     body.innerHTML='<div style="margin-bottom:10px;font-size:12px;color:var(--muted)">'+headerLabel+' <a href="#" onclick="editPurchaseWeekDates(\''+weekId+'\');return false" style="color:var(--brand);margin-left:6px">edit dates</a></div>'
       +'<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No bills pulled for this week yet. Click "Pull from QuickBooks" above — any vendor with a bill in this week or the trailing 13 weeks will show up as its own column automatically.</div>';
@@ -9777,9 +9781,12 @@ function renderPurchaseReport(){
   var groupHeadTdStyle='padding:8px 8px;font-size:12.5px;text-align:right;border-bottom:1px solid var(--line);background:var(--panel);font-weight:700';
   var stickyColGroup=groupHeadTdStyle+';position:sticky;left:0;z-index:1';
   var stickyColTotal=tdStyle+';text-align:left;font-weight:700;background:var(--panel);position:sticky;left:0;z-index:1';
-  var allGroups=_purchProductGroups();
-  var singleCategory=_purchActiveCategory!=='ALL';
-  var groupsToShow=singleCategory?allGroups.filter(function(g){ return g.name===_purchActiveCategory; }):allGroups;
+  // Every checked-on category gets shown, each with its own collapsible
+  // group header/subtotal — unchecking a category just drops it from
+  // groupsToShow entirely, rows and all.
+  var groupsToShow=visibleGroups;
+  var visibleProductIdSet={};
+  visibleGroups.forEach(function(g){ g.items.forEach(function(it){ visibleProductIdSet[it.qbId]=true; }); });
   groupsToShow.forEach(function(grp,gi){
     // Skip products with zero activity — no realized purchase this week
     // AND no average purchase over the 13-week lookback, from any vendor.
@@ -9793,15 +9800,6 @@ function renderPurchaseReport(){
       });
     });
     if(!visibleItems.length) return;
-    // In single-category mode this IS the whole report, so the group
-    // header (a subtotal that would just repeat the TOTAL row right below
-    // it) is skipped — straight into the product rows.
-    if(singleCategory){
-      visibleItems.forEach(function(it){
-        html+=renderRow(it.qbId,it.name,it.cost,true);
-      });
-      return;
-    }
     var groupId='purchgrp-'+gi;
     var collapsed=!!_purchCollapsedGroups[grp.name];
     // Subtotal cells — the group header row IS a real totals row (same
@@ -9845,10 +9843,11 @@ function renderPurchaseReport(){
   // Totals row
   html+='<tr style="background:var(--panel)"><td style="'+stickyColTotal+'">TOTAL</td><td style="'+tdStyle+'"></td>';
   var grandEst=0, grandRlz=0;
+  var visibleRowKeys=Object.keys(visibleProductIdSet).concat(uncatKeys);
   vendorIds.forEach(function(vid){
     var colEst=0, colRlz=0;
-    products.forEach(function(it){ colEst+=(estGrid&&estGrid[it.qbId]&&estGrid[it.qbId][vid])||0; });
-    rowKeys.forEach(function(rk){
+    products.forEach(function(it){ if(visibleProductIdSet[it.qbId]) colEst+=(estGrid&&estGrid[it.qbId]&&estGrid[it.qbId][vid])||0; });
+    visibleRowKeys.forEach(function(rk){
       if(grid) colRlz+=((grid[rk]&&grid[rk][vid])||0);
     });
     grandEst+=colEst; grandRlz+=colRlz;

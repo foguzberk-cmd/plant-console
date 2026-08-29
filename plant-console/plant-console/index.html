@@ -4193,8 +4193,6 @@ function renderReports(){
         +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:14px">'
           +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Week</label>'
           +'<select id="purch-week" onchange="onPurchaseWeekChange()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);min-width:170px"></select></div>'
-          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Categories</label>'
-          +'<div id="purch-category-checks" style="display:flex;flex-wrap:wrap;gap:12px;padding:9px 2px"></div></div>'
           +'<button class="btn" onclick="addPurchaseWeek()" title="Add the next week (defaults to 7 days after the current one)">+ Add week</button>'
           +'<button class="btn btn-primary" onclick="runPurchaseReport()">Pull from QuickBooks</button>'
           +'<button class="btn" onclick="togglePurchAllGroups()" title="Expand or collapse every product category at once">Expand/Collapse all</button>'
@@ -9341,7 +9339,6 @@ function initPurchaseReportTab(){
     if(!_purchActiveWeekId || !purchaseConfig.weeks[_purchActiveWeekId]) _purchActiveWeekId=weekIds[weekIds.length-1];
     sel.value=_purchActiveWeekId;
   }
-  _purchRenderCategoryChecks();
   renderPurchaseReport();
   var statusEl=document.getElementById('purch-status');
   if(statusEl) statusEl.textContent='Checking for a recent shared pull…';
@@ -9359,18 +9356,25 @@ var _purchActiveWeekId=null;
 // unchecking one hides it (and its rows) entirely, independent of any
 // other category's checkbox — so any combination can be shown at once,
 // not just one-at-a-time. Page-level UI state only, not persisted/synced.
+// Rendered as part of the report body itself (right above the table, one
+// per line) rather than the toolbar — that way the checkbox for a category
+// stays visible and clickable even after unchecking hides that category's
+// rows, instead of disappearing along with the thing it controls.
 var _purchHiddenCategories={};
-function _purchRenderCategoryChecks(){
-  var wrap=document.getElementById('purch-category-checks');
-  if(!wrap) return;
-  var groups=_purchProductGroups();
-  wrap.innerHTML=groups.map(function(g){
-    var checked=!_purchHiddenCategories[g.name];
-    var boxId='purch-cat-chk-'+g.name.replace(/[^a-z0-9]/gi,'_');
-    return '<label for="'+boxId+'" style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">'
-      +'<input type="checkbox" id="'+boxId+'" '+(checked?'checked':'')+' onchange="onPurchaseCategoryCheckChange(\''+esc(g.name).replace(/'/g,"\\'")+'\',this.checked)" style="width:15px;height:15px;cursor:pointer"/>'
-      +esc(g.name)+'</label>';
-  }).join('');
+// groups: the list to show checkboxes for (either every category that
+// exists, before any pull, or only the ones with real activity this week/
+// lookback, once there's a pull to check against — see renderPurchaseReport).
+function _purchCategoryChecksHtml(groups){
+  if(!groups.length) return '';
+  return '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;padding:12px 14px;background:var(--panel);border:1px solid var(--line);border-radius:10px;max-width:260px">'
+    +groups.map(function(g){
+      var checked=!_purchHiddenCategories[g.name];
+      var boxId='purch-cat-chk-'+g.name.replace(/[^a-z0-9]/gi,'_');
+      return '<label for="'+boxId+'" style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">'
+        +'<input type="checkbox" id="'+boxId+'" '+(checked?'checked':'')+' onchange="onPurchaseCategoryCheckChange(\''+esc(g.name).replace(/'/g,"\\'")+'\',this.checked)" style="width:15px;height:15px;cursor:pointer;flex-shrink:0"/>'
+        +'<span style="font-weight:600">'+esc(g.name)+'</span></label>';
+    }).join('')
+  +'</div>';
 }
 function onPurchaseCategoryCheckChange(name,checked){
   if(checked) delete _purchHiddenCategories[name];
@@ -9681,7 +9685,8 @@ function renderPurchaseReport(){
   var visibleGroups=allGroups.filter(function(g){ return !_purchHiddenCategories[g.name]; });
   var headerLabel=(visibleGroups.length===1&&allGroups.length>1?esc(visibleGroups[0].name)+' — ':'')+esc(_purchWeekLabel(week));
   if(!vendorIds.length){
-    body.innerHTML='<div style="margin-bottom:10px;font-size:12px;color:var(--muted)">'+headerLabel+' <a href="#" onclick="editPurchaseWeekDates(\''+weekId+'\');return false" style="color:var(--brand);margin-left:6px">edit dates</a></div>'
+    body.innerHTML=_purchCategoryChecksHtml(allGroups)
+      +'<div style="margin-bottom:10px;font-size:12px;color:var(--muted)">'+headerLabel+' <a href="#" onclick="editPurchaseWeekDates(\''+weekId+'\');return false" style="color:var(--brand);margin-left:6px">edit dates</a></div>'
       +'<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No bills pulled for this week yet. Click "Pull from QuickBooks" above — any vendor with a bill in this week or the trailing 13 weeks will show up as its own column automatically.</div>';
     return;
   }
@@ -9690,6 +9695,17 @@ function renderPurchaseReport(){
   var rowKeys=products.map(function(it){ return it.qbId; }).concat(uncatKeys);
   var grid=pulledThisWeek?_purchCombinedGrid():null;
   var estGrid=pulledThisWeek?_purchRealized.estGrid:null;
+  // Checkbox list only lists categories with real activity this week or in
+  // the lookback window — once there's a pull to check against — instead
+  // of every category name that has ever existed in the item catalog, most
+  // of which would never actually show a row here anyway.
+  var groupsForChecks=grid?allGroups.filter(function(g){
+    return g.items.some(function(it){
+      return vendorIds.some(function(vid){
+        return ((grid[it.qbId]&&grid[it.qbId][vid])||0)!==0 || ((estGrid&&estGrid[it.qbId]&&estGrid[it.qbId][vid])||0)!==0;
+      });
+    });
+  }):allGroups;
   // Drop any vendor column with zero activity across every product row —
   // this is what actually filters out pure-service vendors (waste hauling,
   // equipment repair, etc.): since Service-type items never get counted in
@@ -9705,7 +9721,8 @@ function renderPurchaseReport(){
     });
   }
   if(!vendorIds.length){
-    body.innerHTML='<div style="margin-bottom:10px;font-size:12px;color:var(--muted)">'+headerLabel+' <a href="#" onclick="editPurchaseWeekDates(\''+weekId+'\');return false" style="color:var(--brand);margin-left:6px">edit dates</a></div>'
+    body.innerHTML=_purchCategoryChecksHtml(groupsForChecks)
+      +'<div style="margin-bottom:10px;font-size:12px;color:var(--muted)">'+headerLabel+' <a href="#" onclick="editPurchaseWeekDates(\''+weekId+'\');return false" style="color:var(--brand);margin-left:6px">edit dates</a></div>'
       +'<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No product/merchandise purchases found for this week or the trailing 13 weeks — every vendor on the pulled bills was service-only or had no activity.</div>';
     return;
   }
@@ -9858,6 +9875,7 @@ function renderPurchaseReport(){
     +'<td style="'+tdStyle+';font-weight:700">'+(grid?_purchMoney(grandRlz):'—')+'</td></tr>';
   html+='</tbody></table></div>';
   html='<div style="margin-bottom:10px;font-size:12px;color:var(--muted)">'+headerLabel+' <a href="#" onclick="editPurchaseWeekDates(\''+weekId+'\');return false" style="color:var(--brand);margin-left:6px">edit dates</a></div>'+html;
+  html=_purchCategoryChecksHtml(groupsForChecks)+html;
   body.innerHTML=html;
   // The two header rows both stick with top:0 in the HTML above, which
   // stacks them exactly on top of each other rather than one below the

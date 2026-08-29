@@ -3358,6 +3358,17 @@ function _ordGetSuggestBox(){
     box.id='_ordSharedProdSuggest';
     box.style.cssText='display:none;position:fixed;z-index:999999;background:#fff;border:1.5px solid var(--line);border-radius:8px;max-height:420px;overflow-y:auto;box-shadow:0 6px 18px rgba(0,0,0,.25)';
     document.body.appendChild(box);
+    // Attached once, ever, right here at creation — not per keystroke.
+    // Scrolling the PAGE should close the box (fixed positioning means it
+    // would otherwise drift away from the field it belongs to); scrolling
+    // INSIDE the box itself, to see more of the list, must not. 'scroll'
+    // events don't bubble, but they do reach a capture-phase listener on
+    // window, so this fires either way — checking the event's own target
+    // is what tells the two apart.
+    window.addEventListener('scroll',function(e){
+      if(e.target===box||box.contains(e.target)) return;
+      _ordCloseAllProductDropdowns();
+    },{capture:true});
   }
   return box;
 }
@@ -3408,10 +3419,6 @@ function _ordProdInput(inputEl){
   box.style.left=r.left+'px';
   box.style.top=(r.bottom+2)+'px';
   box.style.width=r.width+'px';
-  // Fixed elements don't move when the page scrolls, so a stale box would
-  // otherwise drift away from the field it belongs to — simplest correct
-  // behavior is to just close it the moment scrolling starts.
-  window.addEventListener('scroll',function(){ _ordCloseAllProductDropdowns(); },{capture:true,once:true});
 }
 window._ordProdInput=_ordProdInput;
 function _ordSelectProduct(rowEl){

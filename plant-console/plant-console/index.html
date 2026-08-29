@@ -11424,6 +11424,15 @@ function diagnoseLocations(){
     msg+='  Item lines seen: '+d.lineItemsSeen+'\n';
     msg+='  Movements added: '+d.added+'\n';
     msg+='  Skipped (item not matched): '+d.skippedNoItem+'\n';
+    if(d.skippedNoItem>0 && d.unmatchedSample && d.unmatchedSample.length){
+      msg+='    >> Unmatched QuickBooks Item ID(s): '+d.unmatchedSample.join(', ')+'\n';
+      msg+='       These lines reference an Item ID that doesn\'t match anything in your\n';
+      msg+='       current synced item list — often because the item was deleted and\n';
+      msg+='       recreated under a new name in QuickBooks rather than renamed, so the\n';
+      msg+='       old ID is now orphaned. A resync won\'t fix this on its own; the fix is\n';
+      msg+='       usually re-pointing that old bill/invoice line to the current item in\n';
+      msg+='       QuickBooks itself.\n';
+    }
     msg+='  Skipped (no quantity on line): '+d.skippedNoQty+'\n';
     msg+='  Skipped (unexpected error while processing): '+(d.docErrors||0)+'\n';
     if(d.duplicatesRemoved) msg+='  Duplicate transactions removed (same line seen twice): '+d.duplicatesRemoved+'\n';

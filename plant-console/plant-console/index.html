@@ -3475,10 +3475,22 @@ function _ordProdKeydown(e,inputEl){
   }
 }
 window._ordProdKeydown=_ordProdKeydown;
+// Drivers currently referenced by at least one existing order — used to
+// hide drivers from the picker that aren't attached to anything anymore
+// (including old case-variant duplicates like "BASARAN OKUR" vs "Basaran
+// Okur": whichever spelling no order actually uses just stops showing up,
+// with no need to merge or clean up the underlying driver list itself).
+function _driversInUse(){
+  var set={};
+  orders.forEach(function(o){ if(o.driver) set[o.driver]=true; });
+  return set;
+}
 function _driverSelectHtml(selected){
+  var inUse=_driversInUse();
+  var visibleDrivers=drivers.filter(function(d){ return inUse[d]||d===selected; });
   return '<select class="ord-f-driver" onchange="if(this.value===\'__add__\'){ _promptAddDriver(this); }" style="width:100%;padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)">'
     +'<option value=""'+(!selected?' selected':'')+'>— select driver —</option>'
-    +drivers.map(function(d){ return '<option value="'+esc(d)+'"'+(d===selected?' selected':'')+'>'+esc(d)+'</option>'; }).join('')
+    +visibleDrivers.map(function(d){ return '<option value="'+esc(d)+'"'+(d===selected?' selected':'')+'>'+esc(d)+'</option>'; }).join('')
     +'<option value="__add__">+ Add new driver…</option>'
   +'</select>';
 }

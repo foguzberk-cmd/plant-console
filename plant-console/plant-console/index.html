@@ -821,7 +821,8 @@ var DEFAULT_LABEL_LAYOUT_STD={
   shText:    {left:0.10, top:3.16, fontSize:5.4},
   lot:       {left:0.10, top:2.50, fontSize:7},
   customer:  {left:0.10, top:2.56, fontSize:7},
-  tagNumber: {left:1.30, top:2.50, fontSize:7}
+  tagNumber: {left:1.30, top:2.50, fontSize:7},
+  seriesIndex:{left:1.85, top:0.06, fontSize:9}
 };
 // Default layout for the 4in x 6in Brother QL-1110NWB label (Carcass
 // Process/Retail). Same key set as the standard layout above so the editor
@@ -841,7 +842,8 @@ var DEFAULT_LABEL_LAYOUT_4X6={
   shText:    {left:0.15, top:4.65, fontSize:8},
   lot:       {left:0.15, top:3.60, fontSize:10},
   customer:  {left:0.15, top:3.72, fontSize:10},
-  tagNumber: {left:2.30, top:3.60, fontSize:10}
+  tagNumber: {left:2.30, top:3.60, fontSize:10},
+  seriesIndex:{left:3.30, top:0.12, fontSize:14}
 };
 // Picks the right baseline layout for a department based on its label
 // paper size (see DEPT_LABEL_SIZES above).
@@ -13181,7 +13183,7 @@ function updateLabelTemplatePreview(){
   prev.style.transformOrigin='top left';
   prev.style.background='#fff';
   if(titleEl) titleEl.textContent='Preview \u00b7 '+size.w+'\u2033 \u00d7 '+size.h+'\u2033';
-  var fakeEntry={product:'Sample Product',weight:'10.00',date:new Date().toISOString().slice(0,10),lot:'LOT-0001',customer:'Sample Customer',tagNumber:'TAG-0001',department:_ltPanelDept};
+  var fakeEntry={product:'Sample Product',weight:'10.00',date:new Date().toISOString().slice(0,10),lot:'LOT-0001',customer:'Sample Customer',tagNumber:'TAG-0001',seriesIndex:1,seriesTotal:10,department:_ltPanelDept};
   var saved=labelTemplates[_ltPanelDept];
   var draft={
     companyName:document.getElementById('lt-company').value,
@@ -13235,7 +13237,7 @@ var LLL_FRIENDLY_NAMES={
   pkgLabel:'"Packaging Date" label', pkgDate:'Date value', prodName:'Product name',
   seal:'USDA seal text', wtValue:'Weight value', wtUnit:'Weight unit',
   keepText:'"Keep Refrigerated" bar', shTitle:'"Safe Handling" title', shText:'Safe handling body text',
-  lot:'Lot number', customer:'Customer name', tagNumber:'Tag number'
+  lot:'Lot number', customer:'Customer name', tagNumber:'Tag number', seriesIndex:'Piece count (1/10)'
 };
 // Which of the built-in draggable pieces have editable TEXT (as opposed to
 // purely dynamic data like the product name/date/weight, which come from the
@@ -13278,7 +13280,7 @@ function renderLabelLayoutEditor(){
 function refreshLabelLayoutCanvas(){
   var canvas=document.getElementById('lllCanvas');
   if(!canvas) return;
-  var fakeEntry={product:'Sample Product',weight:'10.00',date:new Date().toISOString().slice(0,10),lot:'LOT-0001',customer:'Sample Customer',tagNumber:'TAG-0001',department:_lllDept};
+  var fakeEntry={product:'Sample Product',weight:'10.00',date:new Date().toISOString().slice(0,10),lot:'LOT-0001',customer:'Sample Customer',tagNumber:'TAG-0001',seriesIndex:1,seriesTotal:10,department:_lllDept};
   canvas.innerHTML=buildLabelHTML(fakeEntry,false,true,_lllDraftLayout,_lllDraftTemplate,_lllDraftCustom);
   var page=canvas.querySelector('.lbl-page');
   if(page){ page.style.boxShadow='0 4px 20px rgba(0,0,0,.25)'; page.style.background='#fff'; page.style.flexShrink='0'; }
@@ -13945,6 +13947,17 @@ async function saveUser(){
 // department. Separate from _slDeptFilter below, which is for browsing/
 // exporting the log and legitimately needs an "All Departments" option.
 var _slPrintDept='';
+// Multi-piece label series ("print 10 of these, numbered 1/10 .. 10/10").
+// _slSeriesTotal>1 means a series is actively in progress; the product,
+// item, and customer chosen when it started are held here so every label
+// in the run carries the same ones as defaults, even though the form gets
+// fully rebuilt after each print (weight/lot/tag are the only fields that
+// actually reset piece-to-piece — see printScaleLabel()).
+var _slSeriesTotal=0;
+var _slSeriesIndex=0;
+var _slSeriesProduct='';
+var _slSeriesItemId='';
+var _slSeriesCustomer='';
 var _slDeptFilter=''; // '' = All Departments, '__none__' = no department recorded
 var _slDateFrom='', _slDateTo=''; // optional date-range filter for the log view/export
 function renderScaleLog(){
@@ -13965,9 +13978,20 @@ function renderScaleLog(){
         </div>
         <div class="form-group"><label>Product</label>
           <div class="item-search-wrap">
-            <input type="text" id="sl-search" class="item-search-input" placeholder="Search product..." autocomplete="off" oninput="filterScaleItems();updateLabelPreview()" onfocus="showScaleItemDropdown()" onblur="hideScaleSugg()"/>
-            <input type="hidden" id="sl-item" value=""/>
+            <input type="text" id="sl-search" class="item-search-input" placeholder="Search product..." autocomplete="off" value="${esc(_slSeriesTotal>1?_slSeriesProduct:'')}" oninput="filterScaleItems();updateLabelPreview()" onfocus="showScaleItemDropdown()" onblur="hideScaleSugg()" ${_slSeriesTotal>1?'readonly':''}/>
+            <input type="hidden" id="sl-item" value="${esc(_slSeriesTotal>1?_slSeriesItemId:'')}"/>
           </div>
+        </div>
+        <div class="form-group">
+          <label>Number of pieces (optional)</label>
+          ${_slSeriesTotal>1
+            ? '<div style="display:flex;align-items:center;gap:10px;padding:9px 11px;border:1.5px solid var(--cold);border-radius:8px;background:var(--bg);font-size:13px">'
+              +'<span style="font-family:var(--mono);color:var(--cold);font-weight:700">Piece '+_slSeriesIndex+' / '+_slSeriesTotal+'</span>'
+              +'<button type="button" class="btn btn-sm" style="margin-left:auto" onclick="cancelScaleSeries()">Cancel series</button>'
+            +'</div>'
+            : '<input type="number" id="sl-pieces" placeholder="e.g. 10 — leave blank to print just one" min="2" step="1"/>'
+          }
+          <div style="font-size:11px;color:var(--muted);margin-top:5px">${_slSeriesTotal>1?'Product, department, and customer stay the same for the whole series — only weight resets each time. Each label prints numbered.':'Enter a count to print a numbered series (1/10, 2/10, …) of the same product/customer instead of just one label.'}</div>
         </div>
         <div class="form-row">
           <div class="form-group"><label>Weight (lbs)</label><input type="number" id="sl-weight" placeholder="0.00" min="0" step="0.01" style="text-align:right" onfocus="this.select()" oninput="updateLabelPreview()"/></div>
@@ -13977,8 +14001,8 @@ function renderScaleLog(){
         <div class="form-group"><label>Tag Number (optional)</label><input type="text" id="sl-tag" placeholder="e.g. TAG-4471" oninput="updateLabelPreview()"/></div>
         <div class="form-group"><label>Customer (optional)</label>
           <div class="item-search-wrap">
-            <input type="text" id="sl-customer-search" class="item-search-input" placeholder="Search customer..." autocomplete="off" oninput="filterScaleCustomers();updateLabelPreview()" onfocus="showScaleCustomerDropdown()" onblur="hideCustomerSugg()"/>
-            <input type="hidden" id="sl-customer" value=""/>
+            <input type="text" id="sl-customer-search" class="item-search-input" placeholder="Search customer..." autocomplete="off" value="${esc(_slSeriesTotal>1?_slSeriesCustomer:'')}" oninput="filterScaleCustomers();updateLabelPreview()" onfocus="showScaleCustomerDropdown()" onblur="hideCustomerSugg()"/>
+            <input type="hidden" id="sl-customer" value="${esc(_slSeriesTotal>1?_slSeriesCustomer:'')}"/>
           </div>
           ${!customers.length?'<div style="font-size:11px;color:var(--muted);margin-top:5px">No customers synced yet — go to <strong>Settings → Customers</strong> and click Sync from QuickBooks.</div>':''}
         </div>
@@ -14022,6 +14046,15 @@ function renderScaleLog(){
   updateLabelPreview();
   renderScaleLogTable();
 }
+function cancelScaleSeries(){
+  _slSeriesTotal=0;
+  _slSeriesIndex=0;
+  _slSeriesProduct='';
+  _slSeriesItemId='';
+  _slSeriesCustomer='';
+  renderScaleLog();
+}
+window.cancelScaleSeries=cancelScaleSeries;
 function onScalePrintDeptChange(){
   _slPrintDept=document.getElementById('sl-dept').value;
   // Changing department invalidates whatever product was selected from the
@@ -14119,6 +14152,7 @@ function buildLabelHTML(entry, forPrint, editable, layoutOverride, templateOverr
       +wrap('coAddr','width:2.7in;text-align:center;line-height:1.2;',addressHTML)
       +wrap('pkgLabel','width:3.7in;text-align:center;font-weight:bold;',esc(tpl.pkgLabelText))
       +wrap('pkgDate','width:3.7in;text-align:center;font-weight:bold;',esc(dateStr))
+      +(entry.seriesTotal>1?wrap('seriesIndex','font-weight:bold;',esc(entry.seriesIndex+'/'+entry.seriesTotal)):'')
       +wrap('prodName','width:3.7in;text-align:center;font-weight:bold;line-height:1.2;word-wrap:break-word;',esc(product))
       +wrap('seal','width:1.2in;height:1.2in;border:3px solid #000;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-weight:bold;line-height:1.2;padding:5px;box-sizing:border-box;','U.S.<br>INSPECTED<br>AND PASSED BY<br>DEPARTMENT OF<br>AGRICULTURE<br>'+esc(tpl.estNumber))
       +wrap('wtValue','font-weight:bold;line-height:1;',weight)
@@ -14146,6 +14180,7 @@ function buildLabelHTML(entry, forPrint, editable, layoutOverride, templateOverr
     +wrap('coAddr','width:1.45in;text-align:center;line-height:1.1;',addressHTML)
     +wrap('pkgLabel','width:2.2in;text-align:center;font-weight:bold;',esc(tpl.pkgLabelText))
     +wrap('pkgDate','width:2.2in;text-align:center;font-weight:bold;',esc(dateStr))
+    +(entry.seriesTotal>1?wrap('seriesIndex','font-weight:bold;',esc(entry.seriesIndex+'/'+entry.seriesTotal)):'')
     +wrap('prodName','width:2.2in;text-align:center;font-weight:bold;line-height:1.1;word-wrap:break-word;',esc(product))
     +wrap('seal','width:0.85in;height:0.85in;border:2.5px solid #000;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-weight:bold;line-height:1.15;padding:3px;box-sizing:border-box;','U.S.<br>INSPECTED<br>AND PASSED BY<br>DEPARTMENT OF<br>AGRICULTURE<br>'+esc(tpl.estNumber))
     +wrap('wtValue','font-weight:bold;line-height:1;',weight)
@@ -14205,6 +14240,7 @@ function updateLabelPreview(){
     customer:document.getElementById('sl-customer')?document.getElementById('sl-customer').value.trim():'',
     department:_slPrintDept
   };
+  if(_slSeriesTotal>1){ entry.seriesIndex=_slSeriesIndex; entry.seriesTotal=_slSeriesTotal; }
   prev.innerHTML=buildLabelHTML(entry,false);
 }
 
@@ -14449,10 +14485,27 @@ async function printScaleLabel(){
     if(!product){ if(status)status.textContent='Pick a product first.'; searchEl.focus(); return; }
     if(weight===''||Number(weight)<=0){ if(status)status.textContent='Enter a weight.'; weightEl.focus(); return; }
 
-    var now=new Date();
-    var time=now.toTimeString().slice(0,5);
     var itemEl=document.getElementById('sl-item');
     var itemId=itemEl?itemEl.value:'';
+
+    // Starting a new series: the "Number of pieces" field only exists (and
+    // is only read) when no series is currently in progress — see
+    // renderScaleLog(), which swaps it for a progress readout once one is.
+    var piecesEl=document.getElementById('sl-pieces');
+    if(_slSeriesTotal<=1 && piecesEl){
+      var piecesVal=parseInt(piecesEl.value,10);
+      if(piecesVal>1){
+        _slSeriesTotal=piecesVal;
+        _slSeriesIndex=1;
+        _slSeriesProduct=product;
+        _slSeriesItemId=itemId;
+        _slSeriesCustomer=customer;
+      }
+    }
+    var inSeries=_slSeriesTotal>1;
+
+    var now=new Date();
+    var time=now.toTimeString().slice(0,5);
     var entry={
       id:'sl_'+Date.now(),
       product:product,
@@ -14466,6 +14519,7 @@ async function printScaleLabel(){
       customer:customer,
       loggedBy:currentUser?(currentUser.name||currentUser.email||''):''
     };
+    if(inSeries){ entry.seriesIndex=_slSeriesIndex; entry.seriesTotal=_slSeriesTotal; }
     scaleLogs.push(entry);
     logSync('SAVE created entry id='+entry.id+' weight='+entry.weight+' (local scaleLogs now='+scaleLogs.length+')');
     safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs)); // instant local save, regardless of network
@@ -14491,16 +14545,35 @@ async function printScaleLabel(){
       console.error('Print failed:', e);
     }
 
+    // Was this the last piece of the series (or not in one at all)? Decide
+    // BEFORE resetting/advancing the series counters below, since both the
+    // reset logic and the status message need to know which case this is.
+    var seriesJustFinished=inSeries && _slSeriesIndex>=_slSeriesTotal;
+    var seriesLabel=inSeries?(' ('+_slSeriesIndex+'/'+_slSeriesTotal+')'):'';
+    if(inSeries){
+      if(seriesJustFinished){
+        _slSeriesTotal=0; _slSeriesIndex=0; _slSeriesProduct=''; _slSeriesItemId=''; _slSeriesCustomer='';
+      } else {
+        _slSeriesIndex++;
+      }
+    }
+
     // Reset the form and show the new entry in the table immediately too —
     // both already reflect reality (the local save above), no reason to
-    // wait on the network for either of these.
+    // wait on the network for either of these. Mid-series (more pieces
+    // still to go), only weight/lot/tag clear — product, department, and
+    // customer carry over as defaults for the next piece, restored by
+    // renderScaleLog() itself from _slSeriesProduct/_slSeriesCustomer.
+    // Finishing a series (or a normal single-label print) clears everything.
     var btn=document.querySelector('button[onclick="printScaleLabel()"]');
     if(weightEl) weightEl.value='';
     if(lotEl) lotEl.value='';
     if(tagEl) tagEl.value='';
-    if(customerEl) customerEl.value='';
-    var custSearchEl=document.getElementById('sl-customer-search');
-    if(custSearchEl) custSearchEl.value='';
+    if(!inSeries || seriesJustFinished){
+      if(customerEl) customerEl.value='';
+      var custSearchEl=document.getElementById('sl-customer-search');
+      if(custSearchEl) custSearchEl.value='';
+    }
     renderScaleLog();
     // IMPORTANT: renderScaleLog() just rebuilt the entire form, including a
     // brand-new #sl-status element and #print button — grab fresh
@@ -14511,7 +14584,7 @@ async function printScaleLabel(){
     if(freshBtn) freshBtn.disabled=true;
     if(freshStatus){
       freshStatus.textContent=printOk
-        ? ('Printed: '+product+' · '+Number(weight).toFixed(2)+' lbs. Saving to server…')
+        ? ('Printed'+seriesLabel+': '+product+' · '+Number(weight).toFixed(2)+' lbs. Saving to server…')
         : ('Printing failed ('+printError+'), but it is saved locally. Saving to server…');
     }
 
@@ -14555,7 +14628,7 @@ async function printScaleLabel(){
         finalStatus.style.color='#c0392b';
         retryPushUntilConfirmed(product, weight);
       }else{
-        finalStatus.textContent='Saved to server & printed: '+product+' · '+Number(weight).toFixed(2)+' lbs — all '+scaleLogs.length+' records on this device are now on the server';
+        finalStatus.textContent='Saved to server & printed'+seriesLabel+': '+product+' · '+Number(weight).toFixed(2)+' lbs — all '+scaleLogs.length+' records on this device are now on the server';
         finalStatus.style.color='';
       }
     }
@@ -14721,6 +14794,7 @@ function exportScaleLogToExcel(){
         'Customer': l.customer||'',
         'Logged By': l.loggedBy||'',
         'Lot/Batch': l.lot||'',
+        'Piece': l.seriesTotal>1?(l.seriesIndex+'/'+l.seriesTotal):'',
         'Weight (lbs)': Number(l.weight||0)
       };
     });

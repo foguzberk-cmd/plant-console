@@ -1785,7 +1785,18 @@ async function doSync(incremental){
     } else if(status){status.textContent='Sync error (items): '+itemsResult.error;}
     return;
   }
-  showSyncProgress(45,'Items synced ('+itemsResult.count+') — fetching documents…');
+  showSyncProgress(45,'Items synced ('+itemsResult.count+') — saving to server…');
+  // Push RIGHT AWAY, before starting the much slower document sync below —
+  // this is the actual fix for "logging out partway through wipes the
+  // sync out": previously only ONE push happened, at the very end of the
+  // whole 3-step process, so leaving (logout, closing the tab, giving up
+  // on a slow sync) at any point before that final push meant NONE of
+  // it — not even the fast, already-finished item sync — had actually
+  // reached the server yet. Saving items the moment they're done means
+  // that part survives even if the document sync after it gets
+  // interrupted, so it never needs to be redone from scratch.
+  await pushToServer();
+  showSyncProgress(48,'Items saved — fetching documents…');
 
   // 2. Sync documents (incremental fetches only changed since last sync)
   if(status)status.textContent='Step 2/3 — syncing bills, invoices & credit memos…';

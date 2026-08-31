@@ -3868,7 +3868,6 @@ function _renderOrderRow(o){
         : '<span style="color:var(--muted);font-style:italic">(no products listed)</span>')
     +'</span>'
     +'<span style="flex-shrink:0;display:flex;gap:4px;padding-top:2px">'
-      +'<button title="Create Invoice in QuickBooks" onclick="event.stopPropagation();showCreateInvoiceModal(\''+esc(o.id)+'\')" style="border:0;background:transparent;cursor:pointer;padding:4px;color:var(--cold)">🧾</button>'
       +'<button title="Print this order" onclick="event.stopPropagation();printOrders([\''+esc(o.id)+'\'],\''+esc((o.customer||'Order')+' — '+(o.date||''))+'\')" style="border:0;background:transparent;cursor:pointer;padding:4px;color:var(--muted)">🖨</button>'
       +'<button title="Edit" onclick="event.stopPropagation();_ordersEditingId=\''+esc(o.id)+'\';_renderOrdersWeekSummary()" style="border:0;background:transparent;cursor:pointer;padding:4px;color:var(--muted)">✎</button>'
       +'<button title="Delete" onclick="event.stopPropagation();deleteOrder(\''+esc(o.id)+'\')" style="border:0;background:transparent;cursor:pointer;padding:4px;color:#b8460b">🗑</button>'
@@ -3922,8 +3921,7 @@ function showOrderDetailModal(id){
       +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
         +(o.shipped
             ? '<button class="btn" onclick="toggleOrderShippedManually(\''+esc(o.id)+'\',false)" title="Manual override — use this if it was matched to the wrong invoice">Mark as Received</button>'
-            : ('<button class="btn" onclick="toggleOrderShippedManually(\''+esc(o.id)+'\',true)" title="Manual override — use this if you know it shipped but Match with QuickBooks hasn\'t caught it yet">✓ Mark as Shipped</button>'
-              +'<button class="btn" style="background:var(--cold);color:#fff;border-color:var(--cold)" onclick="closeOrderDetailModal();showCreateInvoiceModal(\''+esc(o.id)+'\')" title="Bills the customer directly in QuickBooks, using the Final Count you entered for each product">🧾 Create Invoice</button>'))
+            : '<button class="btn" onclick="toggleOrderShippedManually(\''+esc(o.id)+'\',true)" title="Manual override — use this if you know it shipped but Match with QuickBooks hasn\'t caught it yet">✓ Mark as Shipped</button>')
         +'<button class="btn" onclick="printOrders([\''+esc(o.id)+'\'],\''+esc((o.customer||'Order')+' — '+(o.date||''))+'\')">🖨 Print</button>'
         +'<button class="btn" onclick="closeOrderDetailModal()">Close</button>'
         +'<button class="btn btn-primary" onclick="closeOrderDetailModal();_ordersEditingId=\''+esc(o.id)+'\';_renderOrdersWeekSummary();var r=document.getElementById(\'ordRow-'+esc(o.id)+'\');if(r)r.scrollIntoView({behavior:\'smooth\',block:\'center\'});">✎ Edit</button>'

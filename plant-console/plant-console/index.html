@@ -3724,10 +3724,27 @@ async function saveOrder(orderFields){
   var fallbackGuardTimeout=setTimeout(function(){ delete _recentlyAddedOrders[finalId]; },20000);
   safeSetLocal('pc_orders',JSON.stringify(orders));
   try{
-    var res=await fetch('/api/data/save-order',{
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({order:Object.assign({},orderFields,{id:finalId,createdBy:(currentUser&&currentUser.name)||''})})
-    });
+    // Without a timeout, a server that's slow to respond (or mid-restart)
+    // leaves this fetch hanging indefinitely — and since
+    // _orderSaveInProgress blocks any further save attempt until this one
+    // resolves one way or the other, that means the Save button just
+    // stays stuck on "Saving…" forever, with no way to retry short of
+    // reloading the whole app. 25s is generous for what should be a fast,
+    // single-row write; past that, treat it as failed so the normal
+    // catch-block error handling (which already exists below) can put the
+    // button back and let the person just try again.
+    var ctrl=new AbortController();
+    var timeoutId=setTimeout(function(){ ctrl.abort(); },25000);
+    var res;
+    try{
+      res=await fetch('/api/data/save-order',{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({order:Object.assign({},orderFields,{id:finalId,createdBy:(currentUser&&currentUser.name)||''})}),
+        signal:ctrl.signal
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
     if(!res.ok) throw new Error('HTTP '+res.status);
     var data=await res.json();
     if(data.order){
@@ -3743,7 +3760,7 @@ async function saveOrder(orderFields){
     }
     return optimistic;
   }catch(e){
-    console.error('Order save failed:',e);
+    console.error('Order save failed:',e&&e.name==='AbortError'?'timed out after 25s waiting for the server':e);
     return null;
   }
 }

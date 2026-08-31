@@ -9475,20 +9475,23 @@ function _purchProductGroups(){
 }
 function initPurchaseReportTab(){
   var weekIds=_purchSortedWeekIds();
-  if(!weekIds.length){
-    // First-ever visit to this tab on this install — seed one starter week
-    // so the tab isn't empty. Defaults to the current week (Mon–Sat);
-    // fully editable afterward via "+ Add week".
-    var today=new Date();
-    var day=today.getDay(); // 0=Sun..6=Sat
-    var mondayOffset=(day===0)?-6:(1-day);
-    var monday=new Date(today); monday.setDate(today.getDate()+mondayOffset);
-    var startDate=monday.toISOString().slice(0,10);
-    var endDate=_purchAddDays(startDate,5); // Mon–Sat
+  // Always make sure the CURRENT calendar week (Mon–Sat) exists in the
+  // list — not just the very first time this tab is ever opened. That's
+  // what actually removes the need to click "+ Add week" by hand every
+  // week: whenever a new week begins, the next time anyone opens
+  // Purchasing it's just already there, ready to pull.
+  var today=new Date();
+  var day=today.getDay(); // 0=Sun..6=Sat
+  var mondayOffset=(day===0)?-6:(1-day);
+  var monday=new Date(today); monday.setDate(today.getDate()+mondayOffset);
+  var thisWeekStart=monday.toISOString().slice(0,10);
+  var alreadyHaveThisWeek=weekIds.some(function(wid){ return purchaseConfig.weeks[wid].startDate===thisWeekStart; });
+  if(!alreadyHaveThisWeek){
+    var endDate=_purchAddDays(thisWeekStart,5); // Mon–Sat
     var wid='week_'+Date.now().toString(36);
-    purchaseConfig.weeks[wid]={startDate:startDate,endDate:endDate};
+    purchaseConfig.weeks[wid]={startDate:thisWeekStart,endDate:endDate};
     savePurchaseConfig();
-    weekIds=[wid];
+    weekIds=_purchSortedWeekIds();
   }
   var sel=document.getElementById('purch-week');
   if(sel){

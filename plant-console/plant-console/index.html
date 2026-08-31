@@ -3584,7 +3584,7 @@ function _readOrderLineOnly(row){
 async function _promptAddDriver(selectEl){
   var name=prompt('New driver name:');
   if(!name || !name.trim()) { selectEl.value=''; return; }
-  name=name.trim();
+  name=name.trim().toUpperCase(); // mandatory — prevents the exact case-variant duplicates ("Ibrahim Gungor" vs "IBRAHIM GUNGOR") that used to pile up in this list
   selectEl.disabled=true;
   try{
     var res=await fetch('/api/data/add-driver',{

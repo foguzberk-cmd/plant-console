@@ -9956,7 +9956,7 @@ function renderPurchaseReport(){
     var tb=vendorIds.reduce(function(s,vid){ return s+((grid[b]&&grid[b][vid])||0); },0);
     return tb-ta;
   });
-  var thStyle='padding:8px 10px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);font-weight:700;text-align:center;border:1px solid var(--line);position:sticky;top:0;background:#fff;z-index:5;width:110px';
+  var thStyle='padding:8px 10px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#fff;font-weight:700;text-align:center;border:1px solid var(--line);position:sticky;top:0;background:var(--brand);z-index:5;width:110px';
   var thCornerStyle=thStyle+';left:0;z-index:6;width:220px'; // the "Product" header cell: sticky on BOTH axes (it's the corner), so it needs to sit above every other sticky cell in both directions — and needs its own, wider width (product names are long; the numeric columns don't need nearly this much room)
   var tdStyle='padding:6px 8px;font-size:12.5px;text-align:right;border-bottom:1px solid var(--line);width:110px';
   // Alternating shading per VENDOR (each vendor is 2 columns — Avg. Est. +
@@ -9978,8 +9978,18 @@ function renderPurchaseReport(){
   // vendors always looked unshaded by definition. Two tones means every
   // column stands out from the page background, while adjacent vendors
   // still read as visually separate from each other.
-  function vendorThBg(vid){ return ';background:'+(vendorBand[vid]?'var(--line)':'var(--bg)'); }
   function vendorTdBg(vid){ return ';background:'+(vendorBand[vid]?'var(--line)':'var(--bg)'); }
+  // Header rows get their own real color per vendor (not just the neutral
+  // gray/beige banding used in the body) — a plain grayscale header read as
+  // "too gray" with this many columns side by side; a distinct hue per
+  // vendor makes each one instantly recognizable at a glance, and pairs
+  // with white header text for contrast. Body cells stay the neutral
+  // banding above — a fully saturated background under every dollar
+  // figure would be harder to read than helpful.
+  var VENDOR_HEADER_COLORS=['#2B7A78','#C0562F','#6A4C93','#1F6F8B','#A83262','#B08900','#3D7A3D','#8A4B8A','#B0413E','#2F6690'];
+  var vendorHeaderColor={};
+  vendorIds.forEach(function(vid,vi){ vendorHeaderColor[vid]=VENDOR_HEADER_COLORS[vi%VENDOR_HEADER_COLORS.length]; });
+  function vendorThBg(vid){ return ';background:'+vendorHeaderColor[vid]+';color:#fff;border-color:'+vendorHeaderColor[vid]; }
   // First-cell (Product name) styles per row type — each needs its own
   // opaque background matching that row's normal background, or the rows
   // scrolling past underneath would show through while this cell is

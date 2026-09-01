@@ -38,6 +38,21 @@ if (!QB_REALM || !CLIENT_ID || !CLIENT_SECRET) {
 // server instances running at once (last write wins).
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'plant-data.json');
+// items + transactions live in their OWN file with their OWN lock,
+// separate from everything else (orders, chat messages, users, etc. — see
+// DATA_FILE above). Reasoning: these two are frequently multiple MB
+// (hundreds of items, thousands of transaction/movement rows from years
+// of synced Bills/Invoices), and JSON.stringify/parse of a multi-MB
+// payload is a genuinely slow, SYNCHRONOUS operation that blocks Node's
+// single thread — during that block, literally nothing else on the
+// server can run. Confirmed live (Sep 2026): a Full Sync's push of the
+// whole items+transactions array was blocking completely unrelated
+// requests — an order save, chat message polling, everything — because
+// they all shared one lock/file with items+transactions. Splitting them
+// into their own file+lock means a huge items/transactions write can
+// only ever block ANOTHER items/transactions operation, never an order
+// save or anything else.
+const ITEMS_TXN_FILE = path.join(DATA_DIR, 'items-transactions.json');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 // Separate file, not bundled into DATA_FILE — this can hold thousands of
 // invoices/payments and shouldn't bloat every read/write of the main,
@@ -63,7 +78,7 @@ const PURCHASE_CACHE_FILE = path.join(DATA_DIR, 'purchase-report-cache.json');
 // disk (same DATA_DIR the rest of the shared data already lives on) means a
 // restart is invisible to whoever's already logged in.
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
-const DATA_DEFAULT = { items: [], transactions: [], storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [], deletedCfSplitIds: [], chatMessages: [], orders: [], deletedOrderIds: [], drivers: [], deletedDrivers: [],
+const DATA_DEFAULT = { storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [], deletedCfSplitIds: [], chatMessages: [], orders: [], deletedOrderIds: [], drivers: [], deletedDrivers: [],
   // Weekly Purchase Report (Reports → Purchasing): purchaseConfig holds the
   // admin-configured row/column definitions (which products, which vendor
   // columns, which weeks exist) — small, rarely-changed, keyed by id so it
@@ -200,12 +215,26 @@ function readSharedData() {
   return withDataLock(_readSharedDataUnlocked);
 }
 function writeSharedData(data) {
-  const p = withDataLock(() => _writeSharedDataUnlocked(data));
-  // Fire-and-forget, and only AFTER the lock above has fully released --
-  // maybeAutoBackup() needs the lock again itself (via readSharedData), so
-  // calling it before this promise resolves would deadlock against itself.
-  p.then(() => maybeAutoBackup()).catch(() => {});
-  return p;
+  // items/transactions live in their own file now (see ITEMS_TXN_FILE) —
+  // split them out here rather than in every individual caller, so any
+  // existing caller that still passes a full blob (a backup restore, for
+  // instance, which legitimately has both) automatically routes each part
+  // to the right place without needing its own update. This function is
+  // only ever used for that kind of full-blob write (restores, mainly),
+  // never the hot per-request sync path — so awaiting both writes here
+  // (rather than firing the items/transactions one off unawaited) is the
+  // right tradeoff: correctness (the caller's response means it's ALL
+  // actually on disk) matters more than shaving a few ms on a rare call.
+  return (async () => {
+    if (data && (Array.isArray(data.items) || Array.isArray(data.transactions))) {
+      await writeItemsTxnData({ items: data.items || [], transactions: data.transactions || [] });
+      data = Object.assign({}, data);
+      delete data.items;
+      delete data.transactions;
+    }
+    await withDataLock(() => _writeSharedDataUnlocked(data));
+    maybeAutoBackup(); // fire-and-forget is fine for this one — it's a courtesy snapshot, not part of what the caller needs to wait on
+  })();
 }
 // Atomic "read, modify, write" as ONE queued step — use this whenever the
 // write depends on first reading the current data (e.g. merging incoming
@@ -224,6 +253,60 @@ function updateSharedData(mutator) {
   });
   p.then(result => { if (!result.skipWrite) maybeAutoBackup(); }).catch(() => {});
   return p;
+}
+
+// ===== ITEMS + TRANSACTIONS (separate file/lock — see ITEMS_TXN_FILE above) =====
+const ITEMS_TXN_DEFAULT = { items: [], transactions: [] };
+let _itemsTxnLock = Promise.resolve();
+function withItemsTxnLock(fn) {
+  const run = _itemsTxnLock.then(fn, fn);
+  _itemsTxnLock = run.then(() => {}, () => {});
+  return run;
+}
+async function _readItemsTxnUnlocked() {
+  try {
+    const raw = await fs.promises.readFile(ITEMS_TXN_FILE, 'utf8');
+    return Object.assign({}, ITEMS_TXN_DEFAULT, JSON.parse(raw || '{}'));
+  } catch (e) {
+    return Object.assign({}, ITEMS_TXN_DEFAULT); // no file yet (first run, or pre-migration) — same "start empty" behavior as the main store
+  }
+}
+async function _writeItemsTxnUnlocked(data) {
+  const dir = path.dirname(ITEMS_TXN_FILE);
+  if (!fs.existsSync(dir)) await fs.promises.mkdir(dir, { recursive: true });
+  // Same atomic write-then-rename as the main data file, for the same
+  // reason: a crash/restart mid-write should never leave a truncated file.
+  const tmpFile = ITEMS_TXN_FILE + '.tmp-' + process.pid + '-' + Date.now();
+  await fs.promises.writeFile(tmpFile, JSON.stringify(data));
+  await fs.promises.rename(tmpFile, ITEMS_TXN_FILE);
+}
+function readItemsTxnData() {
+  return withItemsTxnLock(_readItemsTxnUnlocked);
+}
+function writeItemsTxnData(data) {
+  return withItemsTxnLock(() => _writeItemsTxnUnlocked(data));
+}
+// One-time migration: the very first read after this split ships, pull any
+// items/transactions still sitting in the OLD combined file over to the new
+// one, so existing installs don't just lose their whole item catalog. Runs
+// at most once — after the first successful migration, the new file exists
+// and this becomes a no-op forever after (nothing left to migrate).
+let _itemsTxnMigrationChecked = false;
+async function migrateItemsTxnIfNeeded() {
+  if (_itemsTxnMigrationChecked) return;
+  _itemsTxnMigrationChecked = true;
+  try {
+    if (fs.existsSync(ITEMS_TXN_FILE)) return; // already migrated (or fresh install with nothing to migrate)
+    if (!fs.existsSync(DATA_FILE)) return; // fresh install — nothing to migrate either
+    const raw = await fs.promises.readFile(DATA_FILE, 'utf8');
+    const old = JSON.parse(raw || '{}');
+    if (Array.isArray(old.items) || Array.isArray(old.transactions)) {
+      await writeItemsTxnData({ items: old.items || [], transactions: old.transactions || [] });
+      console.log('Migrated items/transactions (' + (old.items || []).length + ' items, ' + (old.transactions || []).length + ' transactions) to their own file.');
+    }
+  } catch (e) {
+    console.error('items/transactions migration check failed (non-fatal):', e.message);
+  }
 }
 
 // ===== SERVER-SIDE BACKUPS =====
@@ -251,14 +334,16 @@ function backupTimestamp() {
 // user's PIN back exactly as it was, not force everyone to reset it.
 async function takeServerBackup(kind) {
   await ensureBackupDir();
-  const data = await readSharedData(); // goes through the same lock/read path as everything else
+  // Both stores, merged into one payload — a backup should be a complete
+  // snapshot regardless of which file each part actually lives in day-to-day.
+  const [data, itemsTxn] = await Promise.all([readSharedData(), readItemsTxnData()]);
   const filename = `backup-${backupTimestamp()}-${kind}.json`;
   const payload = {
     _backupType: 'plant-console-server-backup',
     _version: 1,
     takenAt: new Date().toISOString(),
     kind: kind,
-    data: data
+    data: Object.assign({}, data, itemsTxn)
   };
   await fs.promises.writeFile(path.join(BACKUP_DIR, filename), JSON.stringify(payload, null, 2));
   pruneOldBackups().catch(e => console.error('Could not prune old backups:', e.message));
@@ -1249,8 +1334,8 @@ const server = http.createServer(async (req, res) => {
   // items/transactions/storages/users instead of each keeping its own local copy =====
   if (url === '/api/data' && req.method === 'GET') {
     if (!requireAuth(req, res)) return;
-    const data = await readSharedData();
-    const safe = Object.assign({}, data, {
+    const [data, itemsTxn] = await Promise.all([readSharedData(), readItemsTxnData()]);
+    const safe = Object.assign({}, data, itemsTxn, {
       users: data.users.map(u => { const c = Object.assign({}, u); delete c.pin; delete c.pinHash; return c; })
     });
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
@@ -1715,6 +1800,25 @@ const server = http.createServer(async (req, res) => {
     try {
       const bodyStr = await readRequestBody(req);
       const incoming = JSON.parse(bodyStr || '{}');
+      // items/transactions are BY FAR the largest, slowest-to-serialize
+      // part of a routine full-snapshot push — pulled out and written
+      // through their own separate lock/file (see ITEMS_TXN_FILE above)
+      // BEFORE the main updateSharedData() call below, so this request's
+      // big payload can never make some other, unrelated request (an
+      // order save, chat message polling, anything using the main store)
+      // sit around waiting on it.
+      if (Array.isArray(incoming.items) || Array.isArray(incoming.transactions)) {
+        // Only overwrite whichever of the two was actually sent — same
+        // "merge: only overwrite the keys actually sent" principle as the
+        // main store, so pushing just one of them never wipes the other.
+        const existing = (!Array.isArray(incoming.items) || !Array.isArray(incoming.transactions)) ? await readItemsTxnData() : null;
+        await writeItemsTxnData({
+          items: Array.isArray(incoming.items) ? incoming.items : existing.items,
+          transactions: Array.isArray(incoming.transactions) ? incoming.transactions : existing.transactions
+        });
+        delete incoming.items;
+        delete incoming.transactions;
+      }
       await updateSharedData(async (current) => {
         // If the incoming users array is missing pin/pinHash for a user (because
         // the browser never received it), keep that user's existing credentials
@@ -2910,6 +3014,7 @@ const server = http.createServer(async (req, res) => {
 
 (async () => {
   await loadSessionsFromDisk(); // restore sessions BEFORE accepting any requests, so nobody gets a spurious 401 right after a restart
+  await migrateItemsTxnIfNeeded(); // one-time: move any existing items/transactions out of the old combined file before anything tries to read either store
   server.listen(PORT, () => {
     console.log('Plant Console running on port ' + PORT);
     // Apply the (possibly just-lowered) BACKUP_KEEP_MAX to whatever's already

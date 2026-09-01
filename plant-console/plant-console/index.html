@@ -9958,6 +9958,8 @@ function renderPurchaseReport(){
   });
   var thStyle='padding:8px 10px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#fff;font-weight:700;text-align:center;border:1px solid var(--line);position:sticky;top:0;background:var(--brand);z-index:5;width:110px';
   var thCornerStyle=thStyle+';left:0;z-index:6;width:220px'; // the "Product" header cell: sticky on BOTH axes (it's the corner), so it needs to sit above every other sticky cell in both directions — and needs its own, wider width (product names are long; the numeric columns don't need nearly this much room)
+  var thUnitPriceStyle=thStyle+';left:220px;z-index:6'; // Unit Price pins right next to Product (starts exactly where Product's 220px width ends) — same brand color as every other header now, no separate shade
+  var stickyUnitPriceCellStyle=';position:sticky;left:220px;z-index:1'; // body-row equivalent, appended per row-type below since each has its own base background
   var tdStyle='padding:6px 8px;font-size:12.5px;text-align:right;border-bottom:1px solid var(--line);width:110px';
   // Alternating shading per VENDOR (each vendor is 2 columns — Avg. Est. +
   // Realized), not per individual column, so the pair visually reads as one
@@ -9992,7 +9994,7 @@ function renderPurchaseReport(){
   // pinned during horizontal scroll.
   var stickyColPlain=tdStyle+';text-align:left;font-weight:600;position:sticky;left:0;z-index:1;background:#fff;width:220px';
   var html='<div style="overflow:auto;max-height:65vh"><table style="border-collapse:collapse;width:100%;min-width:900px;table-layout:fixed">';
-  html+='<thead><tr><th style="'+thCornerStyle+';text-align:left" rowspan="2">Product</th><th style="'+thStyle+';background:var(--line)" rowspan="2">Unit price</th>';
+  html+='<thead><tr><th style="'+thCornerStyle+';text-align:left" rowspan="2">Product</th><th style="'+thUnitPriceStyle+'" rowspan="2">Unit price</th>';
   vendorIds.forEach(function(vid){
     html+='<th style="'+thStyle+vendorThBg(vid)+'" colspan="2">'+esc(_purchVendorLabel(vid))+'</th>';
   });
@@ -10013,7 +10015,7 @@ function renderPurchaseReport(){
       cellsHtml+='<td style="'+tdStyle+vendorTdBg(vid)+'">'+(rlz!=null?_purchMoney(rlz):'<span style="color:var(--muted)">—</span>')+'</td>';
     });
     return '<tr><td style="'+stickyColPlain+'">'+esc(label)+'</td>'
-      +'<td style="'+tdStyle+';background:var(--line)">'+(unitPrice?_purchMoney(unitPrice):'—')+'</td>'
+      +'<td style="'+tdStyle+';background:var(--line)'+stickyUnitPriceCellStyle+'">'+(unitPrice?_purchMoney(unitPrice):'—')+'</td>'
       +cellsHtml
       +'<td style="'+tdStyle+';background:#fff;font-weight:700">'+(hasEst?_purchMoney(rowTotalEst):'<span style="color:var(--muted)">—</span>')+'</td>'
       +'<td style="'+tdStyle+';background:#fff;font-weight:700">'+(grid?_purchMoney(rowTotalRlz):'<span style="color:var(--muted)">—</span>')+'</td></tr>';
@@ -10062,7 +10064,7 @@ function renderPurchaseReport(){
         +'<span style="display:inline-flex;align-items:center;gap:6px">'
           +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;stroke:var(--muted);flex-shrink:0;transform:rotate('+(collapsed?'0':'90')+'deg);transition:transform .15s"><polyline points="9 6 15 12 9 18"/></svg>'
           +esc(grp.name)+'</span></td>'
-      +'<td style="'+groupHeadTdStyle+';background:var(--line)"></td>'
+      +'<td style="'+groupHeadTdStyle+';background:var(--line)'+stickyUnitPriceCellStyle+'"></td>'
       +groupCellsHtml
       +'<td style="'+groupHeadTdStyle+'">'+_purchMoney(groupTotalEst)+'</td>'
       +'<td style="'+groupHeadTdStyle+'">'+(grid?_purchMoney(groupTotalRlz):'—')+'</td></tr>';
@@ -10081,7 +10083,7 @@ function renderPurchaseReport(){
     html+=renderRow(rk,_purchRowLabel(rk),null,false);
   });
   // Totals row
-  html+='<tr style="background:var(--panel)"><td style="'+stickyColTotal+'">TOTAL</td><td style="'+tdStyle+';background:var(--line)"></td>';
+  html+='<tr style="background:var(--panel)"><td style="'+stickyColTotal+'">TOTAL</td><td style="'+tdStyle+';background:var(--line)'+stickyUnitPriceCellStyle+'"></td>';
   var grandEst=0, grandRlz=0;
   vendorIds.forEach(function(vid){
     var colEst=0, colRlz=0;

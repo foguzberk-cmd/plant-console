@@ -9986,7 +9986,7 @@ function renderPurchaseReport(){
   // pinned during horizontal scroll.
   var stickyColPlain=tdStyle+';text-align:left;font-weight:600;position:sticky;left:0;z-index:1;background:#fff;width:220px';
   var html='<div style="overflow:auto;max-height:65vh"><table style="border-collapse:collapse;width:100%;min-width:900px;table-layout:fixed">';
-  html+='<thead><tr><th style="'+thCornerStyle+';text-align:left" rowspan="2">Product</th><th style="'+thStyle+'" rowspan="2">Unit price</th>';
+  html+='<thead><tr><th style="'+thCornerStyle+';text-align:left" rowspan="2">Product</th><th style="'+thStyle+';background:var(--line)" rowspan="2">Unit price</th>';
   vendorIds.forEach(function(vid){
     html+='<th style="'+thStyle+vendorThBg(vid)+'" colspan="2">'+esc(_purchVendorLabel(vid))+'</th>';
   });
@@ -10007,7 +10007,7 @@ function renderPurchaseReport(){
       cellsHtml+='<td style="'+tdStyle+vendorTdBg(vid)+'">'+(rlz!=null?_purchMoney(rlz):'<span style="color:var(--muted)">—</span>')+'</td>';
     });
     return '<tr><td style="'+stickyColPlain+'">'+esc(label)+'</td>'
-      +'<td style="'+tdStyle+';background:#fff">'+(unitPrice?_purchMoney(unitPrice):'—')+'</td>'
+      +'<td style="'+tdStyle+';background:var(--line)">'+(unitPrice?_purchMoney(unitPrice):'—')+'</td>'
       +cellsHtml
       +'<td style="'+tdStyle+';background:#fff;font-weight:700">'+(hasEst?_purchMoney(rowTotalEst):'<span style="color:var(--muted)">—</span>')+'</td>'
       +'<td style="'+tdStyle+';background:#fff;font-weight:700">'+(grid?_purchMoney(rowTotalRlz):'<span style="color:var(--muted)">—</span>')+'</td></tr>';
@@ -10056,7 +10056,7 @@ function renderPurchaseReport(){
         +'<span style="display:inline-flex;align-items:center;gap:6px">'
           +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;stroke:var(--muted);flex-shrink:0;transform:rotate('+(collapsed?'0':'90')+'deg);transition:transform .15s"><polyline points="9 6 15 12 9 18"/></svg>'
           +esc(grp.name)+'</span></td>'
-      +'<td style="'+groupHeadTdStyle+'"></td>'
+      +'<td style="'+groupHeadTdStyle+';background:var(--line)"></td>'
       +groupCellsHtml
       +'<td style="'+groupHeadTdStyle+'">'+_purchMoney(groupTotalEst)+'</td>'
       +'<td style="'+groupHeadTdStyle+'">'+(grid?_purchMoney(groupTotalRlz):'—')+'</td></tr>';
@@ -10075,7 +10075,7 @@ function renderPurchaseReport(){
     html+=renderRow(rk,_purchRowLabel(rk),null,false);
   });
   // Totals row
-  html+='<tr style="background:var(--panel)"><td style="'+stickyColTotal+'">TOTAL</td><td style="'+tdStyle+';background:#fff"></td>';
+  html+='<tr style="background:var(--panel)"><td style="'+stickyColTotal+'">TOTAL</td><td style="'+tdStyle+';background:var(--line)"></td>';
   var grandEst=0, grandRlz=0;
   vendorIds.forEach(function(vid){
     var colEst=0, colRlz=0;

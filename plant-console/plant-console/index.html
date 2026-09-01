@@ -9956,7 +9956,7 @@ function renderPurchaseReport(){
     var tb=vendorIds.reduce(function(s,vid){ return s+((grid[b]&&grid[b][vid])||0); },0);
     return tb-ta;
   });
-  var thStyle='padding:8px 10px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:center;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5';
+  var thStyle='padding:8px 10px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:center;border-bottom:1px solid var(--line);position:sticky;top:0;background:#fff;z-index:5';
   var thCornerStyle=thStyle+';left:0;z-index:6'; // the "Product" header cell: sticky on BOTH axes (it's the corner), so it needs to sit above every other sticky cell in both directions
   var tdStyle='padding:6px 8px;font-size:12.5px;text-align:right;border-bottom:1px solid var(--line)';
   // Alternating shading per VENDOR (each vendor is 2 columns — Avg. Est. +

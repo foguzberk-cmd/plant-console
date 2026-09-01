@@ -11953,14 +11953,20 @@ function renderSettings(){
     <p class="lede">Storage locations, users, and system configuration for the entire console.</p>
     <div class="settings-layout">
 
-      <div class="settings-section">
+      <div class="settings-tabbar" style="display:flex;gap:4px;overflow-x:auto;border-bottom:1.5px solid var(--line);margin-bottom:18px;padding-bottom:0">
+        ${[['account','My account'],['storage','Storage locations'],['backup','Backup & restore'],['users','Users & permissions'],['permMatrix','Permissions matrix'],['labeling','Labeling'],['customers','Customers'],['vendors','Vendors'],['labelTemplates','Label Templates']]
+          .filter(function(t){ return t[0]!=='permMatrix' || (currentUser&&currentUser.role==='admin'); })
+          .map(function(t){ return '<button id="stab-btn-'+t[0]+'" class="btn" onclick="switchSettingsTab(\''+t[0]+'\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">'+t[1]+'</button>'; }).join('')}
+      </div>
+
+      <div class="settings-section" id="stab-account">
         <div class="settings-section-head">
           <div><h3>My account</h3><p>Your profile and login credentials.</p></div>
         </div>
         <div class="my-profile-card" id="myProfileCard"></div>
       </div>
 
-      <div class="settings-section">
+      <div class="settings-section" id="stab-storage">
         <div class="settings-section-head">
           <div><h3>Storage locations</h3><p>Physical areas where product is held — coolers, freezers, dry racks.</p></div>
           <div style="display:flex;gap:8px">
@@ -11993,7 +11999,7 @@ function renderSettings(){
         </div>
       </div>
 
-      <div class="settings-section">
+      <div class="settings-section" id="stab-backup">
         <div class="settings-section-head">
           <div><h3>Backup &amp; restore</h3><p>Full snapshots of everything — items, transactions, locations, users, scale logs, customers, label templates, all settings — taken and stored on the server itself, independent of any one device or browser.</p></div>
         </div>
@@ -12014,7 +12020,7 @@ function renderSettings(){
         </div>
       </div>
 
-      <div class="settings-section">
+      <div class="settings-section" id="stab-users">
         <div class="settings-section-head">
           <div><h3>Users &amp; permissions</h3><p>Manage who can access the console and what they can do.</p></div>
           ${currentUser&&currentUser.role==='admin'?`<button class="btn btn-primary btn-sm" onclick="openAddUserModal()"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add user</button>`:''}
@@ -12022,7 +12028,7 @@ function renderSettings(){
         <ul class="user-list" id="userList"></ul>
       </div>
 
-      <div class="settings-section" id="permMatrixSection" style="${currentUser&&currentUser.role==='admin'?'':'display:none'}">
+      <div class="settings-section" id="stab-permMatrix" style="${currentUser&&currentUser.role==='admin'?'':'display:none'}">
         <div class="settings-section-head">
           <div><h3>Permissions matrix</h3><p>Every permission, every person, in one view — tick a box to grant it, right here, no need to open each person individually. Admins always have everything and can't be edited (their column is grayed out).</p></div>
         </div>
@@ -12035,28 +12041,28 @@ function renderSettings(){
         </div>
       </div>
 
-      <div class="settings-section">
+      <div class="settings-section" id="stab-labeling">
         <div class="settings-section-head">
           <div><h3>Labeling</h3><p>Choose which products are allowed to print labels in the Scale Log. Only checked products appear in the scale operator's dropdown.</p></div>
         </div>
         <div id="labelingPanel"></div>
       </div>
 
-      <div class="settings-section">
+      <div class="settings-section" id="stab-customers">
         <div class="settings-section-head">
           <div><h3>Customers</h3><p>Maintain the list of customers available in the Scale Log's Customer dropdown when printing a label.</p></div>
         </div>
         <div id="customersPanel"></div>
       </div>
 
-      <div class="settings-section">
+      <div class="settings-section" id="stab-vendors">
         <div class="settings-section-head">
           <div><h3>Vendors</h3><p>Assign each vendor to a department, so Scheduled Payments' vendor bills table can group them the way your plant is organized.</p></div>
         </div>
         <div id="vendorsPanel"></div>
       </div>
 
-      <div class="settings-section">
+      <div class="settings-section" id="stab-labelTemplates">
         <div class="settings-section-head">
           <div><h3>Label Templates</h3><p>Customize the company info, establishment number, "Keep Refrigerated" wording, and safe handling instructions printed on each department's labels.</p></div>
         </div>
@@ -12073,7 +12079,32 @@ function renderSettings(){
   renderVendorsPanel();
   renderLabelTemplatesPanel();
   renderBackupsPanel();
+  switchSettingsTab(_settingsActiveTab);
 }
+// Which Settings tab is currently showing — remembered across re-renders
+// within the session (e.g. after saving something triggers a re-render),
+// so saving a change doesn't kick you back to "My account" every time.
+var _settingsActiveTab='account';
+function switchSettingsTab(tab){
+  var tabKeys=['account','storage','backup','users','permMatrix','labeling','customers','vendors','labelTemplates'];
+  if(tab==='permMatrix' && !(currentUser&&currentUser.role==='admin')) tab='account'; // that tab/button doesn't exist for non-admins
+  _settingsActiveTab=tab;
+  tabKeys.forEach(function(t){
+    var panel=document.getElementById('stab-'+t);
+    if(panel) panel.style.display=(t===tab)?'block':'none';
+    var btn=document.getElementById('stab-btn-'+t);
+    if(btn){
+      var active=(t===tab);
+      btn.style.background=active?'#fff':'var(--bg)';
+      btn.style.fontWeight=active?'700':'400';
+      btn.style.color=active?'var(--brand)':'var(--muted)';
+      btn.style.borderTop=active?'3px solid var(--brand)':'3px solid transparent';
+      btn.style.borderLeft=active?'1.5px solid var(--line)':'1.5px solid transparent';
+      btn.style.borderRight=active?'1.5px solid var(--line)':'1.5px solid transparent';
+    }
+  });
+}
+window.switchSettingsTab=switchSettingsTab;
 
 var _lblPanelDept=null; // which department's product list is currently being edited
 var _lblDraft=null; // working copy of labelAllowed[_lblPanelDept] — nothing persists until Save is clicked

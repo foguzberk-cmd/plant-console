@@ -13870,89 +13870,119 @@ function renderUserList(){
 // a column, checkboxes editable right in place — the point being to let
 // an admin actually SEE and audit who has what across the whole staff at
 // once, instead of having to open each person one at a time to find out.
-// Which permission categories are rolled up (collapsed) in the matrix —
-// page-level UI state only, not persisted/synced. Defaults to all
-// collapsed on first load so the whole tree opens up compact — click a
-// category to drill into it, same interaction as the Purchasing report's
-// category groups.
-var _permMatrixCollapsedGroups=null; // null = not yet initialized
-function togglePermMatrixGroup(g){
-  _permMatrixCollapsedGroups[g]=!_permMatrixCollapsedGroups[g];
+// Tree rooted at USER first (User → Tab/section → individual permission),
+// per the hand-drawn wireframe: expand a person, then expand one of their
+// tabs, to get down to the actual checkboxes — rather than one long
+// always-visible grid. Page-level UI state only, not persisted/synced.
+var _permTreeExpandedUsers={}; // userId -> bool
+var _permTreeExpandedGroups={}; // userId+'|'+group -> bool
+function togglePermTreeUser(userId){
+  _permTreeExpandedUsers[userId]=!_permTreeExpandedUsers[userId];
   renderPermissionsMatrix();
 }
-window.togglePermMatrixGroup=togglePermMatrixGroup;
+window.togglePermTreeUser=togglePermTreeUser;
+function togglePermTreeGroup(userId,g){
+  var key=userId+'|'+g;
+  _permTreeExpandedGroups[key]=!_permTreeExpandedGroups[key];
+  renderPermissionsMatrix();
+}
+window.togglePermTreeGroup=togglePermTreeGroup;
 function togglePermMatrixAllGroups(){
-  var groupNames=Array.from(new Set(PERMISSIONS.map(function(p){return p.group;})));
-  if(!_permMatrixCollapsedGroups) _permMatrixCollapsedGroups={};
-  var anyExpanded=groupNames.some(function(g){return !_permMatrixCollapsedGroups[g];});
-  groupNames.forEach(function(g){ _permMatrixCollapsedGroups[g]=anyExpanded; });
+  var anyOpen=users.some(function(u){ return _permTreeExpandedUsers[u.id]; });
+  users.forEach(function(u){ _permTreeExpandedUsers[u.id]=!anyOpen; });
+  if(!anyOpen){
+    // Opening everyone — open every one of their tabs too, so "expand all"
+    // actually reaches all the way down to the checkboxes in one click.
+    var groupNames=Array.from(new Set(PERMISSIONS.map(function(p){return p.group;})));
+    users.forEach(function(u){ groupNames.forEach(function(g){ _permTreeExpandedGroups[u.id+'|'+g]=true; }); });
+  }
   renderPermissionsMatrix();
 }
 window.togglePermMatrixAllGroups=togglePermMatrixAllGroups;
+// A tab/group checkbox reflects — and can set — every permission inside it
+// AT ONCE for that one user: checked when all are granted, unchecked when
+// none are, and shown as indeterminate (a dash, not a check or empty box)
+// when it's a mix. Clicking it grants or revokes the whole tab in one go.
+function togglePermTreeGroupAll(userId,g,checked){
+  var u=users.find(function(x){return x.id===userId;});
+  if(!u||u.role==='admin') return;
+  if(!u.perms) u.perms={};
+  PERMISSIONS.filter(function(p){return p.group===g;}).forEach(function(p){ u.perms[p.id]=checked; });
+  saveUsers();
+  renderUserList();
+  renderPermissionsMatrix();
+}
+window.togglePermTreeGroupAll=togglePermTreeGroupAll;
 function renderPermissionsMatrix(){
   var table=document.getElementById('permMatrixTable');
   if(!table) return;
   if(!currentUser||currentUser.role!=='admin') return; // section itself is display:none for non-admins too — belt and suspenders
   var filterEl=document.getElementById('permMatrixFilter');
   var q=(filterEl&&filterEl.value||'').trim().toLowerCase();
-  if(!_permMatrixCollapsedGroups){
-    // First render: start with every category collapsed — a tree you drill
-    // into, not a huge always-open list.
-    _permMatrixCollapsedGroups={};
-    Array.from(new Set(PERMISSIONS.map(function(p){return p.group;}))).forEach(function(g){ _permMatrixCollapsedGroups[g]=true; });
-  }
-  var groups={};
-  var groupOrder=[];
+  var groupsAll={};
+  var groupOrderAll=[];
   PERMISSIONS.forEach(function(p){
     if(q && (p.label+' '+p.desc+' '+p.group).toLowerCase().indexOf(q)<0) return;
-    if(!groups[p.group]){ groups[p.group]=[]; groupOrder.push(p.group); }
-    groups[p.group].push(p);
+    if(!groupsAll[p.group]){ groupsAll[p.group]=[]; groupOrderAll.push(p.group); }
+    groupsAll[p.group].push(p);
   });
-  if(!groupOrder.length){
+  if(!groupOrderAll.length){
     table.innerHTML='<tr><td style="padding:16px;color:var(--muted);font-size:13px">No permissions match "'+esc(q)+'".</td></tr>';
     return;
   }
-  var colCount=users.length+1;
-  var html='<thead><tr>'
-    +'<th style="position:sticky;left:0;background:var(--panel);text-align:left;padding:8px 14px;border-bottom:2px solid var(--line);min-width:220px;z-index:2">Permission</th>'
-    +users.map(function(u){
-      return '<th style="padding:8px 10px;border-bottom:2px solid var(--line);text-align:center;min-width:90px;font-weight:600">'
-        +'<div style="white-space:nowrap">'+esc(u.name)+'</div>'
-        +(u.role==='admin'?'<div style="font-family:var(--mono);font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">admin — all</div>':'')
-      +'</th>';
-    }).join('')
-  +'</tr></thead><tbody>';
-  groupOrder.forEach(function(g){
-    // While actively filtering, a matching category always shows its
-    // matches — collapsing a group whose contents are the very thing you
-    // just searched for would defeat the point of searching.
-    var collapsed=q?false:!!_permMatrixCollapsedGroups[g];
-    var grantedCount=groups[g].filter(function(p){
-      return users.some(function(u){ return u.role!=='admin' && u.perms && u.perms[p.id]; });
-    }).length;
-    html+='<tr onclick="togglePermMatrixGroup(\''+esc(g).replace(/'/g,"\\'")+'\')" style="cursor:pointer">'
-      +'<td colspan="'+colCount+'" style="position:sticky;left:0;background:#F5EFE8;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:7px 14px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)">'
+  var html='<thead><tr><th style="text-align:left;padding:8px 14px;border-bottom:2px solid var(--line)">User / Tab / Function</th><th style="padding:8px 14px;border-bottom:2px solid var(--line);text-align:center;width:90px">Allowed</th></tr></thead><tbody>';
+  var indeterminateIds=[]; // native <input> has no HTML attribute for indeterminate — has to be set via JS after the table's in the DOM
+  users.forEach(function(u){
+    var isAdmin=u.role==='admin';
+    var userExpanded=q?true:!!_permTreeExpandedUsers[u.id]; // filtering forces everything open, same reasoning as the old category tree
+    var userGrantedCount=isAdmin?PERMISSIONS.length:PERMISSIONS.filter(function(p){return u.perms&&u.perms[p.id];}).length;
+    html+='<tr onclick="togglePermTreeUser(\''+esc(u.id)+'\')" style="cursor:pointer;background:var(--panel)">'
+      +'<td style="padding:8px 14px;border-bottom:1px solid var(--line);font-weight:700">'
         +'<span style="display:inline-flex;align-items:center;gap:6px">'
-          +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:9px;height:9px;stroke:var(--muted);flex-shrink:0;transform:rotate('+(collapsed?'0':'90')+'deg);transition:transform .15s"><polyline points="9 6 15 12 9 18"/></svg>'
-          +esc(g)+' ('+groups[g].length+')'
-          +(grantedCount?'<span style="color:var(--brand);text-transform:none;letter-spacing:0;margin-left:4px">— '+grantedCount+' granted</span>':'')
-        +'</span></td></tr>';
-    if(collapsed) return;
-    groups[g].forEach(function(p){
-      html+='<tr>'
-        +'<td style="position:sticky;left:0;background:var(--panel);padding:7px 14px 7px 30px;border-bottom:1px solid var(--line)"><div style="font-weight:600">'+esc(p.label)+'</div><div style="font-size:11px;color:var(--muted)">'+esc(p.desc)+'</div></td>'
-        +users.map(function(u){
-          var isAdmin=u.role==='admin';
-          var checked=isAdmin||(u.perms&&u.perms[p.id]);
-          return '<td style="text-align:center;border-bottom:1px solid var(--line)">'
+          +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;stroke:var(--muted);flex-shrink:0;transform:rotate('+(userExpanded?'90':'0')+'deg);transition:transform .15s"><polyline points="9 6 15 12 9 18"/></svg>'
+          +esc(u.name)
+          +(isAdmin?'<span style="font-family:var(--mono);font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-left:6px">admin — all</span>'
+                   :'<span style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-left:6px">'+userGrantedCount+'/'+PERMISSIONS.length+' granted</span>')
+        +'</span></td>'
+      +'<td style="border-bottom:1px solid var(--line)"></td></tr>';
+    if(!userExpanded) return;
+    groupOrderAll.forEach(function(g){
+      var groupKey=u.id+'|'+g;
+      var groupExpanded=q?true:!!_permTreeExpandedGroups[groupKey];
+      var groupPerms=groupsAll[g];
+      var groupGrantedCount=isAdmin?groupPerms.length:groupPerms.filter(function(p){return u.perms&&u.perms[p.id];}).length;
+      var groupAllChecked=isAdmin||groupGrantedCount===groupPerms.length;
+      var groupIndeterminate=!isAdmin&&groupGrantedCount>0&&groupGrantedCount<groupPerms.length;
+      var groupCbId='permtree-grp-'+esc(u.id)+'-'+esc(g).replace(/[^a-z0-9]/gi,'_');
+      html+='<tr style="background:#FAF7F2">'
+        +'<td onclick="togglePermTreeGroup(\''+esc(u.id)+'\',\''+esc(g).replace(/'/g,"\\'")+'\')" style="cursor:pointer;padding:6px 14px 6px 34px;border-bottom:1px solid var(--line)">'
+          +'<span style="display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">'
+            +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:9px;height:9px;stroke:var(--muted);flex-shrink:0;transform:rotate('+(groupExpanded?'90':'0')+'deg);transition:transform .15s"><polyline points="9 6 15 12 9 18"/></svg>'
+            +esc(g)+' ('+groupGrantedCount+'/'+groupPerms.length+')'
+          +'</span></td>'
+        +'<td style="text-align:center;border-bottom:1px solid var(--line)">'
+          +'<input type="checkbox" id="'+groupCbId+'" '+(groupAllChecked?'checked':'')+' '+(isAdmin?'disabled':'')+' onclick="event.stopPropagation()" onchange="togglePermTreeGroupAll(\''+esc(u.id)+'\',\''+esc(g).replace(/'/g,"\\'")+'\',this.checked)" style="width:15px;height:15px;cursor:'+(isAdmin?'not-allowed':'pointer')+';accent-color:var(--brand)"/>'
+        +'</td></tr>';
+      if(groupIndeterminate){
+        indeterminateIds.push(groupCbId);
+      }
+      if(!groupExpanded) return;
+      groupPerms.forEach(function(p){
+        var checked=isAdmin||(u.perms&&u.perms[p.id]);
+        html+='<tr>'
+          +'<td style="padding:6px 14px 6px 58px;border-bottom:1px solid var(--line)"><div style="font-weight:600;font-size:12.5px">'+esc(p.label)+'</div><div style="font-size:11px;color:var(--muted)">'+esc(p.desc)+'</div></td>'
+          +'<td style="text-align:center;border-bottom:1px solid var(--line)">'
             +'<input type="checkbox" '+(checked?'checked':'')+' '+(isAdmin?'disabled':'')+' onchange="togglePermMatrixCell(\''+esc(u.id)+'\',\''+p.id+'\',this.checked)" style="width:16px;height:16px;cursor:'+(isAdmin?'not-allowed':'pointer')+';accent-color:var(--brand)"/>'
-          +'</td>';
-        }).join('')
-      +'</tr>';
+          +'</td></tr>';
+      });
     });
   });
   html+='</tbody>';
   table.innerHTML=html;
+  indeterminateIds.forEach(function(id){
+    var el=document.getElementById(id);
+    if(el) el.indeterminate=true;
+  });
 }
 async function togglePermMatrixCell(userId,permId,checked){
   var u=users.find(function(x){return x.id===userId;});

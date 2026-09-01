@@ -9956,9 +9956,9 @@ function renderPurchaseReport(){
     var tb=vendorIds.reduce(function(s,vid){ return s+((grid[b]&&grid[b][vid])||0); },0);
     return tb-ta;
   });
-  var thStyle='padding:8px 10px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:center;border-bottom:1px solid var(--line);position:sticky;top:0;background:#fff;z-index:5';
-  var thCornerStyle=thStyle+';left:0;z-index:6'; // the "Product" header cell: sticky on BOTH axes (it's the corner), so it needs to sit above every other sticky cell in both directions
-  var tdStyle='padding:6px 8px;font-size:12.5px;text-align:right;border-bottom:1px solid var(--line)';
+  var thStyle='padding:8px 10px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);font-weight:700;text-align:center;border:1px solid var(--line);position:sticky;top:0;background:#fff;z-index:5;width:110px';
+  var thCornerStyle=thStyle+';left:0;z-index:6;width:220px'; // the "Product" header cell: sticky on BOTH axes (it's the corner), so it needs to sit above every other sticky cell in both directions — and needs its own, wider width (product names are long; the numeric columns don't need nearly this much room)
+  var tdStyle='padding:6px 8px;font-size:12.5px;text-align:right;border-bottom:1px solid var(--line);width:110px';
   // Alternating shading per VENDOR (each vendor is 2 columns — Avg. Est. +
   // Realized), not per individual column, so the pair visually reads as one
   // block. Makes it obvious at a glance where one vendor ends and the next
@@ -9984,8 +9984,8 @@ function renderPurchaseReport(){
   // opaque background matching that row's normal background, or the rows
   // scrolling past underneath would show through while this cell is
   // pinned during horizontal scroll.
-  var stickyColPlain=tdStyle+';text-align:left;font-weight:600;position:sticky;left:0;z-index:1;background:#fff';
-  var html='<div style="overflow:auto;max-height:65vh"><table style="border-collapse:collapse;width:100%;min-width:900px">';
+  var stickyColPlain=tdStyle+';text-align:left;font-weight:600;position:sticky;left:0;z-index:1;background:#fff;width:220px';
+  var html='<div style="overflow:auto;max-height:65vh"><table style="border-collapse:collapse;width:100%;min-width:900px;table-layout:fixed">';
   html+='<thead><tr><th style="'+thCornerStyle+';text-align:left" rowspan="2">Product</th><th style="'+thStyle+'" rowspan="2">Unit price</th>';
   vendorIds.forEach(function(vid){
     html+='<th style="'+thStyle+vendorThBg(vid)+'" colspan="2">'+esc(_purchVendorLabel(vid))+'</th>';
@@ -10013,9 +10013,9 @@ function renderPurchaseReport(){
       +'<td style="'+tdStyle+';background:#fff;font-weight:700">'+(grid?_purchMoney(rowTotalRlz):'<span style="color:var(--muted)">—</span>')+'</td></tr>';
   }
   var totalCols=4+vendorIds.length*2;
-  var groupHeadTdStyle='padding:8px 8px;font-size:12.5px;text-align:right;border-bottom:1px solid var(--line);background:var(--panel);font-weight:700';
-  var stickyColGroup=groupHeadTdStyle+';position:sticky;left:0;z-index:1';
-  var stickyColTotal=tdStyle+';text-align:left;font-weight:700;background:var(--panel);position:sticky;left:0;z-index:1';
+  var groupHeadTdStyle='padding:8px 8px;font-size:12.5px;text-align:right;border-bottom:1px solid var(--line);background:var(--panel);font-weight:700;width:110px';
+  var stickyColGroup=groupHeadTdStyle+';position:sticky;left:0;z-index:1;width:220px';
+  var stickyColTotal=tdStyle+';text-align:left;font-weight:700;background:var(--panel);position:sticky;left:0;z-index:1;width:220px';
   // Every checked-on category gets shown, each with its own collapsible
   // group header/subtotal — unchecking a category just drops it from
   // groupsToShow entirely, rows and all.

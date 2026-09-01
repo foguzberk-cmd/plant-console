@@ -1837,14 +1837,23 @@ const server = http.createServer(async (req, res) => {
         // routine local edits here. Without this guard, a non-admin session
         // could hand-craft a `users` payload that promotes itself (or anyone)
         // to role:'admin' with full perms — there's no other check standing
-        // between this merge and the permissions matrix. Only an admin
-        // session may change a user's role or perms through this route; for
-        // anyone else, every incoming user record's role/perms are forced
-        // back to whatever the server currently has on file (or safe
+        // between this merge and the permissions matrix. A session may change
+        // a user's role or perms through this route if it's role:'admin' OR
+        // if the acting user has been individually granted the "Manage
+        // users" permission — that second case matters because this app's
+        // own permission model explicitly supports a non-admin staff account
+        // being granted manageUsers (visible right in the Users list: staff
+        // accounts with a full permission set, no admin role) — the first,
+        // role-only version of this guard didn't account for that and ended
+        // up silently blocking exactly the people it's meant to allow: a
+        // staff member with Manage Users trying to grant someone else a
+        // permission would look like it saved, then silently revert. For
+        // anyone who is neither, every incoming user record's role/perms are
+        // forced back to whatever the server currently has on file (or safe
         // defaults for a brand-new user id the server doesn't know yet).
-        // Admin-driven role/perm changes should go through this same route
-        // from an admin-logged-in device, which is unaffected by this guard.
-        if (Array.isArray(incoming.users) && _dataPostSession.role !== 'admin') {
+        const actingUser = current.users.find(u => u.id === _dataPostSession.userId);
+        const actingUserCanManageUsers = _dataPostSession.role === 'admin' || !!(actingUser && actingUser.perms && actingUser.perms.manageUsers);
+        if (Array.isArray(incoming.users) && !actingUserCanManageUsers) {
           incoming.users = incoming.users.map(u => {
             if (!u) return u;
             const existing = current.users.find(x => x.id === u.id);

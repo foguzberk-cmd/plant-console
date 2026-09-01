@@ -1895,7 +1895,19 @@ const server = http.createServer(async (req, res) => {
           for (const o of incoming.orders) {
             if (!o || orderTombstoned.has(o.id)) continue;
             const existing = mergedOrders.get(o.id);
-            if (existing && existing.at && o.at && existing.at > o.at) continue; // existing is newer — keep it
+            // Keep the existing record whenever it's the newer one — OR when
+            // it has a timestamp and the incoming side doesn't. That second
+            // case is the actual bug behind orders "bouncing back" from
+            // Shipped to Received days later: requiring BOTH sides to have
+            // an .at before comparing meant a device holding a stale,
+            // .at-less cached copy (from before this field existed, or any
+            // code path that built an order object without it) would
+            // unconditionally win over a properly-timestamped, genuinely
+            // newer server record — silently reverting shipped status (and
+            // anything else about the order) back to whatever that old
+            // snapshot had. Only let a timestamp-less incoming record win
+            // when the existing one ALSO has no timestamp to compare against.
+            if (existing && existing.at && (!o.at || existing.at > o.at)) continue;
             mergedOrders.set(o.id, o);
           }
           for (const id of orderTombstoned) mergedOrders.delete(id);

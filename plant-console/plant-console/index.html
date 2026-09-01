@@ -12026,8 +12026,9 @@ function renderSettings(){
         <div class="settings-section-head">
           <div><h3>Permissions matrix</h3><p>Every permission, every person, in one view — tick a box to grant it, right here, no need to open each person individually. Admins always have everything and can't be edited (their column is grayed out).</p></div>
         </div>
-        <div style="padding:14px 20px 4px">
-          <input type="text" id="permMatrixFilter" placeholder="Filter permissions… (e.g. &quot;reports&quot;, &quot;transactions&quot;)" oninput="renderPermissionsMatrix()" style="width:100%;max-width:360px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
+        <div style="padding:14px 20px 4px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <input type="text" id="permMatrixFilter" placeholder="Filter permissions… (e.g. &quot;reports&quot;, &quot;transactions&quot;)" oninput="renderPermissionsMatrix()" style="flex:1;max-width:360px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
+          <button class="btn btn-sm" onclick="togglePermMatrixAllGroups()">Expand/Collapse all</button>
         </div>
         <div style="overflow-x:auto;padding:4px 20px 20px">
           <table id="permMatrixTable" style="border-collapse:collapse;font-size:12.5px;min-width:100%"></table>
@@ -13869,12 +13870,37 @@ function renderUserList(){
 // a column, checkboxes editable right in place — the point being to let
 // an admin actually SEE and audit who has what across the whole staff at
 // once, instead of having to open each person one at a time to find out.
+// Which permission categories are rolled up (collapsed) in the matrix —
+// page-level UI state only, not persisted/synced. Defaults to all
+// collapsed on first load so the whole tree opens up compact — click a
+// category to drill into it, same interaction as the Purchasing report's
+// category groups.
+var _permMatrixCollapsedGroups=null; // null = not yet initialized
+function togglePermMatrixGroup(g){
+  _permMatrixCollapsedGroups[g]=!_permMatrixCollapsedGroups[g];
+  renderPermissionsMatrix();
+}
+window.togglePermMatrixGroup=togglePermMatrixGroup;
+function togglePermMatrixAllGroups(){
+  var groupNames=Array.from(new Set(PERMISSIONS.map(function(p){return p.group;})));
+  if(!_permMatrixCollapsedGroups) _permMatrixCollapsedGroups={};
+  var anyExpanded=groupNames.some(function(g){return !_permMatrixCollapsedGroups[g];});
+  groupNames.forEach(function(g){ _permMatrixCollapsedGroups[g]=anyExpanded; });
+  renderPermissionsMatrix();
+}
+window.togglePermMatrixAllGroups=togglePermMatrixAllGroups;
 function renderPermissionsMatrix(){
   var table=document.getElementById('permMatrixTable');
   if(!table) return;
   if(!currentUser||currentUser.role!=='admin') return; // section itself is display:none for non-admins too — belt and suspenders
   var filterEl=document.getElementById('permMatrixFilter');
   var q=(filterEl&&filterEl.value||'').trim().toLowerCase();
+  if(!_permMatrixCollapsedGroups){
+    // First render: start with every category collapsed — a tree you drill
+    // into, not a huge always-open list.
+    _permMatrixCollapsedGroups={};
+    Array.from(new Set(PERMISSIONS.map(function(p){return p.group;}))).forEach(function(g){ _permMatrixCollapsedGroups[g]=true; });
+  }
   var groups={};
   var groupOrder=[];
   PERMISSIONS.forEach(function(p){
@@ -13886,6 +13912,7 @@ function renderPermissionsMatrix(){
     table.innerHTML='<tr><td style="padding:16px;color:var(--muted);font-size:13px">No permissions match "'+esc(q)+'".</td></tr>';
     return;
   }
+  var colCount=users.length+1;
   var html='<thead><tr>'
     +'<th style="position:sticky;left:0;background:var(--panel);text-align:left;padding:8px 14px;border-bottom:2px solid var(--line);min-width:220px;z-index:2">Permission</th>'
     +users.map(function(u){
@@ -13896,10 +13923,24 @@ function renderPermissionsMatrix(){
     }).join('')
   +'</tr></thead><tbody>';
   groupOrder.forEach(function(g){
-    html+='<tr><td colspan="'+(users.length+1)+'" style="position:sticky;left:0;background:#F5EFE8;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:7px 14px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)">'+esc(g)+'</td></tr>';
+    // While actively filtering, a matching category always shows its
+    // matches — collapsing a group whose contents are the very thing you
+    // just searched for would defeat the point of searching.
+    var collapsed=q?false:!!_permMatrixCollapsedGroups[g];
+    var grantedCount=groups[g].filter(function(p){
+      return users.some(function(u){ return u.role!=='admin' && u.perms && u.perms[p.id]; });
+    }).length;
+    html+='<tr onclick="togglePermMatrixGroup(\''+esc(g).replace(/'/g,"\\'")+'\')" style="cursor:pointer">'
+      +'<td colspan="'+colCount+'" style="position:sticky;left:0;background:#F5EFE8;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:7px 14px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)">'
+        +'<span style="display:inline-flex;align-items:center;gap:6px">'
+          +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:9px;height:9px;stroke:var(--muted);flex-shrink:0;transform:rotate('+(collapsed?'0':'90')+'deg);transition:transform .15s"><polyline points="9 6 15 12 9 18"/></svg>'
+          +esc(g)+' ('+groups[g].length+')'
+          +(grantedCount?'<span style="color:var(--brand);text-transform:none;letter-spacing:0;margin-left:4px">— '+grantedCount+' granted</span>':'')
+        +'</span></td></tr>';
+    if(collapsed) return;
     groups[g].forEach(function(p){
       html+='<tr>'
-        +'<td style="position:sticky;left:0;background:var(--panel);padding:7px 14px;border-bottom:1px solid var(--line)"><div style="font-weight:600">'+esc(p.label)+'</div><div style="font-size:11px;color:var(--muted)">'+esc(p.desc)+'</div></td>'
+        +'<td style="position:sticky;left:0;background:var(--panel);padding:7px 14px 7px 30px;border-bottom:1px solid var(--line)"><div style="font-weight:600">'+esc(p.label)+'</div><div style="font-size:11px;color:var(--muted)">'+esc(p.desc)+'</div></td>'
         +users.map(function(u){
           var isAdmin=u.role==='admin';
           var checked=isAdmin||(u.perms&&u.perms[p.id]);

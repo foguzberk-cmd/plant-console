@@ -14284,6 +14284,27 @@ function updateLabelPreview(){
   prev.innerHTML=buildLabelHTML(entry,false);
 }
 
+// Which Mon–Sat week a date falls in (Monday's own date, as the group key)
+// — same weekly convention used elsewhere in the app (Purchasing, Cash Flow).
+function _slWeekKeyForDate(dateStr){
+  var d=new Date(dateStr+'T12:00:00');
+  var day=d.getDay(); // 0=Sun..6=Sat
+  var mondayOffset=(day===0)?-6:(1-day);
+  var monday=new Date(d); monday.setDate(d.getDate()+mondayOffset);
+  return monday.toISOString().slice(0,10);
+}
+function _slWeekLabel(mondayKey){
+  var monday=new Date(mondayKey+'T12:00:00');
+  var saturday=new Date(monday); saturday.setDate(monday.getDate()+5);
+  var fmt=function(d){ return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); };
+  return fmt(monday)+' – '+fmt(saturday);
+}
+var _slCollapsedWeeks={}; // week key -> true if rolled up; defaults to expanded
+function toggleScaleLogWeek(weekKey){
+  _slCollapsedWeeks[weekKey]=!_slCollapsedWeeks[weekKey];
+  renderScaleLogTable();
+}
+window.toggleScaleLogWeek=toggleScaleLogWeek;
 function renderScaleLogTable(){
   var wrap=document.getElementById('scaleLogTableWrap');
   if(!wrap) return;
@@ -14292,7 +14313,7 @@ function renderScaleLogTable(){
     wrap.innerHTML='<div class="txn-empty"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18l-2 13a2 2 0 0 1-2 1.7H7a2 2 0 0 1-2-1.7L3 6z"/></svg><p>No labels match the current filters.</p></div>';
     return;
   }
-  var rows=list.map(function(l){
+  function row(l){
     var ds=l.date?new Date(l.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
     return '<tr>'
       +'<td class="txn-date" style="white-space:nowrap">'+ds+'</td>'
@@ -14307,8 +14328,35 @@ function renderScaleLogTable(){
       +'<button class="btn btn-sm" title="Reprint" onclick="reprintLabel(this.dataset.id)" data-id="'+l.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button>'
       +'<button class="btn btn-sm btn-danger" onclick="deleteScaleLog(this.dataset.id)" data-id="'+l.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>'
       +'</div></td></tr>';
+  }
+  // Group into weeks (Mon–Sat). `list` is already sorted newest-first, so
+  // the first time we see each week key is naturally the most recent week
+  // — no separate sort of the groups needed.
+  var weekOrder=[];
+  var weekRows={};
+  var weekTotalLbs={};
+  list.forEach(function(l){
+    var wk=l.date?_slWeekKeyForDate(l.date):'unknown';
+    if(!weekRows[wk]){ weekRows[wk]=[]; weekTotalLbs[wk]=0; weekOrder.push(wk); }
+    weekRows[wk].push(l);
+    weekTotalLbs[wk]+=Number(l.weight||0);
+  });
+  var thead='<thead><tr><th>Date</th><th>Time</th><th>Product</th><th>Tag #</th><th>Department</th><th>Customer</th><th>Logged By</th><th style="text-align:right">Weight</th><th></th></tr></thead>';
+  var body=weekOrder.map(function(wk){
+    var collapsed=!!_slCollapsedWeeks[wk];
+    var label=(wk==='unknown')?'No date':_slWeekLabel(wk);
+    var headerRow='<tr onclick="toggleScaleLogWeek(\''+wk+'\')" style="cursor:pointer;background:var(--panel)">'
+      +'<td colspan="7" style="font-weight:700;font-size:12.5px">'
+        +'<span style="display:inline-flex;align-items:center;gap:6px">'
+          +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;stroke:var(--muted);flex-shrink:0;transform:rotate('+(collapsed?'0':'90')+'deg);transition:transform .15s"><polyline points="9 6 15 12 9 18"/></svg>'
+          +'Week of '+esc(label)+' ('+weekRows[wk].length+')'
+        +'</span></td>'
+      +'<td style="text-align:right;font-family:var(--mono);font-size:12.5px;font-weight:700">'+weekTotalLbs[wk].toFixed(2)+' lbs</td>'
+      +'<td></td></tr>';
+    var dataRows=collapsed?'':weekRows[wk].map(row).join('');
+    return headerRow+dataRows;
   }).join('');
-  wrap.innerHTML='<table class="txn-table"><thead><tr><th>Date</th><th>Time</th><th>Product</th><th>Tag #</th><th>Department</th><th>Customer</th><th>Logged By</th><th style="text-align:right">Weight</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
+  wrap.innerHTML='<table class="txn-table">'+thead+'<tbody>'+body+'</tbody></table>';
 }
 
 // Called on focus/click — just shows the dropdown (full list if nothing's

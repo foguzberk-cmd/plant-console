@@ -9993,7 +9993,18 @@ function renderPurchaseReport(){
   // scrolling past underneath would show through while this cell is
   // pinned during horizontal scroll.
   var stickyColPlain=tdStyle+';text-align:left;font-weight:600;position:sticky;left:0;z-index:1;background:#fff;width:220px';
-  var html='<div style="overflow:auto;max-height:65vh"><table style="border-collapse:collapse;width:100%;min-width:900px;table-layout:fixed">';
+  // table-layout:fixed only keeps columns at their declared widths if the
+  // table's OWN width has nothing extra to redistribute — a flat 900px
+  // minimum meant that whenever fewer vendors show (a category unchecked,
+  // vendors filtered out for having no activity, etc.) and the columns'
+  // real total fell under 900px, the browser stretched something to fill
+  // the gap — usually Product — breaking the assumption Unit Price's
+  // pinned position depends on (that Product is always exactly 220px).
+  // Computing the exact total here means there's never slack space to
+  // redistribute, so both columns stay exactly where they're pinned
+  // regardless of how many vendors are currently showing.
+  var tableMinWidth=220+110+vendorIds.length*220+110+110;
+  var html='<div style="overflow:auto;max-height:65vh"><table style="border-collapse:collapse;width:100%;min-width:'+tableMinWidth+'px;table-layout:fixed">';
   html+='<thead><tr><th style="'+thCornerStyle+';text-align:left" rowspan="2">Product</th><th style="'+thUnitPriceStyle+'" rowspan="2">Unit price</th>';
   vendorIds.forEach(function(vid){
     html+='<th style="'+thStyle+vendorThBg(vid)+'" colspan="2">'+esc(_purchVendorLabel(vid))+'</th>';

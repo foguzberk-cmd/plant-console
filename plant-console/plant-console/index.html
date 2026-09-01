@@ -10007,10 +10007,10 @@ function renderPurchaseReport(){
       cellsHtml+='<td style="'+tdStyle+vendorTdBg(vid)+'">'+(rlz!=null?_purchMoney(rlz):'<span style="color:var(--muted)">—</span>')+'</td>';
     });
     return '<tr><td style="'+stickyColPlain+'">'+esc(label)+'</td>'
-      +'<td style="'+tdStyle+'">'+(unitPrice?_purchMoney(unitPrice):'—')+'</td>'
+      +'<td style="'+tdStyle+';background:#fff">'+(unitPrice?_purchMoney(unitPrice):'—')+'</td>'
       +cellsHtml
-      +'<td style="'+tdStyle+';font-weight:700">'+(hasEst?_purchMoney(rowTotalEst):'<span style="color:var(--muted)">—</span>')+'</td>'
-      +'<td style="'+tdStyle+';font-weight:700">'+(grid?_purchMoney(rowTotalRlz):'<span style="color:var(--muted)">—</span>')+'</td></tr>';
+      +'<td style="'+tdStyle+';background:#fff;font-weight:700">'+(hasEst?_purchMoney(rowTotalEst):'<span style="color:var(--muted)">—</span>')+'</td>'
+      +'<td style="'+tdStyle+';background:#fff;font-weight:700">'+(grid?_purchMoney(rowTotalRlz):'<span style="color:var(--muted)">—</span>')+'</td></tr>';
   }
   var totalCols=4+vendorIds.length*2;
   var groupHeadTdStyle='padding:8px 8px;font-size:12.5px;text-align:right;border-bottom:1px solid var(--line);background:var(--panel);font-weight:700';
@@ -10075,7 +10075,7 @@ function renderPurchaseReport(){
     html+=renderRow(rk,_purchRowLabel(rk),null,false);
   });
   // Totals row
-  html+='<tr style="background:var(--panel)"><td style="'+stickyColTotal+'">TOTAL</td><td style="'+tdStyle+'"></td>';
+  html+='<tr style="background:var(--panel)"><td style="'+stickyColTotal+'">TOTAL</td><td style="'+tdStyle+';background:#fff"></td>';
   var grandEst=0, grandRlz=0;
   vendorIds.forEach(function(vid){
     var colEst=0, colRlz=0;

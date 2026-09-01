@@ -9979,17 +9979,13 @@ function renderPurchaseReport(){
   // column stands out from the page background, while adjacent vendors
   // still read as visually separate from each other.
   function vendorTdBg(vid){ return ';background:'+(vendorBand[vid]?'var(--line)':'var(--bg)'); }
-  // Header rows get their own real color per vendor (not just the neutral
-  // gray/beige banding used in the body) — a plain grayscale header read as
-  // "too gray" with this many columns side by side; a distinct hue per
-  // vendor makes each one instantly recognizable at a glance, and pairs
-  // with white header text for contrast. Body cells stay the neutral
-  // banding above — a fully saturated background under every dollar
-  // figure would be harder to read than helpful.
-  var VENDOR_HEADER_COLORS=['#2B7A78','#C0562F','#6A4C93','#1F6F8B','#A83262','#B08900','#3D7A3D','#8A4B8A','#B0413E','#2F6690'];
-  var vendorHeaderColor={};
-  vendorIds.forEach(function(vid,vi){ vendorHeaderColor[vid]=VENDOR_HEADER_COLORS[vi%VENDOR_HEADER_COLORS.length]; });
-  function vendorThBg(vid){ return ';background:'+vendorHeaderColor[vid]+';color:#fff;border-color:'+vendorHeaderColor[vid]; }
+  // Every header cell — Product/Unit Price/Total AND every vendor — is now
+  // the SAME single color (the app's brand teal, matching thStyle's own
+  // base), not a distinct hue per vendor. A per-vendor palette made each
+  // one identifiable, but the ask was one consistent header color
+  // throughout; vendors are still visually separated by the column
+  // banding in the body underneath, just not by header color anymore.
+  function vendorThBg(vid){ return ''; } // thStyle's own background/color (brand teal / white) already applies — nothing to override
   // First-cell (Product name) styles per row type — each needs its own
   // opaque background matching that row's normal background, or the rows
   // scrolling past underneath would show through while this cell is

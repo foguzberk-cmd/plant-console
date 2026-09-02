@@ -12471,7 +12471,7 @@ function renderCustomersList(){
     return '<label style="display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer">'
       +'<input type="checkbox" '+(on?'checked':'')+' onchange="toggleCustomerAllowed(\''+c.id+'\',this.checked)" style="width:17px;height:17px;cursor:pointer;accent-color:var(--brand)"/>'
       +'<div style="flex:1;font-size:13px;font-weight:600">'+esc(c.name)+'</div>'
-      +'<input type="text" data-repinput="'+c.id+'" value="'+esc(c.salesRep||'')+'" placeholder="Sales Rep" onclick="event.stopPropagation()" onfocus="event.stopPropagation();showRepSuggestions(this,\''+c.id+'\')" oninput="showRepSuggestions(this,\''+c.id+'\')" onblur="setTimeout(hideRepSuggestions,300)" onchange="updateCustomerSalesRep(\''+c.id+'\',this.value)" style="width:140px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink);cursor:text"/>'
+      +'<input type="text" data-repinput="'+c.id+'" value="'+esc(c.salesRep||'')+'" placeholder="Sales Rep" onclick="event.stopPropagation()" onfocus="event.stopPropagation();showRepSuggestions(this,\''+c.id+'\')" oninput="showRepSuggestions(this,\''+c.id+'\')" onchange="updateCustomerSalesRep(\''+c.id+'\',this.value)" style="width:140px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink);cursor:text"/>'
       +'<input type="text" value="'+esc(c.dunsNumber||'')+'" placeholder="Dun#" title="Dun# (D-U-N-S number) — not available from QuickBooks\'s API, entered here manually" onclick="event.stopPropagation()" onchange="updateCustomerDunsNumber(\''+c.id+'\',this.value)" style="width:100px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;font-family:var(--mono);background:var(--bg);color:var(--ink);cursor:text"/>'
       +'</label>';
   }).join('');
@@ -12484,6 +12484,18 @@ function renderCustomersList(){
 // at all, and even where a datalist itself is supported, tapping the field
 // often doesn't reliably pop it open). This is built and positioned by hand
 // so "picking" a rep works the same way regardless of device/browser.
+//
+// Closes only on a genuine click outside both the input and the dropdown
+// itself (see the one-time document-level listener below) — NOT on the
+// input's blur event with a timer, which is what the first two attempts at
+// this used. Blur fires the instant focus moves anywhere else, including
+// onto the dropdown's own scrollbar or the gap between rows, and racing a
+// timer against that (150ms, then 300ms) never reliably won: any click
+// that took even slightly longer than the timer — scrolling to find a
+// name further down a long list was the common case — closed the popup
+// before the click landed. An outside-click check has no timer to lose a
+// race against at all; it just asks "was this click inside the popup or
+// the field" after the click has already fully happened.
 function showRepSuggestions(inputEl,custId){
   var q=(inputEl.value||'').toLowerCase();
   var opts=(window._custRepOptions||[]).filter(function(r){ return r.toLowerCase().indexOf(q)>=0; }).slice(0,8);
@@ -12500,16 +12512,9 @@ function showRepSuggestions(inputEl,custId){
     dd.style.maxHeight='220px';
     dd.style.overflowY='auto';
     dd.style.display='none';
-    // Only individual rows below intercept mousedown to keep the input
-    // focused — clicking (or dragging a scrollbar) anywhere else in this
-    // popup (its own padding, the scroll track, between rows) wasn't
-    // covered, so that click still blurred the input and closed the whole
-    // thing via the timer above, before a click on the actual name ever
-    // had a chance to land — especially awkward with a long, scrollable
-    // list of matches. This catches everything that isn't a row itself.
-    dd.onmousedown=function(e){ e.preventDefault(); };
     document.body.appendChild(dd);
   }
+  dd.dataset.forInput=custId; // lets the document-level outside-click listener recognize this popup's own current field
   if(!opts.length){ dd.style.display='none'; return; }
   var rect=inputEl.getBoundingClientRect();
   dd.style.left=Math.round(rect.left)+'px';
@@ -12524,11 +12529,7 @@ function showRepSuggestions(inputEl,custId){
     row.style.cursor='pointer';
     row.onmouseover=function(){ row.style.background='var(--bg)'; };
     row.onmouseout=function(){ row.style.background='#fff'; };
-    // mousedown (not click) fires BEFORE the input's blur, so the value is
-    // set and saved before the blur-triggered hideRepSuggestions() timeout
-    // below would otherwise close this dropdown out from under a tap.
-    row.onmousedown=function(e){
-      e.preventDefault();
+    row.onclick=function(){
       inputEl.value=o;
       hideRepSuggestions();
       updateCustomerSalesRep(custId,o);
@@ -12540,6 +12541,16 @@ function showRepSuggestions(inputEl,custId){
 function hideRepSuggestions(){
   var dd=document.getElementById('custRepSuggestDropdown');
   if(dd) dd.style.display='none';
+}
+if(!window._repSuggestOutsideClickBound){
+  window._repSuggestOutsideClickBound=true;
+  document.addEventListener('click',function(e){
+    var dd=document.getElementById('custRepSuggestDropdown');
+    if(!dd||dd.style.display==='none') return;
+    if(dd.contains(e.target)) return; // a row's own onclick already handled selection above
+    if(e.target&&e.target.matches&&e.target.matches('[data-repinput]')) return; // clicking the field itself shouldn't close what it just opened
+    dd.style.display='none';
+  });
 }
 // "Dumb terminal" write — sends ONLY this one field, for this one
 // customer, straight to the server. No local array mutation, no full

@@ -4393,6 +4393,8 @@ function renderReports(){
         +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:14px">'
           +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Week</label>'
           +'<select id="purch-week" onchange="onPurchaseWeekChange()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);min-width:170px"></select></div>'
+          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Product</label>'
+          +'<input type="text" id="purch-product-search" oninput="renderPurchaseReport()" placeholder="Search product…" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);min-width:200px"/></div>'
           +'<button class="btn btn-primary" onclick="runPurchaseReport()">Pull from QuickBooks</button>'
           +'<button class="btn" onclick="togglePurchAllGroups()" title="Expand or collapse every product category at once">Expand/Collapse all</button>'
         +'</div>'
@@ -9881,6 +9883,8 @@ function renderPurchaseReport(){
     body.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">Pick or add a week above.</div>';
     return;
   }
+  var searchEl=document.getElementById('purch-product-search');
+  var productSearch=(searchEl&&searchEl.value||'').trim().toLowerCase();
   var vendorIds=_purchVendorIdsForWeek(weekId);
   var pulledThisWeek=_purchRealized&&_purchRealized.weekId===weekId;
   var allGroups=_purchProductGroups();
@@ -10043,6 +10047,7 @@ function renderPurchaseReport(){
   // group header/subtotal — unchecking a category just drops it from
   // groupsToShow entirely, rows and all.
   var groupsToShow=visibleGroups;
+  var _purchAnyProductMatched=false;
   groupsToShow.forEach(function(grp,gi){
     // Skip products with no REALIZED purchase this week from any vendor —
     // a nonzero 13-week average alone no longer keeps a row visible (same
@@ -10051,14 +10056,19 @@ function renderPurchaseReport(){
     // for it. If that empties out a whole group, skip the group header
     // too rather than showing an empty category.
     var visibleItems=grp.items.filter(function(it){
+      if(productSearch && it.name.toLowerCase().indexOf(productSearch)<0) return false;
       if(!grid) return true;
       return vendorIds.some(function(vid){
         return ((grid[it.qbId]&&grid[it.qbId][vid])||0)!==0;
       });
     });
     if(!visibleItems.length) return;
+    _purchAnyProductMatched=true;
     var groupId='purchgrp-'+gi;
-    var collapsed=!!_purchCollapsedGroups[grp.name];
+    // While actively searching, a category with a matching product always
+    // shows it — collapsing a group whose contents are the very thing just
+    // searched for would defeat the point of searching.
+    var collapsed=productSearch?false:!!_purchCollapsedGroups[grp.name];
     // Subtotal cells — the group header row IS a real totals row (same
     // column shape as every product row below it), not just a label, so
     // the rolled-up numbers are visible whether or not it's expanded.
@@ -10113,6 +10123,9 @@ function renderPurchaseReport(){
   html+='<td style="'+tdStyle+';font-weight:700">'+_purchMoney(grandEst)+'</td>'
     +'<td style="'+tdStyle+';font-weight:700">'+(grid?_purchMoney(grandRlz):'—')+'</td></tr>';
   html+='</tbody></table></div>';
+  if(productSearch && !_purchAnyProductMatched){
+    html+='<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">No product matches "'+esc(productSearch)+'".</div>';
+  }
   html='<div style="margin-bottom:10px;font-size:12px;color:var(--muted)">'+headerLabel+' <a href="#" onclick="editPurchaseWeekDates(\''+weekId+'\');return false" style="color:var(--brand);margin-left:6px">edit dates</a></div>'+html;
   html=_purchCategoryChecksHtml(groupsForChecks)+html;
   body.innerHTML=html;

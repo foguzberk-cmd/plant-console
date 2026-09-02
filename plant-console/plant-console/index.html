@@ -12471,7 +12471,7 @@ function renderCustomersList(){
     return '<label style="display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer">'
       +'<input type="checkbox" '+(on?'checked':'')+' onchange="toggleCustomerAllowed(\''+c.id+'\',this.checked)" style="width:17px;height:17px;cursor:pointer;accent-color:var(--brand)"/>'
       +'<div style="flex:1;font-size:13px;font-weight:600">'+esc(c.name)+'</div>'
-      +'<input type="text" data-repinput="'+c.id+'" value="'+esc(c.salesRep||'')+'" placeholder="Sales Rep" onclick="event.stopPropagation()" onfocus="event.stopPropagation();showRepSuggestions(this,\''+c.id+'\')" oninput="showRepSuggestions(this,\''+c.id+'\')" onblur="setTimeout(hideRepSuggestions,150)" onchange="updateCustomerSalesRep(\''+c.id+'\',this.value)" style="width:140px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink);cursor:text"/>'
+      +'<input type="text" data-repinput="'+c.id+'" value="'+esc(c.salesRep||'')+'" placeholder="Sales Rep" onclick="event.stopPropagation()" onfocus="event.stopPropagation();showRepSuggestions(this,\''+c.id+'\')" oninput="showRepSuggestions(this,\''+c.id+'\')" onblur="setTimeout(hideRepSuggestions,300)" onchange="updateCustomerSalesRep(\''+c.id+'\',this.value)" style="width:140px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink);cursor:text"/>'
       +'<input type="text" value="'+esc(c.dunsNumber||'')+'" placeholder="Dun#" title="Dun# (D-U-N-S number) — not available from QuickBooks\'s API, entered here manually" onclick="event.stopPropagation()" onchange="updateCustomerDunsNumber(\''+c.id+'\',this.value)" style="width:100px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;font-family:var(--mono);background:var(--bg);color:var(--ink);cursor:text"/>'
       +'</label>';
   }).join('');
@@ -12500,6 +12500,14 @@ function showRepSuggestions(inputEl,custId){
     dd.style.maxHeight='220px';
     dd.style.overflowY='auto';
     dd.style.display='none';
+    // Only individual rows below intercept mousedown to keep the input
+    // focused — clicking (or dragging a scrollbar) anywhere else in this
+    // popup (its own padding, the scroll track, between rows) wasn't
+    // covered, so that click still blurred the input and closed the whole
+    // thing via the timer above, before a click on the actual name ever
+    // had a chance to land — especially awkward with a long, scrollable
+    // list of matches. This catches everything that isn't a row itself.
+    dd.onmousedown=function(e){ e.preventDefault(); };
     document.body.appendChild(dd);
   }
   if(!opts.length){ dd.style.display='none'; return; }

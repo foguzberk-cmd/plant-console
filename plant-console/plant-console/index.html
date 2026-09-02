@@ -3665,6 +3665,16 @@ async function submitNewOrder(){
   if(document.activeElement && typeof document.activeElement.blur==='function') document.activeElement.blur();
   var vals=_readOrderFormFields(fieldsWrap);
   if(!vals.customer.trim()){ if(statusEl){ statusEl.textContent='Customer is required.'; statusEl.style.color='#c0392b'; } return; }
+  // Same customer, same date already has an order on the books — easy to
+  // do by accident (e.g. re-submitting after a save that only looked like
+  // it failed), and the fix once it happens is a manual cleanup, so it's
+  // worth a heads-up before it happens rather than after.
+  var custKey=vals.customer.trim().toLowerCase();
+  var existingSameDay=orders.filter(function(o){ return o.date===vals.date && (o.customer||'').trim().toLowerCase()===custKey; });
+  if(existingSameDay.length){
+    var proceed=confirm('There'+(existingSameDay.length===1?' is already 1 order':' are already '+existingSameDay.length+' orders')+' for '+vals.customer.trim()+' on '+vals.date+'.\n\nAdd another one anyway?');
+    if(!proceed) return;
+  }
   if(statusEl){ statusEl.textContent='Saving…'; statusEl.style.color='var(--muted)'; }
   var saveBtn=document.querySelector('#newOrderFormWrap button.btn-primary');
   if(saveBtn){ saveBtn.disabled=true; saveBtn.textContent='Saving…'; }

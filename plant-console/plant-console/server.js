@@ -2069,7 +2069,24 @@ const server = http.createServer(async (req, res) => {
             for (const splitId of Array.from(splitsById.keys())) {
               if (cfSplitTombstoned.has(billId + '::' + splitId)) splitsById.delete(splitId);
             }
-            mergedCf[billId] = Object.assign({}, curRec, incRec, { splits: Array.from(splitsById.values()) });
+            // The bill-identity fields below (vendor, vendorId, docNum, due)
+            // had NO freshness protection at all — Object.assign(curRec,
+            // incRec, ...) let incRec's copy win unconditionally, on every
+            // single push, forever, with no timestamp check of any kind
+            // (unlike the split-level merge just above, which does protect
+            // Paid status). These fields describe which bill this even IS —
+            // set once, correctly, the moment a bill is first scheduled
+            // (see _cfAddSplit), and have no legitimate reason to ever
+            // change afterward. Locking them to curRec closes that gap
+            // completely: nothing pushed later, stale or not, can ever
+            // relabel an existing bill's vendor again. balance and
+            // vendorBalanceAtSchedule are deliberately left OUT of that
+            // lock — those two are meant to keep tracking QuickBooks' actual
+            // current state (e.g. a partial payment recorded elsewhere),
+            // not frozen at whatever they were the moment the bill was
+            // first scheduled, so incRec's copy of those two still wins.
+            const identityFields = { vendor: curRec.vendor, vendorId: curRec.vendorId, docNum: curRec.docNum, due: curRec.due };
+            mergedCf[billId] = Object.assign({}, curRec, incRec, identityFields, { splits: Array.from(splitsById.values()) });
           }
           for (const id of cfTombstoned) delete mergedCf[id];
           incoming.cfScheduledDates = mergedCf;

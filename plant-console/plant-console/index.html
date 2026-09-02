@@ -9763,6 +9763,13 @@ async function runPurchaseReport(){
   // this way — its unmatched lines simply aren't averaged into anything).
   var uncatByDesc={}; // description -> vendorId -> amount
   var uncatLabels={}; // rowKey -> original description text (for display)
+  // "Unit price" used to come from the Item's own static Cost field in
+  // QuickBooks — a value someone sets once and often doesn't keep updated
+  // after every price change. This tracks the ACTUAL rate paid on the most
+  // recent bill line for each item instead (across the whole combined pull,
+  // current week + lookback, whichever bill is more recent wins), so the
+  // column shows what was really paid last time, not a stale sticker price.
+  var lastUnitPrice={}; // itemId -> {price, date}
 
   bills.forEach(function(bill){
     var vqid=(bill.VendorRef&&bill.VendorRef.value)||'_novendor';
@@ -9780,6 +9787,14 @@ async function runPurchaseReport(){
       if(productItemIds[itemId]){
         if(inCurrentWeek) grid[itemId][vqid]=(grid[itemId][vqid]||0)+amt;
         if(inLookback) estTotals[itemId][vqid]=(estTotals[itemId][vqid]||0)+amt;
+        // Rate directly off the bill line when QuickBooks provides one;
+        // Amount/Qty as a fallback for lines that only carry a total.
+        var detail=ln.ItemBasedExpenseLineDetail;
+        var qty=Number(detail&&detail.Qty);
+        var rate=detail&&detail.UnitPrice!=null?Number(detail.UnitPrice):(qty>0?amt/qty:null);
+        if(rate!=null&&isFinite(rate)&&rate>0&&txnDate&&(!lastUnitPrice[itemId]||txnDate>lastUnitPrice[itemId].date)){
+          lastUnitPrice[itemId]={price:rate,date:txnDate};
+        }
         return;
       }
       if(!inCurrentWeek) return; // only break out unmatched lines for the current week
@@ -9809,6 +9824,7 @@ async function runPurchaseReport(){
     uncatByDesc:uncatByDesc,
     uncatLabels:uncatLabels,
     vendors:vendorNames,
+    lastUnitPrice:lastUnitPrice,
     billCount:bills.length
   };
   // Cache vendor display names locally (not synced — just so column headers
@@ -10095,7 +10111,12 @@ function renderPurchaseReport(){
       +'<td style="'+groupHeadTdStyle+'">'+(grid?_purchMoney(groupTotalRlz):'—')+'</td></tr>';
     if(!collapsed){
       visibleItems.forEach(function(it){
-        html+=renderRow(it.qbId,it.name,it.cost,true);
+        // Actual rate from the most recent bill line for this item, when
+        // we have one — falls back to the Item's own QuickBooks Cost field
+        // only for something that's never actually been purchased in the
+        // whole pulled window.
+        var lastPrice=(pulledThisWeek&&_purchRealized.lastUnitPrice&&_purchRealized.lastUnitPrice[it.qbId])?_purchRealized.lastUnitPrice[it.qbId].price:null;
+        html+=renderRow(it.qbId,it.name,lastPrice!=null?lastPrice:it.cost,true);
       });
     }
   });

@@ -3418,6 +3418,22 @@ function _ordGetSuggestBox(){
       if(e.target===box||box.contains(e.target)) return;
       _ordCloseAllProductDropdowns();
     },{capture:true});
+    // Closing on the input's blur event (with mousedown+preventDefault on
+    // each suggestion row to stop a click from triggering that blur first)
+    // is what this used to rely on — found, during a maintenance review,
+    // to have the exact same gap proven out in the Sales Rep picker: only
+    // a click landing exactly on a row was protected, so a click anywhere
+    // ELSE in this popup (its padding, its scrollbar, between rows —
+    // realistic here too, since this list can run up to 40 items deep)
+    // still blurred the input and closed the whole thing first. Same fix:
+    // close only on a genuine click outside both the box and the field
+    // that opened it, with no blur/timer involved to race against at all.
+    document.addEventListener('click',function(e){
+      if(box.style.display==='none') return;
+      if(box.contains(e.target)) return; // a row's own onmousedown already handled selection
+      if(e.target&&e.target.classList&&e.target.classList.contains('ord-line-product')) return; // clicking the field itself shouldn't close what it (or its own focus handler) just opened
+      _ordCloseAllProductDropdowns();
+    });
   }
   return box;
 }
@@ -3544,7 +3560,7 @@ function _orderLineRowHtml(line,isFirst,o){
           +'<input type="text" class="ord-f-customer" list="ordersCustomerList" value="'+esc(o.customer||'')+'" placeholder="Customer" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
           +_driverSelectHtml(o.driver||'')
         : '<span></span><span></span><span></span>')
-    +'<input type="text" class="ord-line-product" autocomplete="off" value="'+esc(line.product||'')+'" placeholder="Product" oninput="_ordProdInput(this)" onfocus="_ordProdInput(this)" onkeydown="_ordProdKeydown(event,this)" onblur="_ordProdBlur(this)" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
+    +'<input type="text" class="ord-line-product" autocomplete="off" value="'+esc(line.product||'')+'" placeholder="Product" oninput="_ordProdInput(this)" onfocus="_ordProdInput(this)" onkeydown="_ordProdKeydown(event,this)" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
     +'<input type="text" class="ord-line-description" value="'+esc(line.description||'')+'" placeholder="Description" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
     +'<input type="text" class="ord-line-quantity" value="'+esc(line.quantity||'')+'" placeholder="Qty" onkeydown="if(event.key===\'Enter\'){event.preventDefault();_orderLineEnterAddsRow(this);}" style="padding:7px 6px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
     +'<input type="text" class="ord-line-finalcount" value="'+esc(line.finalCount||'')+'" placeholder="Count" title="Final physical count for this product" style="padding:7px 6px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;font-family:var(--mono);background:var(--bg);color:var(--ink)"/>'
@@ -11956,7 +11972,7 @@ function addOCLine(){
   line.style.cssText='display:grid;grid-template-columns:'+OC_GRID_STD+';gap:6px;align-items:start';
   line.innerHTML=''
     +'<div class="item-search-wrap">'
-    +'<input type="text" id="oc-search-'+idx+'" class="item-search-input" placeholder="Search product..." autocomplete="off" oninput="filterOCItems('+idx+')" onkeydown="ocKeyNav(event,'+idx+')" onblur="hideOCSugg('+idx+')"/>'
+    +'<input type="text" id="oc-search-'+idx+'" class="item-search-input" placeholder="Search product..." autocomplete="off" oninput="filterOCItems('+idx+')" onkeydown="ocKeyNav(event,'+idx+')"/>'
     +'<input type="hidden" id="oc-item-'+idx+'" value=""/>'
     +'</div>'
     +'<input type="number" id="oc-qty-'+idx+'" placeholder="Qty" min="0" step="0.01" oninput="updatePhysicalDiff('+idx+')" style="padding:8px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;text-align:right;width:100%"/>'
@@ -12010,6 +12026,29 @@ function hideOCSugg(idx){
     if(s) s.style.display='none';
   },200);
 }
+// Same class of gap found and fixed in the Sales Rep and Orders product
+// pickers during a maintenance review applies here too: a row click is
+// protected (onmousedown fires and completes the selection before blur can
+// interfere), but a click anywhere else in this popup — its own padding,
+// its scrollbar — isn't, and would still close it via the timer above
+// before a selection ever happened. Since this popup is appended to
+// document.body (deliberately, to escape the modal's own overflow
+// clipping — see addOCLine), the app's general "close item-suggestions on
+// outside click" listener further down can't reach it either: that
+// listener checks each box's OWN parent element for containment, which
+// for a body-appended box is just document.body — and document.body
+// contains every click on the page, so that check can never actually
+// trigger for this one. This dedicated listener closes it correctly on a
+// genuine outside click instead, the same fix already proven for the
+// other two pickers.
+document.addEventListener('click',function(e){
+  document.querySelectorAll('[id^="oc-sugg-"]').forEach(function(sugg){
+    if(sugg.style.display==='none') return;
+    if(sugg.contains(e.target)) return; // a row's own onmousedown already handled selection
+    if(e.target&&e.target.id&&e.target.id.indexOf('oc-search-')===0) return; // clicking the field itself shouldn't close what its own oninput just opened
+    sugg.style.display='none';
+  });
+});
 
 function filterOCItems(idx){
   var inp=document.getElementById('oc-search-'+idx);

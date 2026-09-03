@@ -11622,6 +11622,34 @@ function qtyAtLoc(it,locId){
 }
 
 // Diagnostic: shows how transfers stored their locations and what the engine produced
+async function checkServerMemory(){
+  try{
+    var res=await fetchWithTimeout('/api/diagnostics/memory?_ts='+Date.now(),{cache:'no-store'});
+    if(!res.ok){ alert('Could not reach the server for this ('+res.status+').'); return; }
+    var d=await res.json();
+    var msg='SERVER MEMORY & DATA SIZE\n\n';
+    msg+='Process memory right now:\n';
+    msg+='  RSS (total OS-allocated memory — the number that matters for a crash): '+d.processMemoryMB.rss+' MB\n';
+    msg+='  Heap used: '+d.processMemoryMB.heapUsed+' MB   Heap total: '+d.processMemoryMB.heapTotal+' MB\n';
+    msg+='  External: '+d.processMemoryMB.external+' MB   Array buffers: '+d.processMemoryMB.arrayBuffers+' MB\n';
+    msg+='  Server uptime since last restart: '+d.uptimeMinutes+' minutes\n\n';
+    msg+='Record counts:\n';
+    msg+='  Items: '+d.dataCounts.items.toLocaleString()+'\n';
+    msg+='  Transactions: '+d.dataCounts.transactions.toLocaleString()+'\n';
+    msg+='  Orders: '+d.dataCounts.orders.toLocaleString()+'\n';
+    msg+='  Scale logs: '+d.dataCounts.scaleLogs.toLocaleString()+'\n';
+    msg+='  Customers: '+d.dataCounts.customers.toLocaleString()+'\n';
+    msg+='  Vendors: '+d.dataCounts.vendors.toLocaleString()+'\n\n';
+    msg+='On-disk file sizes:\n';
+    msg+='  Items + transactions file: '+(d.fileSizesMB.itemsTransactionsFile!=null?d.fileSizesMB.itemsTransactionsFile+' MB':'not found')+'\n';
+    msg+='  Main data file (everything else): '+(d.fileSizesMB.mainDataFile!=null?d.fileSizesMB.mainDataFile+' MB':'not found')+'\n\n';
+    msg+='If RSS climbs noticeably higher every time you check this over the\ncoming days without a restart in between, that confirms a genuine,\nongoing memory leak rather than just a naturally large dataset.';
+    alert(msg);
+  }catch(e){
+    alert('Could not check server memory: '+(e&&e.message?e.message:e));
+  }
+}
+window.checkServerMemory=checkServerMemory;
 function diagnoseLocations(){
   var allTxns=transactions;
 
@@ -11754,6 +11782,10 @@ function renderItemsView(){
         <button class="btn" onclick="diagnoseLocations()" title="Show how transfers and locations are stored">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
           Check
+        </button>
+        <button class="btn" onclick="checkServerMemory()" title="Show the server's actual current memory usage and data size — for tracking down the repeated crashes">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>
+          Memory
         </button>
         <button id="qbSyncIncBtn" class="btn btn-primary" onclick="syncIncremental()" title="Fast — pulls only documents changed since your last sync">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>

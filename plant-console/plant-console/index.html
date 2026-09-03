@@ -6520,6 +6520,38 @@ async function _fetchAllOpenQBEntity(entity,onProgress){
   return rows.filter(function(d){ return Number(d.Balance||0)>0; });
 }
 
+// A scheduled bill's "balance" gets captured ONCE, as a snapshot, the
+// moment it's first added to Scheduled Payments (see _cfAddSplit) — and
+// nothing ever refreshed it again after that, no matter how many times
+// the report gets re-pulled from QuickBooks afterward. Confirmed live
+// (Sep 2026): a bill showed a Balance in Plant Console lower than
+// QuickBooks' own current Balance for that exact bill, and re-pulling
+// had no effect — because a re-pull only refreshes the general
+// _cashFlowBills list; it never went back and updated the frozen number
+// already sitting in an already-scheduled bill's own record. If a vendor
+// credit (or anything else) was ever applied to that bill in QuickBooks
+// at some point after it was first scheduled here, then later un-applied,
+// the stale snapshot just sat there permanently out of sync — which is
+// exactly the "PC deducted an unapplied credit" symptom this fixes: the
+// credit genuinely wasn't reflected wrong at scheduling time, the balance
+// just never got the memo that QuickBooks changed back afterward.
+// This brings every already-scheduled, still-open bill's stored balance
+// back in sync with QuickBooks' CURRENT truth on every pull, exactly like
+// a freshly-scheduled bill already gets. Only bills still present in this
+// pull (still open in QuickBooks) are touched — a bill that's dropped out
+// entirely (fully paid/closed) keeps its last-known balance as history;
+// _cfReconcileApprovedPayments (right after this runs) is what handles
+// marking that one's splits Paid.
+function _cfRefreshScheduledBalances(freshBills){
+  var freshBalanceById={};
+  (freshBills||[]).forEach(function(b){ freshBalanceById[b.Id]=Number(b.Balance||0); });
+  Object.keys(_cfScheduledDates).forEach(function(billId){
+    if(!freshBalanceById.hasOwnProperty(billId)) return; // not open in QuickBooks anymore — leave the historical record alone
+    var rec=_cfScheduledDates[billId];
+    var fresh=freshBalanceById[billId];
+    if(rec.balance!==fresh) rec.balance=fresh;
+  });
+}
 async function runCashFlowReport(){
   var statusEl=document.getElementById('cf-status');
   var bodyEl=document.getElementById('cf-body');
@@ -6533,6 +6565,10 @@ async function runCashFlowReport(){
     if(statusEl){ statusEl.textContent='Error: '+e.message; statusEl.style.color='#c0392b'; }
     return;
   }
+  // Keep already-scheduled bills' stored balance current — see
+  // _cfRefreshScheduledBalances for why this can't just be left as the
+  // one-time snapshot taken when a bill was first added to the schedule.
+  _cfRefreshScheduledBalances(_cashFlowBills);
   var clearedCount=_cfReconcileApprovedPayments(_cashFlowBills);
   renderCashFlowReport();
   if(clearedCount>0 && statusEl){

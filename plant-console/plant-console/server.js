@@ -2944,6 +2944,56 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Memory diagnostics — reports what Node's own process is ACTUALLY using
+  // right now (not an estimate from the browser side), plus how large the
+  // underlying data actually is. Added specifically to find out whether
+  // repeated OOM crashes (Sep 2026 — crashed at ~255MB, then ~350MB, then
+  // ~460MB, then ~1792MB, each time right against whatever heap ceiling
+  // was set) are a genuine, continuously-growing memory problem — the
+  // transactions array (every movement record from years of synced
+  // QuickBooks history, all held in memory at once, nothing currently
+  // archives or prunes it) is the leading suspect — or something else.
+  if (url === '/api/diagnostics/memory') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const mem = process.memoryUsage();
+      const itemsTxn = await readItemsTxnData();
+      const mainData = await readSharedData();
+      const mb = (bytes) => Math.round(bytes / 1024 / 1024 * 10) / 10;
+      let itemsTxnFileSize = null;
+      try { itemsTxnFileSize = fs.statSync(ITEMS_TXN_FILE).size; } catch (e) { /* file may not exist yet */ }
+      let mainFileSize = null;
+      try { mainFileSize = fs.statSync(DATA_FILE).size; } catch (e) { /* file may not exist yet */ }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({
+        processMemoryMB: {
+          rss: mb(mem.rss), // total memory the OS has actually allocated to this process — the number that matters for an OOM kill
+          heapUsed: mb(mem.heapUsed),
+          heapTotal: mb(mem.heapTotal),
+          external: mb(mem.external),
+          arrayBuffers: mb(mem.arrayBuffers)
+        },
+        uptimeMinutes: Math.round(process.uptime() / 60),
+        dataCounts: {
+          items: (itemsTxn.items || []).length,
+          transactions: (itemsTxn.transactions || []).length,
+          orders: (mainData.orders || []).length,
+          scaleLogs: (mainData.scaleLogs || []).length,
+          customers: (mainData.customers || []).length,
+          vendors: (mainData.vendors || []).length
+        },
+        fileSizesMB: {
+          itemsTransactionsFile: itemsTxnFileSize != null ? mb(itemsTxnFileSize) : null,
+          mainDataFile: mainFileSize != null ? mb(mainFileSize) : null
+        }
+      }, null, 2));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
   // QuickBooks items proxy endpoint
   if (url === '/api/qb/items') {
     if (!requireAuth(req, res)) return;

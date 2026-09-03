@@ -917,6 +917,7 @@ function saveStorages(){safeSetLocal('pc_storages',JSON.stringify(storages));pus
 // (which still work fine — they just won't wait for confirmation).
 async function saveTxns(){
   safeSetLocal('pc_transactions',JSON.stringify(transactions));
+  _itemsTransactionsDirty=true; // a transaction was just added/edited/removed manually — this push needs to carry it
   _writeInFlight++;
   var ok=false;
   try{
@@ -1503,6 +1504,25 @@ function dedupeUsersByEmail(arr){
 // awaiting pushToServer() truly means "my turn has actually run with
 // current data" — not just "some push finished, who knows which."
 var _pushChain=Promise.resolve();
+// items/transactions are BY FAR the largest thing in the whole shared
+// dataset — hundreds of items, thousands of movement/transaction rows from
+// years of synced Bills/Invoices. Including them in EVERY single push
+// (even a one-field edit like a customer's Sales Rep) meant every save,
+// anywhere in the app, paid the full cost of re-serializing and
+// re-uploading that entire multi-MB payload — confirmed live (Sep 2026) as
+// the actual reason ordinary small edits (a customer's Sales Rep, in this
+// case) were taking noticeably long, well after the earlier fix that gave
+// items/transactions their own file/lock server-side: that fix stopped a
+// big items push from blocking OTHER people's small pushes, but did
+// nothing about a small push itself still being forced to drag the whole
+// items/transactions payload along for the ride on the way there. This
+// flag is how a push decides whether it actually needs to include them:
+// only when something that actually changed items or transactions (a
+// sync, a manual transaction edit — see saveTxns and doSync) set it true
+// first. An ordinary edit elsewhere leaves it false, so that push skips
+// them entirely and stays small and fast, the same way it already did for
+// literally everything else in the snapshot.
+var _itemsTransactionsDirty=false;
 function pushToServer(){
   _pushChain=_pushChain.then(_pushToServerImpl).catch(function(e){
     console.error('Push to server failed:', e);
@@ -1596,7 +1616,14 @@ async function _pushToServerImpl(){
     // per-field) would let the older snapshot silently win — quietly
     // reverting the approval a few seconds after it was made. Keeping this
     // field out of this payload entirely removes that race outright.
-    var snapshot=JSON.stringify({items:items,transactions:transactions,storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,orders:orders,drivers:drivers,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates,vendors:vendors,vendorDepartments:_vendorDepartments,purchaseConfig:purchaseConfig,purchaseEstimates:purchaseEstimates});
+    // items/transactions: only included when _itemsTransactionsDirty says
+    // something actually changed them — see that flag's own comment above
+    // for why. this keeps an ordinary small edit (anything else in this
+    // object) fast, instead of dragging the largest part of the whole
+    // dataset along on every single push regardless of relevance.
+    var snapshotObj={storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,orders:orders,drivers:drivers,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates,vendors:vendors,vendorDepartments:_vendorDepartments,purchaseConfig:purchaseConfig,purchaseEstimates:purchaseEstimates};
+    if(_itemsTransactionsDirty){ snapshotObj.items=items; snapshotObj.transactions=transactions; }
+    var snapshot=JSON.stringify(snapshotObj);
     if(snapshot===_lastPushedSnapshot){ _lastPushFailureDetail=''; return true; } // this exact state was already confirmed sent
     // 60s (not the 10s default) — every push sends the FULL app state,
     // including every transaction, and that array has grown into the tens
@@ -1625,6 +1652,13 @@ async function _pushToServerImpl(){
     // had already gone through.
     _lastPushedSnapshot=snapshot;
     _lastPushFailureDetail='';
+    // Only clear this once items/transactions actually made it to the
+    // server successfully — if this particular push didn't carry them (an
+    // ordinary small edit elsewhere) there's nothing to clear, and if it
+    // DID carry them but failed (caught below / the !res.ok branch above),
+    // the flag needs to stay true so the next retry still includes them
+    // instead of silently dropping that data.
+    if(snapshotObj.items) _itemsTransactionsDirty=false;
     return true;
   }catch(e){
     // Offline, DNS failure, CORS block, etc. — local save already happened,
@@ -1795,6 +1829,7 @@ async function doSync(incremental){
   // reached the server yet. Saving items the moment they're done means
   // that part survives even if the document sync after it gets
   // interrupted, so it never needs to be redone from scratch.
+  _itemsTransactionsDirty=true; // items were just synced fresh — this push needs to actually include them, not skip them like routine pushes do
   await pushToServer();
   showSyncProgress(48,'Items saved — fetching documents…');
 
@@ -1850,6 +1885,7 @@ async function doSync(incremental){
   }
   renderItemsTable();
   setTimeout(hideSyncProgress,1500);
+  _itemsTransactionsDirty=true; // document sync just added/updated transactions — this final push needs to carry them
   await pushToServer(); // wait for this to actually land before the background pull timer can resume
 
   }catch(err){

@@ -1863,6 +1863,27 @@ const server = http.createServer(async (req, res) => {
             });
           });
         }
+        // Same gap found in vendors above, also closed during the same
+        // maintenance review: users had no union protection either, on top
+        // of everything above (pin-preservation, the escalation guard) —
+        // once past those, it still fell straight through to the blind
+        // whole-array replace at the end of this handler. A device with a
+        // stale local users list — most simply, one that just hadn't
+        // pulled since a new teammate's account was added on someone
+        // else's device — could silently erase that brand-new account by
+        // pushing for any unrelated reason. Union-by-id, same as
+        // customers/vendors: incoming's copy of a user wins field-by-field
+        // where both sides have it (this is what actually carries the
+        // pin-preservation and escalation-guard results above through),
+        // and anyone the current push doesn't know about is preserved.
+        if (Array.isArray(incoming.users)) {
+          const mergedUsers = new Map((current.users || []).map(u => [u && u.id, u]));
+          for (const u of incoming.users) {
+            if (!u) continue;
+            mergedUsers.set(u.id, Object.assign({}, mergedUsers.get(u.id) || {}, u));
+          }
+          incoming.users = Array.from(mergedUsers.values());
+        }
         // scaleLogs uses UNION semantics server-side, not a blind replace.
         // Deletions are already handled correctly via tombstones (see
         // /api/data/delete-scalelog below) — but a PLAIN REPLACE here had a
@@ -1940,6 +1961,49 @@ const server = http.createServer(async (req, res) => {
           for (const d of driverTombstoned) mergedDrivers.delete(d);
           incoming.drivers = Array.from(mergedDrivers).sort();
           incoming.deletedDrivers = Array.from(driverTombstoned);
+        }
+        // Vendors — found during a maintenance review (Sep 2026) to have had
+        // NO merge protection at all, unlike customers/drivers right above
+        // (which both get a proper union). A push here fell straight through
+        // to the generic Object.assign(current, incoming) at the very end of
+        // this handler, which is a blind whole-array REPLACE — worse than
+        // customers' old bug even, since that one was at least a union, just
+        // missing a timestamp. Any device with a stale local vendors list
+        // (hadn't synced recently, or synced a partial page) could silently
+        // wipe out vendors that only existed in a fresher copy on the
+        // server, just by pushing for any unrelated reason. Same union-by-id
+        // fix as customers above: incoming's copy of a vendor wins
+        // field-by-field where both sides have it, and any vendor the
+        // current push doesn't know about (added/synced on another device)
+        // is preserved rather than dropped.
+        if (Array.isArray(incoming.vendors)) {
+          const mergedVendors = new Map((current.vendors || []).map(v => [v && v.id, v]));
+          for (const v of incoming.vendors) {
+            if (!v) continue;
+            mergedVendors.set(v.id, Object.assign({}, mergedVendors.get(v.id) || {}, v));
+          }
+          incoming.vendors = Array.from(mergedVendors.values());
+        }
+        // Same gap, same fix, found for two more during the same review:
+        // storages (physical locations — coolers, freezers, dry racks) and
+        // savedReports both had no merge protection either, for the exact
+        // same reason and with the exact same risk — a stale device could
+        // silently erase a location or report someone else just added.
+        if (Array.isArray(incoming.storages)) {
+          const mergedStorages = new Map((current.storages || []).map(s => [s && s.id, s]));
+          for (const s of incoming.storages) {
+            if (!s) continue;
+            mergedStorages.set(s.id, Object.assign({}, mergedStorages.get(s.id) || {}, s));
+          }
+          incoming.storages = Array.from(mergedStorages.values());
+        }
+        if (Array.isArray(incoming.savedReports)) {
+          const mergedReports = new Map((current.savedReports || []).map(r => [r && r.id, r]));
+          for (const r of incoming.savedReports) {
+            if (!r) continue;
+            mergedReports.set(r.id, Object.assign({}, mergedReports.get(r.id) || {}, r));
+          }
+          incoming.savedReports = Array.from(mergedReports.values());
         }
         // labelTemplates is a plain object keyed by department, e.g.
         // { "Carcass Process/Retail": {...}, "Slaughter": {...} }. A blind

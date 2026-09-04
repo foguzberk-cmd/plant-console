@@ -4421,6 +4421,7 @@ function renderReports(){
         +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
           +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Compare by</label>'
           +'<select id="sbc-granularity" onchange="onSbcGranularityChange()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)">'
+            +'<option value="week">Week vs. week</option>'
             +'<option value="month">Month vs. month</option>'
             +'<option value="quarter">Quarter vs. quarter</option>'
             +'<option value="year">Year vs. year</option>'
@@ -6055,6 +6056,26 @@ function _sbcFmtDate(y,m0,d){ return y+'-'+_sbcPad2(m0+1)+'-'+_sbcPad2(d); }
 function _sbcComputePeriods(granularity,offset){
   var now=new Date();
   var MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  if(granularity==='week'){
+    // Mon–Sat, same weekly convention used everywhere else in the app
+    // (Purchasing, Cash Flow) — not a Sun-Sat or ISO Mon-Sun week.
+    function fmtWeekLabel(mon,sat){
+      var opts={month:'short',day:'numeric'};
+      return mon.toLocaleDateString('en-US',opts)+' – '+sat.toLocaleDateString('en-US',opts);
+    }
+    function toDateStr(d){ return _sbcFmtDate(d.getFullYear(),d.getMonth(),d.getDate()); }
+    var day=now.getDay(); // 0=Sun..6=Sat
+    var mondayOffset=(day===0)?-6:(1-day);
+    var thisMonday=new Date(now); thisMonday.setDate(now.getDate()+mondayOffset); // Monday of THIS (still in progress) week
+    var curMonday=new Date(thisMonday); curMonday.setDate(curMonday.getDate()+(offset-1)*7); // -1 week lands on the last COMPLETE week as the offset=0 baseline
+    var curSaturday=new Date(curMonday); curSaturday.setDate(curMonday.getDate()+5);
+    var priorMonday=new Date(curMonday); priorMonday.setDate(priorMonday.getDate()-7);
+    var priorSaturday=new Date(priorMonday); priorSaturday.setDate(priorMonday.getDate()+5);
+    return {
+      curFrom:toDateStr(curMonday), curTo:toDateStr(curSaturday), curLabel:fmtWeekLabel(curMonday,curSaturday),
+      priorFrom:toDateStr(priorMonday), priorTo:toDateStr(priorSaturday), priorLabel:fmtWeekLabel(priorMonday,priorSaturday)
+    };
+  }
   if(granularity==='quarter'){
     var thisQIdx=now.getFullYear()*4+Math.floor(now.getMonth()/3);
     var curQIdx=thisQIdx-1+offset; // -1 steps back to the last COMPLETE quarter as the baseline (offset=0)

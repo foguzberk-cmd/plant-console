@@ -3205,10 +3205,32 @@ const server = http.createServer(async (req, res) => {
     // on disk right away, instead of waiting for the next backup to be taken
     // (which could be up to an hour away) to trim down existing excess files.
     pruneOldBackups().catch(e => console.error('Could not prune old backups on startup:', e.message));
+    // Repeated OOM crashes (Sep 2026) at wildly varying times-since-restart
+    // (2.5 min once, 7 min another) but always right at whatever the heap
+    // ceiling happened to be set to — and confirmed NOT caused by the data
+    // files themselves being too large (16MB + 23MB on disk, nowhere near
+    // enough to explain a multi-GB crash on their own). That pattern points
+    // to something accumulating continuously during normal operation rather
+    // than a one-time startup cost — but reading through the request
+    // handlers and the periodic background sync hasn't turned up an
+    // obvious culprit. This logs actual RSS every 60s so the NEXT crash's
+    // logs show the full memory timeline leading up to it (smooth climb?
+    // a sudden jump? does it correlate with the 30-min background sync
+    // firing?) instead of just the single final number V8 reports right
+    // as it dies.
+    setInterval(() => {
+      var mem = process.memoryUsage();
+      console.log('[memcheck] uptime=' + Math.round(process.uptime()) + 's rss=' + Math.round(mem.rss / 1024 / 1024) + 'MB heapUsed=' + Math.round(mem.heapUsed / 1024 / 1024) + 'MB external=' + Math.round(mem.external / 1024 / 1024) + 'MB');
+    }, 60000);
     // First background Customers/Vendors sync shortly after boot (not
     // immediately — give the server a moment to finish settling first),
     // then on the regular interval after that.
-    setTimeout(() => { runBackgroundSync().catch(e => console.error('Background sync error:', e.message)); }, 15000);
+    setTimeout(() => {
+      console.log('[memcheck] background sync starting, rss=' + Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB');
+      runBackgroundSync()
+        .then(() => console.log('[memcheck] background sync finished, rss=' + Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB'))
+        .catch(e => console.error('Background sync error:', e.message));
+    }, 15000);
     setInterval(() => { runBackgroundSync().catch(e => console.error('Background sync error:', e.message)); }, BACKGROUND_SYNC_INTERVAL_MS);
   });
 })();

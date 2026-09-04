@@ -2953,6 +2953,38 @@ const server = http.createServer(async (req, res) => {
   // transactions array (every movement record from years of synced
   // QuickBooks history, all held in memory at once, nothing currently
   // archives or prunes it) is the leading suspect — or something else.
+  // Lightweight version of the memory diagnostic above — ONLY reads file
+  // SIZES from the filesystem (fs.statSync), never loads or parses their
+  // actual contents into memory. Added because the full diagnostic above
+  // calls readItemsTxnData()/readSharedData(), which DOES parse the whole
+  // file — if that file has grown large enough to be the actual problem,
+  // the full diagnostic could itself be slow or risky to call while the
+  // server is already under memory pressure or mid crash-loop. This one
+  // works regardless, since it never touches the file's contents at all.
+  if (url === '/api/diagnostics/filesizes') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const mb = (bytes) => Math.round(bytes / 1024 / 1024 * 10) / 10;
+      let itemsTxnFileSize = null;
+      try { itemsTxnFileSize = fs.statSync(ITEMS_TXN_FILE).size; } catch (e) { /* file may not exist yet */ }
+      let mainFileSize = null;
+      try { mainFileSize = fs.statSync(DATA_FILE).size; } catch (e) { /* file may not exist yet */ }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({
+        processMemoryMB: { rss: mb(process.memoryUsage().rss) },
+        uptimeMinutes: Math.round(process.uptime() / 60),
+        fileSizesMB: {
+          itemsTransactionsFile: itemsTxnFileSize != null ? mb(itemsTxnFileSize) : null,
+          mainDataFile: mainFileSize != null ? mb(mainFileSize) : null
+        }
+      }, null, 2));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
   if (url === '/api/diagnostics/memory') {
     if (!requireAuth(req, res)) return;
     try {

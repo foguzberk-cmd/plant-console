@@ -6104,38 +6104,71 @@ function sbcShiftPeriod(delta){
   _sbcUpdatePeriodLabel();
 }
 window.sbcShiftPeriod=sbcShiftPeriod;
-async function _sbcFetchRange(from,to,statusEl,labelForStatus){
+// Fetches ALL pages of ONE document type for ONE date range. Split out
+// from the old _sbcFetchRange specifically so several of these can run
+// CONCURRENTLY (see below) instead of one entity type, one page, one
+// period at a time — that sequential approach was the actual reason a
+// full quarter (3x the data of a month, fetched twice — current period
+// and prior — so really 6x a month's worth of sequential round-trips)
+// felt so slow: total time was the SUM of every single page across every
+// entity across both periods, one after another. Running the six
+// independent streams (Invoice/SalesReceipt/CreditMemo × current/prior)
+// at the same time instead means the total time is only as long as
+// whichever ONE stream happens to have the most pages, not the sum of all
+// of them — a large, easy win with no change in what data comes back.
+// progress/progressKey: a single object shared across every concurrent
+// stream, each one updating its own key — so the status line can show a
+// live combined total across ALL in-flight fetches instead of only
+// whichever stream's own message happened to land last.
+async function _sbcFetchEntity(entName,from,to,statusEl,progress,progressKey){
   var base=window.location.origin;
   var pageSize=100;
   var docs=[];
-  for(var si=0;si<3;si++){
-    var entName=si===0?'Invoice':(si===1?'SalesReceipt':'CreditMemo');
-    var start=1, safety=0;
-    while(true){
-      safety++;
-      if(safety>1000) break; // hard cap (~100k rows)
-      var ctrl=new AbortController();
-      var timer=setTimeout(function(){ctrl.abort();},60000);
-      var rows=null;
-      try{
-        var r=await fetch(base+'/api/qb/documents?entity='+entName+'&startposition='+start+'&from='+encodeURIComponent(from),{signal:ctrl.signal});
-        clearTimeout(timer);
-        if(r.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return null; }
-        var jd=await r.json();
-        if(jd && jd.error){ if(statusEl){ statusEl.textContent='Error: '+jd.error; statusEl.style.color='#c0392b'; } return null; }
-        rows=(jd && jd[entName]) ? jd[entName] : [];
-      }catch(e){
-        clearTimeout(timer);
-        if(statusEl){ statusEl.textContent='Network error while fetching sales documents — try again.'; statusEl.style.color='#c0392b'; }
-        return null;
-      }
-      rows.forEach(function(r){ r._pcDocType=entName; });
-      docs=docs.concat(rows);
-      if(statusEl) statusEl.textContent='Fetching '+labelForStatus+'… '+docs.length+' document(s) so far…';
-      if(rows.length<pageSize) break;
-      start+=pageSize;
+  var start=1, safety=0;
+  while(true){
+    safety++;
+    if(safety>1000) break; // hard cap (~100k rows)
+    var ctrl=new AbortController();
+    var timer=setTimeout(function(){ctrl.abort();},60000);
+    var rows=null;
+    try{
+      var r=await fetch(base+'/api/qb/documents?entity='+entName+'&startposition='+start+'&from='+encodeURIComponent(from),{signal:ctrl.signal});
+      clearTimeout(timer);
+      if(r.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return null; }
+      var jd=await r.json();
+      if(jd && jd.error){ if(statusEl){ statusEl.textContent='Error: '+jd.error; statusEl.style.color='#c0392b'; } return null; }
+      rows=(jd && jd[entName]) ? jd[entName] : [];
+    }catch(e){
+      clearTimeout(timer);
+      if(statusEl){ statusEl.textContent='Network error while fetching sales documents — try again.'; statusEl.style.color='#c0392b'; }
+      return null;
     }
+    rows.forEach(function(r){ r._pcDocType=entName; });
+    docs=docs.concat(rows);
+    if(progress&&progressKey){
+      progress[progressKey]=docs.length;
+      if(statusEl){
+        var total=Object.keys(progress).reduce(function(s,k){ return s+(progress[k]||0); },0);
+        statusEl.textContent='Fetching sales documents from QuickBooks… '+total+' document(s) so far…';
+      }
+    }
+    if(rows.length<pageSize) break;
+    start+=pageSize;
   }
+  return docs;
+}
+// Runs all three document types for ONE period concurrently, and returns
+// the combined, date-filtered result — same output the old sequential
+// version produced, just internally parallel now.
+async function _sbcFetchRange(from,to,statusEl,periodLabel,progress){
+  var p=progress||{};
+  var results=await Promise.all([
+    _sbcFetchEntity('Invoice',from,to,statusEl,p,periodLabel+':Invoice'),
+    _sbcFetchEntity('SalesReceipt',from,to,statusEl,p,periodLabel+':SalesReceipt'),
+    _sbcFetchEntity('CreditMemo',from,to,statusEl,p,periodLabel+':CreditMemo')
+  ]);
+  if(results.indexOf(null)>=0) return null; // one of the three failed — error already shown by _sbcFetchEntity
+  var docs=results[0].concat(results[1],results[2]);
   return docs.filter(function(d){
     var dt=(d.TxnDate||'').slice(0,10);
     return dt && dt>=from && dt<=to;
@@ -6147,11 +6180,19 @@ async function runSalesByCustomerReport(){
   var p=_sbcComputePeriods(_sbcGranularity,_sbcPeriodOffset);
   if(statusEl){ statusEl.textContent='Fetching sales documents from QuickBooks…'; statusEl.style.color=''; }
   if(bodyEl) bodyEl.innerHTML='';
-  var curDocs=await _sbcFetchRange(p.curFrom,p.curTo,statusEl,p.curLabel);
-  if(curDocs===null) return; // error already shown by _sbcFetchRange
+  // Both periods fetched at the same time now too, not one after the
+  // other — six total concurrent streams (Invoice/SalesReceipt/CreditMemo
+  // × current/prior), sharing one progress tracker so the status line
+  // reflects the true combined total instead of just the current period's
+  // count while the prior period sits waiting to even start.
+  var progress={};
+  var results=await Promise.all([
+    _sbcFetchRange(p.curFrom,p.curTo,statusEl,'cur',progress),
+    _sbcFetchRange(p.priorFrom,p.priorTo,statusEl,'prior',progress)
+  ]);
+  var curDocs=results[0], priorDocs=results[1];
+  if(curDocs===null||priorDocs===null) return; // error already shown by whichever stream failed
   _sbcSalesDocs=curDocs;
-  var priorDocs=await _sbcFetchRange(p.priorFrom,p.priorTo,statusEl,p.priorLabel);
-  if(priorDocs===null) return;
   _sbcPriorDocs=priorDocs;
   if(statusEl){ statusEl.textContent='Comparing '+p.priorLabel+' against '+p.curLabel+'.'; statusEl.style.color='#1a7a3c'; }
   renderSalesByCustomerReport();

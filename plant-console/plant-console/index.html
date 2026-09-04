@@ -6116,14 +6116,32 @@ window.sbcShiftPeriod=sbcShiftPeriod;
 // at the same time instead means the total time is only as long as
 // whichever ONE stream happens to have the most pages, not the sum of all
 // of them — a large, easy win with no change in what data comes back.
+//
+// On top of that, this now caches results per (entity, period) and, on
+// every pull after the first for a given period, asks QuickBooks only for
+// documents changed SINCE the last time that exact period was fetched —
+// same incremental pattern already used for Open Invoices in Customer
+// Payments (_collOpenInvoicesLastSync). A first look at, say, August 2026
+// is still a full fetch — nothing to be done about that, all the data is
+// genuinely new. But checking August again later, or coming back to a
+// quarter/year you've already pulled before, should be close to instant:
+// almost always nothing (or very little) has actually changed on
+// already-issued invoices from a past period.
+//
 // progress/progressKey: a single object shared across every concurrent
 // stream, each one updating its own key — so the status line can show a
 // live combined total across ALL in-flight fetches instead of only
 // whichever stream's own message happened to land last.
+var _sbcDocCache=JSON.parse(localStorage.getItem('pc_sbc_doc_cache')||'{}'); // cacheKey -> {lastSync, byId:{id:doc}}
 async function _sbcFetchEntity(entName,from,to,statusEl,progress,progressKey){
   var base=window.location.origin;
   var pageSize=100;
-  var docs=[];
+  var cacheKey=entName+'|'+from+'|'+to;
+  var cached=_sbcDocCache[cacheKey];
+  var isIncremental=!!(cached&&cached.lastSync);
+  var byId=isIncremental?cached.byId:{};
+  var syncStartedAt=new Date().toISOString(); // recorded BEFORE fetching, so anything changed mid-fetch isn't missed next time
+  var newCount=0;
   var start=1, safety=0;
   while(true){
     safety++;
@@ -6132,7 +6150,8 @@ async function _sbcFetchEntity(entName,from,to,statusEl,progress,progressKey){
     var timer=setTimeout(function(){ctrl.abort();},60000);
     var rows=null;
     try{
-      var r=await fetch(base+'/api/qb/documents?entity='+entName+'&startposition='+start+'&from='+encodeURIComponent(from),{signal:ctrl.signal});
+      var url=base+'/api/qb/documents?entity='+entName+'&startposition='+start+'&from='+encodeURIComponent(from)+(isIncremental?'&since='+encodeURIComponent(cached.lastSync):'');
+      var r=await fetch(url,{signal:ctrl.signal});
       clearTimeout(timer);
       if(r.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return null; }
       var jd=await r.json();
@@ -6143,19 +6162,28 @@ async function _sbcFetchEntity(entName,from,to,statusEl,progress,progressKey){
       if(statusEl){ statusEl.textContent='Network error while fetching sales documents — try again.'; statusEl.style.color='#c0392b'; }
       return null;
     }
-    rows.forEach(function(r){ r._pcDocType=entName; });
-    docs=docs.concat(rows);
+    rows.forEach(function(r){ r._pcDocType=entName; byId[r.Id]=r; }); // overwrites the cached copy of anything that changed, adds anything new
+    newCount+=rows.length;
     if(progress&&progressKey){
-      progress[progressKey]=docs.length;
+      progress[progressKey]=Object.keys(byId).length;
       if(statusEl){
         var total=Object.keys(progress).reduce(function(s,k){ return s+(progress[k]||0); },0);
-        statusEl.textContent='Fetching sales documents from QuickBooks… '+total+' document(s) so far…';
+        statusEl.textContent=(isIncremental&&newCount===0&&rows.length===0?'Checking for changes':'Fetching sales documents')+' from QuickBooks… '+total+' document(s) total…';
       }
     }
     if(rows.length<pageSize) break;
     start+=pageSize;
   }
-  return docs;
+  // A document QuickBooks itself deleted entirely (not just voided —
+  // genuinely removed) won't come back through this query either way, so
+  // it would linger forever in an incrementally-updated cache. Deletions
+  // of already-issued sales documents are rare enough in practice that
+  // this is accepted here the same way it already is for Open Invoices
+  // elsewhere in the app, rather than adding a separate delete-detection
+  // pass for a case that's unlikely to matter for a trend report.
+  _sbcDocCache[cacheKey]={lastSync:syncStartedAt,byId:byId};
+  try{ localStorage.setItem('pc_sbc_doc_cache',JSON.stringify(_sbcDocCache)); }catch(e){ /* storage full or unavailable — cache just won't persist across reloads this time, not fatal */ }
+  return Object.values(byId);
 }
 // Runs all three document types for ONE period concurrently, and returns
 // the combined, date-filtered result — same output the old sequential

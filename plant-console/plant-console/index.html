@@ -6617,11 +6617,21 @@ async function runCashFlowReport(){
     if(statusEl){ statusEl.textContent='Error: '+e.message; statusEl.style.color='#c0392b'; }
     return;
   }
-  // Keep already-scheduled bills' stored balance current — see
-  // _cfRefreshScheduledBalances for why this can't just be left as the
-  // one-time snapshot taken when a bill was first added to the schedule.
-  _cfRefreshScheduledBalances(_cashFlowBills);
+  // Order matters here: reconciliation FIRST, using whatever balance
+  // snapshot is still sitting in _cfScheduledDates from the LAST pull, to
+  // correctly detect how much has been paid down since then — only AFTER
+  // that comparison is done is it safe to refresh the snapshot to today's
+  // current balance. Reversing this order is a real regression that
+  // happened earlier today: refreshing the snapshot first meant the
+  // "before" and "after" numbers reconciliation compares were already
+  // identical by the time it ran, so it could never detect a payment
+  // clearing at all — a scheduled payment would just sit "in process"
+  // forever, and the bill's own remaining balance would never reappear in
+  // the unscheduled list either, since Plant Console kept treating money
+  // QuickBooks had already applied as if it were still separately
+  // "scheduled" on top of the (already-reduced) live balance.
   var clearedCount=_cfReconcileApprovedPayments(_cashFlowBills);
+  _cfRefreshScheduledBalances(_cashFlowBills);
   renderCashFlowReport();
   if(clearedCount>0 && statusEl){
     statusEl.textContent=(statusEl.textContent?statusEl.textContent+' — ':'')+clearedCount+' approved payment(s) confirmed paid in QuickBooks and cleared automatically.';

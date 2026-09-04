@@ -4432,6 +4432,7 @@ function renderReports(){
           +'</div>'
           +'<button class="btn btn-primary" onclick="runSalesByCustomerReport()">Pull from QuickBooks</button>'
           +'<button class="btn" onclick="printSalesByCustomerReport()">Print</button>'
+          +'<button class="btn" onclick="exportSalesByCustomerCSV()">Download CSV</button>'
         +'</div>'
         +'<div style="position:relative;margin-bottom:14px;max-width:320px">'
           +'<input type="text" id="sbc-search" placeholder="Search customer..." oninput="renderSalesByCustomerReport()" style="width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
@@ -6399,17 +6400,57 @@ function renderSalesByCustomerReport(){
 }
 window.renderSalesByCustomerReport=renderSalesByCustomerReport;
 function printSalesByCustomerReport(){
+  // Expand every customer's product breakdown first, regardless of what's
+  // currently open on screen — a printed report should be complete on its
+  // own, not dependent on which rows someone happened to have clicked
+  // before printing.
+  if(_sbcSalesDocs.length&&_sbcPriorDocs){
+    var curByCust=_sbcTotalsByCustomer(_sbcSalesDocs);
+    var priorByCust=_sbcTotalsByCustomer(_sbcPriorDocs);
+    Array.from(new Set(Object.keys(curByCust).concat(Object.keys(priorByCust)))).forEach(function(key){ _sbcExpandedCustomers[key]=true; });
+    renderSalesByCustomerReport();
+  }
   var el=document.getElementById('sbc-print');
   if(!el) return;
+  var periodLabel=document.getElementById('sbc-period-label');
   var w=window.open('','_blank');
   w.document.write('<html><head><title>Sales by Customer</title>'
     +'<style>body{font-family:Arial,sans-serif;padding:40px;color:#222}table{width:100%}</style></head><body>'
-    +'<h2>Sales by Customer</h2>'+el.outerHTML+'</body></html>');
+    +'<h2>Sales by Customer'+(periodLabel?' — '+esc(periodLabel.textContent):'')+'</h2>'+el.outerHTML+'</body></html>');
   w.document.close();
   w.focus();
   setTimeout(function(){w.print();},250);
 }
 window.printSalesByCustomerReport=printSalesByCustomerReport;
+// Customer-level rows, each immediately followed by that customer's own
+// product breakdown — same drill-down already available on screen, just
+// all in one flat file so it's usable in Excel (filter, subtotal, pivot)
+// without needing to click through every customer first.
+function exportSalesByCustomerCSV(){
+  if(!_sbcSalesDocs.length){ alert('Pull the report first, then export.'); return; }
+  var periodLabel=document.getElementById('sbc-period-label');
+  var curByCust=_sbcTotalsByCustomer(_sbcSalesDocs);
+  var priorByCust=_sbcPriorDocs?_sbcTotalsByCustomer(_sbcPriorDocs):{};
+  var allKeys=Array.from(new Set(Object.keys(curByCust).concat(Object.keys(priorByCust))));
+  var custRows=allKeys.map(function(key){
+    var cur=curByCust[key]||{name:(priorByCust[key]&&priorByCust[key].name)||key,total:0};
+    var prior=priorByCust[key]||{total:0};
+    return {key:key,name:cur.name,curTotal:cur.total,priorTotal:prior.total,change:cur.total-prior.total};
+  });
+  custRows.sort(function(a,b){ return a.change-b.change; });
+  var rows=[['Customer','Product','Prior Period','Current Period','Change','Change %']];
+  custRows.forEach(function(c){
+    var pct=c.priorTotal>0.004?(Math.round((c.change/c.priorTotal)*1000)/10)+'%':(c.curTotal>0.004?'new':'');
+    rows.push([c.name,'(all products)',c.priorTotal.toFixed(2),c.curTotal.toFixed(2),c.change.toFixed(2),pct]);
+    _sbcProductBreakdownForCustomer(c.key).forEach(function(p){
+      var pPct=p.priorTotal>0.004?(Math.round((p.change/p.priorTotal)*1000)/10)+'%':(p.curTotal>0.004?'new':'');
+      rows.push(['',p.name,p.priorTotal.toFixed(2),p.curTotal.toFixed(2),p.change.toFixed(2),pPct]);
+    });
+  });
+  var suffix=periodLabel?periodLabel.textContent.replace(/[^a-z0-9]+/gi,'-'):new Date().toISOString().slice(0,10);
+  _downloadCSVRows(rows,'sales-by-customer-'+suffix+'.csv');
+}
+window.exportSalesByCustomerCSV=exportSalesByCustomerCSV;
 
 function renderCollectionReport(){
   function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }

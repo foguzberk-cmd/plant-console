@@ -662,6 +662,7 @@ const PERMISSIONS=[
   {id:'viewReportsInventory',  label:'— Inventory Statement',desc:'View the Inventory Statement report',group:'Reports'},
   {id:'viewReportsAudit',      label:'— Audit',              desc:'View the Audit report',group:'Reports'},
   {id:'viewReportsPurchasing', label:'— Purchasing',         desc:'View the Weekly Purchase report',group:'Reports'},
+  {id:'viewReportsSalesByCustomer', label:'— Sales by Customer', desc:'View the Sales by Customer report',group:'Reports'},
   {id:'cfSchedulePayment',label:'Schedule payments',   desc:'Pick a date to schedule a vendor bill for payment, full or partial',group:'Reports'},
   {id:'cfApprovePayment', label:'Approve payments',    desc:'Approve a scheduled payment as ready to pay',group:'Reports'},
   {id:'cfInitiatePayment',label:'Initiate payments',   desc:'Mark an approved payment as sent by wire or check',group:'Reports'},
@@ -682,7 +683,7 @@ const PERMISSIONS=[
 // shipped, since none of them have ever had these specific keys set
 // before. They only actually restrict someone once an admin explicitly
 // unchecks the box for them in the new Permissions Matrix.
-const VIEW_PERMS_DEFAULT_ALLOW=['viewItems','viewTxns','viewScaleLog','viewReports','viewReportsCollection','viewReportsCashflow','viewReportsChecks','viewReportsInventory','viewReportsAudit','viewReportsPurchasing','viewSettings','viewLegal'];
+const VIEW_PERMS_DEFAULT_ALLOW=['viewItems','viewTxns','viewScaleLog','viewReports','viewReportsCollection','viewReportsCashflow','viewReportsChecks','viewReportsInventory','viewReportsAudit','viewReportsPurchasing','viewReportsSalesByCustomer','viewSettings','viewLegal'];
 function hasViewPerm(permId){
   if(!currentUser) return false;
   if(currentUser.role==='admin') return true;
@@ -4358,6 +4359,7 @@ function renderReports(){
     +'</div>'
     +'<div id="rpt-tabs-bar" style="display:flex;gap:8px;margin:6px 0 18px;border-bottom:1px solid var(--line);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none">'
       +(hasViewPerm('viewReportsCollection')?'<button id="rpt-tab-collection" class="btn" onclick="switchReportTab(\'collection\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:#fff;font-weight:700;color:var(--brand);border-top:3px solid var(--brand);border-left:1.5px solid var(--line);border-right:1.5px solid var(--line)">Customer Payments</button>':'')
+      +(hasViewPerm('viewReportsSalesByCustomer')?'<button id="rpt-tab-salesbycustomer" class="btn" onclick="switchReportTab(\'salesbycustomer\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Sales by Customer</button>':'')
       +(hasViewPerm('viewReportsCashflow')?'<button id="rpt-tab-cashflow" class="btn" onclick="switchReportTab(\'cashflow\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Scheduled Payments</button>':'')
       +(hasViewPerm('viewReportsPurchasing')?'<button id="rpt-tab-purchasing" class="btn" onclick="switchReportTab(\'purchasing\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Purchasing</button>':'')
       +(hasViewPerm('viewReportsChecks')?'<button id="rpt-tab-checks" class="btn" onclick="switchReportTab(\'checks\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Checks</button>':'')
@@ -4413,6 +4415,23 @@ function renderReports(){
         +'<div id="coll-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'</div>'
       +'<div id="coll-body"></div>'
+    +'</div>'
+    +'<div id="rpt-panel-salesbycustomer" style="display:none">'
+      +'<div id="sbc-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
+        +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
+          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">From</label>'
+          +'<input type="date" id="sbc-from" value="'+firstOpen+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
+          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">To</label>'
+          +'<input type="date" id="sbc-to" value="'+today+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
+          +'<button class="btn btn-primary" onclick="runSalesByCustomerReport()">Pull from QuickBooks</button>'
+          +'<button class="btn" onclick="printSalesByCustomerReport()">Print</button>'
+        +'</div>'
+        +'<div style="position:relative;margin-bottom:14px;max-width:320px">'
+          +'<input type="text" id="sbc-search" placeholder="Search customer..." oninput="renderSalesByCustomerReport()" style="width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
+        +'</div>'
+        +'<div id="sbc-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
+      +'</div>'
+      +'<div id="sbc-body"></div>'
     +'</div>'
     +'<div id="rpt-panel-cashflow" style="display:none">'
       +'<div id="cf-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
@@ -4846,6 +4865,7 @@ function _reportToolbarIdForTab(tab){
   return {
     inventory:'inv-toolbar-sticky',
     collection:'coll-toolbar-sticky',
+    salesbycustomer:'sbc-toolbar-sticky',
     cashflow:'cf-toolbar-sticky',
     checks:'chk-toolbar-sticky',
     audit:'audit-toolbar-sticky',
@@ -4856,6 +4876,7 @@ function _reportPanelIdForTab(tab){
   return {
     inventory:'rpt-panel-inventory',
     collection:'rpt-panel-collection',
+    salesbycustomer:'rpt-panel-salesbycustomer',
     cashflow:'rpt-panel-cashflow',
     checks:'rpt-panel-checks',
     audit:'rpt-panel-audit',
@@ -6002,6 +6023,124 @@ function renderAuditReport(){
   body.innerHTML=html;
 }
 window.renderAuditReport=renderAuditReport;
+
+// ===== SALES BY CUSTOMER REPORT =====
+// Net sales (Invoices + Sales Receipts, minus Credit Memos issued in the
+// same window) per customer for a date range — same net-of-returns
+// definition already used for the "Sales" figure in Customer Payments,
+// just its own focused report instead of being folded into that one.
+var _sbcSalesDocs=[]; // raw fetched docs for the currently-loaded range, each tagged with _pcDocType
+async function runSalesByCustomerReport(){
+  var fromEl=document.getElementById('sbc-from');
+  var toEl=document.getElementById('sbc-to');
+  var statusEl=document.getElementById('sbc-status');
+  var bodyEl=document.getElementById('sbc-body');
+  var from=fromEl?fromEl.value:'';
+  var to=toEl?toEl.value:'';
+  if(!from||!to){ if(statusEl) statusEl.textContent='Pick both a From and To date first.'; return; }
+  var base=window.location.origin;
+  var pageSize=100;
+  var docs=[];
+  if(statusEl){ statusEl.textContent='Fetching sales documents from QuickBooks…'; statusEl.style.color=''; }
+  if(bodyEl) bodyEl.innerHTML='';
+  for(var si=0;si<3;si++){
+    var entName=si===0?'Invoice':(si===1?'SalesReceipt':'CreditMemo');
+    var start=1, safety=0;
+    while(true){
+      safety++;
+      if(safety>1000) break; // hard cap (~100k rows)
+      var ctrl=new AbortController();
+      var timer=setTimeout(function(){ctrl.abort();},60000);
+      var rows=null;
+      try{
+        var r=await fetch(base+'/api/qb/documents?entity='+entName+'&startposition='+start+'&from='+encodeURIComponent(from),{signal:ctrl.signal});
+        clearTimeout(timer);
+        if(r.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
+        var jd=await r.json();
+        if(jd && jd.error){ if(statusEl){ statusEl.textContent='Error: '+jd.error; statusEl.style.color='#c0392b'; } return; }
+        rows=(jd && jd[entName]) ? jd[entName] : [];
+      }catch(e){
+        clearTimeout(timer);
+        if(statusEl){ statusEl.textContent='Network error while fetching sales documents — try again.'; statusEl.style.color='#c0392b'; }
+        return;
+      }
+      rows.forEach(function(r){ r._pcDocType=entName; });
+      docs=docs.concat(rows);
+      if(statusEl) statusEl.textContent='Fetched '+docs.length+' sales document(s) so far…';
+      if(rows.length<pageSize) break;
+      start+=pageSize;
+    }
+  }
+  docs=docs.filter(function(d){
+    var dt=(d.TxnDate||'').slice(0,10);
+    return dt && dt>=from && dt<=to;
+  });
+  _sbcSalesDocs=docs;
+  if(statusEl){ statusEl.textContent='Showing '+docs.length+' document(s), '+from+' – '+to+'.'; statusEl.style.color='#1a7a3c'; }
+  renderSalesByCustomerReport();
+}
+window.runSalesByCustomerReport=runSalesByCustomerReport;
+function renderSalesByCustomerReport(){
+  var body=document.getElementById('sbc-body');
+  if(!body) return;
+  function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  var searchEl=document.getElementById('sbc-search');
+  var q=(searchEl&&searchEl.value||'').trim().toLowerCase();
+  if(!_sbcSalesDocs.length){
+    body.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No data yet — pick a date range and click "Pull from QuickBooks."</div>';
+    return;
+  }
+  // Net per customer: Invoice + SalesReceipt add, CreditMemo subtracts —
+  // same convention as the "Sales" figure on Customer Payments, so the two
+  // reports agree with each other for the same date range.
+  var byCust={}; // key -> {name, total, docCount}
+  _sbcSalesDocs.forEach(function(d){
+    var name=(d.CustomerRef&&d.CustomerRef.name)||'No customer on file';
+    var key=(d.CustomerRef&&d.CustomerRef.value)||name;
+    if(!byCust[key]) byCust[key]={name:name,total:0,docCount:0};
+    var amt=Number(d.TotalAmt||0);
+    byCust[key].total+=(d._pcDocType==='CreditMemo'?-amt:amt);
+    byCust[key].docCount++;
+  });
+  var rows=Object.values(byCust);
+  if(q) rows=rows.filter(function(r){ return r.name.toLowerCase().indexOf(q)>=0; });
+  rows.sort(function(a,b){ return b.total-a.total; });
+  var grandTotal=rows.reduce(function(s,r){ return s+r.total; },0);
+  if(!rows.length){
+    body.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No customers match "'+esc(q)+'".</div>';
+    return;
+  }
+  var html='<div id="sbc-print"><table style="width:100%;border-collapse:collapse;font-size:13px">'
+    +'<thead><tr>'
+      +'<th style="text-align:left;padding:8px 12px;border-bottom:2px solid var(--line)">Customer</th>'
+      +'<th style="text-align:right;padding:8px 12px;border-bottom:2px solid var(--line)">Documents</th>'
+      +'<th style="text-align:right;padding:8px 12px;border-bottom:2px solid var(--line)">Net Sales</th>'
+    +'</tr></thead><tbody>'
+    +rows.map(function(r){
+      return '<tr>'
+        +'<td style="padding:7px 12px;border-bottom:1px solid var(--line);font-weight:600">'+esc(r.name)+'</td>'
+        +'<td style="padding:7px 12px;border-bottom:1px solid var(--line);text-align:right;color:var(--muted)">'+r.docCount+'</td>'
+        +'<td style="padding:7px 12px;border-bottom:1px solid var(--line);text-align:right;font-family:var(--mono);font-weight:600">'+money(r.total)+'</td>'
+      +'</tr>';
+    }).join('')
+    +'<tr style="background:var(--panel)"><td style="padding:8px 12px;font-weight:700">TOTAL ('+rows.length+' customer'+(rows.length!==1?'s':'')+')</td><td></td>'
+      +'<td style="padding:8px 12px;text-align:right;font-family:var(--mono);font-weight:700">'+money(grandTotal)+'</td></tr>'
+    +'</tbody></table></div>';
+  body.innerHTML=html;
+}
+window.renderSalesByCustomerReport=renderSalesByCustomerReport;
+function printSalesByCustomerReport(){
+  var el=document.getElementById('sbc-print');
+  if(!el) return;
+  var w=window.open('','_blank');
+  w.document.write('<html><head><title>Sales by Customer</title>'
+    +'<style>body{font-family:Arial,sans-serif;padding:40px;color:#222}table{width:100%}</style></head><body>'
+    +'<h2>Sales by Customer</h2>'+el.outerHTML+'</body></html>');
+  w.document.close();
+  w.focus();
+  setTimeout(function(){w.print();},250);
+}
+window.printSalesByCustomerReport=printSalesByCustomerReport;
 
 function renderCollectionReport(){
   function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
@@ -9455,7 +9594,7 @@ function undepositCheck(paymentId){
 window.undepositCheck=undepositCheck;
 
 function switchReportTab(tab){
-  var _tabPermMap={collection:'viewReportsCollection',cashflow:'viewReportsCashflow',checks:'viewReportsChecks',inventory:'viewReportsInventory',audit:'viewReportsAudit',purchasing:'viewReportsPurchasing'};
+  var _tabPermMap={collection:'viewReportsCollection',salesbycustomer:'viewReportsSalesByCustomer',cashflow:'viewReportsCashflow',checks:'viewReportsChecks',inventory:'viewReportsInventory',audit:'viewReportsAudit',purchasing:'viewReportsPurchasing'};
   if(_tabPermMap[tab] && !hasViewPerm(_tabPermMap[tab])){
     var fallback=Object.keys(_tabPermMap).find(function(t){ return hasViewPerm(_tabPermMap[t]); });
     if(!fallback) return; // no report tab at all is visible to this user
@@ -9463,25 +9602,28 @@ function switchReportTab(tab){
   }
   var invPanel=document.getElementById('rpt-panel-inventory');
   var collPanel=document.getElementById('rpt-panel-collection');
+  var sbcPanel=document.getElementById('rpt-panel-salesbycustomer');
   var cfPanel=document.getElementById('rpt-panel-cashflow');
   var chkPanel=document.getElementById('rpt-panel-checks');
   var auditPanel=document.getElementById('rpt-panel-audit');
   var purchPanel=document.getElementById('rpt-panel-purchasing');
   var invTab=document.getElementById('rpt-tab-inventory');
   var collTab=document.getElementById('rpt-tab-collection');
+  var sbcTab=document.getElementById('rpt-tab-salesbycustomer');
   var cfTab=document.getElementById('rpt-tab-cashflow');
   var chkTab=document.getElementById('rpt-tab-checks');
   var auditTab=document.getElementById('rpt-tab-audit');
   var purchTab=document.getElementById('rpt-tab-purchasing');
-  if(!invPanel||!collPanel||!cfPanel||!chkPanel||!auditPanel||!purchPanel) return;
+  if(!invPanel||!collPanel||!sbcPanel||!cfPanel||!chkPanel||!auditPanel||!purchPanel) return;
   invPanel.style.display=(tab==='inventory')?'block':'none';
   collPanel.style.display=(tab==='collection')?'block':'none';
+  sbcPanel.style.display=(tab==='salesbycustomer')?'block':'none';
   cfPanel.style.display=(tab==='cashflow')?'block':'none';
   chkPanel.style.display=(tab==='checks')?'block':'none';
   auditPanel.style.display=(tab==='audit')?'block':'none';
   purchPanel.style.display=(tab==='purchasing')?'block':'none';
   if(tab==='purchasing') initPurchaseReportTab();
-  [[invTab,'inventory'],[collTab,'collection'],[cfTab,'cashflow'],[chkTab,'checks'],[auditTab,'audit'],[purchTab,'purchasing']].forEach(function(pair){
+  [[invTab,'inventory'],[collTab,'collection'],[sbcTab,'salesbycustomer'],[cfTab,'cashflow'],[chkTab,'checks'],[auditTab,'audit'],[purchTab,'purchasing']].forEach(function(pair){
     var active=(tab===pair[1]);
     pair[0].style.background=active?'#fff':'var(--bg)';
     pair[0].style.fontWeight=active?'700':'400';

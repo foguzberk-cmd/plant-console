@@ -4352,19 +4352,6 @@ function renderReports(){
   var today=new Date().toISOString().slice(0,10);
   var firstOpen=earliestOpeningDate()||today;
   var deptOpts=DEPARTMENTS.map(function(d){return '<option value="'+esc(d)+'">'+esc(d)+'</option>';}).join('');
-  // Sales by Customer defaults to comparison mode, current period = the
-  // trailing 30 days, prior period = the 30 days immediately before that —
-  // a far more useful starting point for "who's buying less lately" than
-  // firstOpen-to-today (which could span months or years and bury a
-  // recent decline in a huge all-time total).
-  var sbcCompareDefault=true;
-  var sbcCurTo=today;
-  var sbcCurFromDate=new Date(); sbcCurFromDate.setDate(sbcCurFromDate.getDate()-29);
-  var sbcCurFrom=sbcCurFromDate.toISOString().slice(0,10);
-  var sbcPriorToDate=new Date(sbcCurFromDate); sbcPriorToDate.setDate(sbcPriorToDate.getDate()-1);
-  var sbcPriorTo=sbcPriorToDate.toISOString().slice(0,10);
-  var sbcPriorFromDate=new Date(sbcPriorToDate); sbcPriorFromDate.setDate(sbcPriorFromDate.getDate()-29);
-  var sbcPriorFrom=sbcPriorFromDate.toISOString().slice(0,10);
   view.innerHTML='<div id="rpt-header-sticky" style="background:var(--bg);padding-bottom:2px">'
     +'<div id="rpt-header-text">'
     +'<div class="eyebrow">'+s.kicker+'</div><h2>'+s.title+'</h2>'
@@ -4431,24 +4418,18 @@ function renderReports(){
     +'</div>'
     +'<div id="rpt-panel-salesbycustomer" style="display:none">'
       +'<div id="sbc-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
-        +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 14px">'
-          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">'+(sbcCompareDefault?'Current period — From':'From')+'</label>'
-          +'<input type="date" id="sbc-from" value="'+sbcCurFrom+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
-          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">'+(sbcCompareDefault?'Current period — To':'To')+'</label>'
-          +'<input type="date" id="sbc-to" value="'+sbcCurTo+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
-          +'<label style="display:flex;align-items:center;gap:7px;padding-bottom:9px;font-size:13px;cursor:pointer">'
-            +'<input type="checkbox" id="sbc-compare-toggle" '+(sbcCompareDefault?'checked':'')+' onchange="toggleSbcCompareMode()" style="width:16px;height:16px;cursor:pointer"/>'
-            +'Compare against a prior period (see who\'s buying less)'
-          +'</label>'
-        +'</div>'
-        +'<div id="sbc-compare-fields" style="display:'+(sbcCompareDefault?'flex':'none')+';flex-wrap:wrap;gap:12px;align-items:flex-end;margin:0 0 22px;padding:12px 14px;background:var(--panel);border:1px solid var(--line);border-radius:10px">'
-          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Prior period — From</label>'
-          +'<input type="date" id="sbc-prior-from" value="'+sbcPriorFrom+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:#fff;color:var(--ink)"/></div>'
-          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Prior period — To</label>'
-          +'<input type="date" id="sbc-prior-to" value="'+sbcPriorTo+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:#fff;color:var(--ink)"/></div>'
-          +'<div style="font-size:11px;color:var(--muted);max-width:260px;padding-bottom:9px">Defaults to the same number of days immediately before your current period — adjust either range freely.</div>'
-        +'</div>'
-        +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:0 0 22px">'
+        +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
+          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Compare by</label>'
+          +'<select id="sbc-granularity" onchange="onSbcGranularityChange()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)">'
+            +'<option value="month">Month vs. month</option>'
+            +'<option value="quarter">Quarter vs. quarter</option>'
+            +'<option value="year">Year vs. year</option>'
+          +'</select></div>'
+          +'<div style="display:flex;align-items:center;gap:8px;padding-bottom:1px">'
+            +'<button class="btn btn-sm" id="sbc-period-prev" onclick="sbcShiftPeriod(-1)" title="Go back one period" style="padding:8px 12px">‹</button>'
+            +'<div id="sbc-period-label" style="font-weight:700;font-size:13.5px;white-space:nowrap;min-width:180px;text-align:center">…</div>'
+            +'<button class="btn btn-sm" id="sbc-period-next" onclick="sbcShiftPeriod(1)" title="Go forward one period" style="padding:8px 12px">›</button>'
+          +'</div>'
           +'<button class="btn btn-primary" onclick="runSalesByCustomerReport()">Pull from QuickBooks</button>'
           +'<button class="btn" onclick="printSalesByCustomerReport()">Print</button>'
         +'</div>'
@@ -6055,18 +6036,74 @@ window.renderAuditReport=renderAuditReport;
 // same window) per customer for a date range — same net-of-returns
 // definition already used for the "Sales" figure in Customer Payments,
 // just its own focused report instead of being folded into that one.
-// Compare mode additionally fetches a second (prior) period and shows the
-// change per customer, sorted biggest decline first — built specifically
-// to answer "which customers am I losing sales with," which a single
-// snapshot total can't show on its own.
+// Always compares the selected period against the equivalent PRIOR one
+// (this month vs last month, this quarter vs last quarter, this year vs
+// last year) — built specifically to answer "which customers am I losing
+// sales with," which a single snapshot total can't show on its own.
 var _sbcSalesDocs=[]; // current-period docs, each tagged with _pcDocType
-var _sbcPriorDocs=null; // prior-period docs when compare mode was used for the last pull, else null
-function toggleSbcCompareMode(){
-  var toggle=document.getElementById('sbc-compare-toggle');
-  var fields=document.getElementById('sbc-compare-fields');
-  if(fields) fields.style.display=(toggle&&toggle.checked)?'flex':'none';
+var _sbcPriorDocs=null; // prior-period docs from the last pull
+var _sbcGranularity='month'; // 'month' | 'quarter' | 'year'
+var _sbcPeriodOffset=0; // 0 = the most recently COMPLETED period (not the current, still-in-progress one); negative = further back in time
+function _sbcPad2(n){ return n<10?'0'+n:String(n); }
+function _sbcFmtDate(y,m0,d){ return y+'-'+_sbcPad2(m0+1)+'-'+_sbcPad2(d); }
+// Computes the [from,to] range for a given granularity + how many whole
+// periods back from "the most recent COMPLETE one" — e.g. offset=0 with
+// granularity='month' when today is Sep 4 2026 means August 2026 (current
+// period) vs July 2026 (prior), NOT September (which hasn't finished yet
+// and would look artificially low next to a full month).
+function _sbcComputePeriods(granularity,offset){
+  var now=new Date();
+  var MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  if(granularity==='quarter'){
+    var thisQIdx=now.getFullYear()*4+Math.floor(now.getMonth()/3);
+    var curQIdx=thisQIdx-1+offset; // -1 steps back to the last COMPLETE quarter as the baseline (offset=0)
+    var y=Math.floor(curQIdx/4), q=((curQIdx%4)+4)%4;
+    var priorQIdx=curQIdx-1, py=Math.floor(priorQIdx/4), pq=((priorQIdx%4)+4)%4;
+    return {
+      curFrom:_sbcFmtDate(y,q*3,1), curTo:_sbcFmtDate(y,q*3+2,new Date(y,q*3+3,0).getDate()), curLabel:'Q'+(q+1)+' '+y,
+      priorFrom:_sbcFmtDate(py,pq*3,1), priorTo:_sbcFmtDate(py,pq*3+2,new Date(py,pq*3+3,0).getDate()), priorLabel:'Q'+(pq+1)+' '+py
+    };
+  }
+  if(granularity==='year'){
+    var yr=now.getFullYear()-1+offset;
+    return {
+      curFrom:_sbcFmtDate(yr,0,1), curTo:_sbcFmtDate(yr,11,31), curLabel:String(yr),
+      priorFrom:_sbcFmtDate(yr-1,0,1), priorTo:_sbcFmtDate(yr-1,11,31), priorLabel:String(yr-1)
+    };
+  }
+  // month (default)
+  var thisMIdx=now.getFullYear()*12+now.getMonth();
+  var curMIdx=thisMIdx-1+offset;
+  var my=Math.floor(curMIdx/12), mm=((curMIdx%12)+12)%12;
+  var priorMIdx=curMIdx-1, pmy=Math.floor(priorMIdx/12), pmm=((priorMIdx%12)+12)%12;
+  return {
+    curFrom:_sbcFmtDate(my,mm,1), curTo:_sbcFmtDate(my,mm,new Date(my,mm+1,0).getDate()), curLabel:MONTH_NAMES[mm]+' '+my,
+    priorFrom:_sbcFmtDate(pmy,pmm,1), priorTo:_sbcFmtDate(pmy,pmm,new Date(pmy,pmm+1,0).getDate()), priorLabel:MONTH_NAMES[pmm]+' '+pmy
+  };
 }
-window.toggleSbcCompareMode=toggleSbcCompareMode;
+function _sbcUpdatePeriodLabel(){
+  var gEl=document.getElementById('sbc-granularity');
+  if(gEl) gEl.value=_sbcGranularity;
+  var p=_sbcComputePeriods(_sbcGranularity,_sbcPeriodOffset);
+  var labelEl=document.getElementById('sbc-period-label');
+  if(labelEl) labelEl.textContent=p.curLabel+' vs. '+p.priorLabel;
+  var nextBtn=document.getElementById('sbc-period-next');
+  if(nextBtn) nextBtn.disabled=(_sbcPeriodOffset>=0); // never navigate into the current, still-incomplete period
+}
+function onSbcGranularityChange(){
+  var gEl=document.getElementById('sbc-granularity');
+  _sbcGranularity=gEl?gEl.value:'month';
+  _sbcPeriodOffset=0; // reset to "most recent complete period" whenever the granularity changes
+  _sbcUpdatePeriodLabel();
+}
+window.onSbcGranularityChange=onSbcGranularityChange;
+function sbcShiftPeriod(delta){
+  var next=_sbcPeriodOffset+delta;
+  if(next>0) return; // can't go past the most recent complete period
+  _sbcPeriodOffset=next;
+  _sbcUpdatePeriodLabel();
+}
+window.sbcShiftPeriod=sbcShiftPeriod;
 async function _sbcFetchRange(from,to,statusEl,labelForStatus){
   var base=window.location.origin;
   var pageSize=100;
@@ -6105,34 +6142,18 @@ async function _sbcFetchRange(from,to,statusEl,labelForStatus){
   });
 }
 async function runSalesByCustomerReport(){
-  var fromEl=document.getElementById('sbc-from');
-  var toEl=document.getElementById('sbc-to');
   var statusEl=document.getElementById('sbc-status');
   var bodyEl=document.getElementById('sbc-body');
-  var compareToggle=document.getElementById('sbc-compare-toggle');
-  var compareOn=!!(compareToggle&&compareToggle.checked);
-  var from=fromEl?fromEl.value:'';
-  var to=toEl?toEl.value:'';
-  if(!from||!to){ if(statusEl) statusEl.textContent='Pick both a From and To date first.'; return; }
+  var p=_sbcComputePeriods(_sbcGranularity,_sbcPeriodOffset);
   if(statusEl){ statusEl.textContent='Fetching sales documents from QuickBooks…'; statusEl.style.color=''; }
   if(bodyEl) bodyEl.innerHTML='';
-  var curDocs=await _sbcFetchRange(from,to,statusEl,'current period');
+  var curDocs=await _sbcFetchRange(p.curFrom,p.curTo,statusEl,p.curLabel);
   if(curDocs===null) return; // error already shown by _sbcFetchRange
   _sbcSalesDocs=curDocs;
-  if(compareOn){
-    var priorFromEl=document.getElementById('sbc-prior-from');
-    var priorToEl=document.getElementById('sbc-prior-to');
-    var priorFrom=priorFromEl?priorFromEl.value:'';
-    var priorTo=priorToEl?priorToEl.value:'';
-    if(!priorFrom||!priorTo){ if(statusEl) statusEl.textContent='Pick both prior-period dates too, or uncheck compare mode.'; return; }
-    var priorDocs=await _sbcFetchRange(priorFrom,priorTo,statusEl,'prior period');
-    if(priorDocs===null) return;
-    _sbcPriorDocs=priorDocs;
-    if(statusEl){ statusEl.textContent='Comparing '+priorFrom+' – '+priorTo+' against '+from+' – '+to+'.'; statusEl.style.color='#1a7a3c'; }
-  } else {
-    _sbcPriorDocs=null;
-    if(statusEl){ statusEl.textContent='Showing '+curDocs.length+' document(s), '+from+' – '+to+'.'; statusEl.style.color='#1a7a3c'; }
-  }
+  var priorDocs=await _sbcFetchRange(p.priorFrom,p.priorTo,statusEl,p.priorLabel);
+  if(priorDocs===null) return;
+  _sbcPriorDocs=priorDocs;
+  if(statusEl){ statusEl.textContent='Comparing '+p.priorLabel+' against '+p.curLabel+'.'; statusEl.style.color='#1a7a3c'; }
   renderSalesByCustomerReport();
 }
 window.runSalesByCustomerReport=runSalesByCustomerReport;
@@ -9733,6 +9754,7 @@ function switchReportTab(tab){
   auditPanel.style.display=(tab==='audit')?'block':'none';
   purchPanel.style.display=(tab==='purchasing')?'block':'none';
   if(tab==='purchasing') initPurchaseReportTab();
+  if(tab==='salesbycustomer') _sbcUpdatePeriodLabel();
   [[invTab,'inventory'],[collTab,'collection'],[sbcTab,'salesbycustomer'],[cfTab,'cashflow'],[chkTab,'checks'],[auditTab,'audit'],[purchTab,'purchasing']].forEach(function(pair){
     var active=(tab===pair[1]);
     pair[0].style.background=active?'#fff':'var(--bg)';

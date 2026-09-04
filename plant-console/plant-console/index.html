@@ -4352,6 +4352,19 @@ function renderReports(){
   var today=new Date().toISOString().slice(0,10);
   var firstOpen=earliestOpeningDate()||today;
   var deptOpts=DEPARTMENTS.map(function(d){return '<option value="'+esc(d)+'">'+esc(d)+'</option>';}).join('');
+  // Sales by Customer defaults to comparison mode, current period = the
+  // trailing 30 days, prior period = the 30 days immediately before that —
+  // a far more useful starting point for "who's buying less lately" than
+  // firstOpen-to-today (which could span months or years and bury a
+  // recent decline in a huge all-time total).
+  var sbcCompareDefault=true;
+  var sbcCurTo=today;
+  var sbcCurFromDate=new Date(); sbcCurFromDate.setDate(sbcCurFromDate.getDate()-29);
+  var sbcCurFrom=sbcCurFromDate.toISOString().slice(0,10);
+  var sbcPriorToDate=new Date(sbcCurFromDate); sbcPriorToDate.setDate(sbcPriorToDate.getDate()-1);
+  var sbcPriorTo=sbcPriorToDate.toISOString().slice(0,10);
+  var sbcPriorFromDate=new Date(sbcPriorToDate); sbcPriorFromDate.setDate(sbcPriorFromDate.getDate()-29);
+  var sbcPriorFrom=sbcPriorFromDate.toISOString().slice(0,10);
   view.innerHTML='<div id="rpt-header-sticky" style="background:var(--bg);padding-bottom:2px">'
     +'<div id="rpt-header-text">'
     +'<div class="eyebrow">'+s.kicker+'</div><h2>'+s.title+'</h2>'
@@ -4418,11 +4431,24 @@ function renderReports(){
     +'</div>'
     +'<div id="rpt-panel-salesbycustomer" style="display:none">'
       +'<div id="sbc-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
-        +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
-          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">From</label>'
-          +'<input type="date" id="sbc-from" value="'+firstOpen+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
-          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">To</label>'
-          +'<input type="date" id="sbc-to" value="'+today+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
+        +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 14px">'
+          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">'+(sbcCompareDefault?'Current period — From':'From')+'</label>'
+          +'<input type="date" id="sbc-from" value="'+sbcCurFrom+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
+          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">'+(sbcCompareDefault?'Current period — To':'To')+'</label>'
+          +'<input type="date" id="sbc-to" value="'+sbcCurTo+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
+          +'<label style="display:flex;align-items:center;gap:7px;padding-bottom:9px;font-size:13px;cursor:pointer">'
+            +'<input type="checkbox" id="sbc-compare-toggle" '+(sbcCompareDefault?'checked':'')+' onchange="toggleSbcCompareMode()" style="width:16px;height:16px;cursor:pointer"/>'
+            +'Compare against a prior period (see who\'s buying less)'
+          +'</label>'
+        +'</div>'
+        +'<div id="sbc-compare-fields" style="display:'+(sbcCompareDefault?'flex':'none')+';flex-wrap:wrap;gap:12px;align-items:flex-end;margin:0 0 22px;padding:12px 14px;background:var(--panel);border:1px solid var(--line);border-radius:10px">'
+          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Prior period — From</label>'
+          +'<input type="date" id="sbc-prior-from" value="'+sbcPriorFrom+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:#fff;color:var(--ink)"/></div>'
+          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Prior period — To</label>'
+          +'<input type="date" id="sbc-prior-to" value="'+sbcPriorTo+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:#fff;color:var(--ink)"/></div>'
+          +'<div style="font-size:11px;color:var(--muted);max-width:260px;padding-bottom:9px">Defaults to the same number of days immediately before your current period — adjust either range freely.</div>'
+        +'</div>'
+        +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:0 0 22px">'
           +'<button class="btn btn-primary" onclick="runSalesByCustomerReport()">Pull from QuickBooks</button>'
           +'<button class="btn" onclick="printSalesByCustomerReport()">Print</button>'
         +'</div>'
@@ -6029,20 +6055,22 @@ window.renderAuditReport=renderAuditReport;
 // same window) per customer for a date range — same net-of-returns
 // definition already used for the "Sales" figure in Customer Payments,
 // just its own focused report instead of being folded into that one.
-var _sbcSalesDocs=[]; // raw fetched docs for the currently-loaded range, each tagged with _pcDocType
-async function runSalesByCustomerReport(){
-  var fromEl=document.getElementById('sbc-from');
-  var toEl=document.getElementById('sbc-to');
-  var statusEl=document.getElementById('sbc-status');
-  var bodyEl=document.getElementById('sbc-body');
-  var from=fromEl?fromEl.value:'';
-  var to=toEl?toEl.value:'';
-  if(!from||!to){ if(statusEl) statusEl.textContent='Pick both a From and To date first.'; return; }
+// Compare mode additionally fetches a second (prior) period and shows the
+// change per customer, sorted biggest decline first — built specifically
+// to answer "which customers am I losing sales with," which a single
+// snapshot total can't show on its own.
+var _sbcSalesDocs=[]; // current-period docs, each tagged with _pcDocType
+var _sbcPriorDocs=null; // prior-period docs when compare mode was used for the last pull, else null
+function toggleSbcCompareMode(){
+  var toggle=document.getElementById('sbc-compare-toggle');
+  var fields=document.getElementById('sbc-compare-fields');
+  if(fields) fields.style.display=(toggle&&toggle.checked)?'flex':'none';
+}
+window.toggleSbcCompareMode=toggleSbcCompareMode;
+async function _sbcFetchRange(from,to,statusEl,labelForStatus){
   var base=window.location.origin;
   var pageSize=100;
   var docs=[];
-  if(statusEl){ statusEl.textContent='Fetching sales documents from QuickBooks…'; statusEl.style.color=''; }
-  if(bodyEl) bodyEl.innerHTML='';
   for(var si=0;si<3;si++){
     var entName=si===0?'Invoice':(si===1?'SalesReceipt':'CreditMemo');
     var start=1, safety=0;
@@ -6055,46 +6083,62 @@ async function runSalesByCustomerReport(){
       try{
         var r=await fetch(base+'/api/qb/documents?entity='+entName+'&startposition='+start+'&from='+encodeURIComponent(from),{signal:ctrl.signal});
         clearTimeout(timer);
-        if(r.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
+        if(r.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return null; }
         var jd=await r.json();
-        if(jd && jd.error){ if(statusEl){ statusEl.textContent='Error: '+jd.error; statusEl.style.color='#c0392b'; } return; }
+        if(jd && jd.error){ if(statusEl){ statusEl.textContent='Error: '+jd.error; statusEl.style.color='#c0392b'; } return null; }
         rows=(jd && jd[entName]) ? jd[entName] : [];
       }catch(e){
         clearTimeout(timer);
         if(statusEl){ statusEl.textContent='Network error while fetching sales documents — try again.'; statusEl.style.color='#c0392b'; }
-        return;
+        return null;
       }
       rows.forEach(function(r){ r._pcDocType=entName; });
       docs=docs.concat(rows);
-      if(statusEl) statusEl.textContent='Fetched '+docs.length+' sales document(s) so far…';
+      if(statusEl) statusEl.textContent='Fetching '+labelForStatus+'… '+docs.length+' document(s) so far…';
       if(rows.length<pageSize) break;
       start+=pageSize;
     }
   }
-  docs=docs.filter(function(d){
+  return docs.filter(function(d){
     var dt=(d.TxnDate||'').slice(0,10);
     return dt && dt>=from && dt<=to;
   });
-  _sbcSalesDocs=docs;
-  if(statusEl){ statusEl.textContent='Showing '+docs.length+' document(s), '+from+' – '+to+'.'; statusEl.style.color='#1a7a3c'; }
+}
+async function runSalesByCustomerReport(){
+  var fromEl=document.getElementById('sbc-from');
+  var toEl=document.getElementById('sbc-to');
+  var statusEl=document.getElementById('sbc-status');
+  var bodyEl=document.getElementById('sbc-body');
+  var compareToggle=document.getElementById('sbc-compare-toggle');
+  var compareOn=!!(compareToggle&&compareToggle.checked);
+  var from=fromEl?fromEl.value:'';
+  var to=toEl?toEl.value:'';
+  if(!from||!to){ if(statusEl) statusEl.textContent='Pick both a From and To date first.'; return; }
+  if(statusEl){ statusEl.textContent='Fetching sales documents from QuickBooks…'; statusEl.style.color=''; }
+  if(bodyEl) bodyEl.innerHTML='';
+  var curDocs=await _sbcFetchRange(from,to,statusEl,'current period');
+  if(curDocs===null) return; // error already shown by _sbcFetchRange
+  _sbcSalesDocs=curDocs;
+  if(compareOn){
+    var priorFromEl=document.getElementById('sbc-prior-from');
+    var priorToEl=document.getElementById('sbc-prior-to');
+    var priorFrom=priorFromEl?priorFromEl.value:'';
+    var priorTo=priorToEl?priorToEl.value:'';
+    if(!priorFrom||!priorTo){ if(statusEl) statusEl.textContent='Pick both prior-period dates too, or uncheck compare mode.'; return; }
+    var priorDocs=await _sbcFetchRange(priorFrom,priorTo,statusEl,'prior period');
+    if(priorDocs===null) return;
+    _sbcPriorDocs=priorDocs;
+    if(statusEl){ statusEl.textContent='Comparing '+priorFrom+' – '+priorTo+' against '+from+' – '+to+'.'; statusEl.style.color='#1a7a3c'; }
+  } else {
+    _sbcPriorDocs=null;
+    if(statusEl){ statusEl.textContent='Showing '+curDocs.length+' document(s), '+from+' – '+to+'.'; statusEl.style.color='#1a7a3c'; }
+  }
   renderSalesByCustomerReport();
 }
 window.runSalesByCustomerReport=runSalesByCustomerReport;
-function renderSalesByCustomerReport(){
-  var body=document.getElementById('sbc-body');
-  if(!body) return;
-  function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
-  var searchEl=document.getElementById('sbc-search');
-  var q=(searchEl&&searchEl.value||'').trim().toLowerCase();
-  if(!_sbcSalesDocs.length){
-    body.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No data yet — pick a date range and click "Pull from QuickBooks."</div>';
-    return;
-  }
-  // Net per customer: Invoice + SalesReceipt add, CreditMemo subtracts —
-  // same convention as the "Sales" figure on Customer Payments, so the two
-  // reports agree with each other for the same date range.
+function _sbcTotalsByCustomer(docs){
   var byCust={}; // key -> {name, total, docCount}
-  _sbcSalesDocs.forEach(function(d){
+  docs.forEach(function(d){
     var name=(d.CustomerRef&&d.CustomerRef.name)||'No customer on file';
     var key=(d.CustomerRef&&d.CustomerRef.value)||name;
     if(!byCust[key]) byCust[key]={name:name,total:0,docCount:0};
@@ -6102,30 +6146,96 @@ function renderSalesByCustomerReport(){
     byCust[key].total+=(d._pcDocType==='CreditMemo'?-amt:amt);
     byCust[key].docCount++;
   });
-  var rows=Object.values(byCust);
-  if(q) rows=rows.filter(function(r){ return r.name.toLowerCase().indexOf(q)>=0; });
-  rows.sort(function(a,b){ return b.total-a.total; });
-  var grandTotal=rows.reduce(function(s,r){ return s+r.total; },0);
-  if(!rows.length){
+  return byCust;
+}
+function renderSalesByCustomerReport(){
+  var body=document.getElementById('sbc-body');
+  if(!body) return;
+  function money(n){ return (n<0?'-$':'$')+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  var searchEl=document.getElementById('sbc-search');
+  var q=(searchEl&&searchEl.value||'').trim().toLowerCase();
+  if(!_sbcSalesDocs.length){
+    body.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No data yet — pick a date range and click "Pull from QuickBooks."</div>';
+    return;
+  }
+
+  if(!_sbcPriorDocs){
+    // Single-period mode — plain table, same as before.
+    var byCust=_sbcTotalsByCustomer(_sbcSalesDocs);
+    var rows=Object.values(byCust);
+    if(q) rows=rows.filter(function(r){ return r.name.toLowerCase().indexOf(q)>=0; });
+    rows.sort(function(a,b){ return b.total-a.total; });
+    var grandTotal=rows.reduce(function(s,r){ return s+r.total; },0);
+    if(!rows.length){
+      body.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No customers match "'+esc(q)+'".</div>';
+      return;
+    }
+    var html='<div id="sbc-print"><table style="width:100%;border-collapse:collapse;font-size:13px">'
+      +'<thead><tr>'
+        +'<th style="text-align:left;padding:8px 12px;border-bottom:2px solid var(--line)">Customer</th>'
+        +'<th style="text-align:right;padding:8px 12px;border-bottom:2px solid var(--line)">Documents</th>'
+        +'<th style="text-align:right;padding:8px 12px;border-bottom:2px solid var(--line)">Net Sales</th>'
+      +'</tr></thead><tbody>'
+      +rows.map(function(r){
+        return '<tr>'
+          +'<td style="padding:7px 12px;border-bottom:1px solid var(--line);font-weight:600">'+esc(r.name)+'</td>'
+          +'<td style="padding:7px 12px;border-bottom:1px solid var(--line);text-align:right;color:var(--muted)">'+r.docCount+'</td>'
+          +'<td style="padding:7px 12px;border-bottom:1px solid var(--line);text-align:right;font-family:var(--mono);font-weight:600">'+money(r.total)+'</td>'
+        +'</tr>';
+      }).join('')
+      +'<tr style="background:var(--panel)"><td style="padding:8px 12px;font-weight:700">TOTAL ('+rows.length+' customer'+(rows.length!==1?'s':'')+')</td><td></td>'
+        +'<td style="padding:8px 12px;text-align:right;font-family:var(--mono);font-weight:700">'+money(grandTotal)+'</td></tr>'
+      +'</tbody></table></div>';
+    body.innerHTML=html;
+    return;
+  }
+
+  // Compare mode — a customer might appear in only one of the two periods
+  // (a new customer, or one who bought nothing at all this time), so this
+  // has to union both sides rather than just iterate one list.
+  var curByCust=_sbcTotalsByCustomer(_sbcSalesDocs);
+  var priorByCust=_sbcTotalsByCustomer(_sbcPriorDocs);
+  var allKeys=Array.from(new Set(Object.keys(curByCust).concat(Object.keys(priorByCust))));
+  var rows2=allKeys.map(function(key){
+    var cur=curByCust[key]||{name:(priorByCust[key]&&priorByCust[key].name)||key,total:0,docCount:0};
+    var prior=priorByCust[key]||{total:0,docCount:0};
+    return {name:cur.name,curTotal:cur.total,priorTotal:prior.total,change:cur.total-prior.total};
+  });
+  if(q) rows2=rows2.filter(function(r){ return r.name.toLowerCase().indexOf(q)>=0; });
+  // Biggest decline first — that's the entire point of this view.
+  rows2.sort(function(a,b){ return a.change-b.change; });
+  if(!rows2.length){
     body.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No customers match "'+esc(q)+'".</div>';
     return;
   }
-  var html='<div id="sbc-print"><table style="width:100%;border-collapse:collapse;font-size:13px">'
-    +'<thead><tr>'
-      +'<th style="text-align:left;padding:8px 12px;border-bottom:2px solid var(--line)">Customer</th>'
-      +'<th style="text-align:right;padding:8px 12px;border-bottom:2px solid var(--line)">Documents</th>'
-      +'<th style="text-align:right;padding:8px 12px;border-bottom:2px solid var(--line)">Net Sales</th>'
-    +'</tr></thead><tbody>'
-    +rows.map(function(r){
-      return '<tr>'
-        +'<td style="padding:7px 12px;border-bottom:1px solid var(--line);font-weight:600">'+esc(r.name)+'</td>'
-        +'<td style="padding:7px 12px;border-bottom:1px solid var(--line);text-align:right;color:var(--muted)">'+r.docCount+'</td>'
-        +'<td style="padding:7px 12px;border-bottom:1px solid var(--line);text-align:right;font-family:var(--mono);font-weight:600">'+money(r.total)+'</td>'
-      +'</tr>';
+  var maxAbs=Math.max(1,Math.max.apply(null,rows2.map(function(r){ return Math.max(Math.abs(r.curTotal),Math.abs(r.priorTotal)); })));
+  var totalCur=rows2.reduce(function(s,r){ return s+r.curTotal; },0);
+  var totalPrior=rows2.reduce(function(s,r){ return s+r.priorTotal; },0);
+  var decliningCount=rows2.filter(function(r){ return r.change<-0.004; }).length;
+  var html='<div id="sbc-print">'
+    +'<div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:18px;font-size:13px">'
+      +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Prior period</div><div style="font-weight:700;font-size:16px">'+money(totalPrior)+'</div></div>'
+      +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Current period</div><div style="font-weight:700;font-size:16px">'+money(totalCur)+'</div></div>'
+      +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Overall change</div><div style="font-weight:700;font-size:16px;color:'+((totalCur-totalPrior)<0?'#c0392b':'#1a7a3c')+'">'+money(totalCur-totalPrior)+'</div></div>'
+      +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Customers buying less</div><div style="font-weight:700;font-size:16px;color:#c0392b">'+decliningCount+' of '+rows2.length+'</div></div>'
+    +'</div>'
+    +rows2.map(function(r){
+      var pctStr=r.priorTotal>0.004?(Math.round((r.change/r.priorTotal)*1000)/10)+'%':(r.curTotal>0.004?'new':'—');
+      var barColor=r.change<-0.004?'#c0392b':(r.change>0.004?'#1a7a3c':'var(--muted)');
+      var priorPct=Math.round((Math.abs(r.priorTotal)/maxAbs)*100);
+      var curPct=Math.round((Math.abs(r.curTotal)/maxAbs)*100);
+      return '<div style="padding:10px 12px;border-bottom:1px solid var(--line)">'
+        +'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;gap:10px">'
+          +'<span style="font-weight:600;font-size:13.5px">'+esc(r.name)+'</span>'
+          +'<span style="font-family:var(--mono);font-size:12.5px;white-space:nowrap;color:'+barColor+';font-weight:700">'+money(r.change)+' ('+pctStr+')</span>'
+        +'</div>'
+        +'<div style="display:flex;flex-direction:column;gap:3px">'
+          +'<div style="display:flex;align-items:center;gap:8px"><span style="width:38px;font-family:var(--mono);font-size:10px;color:var(--muted)">prior</span><div style="flex:1;background:var(--panel);border-radius:3px;height:10px;overflow:hidden"><div style="width:'+priorPct+'%;height:100%;background:var(--muted)"></div></div><span style="width:90px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--muted)">'+money(r.priorTotal)+'</span></div>'
+          +'<div style="display:flex;align-items:center;gap:8px"><span style="width:38px;font-family:var(--mono);font-size:10px;color:var(--muted)">now</span><div style="flex:1;background:var(--panel);border-radius:3px;height:10px;overflow:hidden"><div style="width:'+curPct+'%;height:100%;background:'+barColor+'"></div></div><span style="width:90px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:600">'+money(r.curTotal)+'</span></div>'
+        +'</div>'
+      +'</div>';
     }).join('')
-    +'<tr style="background:var(--panel)"><td style="padding:8px 12px;font-weight:700">TOTAL ('+rows.length+' customer'+(rows.length!==1?'s':'')+')</td><td></td>'
-      +'<td style="padding:8px 12px;text-align:right;font-family:var(--mono);font-weight:700">'+money(grandTotal)+'</td></tr>'
-    +'</tbody></table></div>';
+  +'</div>';
   body.innerHTML=html;
 }
 window.renderSalesByCustomerReport=renderSalesByCustomerReport;

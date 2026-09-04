@@ -9954,7 +9954,20 @@ function switchReportTab(tab){
   auditPanel.style.display=(tab==='audit')?'block':'none';
   purchPanel.style.display=(tab==='purchasing')?'block':'none';
   if(tab==='purchasing') initPurchaseReportTab();
-  if(tab==='salesbycustomer') _sbcUpdatePeriodLabel();
+  if(tab==='salesbycustomer'){
+    _sbcUpdatePeriodLabel();
+    // Same fix as Customer Payments/Cash Flow's shell: switching to (or
+    // back to) this tab shouldn't show "no data" when a pull already
+    // happened this session — the data itself was never lost, just not
+    // redisplayed after the surrounding HTML got rebuilt. Reapply it
+    // straight from memory (never re-fetches on its own) — an actual
+    // refresh still always requires clicking "Pull from QuickBooks."
+    if(_sbcSalesDocs.length){
+      renderSalesByCustomerReport();
+      var sbcStatusEl=document.getElementById('sbc-status');
+      if(sbcStatusEl){ sbcStatusEl.textContent='Showing results from your last pull this session — click "Pull from QuickBooks" to refresh.'; sbcStatusEl.style.color='var(--muted)'; }
+    }
+  }
   [[invTab,'inventory'],[collTab,'collection'],[sbcTab,'salesbycustomer'],[cfTab,'cashflow'],[chkTab,'checks'],[auditTab,'audit'],[purchTab,'purchasing']].forEach(function(pair){
     var active=(tab===pair[1]);
     pair[0].style.background=active?'#fff':'var(--bg)';

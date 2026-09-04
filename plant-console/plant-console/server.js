@@ -151,9 +151,28 @@ function withDataLock(fn) {
   return run;
 }
 
+// In-memory cache of the parsed data file — updated on every write, served
+// directly (no disk read/JSON.parse) on every read as long as it's valid.
+// Added specifically because reads vastly outnumber writes here: every
+// open browser tab polls this data every 1.5 SECONDS (see index.html,
+// setInterval(pullFromServer,1500)), while writes only happen when someone
+// actually changes something. Confirmed live (Sep 2026) via request
+// logging that several tabs' 1.5s polls landing close together were
+// driving repeated, full re-parses of tens of MB of JSON multiple times
+// per second — bursts of that easily outpacing what garbage collection
+// could reclaim in between, which is what was actually causing the sudden
+// (not gradual) multi-hundred-MB memory spikes leading to repeated OOM
+// crashes, not a leak in the traditional sense. Caching means a read only
+// costs a disk hit the FIRST time (or right after a restart); every read
+// after that until the next write is just returning what's already in
+// memory — no parsing, most of the allocation pressure gone. null means
+// "not loaded yet, or invalidated" and forces exactly one fresh disk read.
+let _sharedDataCache = null;
+
 // Internal, lock-free implementations. Only call these from inside
 // withDataLock() — calling them directly risks the exact race described above.
 async function _readSharedDataUnlocked() {
+  if (_sharedDataCache) return Object.assign({}, _sharedDataCache); // shallow clone — cheap, and protects the cache from a caller mutating what it gets back
   await ensureDataFile();
   try {
     const raw = await fs.promises.readFile(DATA_FILE, 'utf8');
@@ -171,7 +190,8 @@ async function _readSharedDataUnlocked() {
       await _writeSharedDataRawUnlocked(data);
       console.log('Users list was empty — re-seeded default admin (admin@facility.com / PIN 1234).');
     }
-    return data;
+    _sharedDataCache = data;
+    return Object.assign({}, data);
   } catch (e) {
     console.error('Could not read shared data file:', e.message);
     return Object.assign({}, DATA_DEFAULT, { users: [defaultAdmin()] });
@@ -192,6 +212,7 @@ async function _writeSharedDataRawUnlocked(data) {
   const tmpFile = DATA_FILE + '.tmp-' + process.pid + '-' + Date.now();
   await fs.promises.writeFile(tmpFile, JSON.stringify(data, null, 2));
   await fs.promises.rename(tmpFile, DATA_FILE);
+  _sharedDataCache = data; // the write just landed — this IS the current truth now, no need to re-read it back from disk next time
 }
 
 async function _writeSharedDataUnlocked(data) {
@@ -263,10 +284,18 @@ function withItemsTxnLock(fn) {
   _itemsTxnLock = run.then(() => {}, () => {});
   return run;
 }
+// Same in-memory caching as _sharedDataCache above, same reason: this file
+// is bigger than the main one and gets read on every single 1.5s poll from
+// every open tab — caching it means that only costs a disk read once, not
+// continuously.
+let _itemsTxnCache = null;
 async function _readItemsTxnUnlocked() {
+  if (_itemsTxnCache) return Object.assign({}, _itemsTxnCache);
   try {
     const raw = await fs.promises.readFile(ITEMS_TXN_FILE, 'utf8');
-    return Object.assign({}, ITEMS_TXN_DEFAULT, JSON.parse(raw || '{}'));
+    const data = Object.assign({}, ITEMS_TXN_DEFAULT, JSON.parse(raw || '{}'));
+    _itemsTxnCache = data;
+    return Object.assign({}, data);
   } catch (e) {
     return Object.assign({}, ITEMS_TXN_DEFAULT); // no file yet (first run, or pre-migration) — same "start empty" behavior as the main store
   }
@@ -279,6 +308,7 @@ async function _writeItemsTxnUnlocked(data) {
   const tmpFile = ITEMS_TXN_FILE + '.tmp-' + process.pid + '-' + Date.now();
   await fs.promises.writeFile(tmpFile, JSON.stringify(data));
   await fs.promises.rename(tmpFile, ITEMS_TXN_FILE);
+  _itemsTxnCache = data; // the write just landed — this IS the current truth now
 }
 function readItemsTxnData() {
   return withItemsTxnLock(_readItemsTxnUnlocked);

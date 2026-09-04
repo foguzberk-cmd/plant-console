@@ -6238,6 +6238,45 @@ function _sbcTotalsByCustomer(docs){
   });
   return byCust;
 }
+// Which customers currently have their product breakdown expanded —
+// page-level UI state only, not persisted/synced.
+var _sbcExpandedCustomers={};
+function toggleSbcCustomer(key){
+  _sbcExpandedCustomers[key]=!_sbcExpandedCustomers[key];
+  renderSalesByCustomerReport();
+}
+window.toggleSbcCustomer=toggleSbcCustomer;
+// Per-product net totals (prior vs current) for ONE customer, drawn from
+// the same line-item detail already sitting in every fetched
+// Invoice/SalesReceipt/CreditMemo — nothing extra to fetch for this.
+function _sbcProductBreakdownForCustomer(custKey){
+  function totalsFor(docs){
+    var byProduct={}; // itemId -> {name, total}
+    docs.forEach(function(d){
+      var dKey=(d.CustomerRef&&d.CustomerRef.value)||(d.CustomerRef&&d.CustomerRef.name)||'No customer on file';
+      if(dKey!==custKey) return;
+      var sign=d._pcDocType==='CreditMemo'?-1:1;
+      (d.Line||[]).forEach(function(ln){
+        if(ln.DetailType!=='SalesItemLineDetail'||!ln.SalesItemLineDetail||!ln.SalesItemLineDetail.ItemRef) return;
+        var itemId=ln.SalesItemLineDetail.ItemRef.value;
+        var itemName=ln.SalesItemLineDetail.ItemRef.name||'(unnamed item)';
+        if(!byProduct[itemId]) byProduct[itemId]={name:itemName,total:0};
+        byProduct[itemId].total+=sign*Number(ln.Amount||0);
+      });
+    });
+    return byProduct;
+  }
+  var curByProd=totalsFor(_sbcSalesDocs);
+  var priorByProd=totalsFor(_sbcPriorDocs||[]);
+  var allIds=Array.from(new Set(Object.keys(curByProd).concat(Object.keys(priorByProd))));
+  var rows=allIds.map(function(id){
+    var cur=curByProd[id]||{name:(priorByProd[id]&&priorByProd[id].name)||id,total:0};
+    var prior=priorByProd[id]||{total:0};
+    return {name:cur.name,curTotal:cur.total,priorTotal:prior.total,change:cur.total-prior.total};
+  });
+  rows.sort(function(a,b){ return a.change-b.change; }); // biggest decline first, same principle as the customer list itself
+  return rows;
+}
 function renderSalesByCustomerReport(){
   var body=document.getElementById('sbc-body');
   if(!body) return;
@@ -6289,7 +6328,7 @@ function renderSalesByCustomerReport(){
   var rows2=allKeys.map(function(key){
     var cur=curByCust[key]||{name:(priorByCust[key]&&priorByCust[key].name)||key,total:0,docCount:0};
     var prior=priorByCust[key]||{total:0,docCount:0};
-    return {name:cur.name,curTotal:cur.total,priorTotal:prior.total,change:cur.total-prior.total};
+    return {key:key,name:cur.name,curTotal:cur.total,priorTotal:prior.total,change:cur.total-prior.total};
   });
   if(q) rows2=rows2.filter(function(r){ return r.name.toLowerCase().indexOf(q)>=0; });
   // Biggest decline first — that's the entire point of this view.
@@ -6314,15 +6353,45 @@ function renderSalesByCustomerReport(){
       var barColor=r.change<-0.004?'#c0392b':(r.change>0.004?'#1a7a3c':'var(--muted)');
       var priorPct=Math.round((Math.abs(r.priorTotal)/maxAbs)*100);
       var curPct=Math.round((Math.abs(r.curTotal)/maxAbs)*100);
-      return '<div style="padding:10px 12px;border-bottom:1px solid var(--line)">'
+      var expanded=!!_sbcExpandedCustomers[r.key];
+      var productRows=expanded?_sbcProductBreakdownForCustomer(r.key):[];
+      var productMax=expanded?Math.max(1,Math.max.apply(null,productRows.map(function(p){ return Math.max(Math.abs(p.curTotal),Math.abs(p.priorTotal)); }))):1;
+      return '<div style="border-bottom:1px solid var(--line)">'
+        +'<div onclick="toggleSbcCustomer(\''+esc(r.key).replace(/'/g,"\\'")+'\')" style="padding:10px 12px;cursor:pointer">'
         +'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;gap:10px">'
-          +'<span style="font-weight:600;font-size:13.5px">'+esc(r.name)+'</span>'
+          +'<span style="font-weight:600;font-size:13.5px;display:inline-flex;align-items:center;gap:6px">'
+            +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:9px;height:9px;stroke:var(--muted);flex-shrink:0;transform:rotate('+(expanded?'90':'0')+'deg);transition:transform .15s"><polyline points="9 6 15 12 9 18"/></svg>'
+            +esc(r.name)
+          +'</span>'
           +'<span style="font-family:var(--mono);font-size:12.5px;white-space:nowrap;color:'+barColor+';font-weight:700">'+money(r.change)+' ('+pctStr+')</span>'
         +'</div>'
         +'<div style="display:flex;flex-direction:column;gap:3px">'
           +'<div style="display:flex;align-items:center;gap:8px"><span style="width:38px;font-family:var(--mono);font-size:10px;color:var(--muted)">prior</span><div style="flex:1;background:var(--panel);border-radius:3px;height:10px;overflow:hidden"><div style="width:'+priorPct+'%;height:100%;background:var(--muted)"></div></div><span style="width:90px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--muted)">'+money(r.priorTotal)+'</span></div>'
           +'<div style="display:flex;align-items:center;gap:8px"><span style="width:38px;font-family:var(--mono);font-size:10px;color:var(--muted)">now</span><div style="flex:1;background:var(--panel);border-radius:3px;height:10px;overflow:hidden"><div style="width:'+curPct+'%;height:100%;background:'+barColor+'"></div></div><span style="width:90px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:600">'+money(r.curTotal)+'</span></div>'
         +'</div>'
+        +'</div>'
+        +(expanded?(
+          !productRows.length
+            ? '<div style="padding:8px 12px 14px 34px;color:var(--muted);font-size:12px">No product-level detail on file for this customer\'s documents.</div>'
+            : '<div style="padding:2px 12px 14px 34px;display:flex;flex-direction:column;gap:8px">'
+              +productRows.map(function(p){
+                var pPctStr=p.priorTotal>0.004?(Math.round((p.change/p.priorTotal)*1000)/10)+'%':(p.curTotal>0.004?'new':'—');
+                var pColor=p.change<-0.004?'#c0392b':(p.change>0.004?'#1a7a3c':'var(--muted)');
+                var pPriorPct=Math.round((Math.abs(p.priorTotal)/productMax)*100);
+                var pCurPct=Math.round((Math.abs(p.curTotal)/productMax)*100);
+                return '<div>'
+                  +'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px;gap:10px">'
+                    +'<span style="font-size:12.5px">'+esc(p.name)+'</span>'
+                    +'<span style="font-family:var(--mono);font-size:11.5px;white-space:nowrap;color:'+pColor+'">'+money(p.change)+' ('+pPctStr+')</span>'
+                  +'</div>'
+                  +'<div style="display:flex;flex-direction:column;gap:2px">'
+                    +'<div style="display:flex;align-items:center;gap:6px"><span style="width:34px;font-family:var(--mono);font-size:9px;color:var(--muted)">prior</span><div style="flex:1;background:var(--bg);border-radius:2px;height:7px;overflow:hidden"><div style="width:'+pPriorPct+'%;height:100%;background:var(--muted)"></div></div><span style="width:78px;text-align:right;font-family:var(--mono);font-size:10px;color:var(--muted)">'+money(p.priorTotal)+'</span></div>'
+                    +'<div style="display:flex;align-items:center;gap:6px"><span style="width:34px;font-family:var(--mono);font-size:9px;color:var(--muted)">now</span><div style="flex:1;background:var(--bg);border-radius:2px;height:7px;overflow:hidden"><div style="width:'+pCurPct+'%;height:100%;background:'+pColor+'"></div></div><span style="width:78px;text-align:right;font-family:var(--mono);font-size:10px;font-weight:600">'+money(p.curTotal)+'</span></div>'
+                  +'</div>'
+                +'</div>';
+              }).join('')
+            +'</div>'
+        ):'')
       +'</div>';
     }).join('')
   +'</div>';

@@ -1217,6 +1217,26 @@ const server = http.createServer(async (req, res) => {
   const url = fullUrl.split('?')[0];
   const queryParams = querystring.parse(fullUrl.split('?')[1] || '');
 
+  // Temporary request logging — added specifically to catch which request
+  // is running at the moment memory spikes (confirmed Sep 2026: a sudden
+  // ~840MB jump in under a minute, not a gradual leak — meaning it's some
+  // specific, large operation, not something to fix generically). Skips
+  // the high-frequency lightweight polling endpoints (session checks, the
+  // small-collections poll) since those fire every 1-2s per open tab and
+  // would just be noise; logs everything else, with memory readings around
+  // the heaviest suspects (QuickBooks document/item pulls, the general
+  // data sync) specifically. Remove once the actual cause is found.
+  var _reqIsNoisyPoll = (url === '/api/data/small' || url === '/api/session');
+  if (!_reqIsNoisyPoll) {
+    console.log('[reqlog] ' + req.method + ' ' + url + (fullUrl.indexOf('?') >= 0 ? '?' + fullUrl.split('?')[1].slice(0, 80) : '') + ' rss=' + Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB');
+  }
+  var _reqIsHeavySuspect = (url === '/api/qb/documents' || url === '/api/qb/items' || url === '/api/data');
+  if (_reqIsHeavySuspect) {
+    res.on('finish', function () {
+      console.log('[reqlog] FINISHED ' + req.method + ' ' + url + ' rss=' + Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB');
+    });
+  }
+
   // QuickBooks webhook receiver — deliberately has NO requireAuth() call.
   // Intuit itself calls this directly; it has no session cookie for this
   // app and never will. The signature check below IS this endpoint's

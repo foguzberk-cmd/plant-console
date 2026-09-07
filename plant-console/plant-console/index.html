@@ -2883,8 +2883,12 @@ function _ordersProductTablesHtml(toPrint){
     var lines=_orderLinesOf(o);
     var linesHtml=lines.length
       ? lines.map(function(l){
+          // Shows on the physical picking/route sheet too — a driver or
+          // picker who never opens the app still sees, on paper, that this
+          // line exists specifically to make up for a prior shortage.
+          var shortageNote=l.shortageReschedule?' <b style="color:#a3231b">(SHORTAGE REORDER — was out '+esc(l.rescheduledFromDate||'')+')</b>':'';
           return '<tr>'
-            +'<td class="prod">'+esc(l.product||'(no product)')+'</td>'
+            +'<td class="prod">'+esc(l.product||'(no product)')+shortageNote+'</td>'
             +'<td class="desc">'+esc(l.description||'')+'</td>'
             +'<td class="qty">'+esc(l.quantity||'')+'</td>'
             +'<td class="fill"></td>'
@@ -3958,9 +3962,23 @@ function _renderOrderRow(o){
       +(lines.length
         ? lines.map(function(l,li){
             var stripeBg=li%2===1?'background:rgba(0,0,0,.035);':'';
+            // Shortage flags take priority over the plain "needs processing"
+            // amber, since they explain something more urgent (a delivery
+            // that didn't happen at all): red = this line came from a prior
+            // day's shortage and IS the reorder; orange = this line WAS the
+            // shortage (count 0) that triggered that reorder.
             var procBg=l.needsProcessing?'background:#fff3cd;':stripeBg;
+            if(l.shortageReschedule) procBg='background:#fde2e1;';
+            else if(l.shortage) procBg='background:#ffe9d6;';
+            var shortageBadge='';
+            if(l.shortageReschedule){
+              shortageBadge='<span title="Auto-added because this product came back as a 0 count (out of stock) on '+esc(l.rescheduledFromDate||'a previous day')+'" style="flex-shrink:0;font-size:10px;font-weight:700;color:#a3231b;background:#ffd0cc;padding:2px 6px;border-radius:10px;white-space:nowrap">⚠ Shortage reorder</span>';
+            } else if(l.shortage){
+              shortageBadge='<span title="Rescheduled to '+esc(l.rescheduledToDate||'the next day')+'" style="flex-shrink:0;font-size:10px;font-weight:700;color:#8a4a12;background:#ffdcb0;padding:2px 6px;border-radius:10px;white-space:nowrap">⚠ Out — resched. '+esc(l.rescheduledToDate||'')+'</span>';
+            }
             return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 8px;margin:0 -8px;border-radius:5px;'+procBg+'">'
               +'<span onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+(l.description?' — '+esc(l.description):'')+'</span>'
+              +shortageBadge
               +(l.quantity?'<b style="flex-shrink:0;white-space:nowrap">'+esc(l.quantity)+'</b>':'')
               +'<label title="Needs processing" style="flex-shrink:0;display:flex;align-items:center;gap:4px;cursor:pointer;font-size:10.5px;color:#8a6d1a">'
                 +'<input type="checkbox" '+(l.needsProcessing?'checked':'')+' onchange="updateOrderLineNeedsProcessing(\''+esc(o.id)+'\','+li+',this)" style="width:14px;height:14px;cursor:pointer"/>Process'
@@ -4007,9 +4025,13 @@ function showOrderDetailModal(id){
     +(lines.length
         ? '<div style="border:1px solid var(--line);border-radius:9px;overflow:hidden;margin-bottom:16px">'
           +lines.map(function(l,li){
-            return '<div style="display:flex;justify-content:space-between;gap:12px;padding:9px 12px;font-size:13px;'+(li<lines.length-1?'border-bottom:1px solid var(--line);':'')+'">'
+            var rowBg=l.shortageReschedule?'background:#fde2e1;':(l.shortage?'background:#ffe9d6;':'');
+            return '<div style="display:flex;justify-content:space-between;gap:12px;padding:9px 12px;font-size:13px;'+rowBg+(li<lines.length-1?'border-bottom:1px solid var(--line);':'')+'">'
               +'<div style="min-width:0"><div style="font-weight:600">'+esc(l.product||'(no product)')+'</div>'
-              +(l.description?'<div style="color:var(--muted);margin-top:2px">'+esc(l.description)+'</div>':'')+'</div>'
+              +(l.description?'<div style="color:var(--muted);margin-top:2px">'+esc(l.description)+'</div>':'')
+              +(l.shortageReschedule?'<div style="font-size:11px;font-weight:700;color:#a3231b;margin-top:3px">⚠ Shortage reorder — was out on '+esc(l.rescheduledFromDate||'')+'</div>':'')
+              +(l.shortage?'<div style="font-size:11px;font-weight:700;color:#8a4a12;margin-top:3px">⚠ Out of stock — rescheduled to '+esc(l.rescheduledToDate||'next day')+'</div>':'')
+              +'</div>'
               +'<div style="flex-shrink:0;text-align:right">'
                 +(l.quantity?'<b style="white-space:nowrap">'+esc(l.quantity)+'</b>':'')
                 +(l.finalCount?'<div style="font-size:11px;color:var(--muted);white-space:nowrap">count: '+esc(l.finalCount)+'</div>':'')
@@ -4240,21 +4262,97 @@ async function confirmCreateInvoice(){
   }
 }
 window.confirmCreateInvoice=confirmCreateInvoice;
+// Adds one calendar day to a YYYY-MM-DD date string (the format used by
+// the <input type="date"> order-date fields). Parsed as local midnight
+// (not UTC) so this doesn't drift a day depending on the browser's
+// timezone offset.
+function _addOneDay(dateStr){
+  if(!dateStr) return null;
+  var d=new Date(dateStr+'T00:00:00');
+  if(isNaN(d.getTime())) return null;
+  d.setDate(d.getDate()+1);
+  return d.toISOString().slice(0,10);
+}
+// A count of "0" means the product was out of stock and never actually
+// delivered — this pushes that product forward onto the next day's
+// schedule automatically, so nobody has to remember to re-add it by hand.
+// If an order already exists for the same customer on that next date, the
+// product is appended as a new line on it (avoids splintering one
+// customer's deliveries across multiple same-day orders); otherwise a new
+// order is created. The new line is flagged shortageReschedule:true so
+// _renderOrderRow can highlight it — the point isn't just to reschedule
+// it, it's to make sure whoever preps that next day's order SEES that
+// this item came from a shortage, not a normal add-on.
+async function _rescheduleShortageLine(o,lineIdx){
+  var line=_orderLinesOf(o)[lineIdx];
+  if(!line) return null;
+  var nextDate=_addOneDay(o.date);
+  if(!nextDate) return null;
+  var custKey=(o.customer||'').trim().toLowerCase();
+  var target=orders.find(function(x){
+    return x.date===nextDate && (x.customer||'').trim().toLowerCase()===custKey;
+  });
+  var newLine={
+    product:line.product||'',
+    description:line.description||'',
+    quantity:line.quantity||'',
+    shortageReschedule:true,
+    rescheduledFromOrderId:o.id,
+    rescheduledFromDate:o.date
+  };
+  if(target){
+    var lines=_orderLinesOf(target).map(function(l){ return Object.assign({},l); });
+    lines.push(newLine);
+    return await saveOrder({ id:target.id, date:target.date, customer:target.customer, driver:target.driver, lines:lines });
+  }
+  return await saveOrder({ date:nextDate, customer:o.customer, driver:o.driver, lines:[newLine] });
+}
 // Saves the final physical count typed directly into one product line
 // within a Received Orders row. Same reasoning as toggleOrderShippedManually
 // above: sends the FULL existing record (all lines, not just the one being
 // changed) alongside the new value, since save-order replaces
 // date/customer/driver/lines with whatever's in the payload — a partial
 // payload here would silently drop the other product lines.
+//
+// A count of exactly 0 is treated as "didn't deliver / out of stock":
+// the line gets flagged shortage:true (so this row can show why it's
+// short) and — once, guarded by rescheduledOrderId so re-saving the same
+// 0 twice doesn't create a duplicate — a matching line is pushed onto the
+// next day's order for the same customer, flagged shortageReschedule:true
+// so it's highlighted there too.
 async function updateOrderLineFinalCount(id,lineIdx,value){
   var o=orders.find(function(x){return x.id===id;});
   if(!o) return;
   var lines=_orderLinesOf(o).map(function(l){ return Object.assign({},l); });
   if(!lines[lineIdx]) return;
   lines[lineIdx].finalCount=value;
+  var numeric=_parseQtyNumber(value);
+  var isZero=(value||'').trim()!=='' && numeric===0;
+  var justFlaggedShortage=false;
+  if(isZero){
+    lines[lineIdx].shortage=true;
+    if(!lines[lineIdx].rescheduledOrderId){
+      try{
+        var resc=await _rescheduleShortageLine(o,lineIdx);
+        if(resc){ lines[lineIdx].rescheduledOrderId=resc.id; lines[lineIdx].rescheduledToDate=resc.date; justFlaggedShortage=true; }
+      }catch(e){ console.error('Shortage reschedule failed:',e); }
+    }
+  } else if(lines[lineIdx].shortage){
+    // Corrected away from 0 — clear the flag on this line, but leave any
+    // already-created next-day reorder alone; deleting it automatically
+    // risks silently pulling a product off tomorrow's route that someone
+    // may already be relying on. A person can remove it by hand if it's
+    // genuinely no longer needed.
+    lines[lineIdx].shortage=false;
+  }
   var fullOrder={ id:o.id, date:o.date, customer:o.customer, driver:o.driver, lines:lines };
   var saved=await saveOrder(fullOrder);
   if(!saved){ alert('Could not save the count — check your connection and try again.'); }
+  else if(justFlaggedShortage){
+    // Full re-render (rather than the usual quiet in-place tweak) so the
+    // shortage badge/highlight added below actually shows up right away.
+    _renderOrdersWeekSummary();
+  }
 }
 window.updateOrderLineFinalCount=updateOrderLineFinalCount;
 // Saves the "needs processing" flag for one product line — same

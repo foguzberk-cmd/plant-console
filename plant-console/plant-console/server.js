@@ -2378,7 +2378,24 @@ const server = http.createServer(async (req, res) => {
           // processing department before it can ship — a per-product flag,
           // same reasoning as finalCount: one order can easily mix
           // products that need processing with ones that don't.
-          needsProcessing: !!(l && l.needsProcessing)
+          needsProcessing: !!(l && l.needsProcessing),
+          // Shortage tracking: set on the ORIGINAL line when its count was
+          // entered as 0 (out of stock, didn't actually deliver).
+          shortage: !!(l && l.shortage),
+          // Set on the NEW line that gets auto-created on the next day's
+          // order to cover that shortage — this is what tells the
+          // Received Orders view and the printed picking sheet to
+          // highlight it as "this exists because of a prior shortage",
+          // not a normal add-on.
+          shortageReschedule: !!(l && l.shortageReschedule),
+          // Cross-references so each side can show/find the other: the
+          // shortage line points at the order it was rescheduled into,
+          // and the reschedule line points back at the order/date it
+          // originated from.
+          rescheduledOrderId: String((l && l.rescheduledOrderId) || '').trim().slice(0, 100),
+          rescheduledToDate: String((l && l.rescheduledToDate) || '').slice(0, 10),
+          rescheduledFromOrderId: String((l && l.rescheduledFromOrderId) || '').trim().slice(0, 100),
+          rescheduledFromDate: String((l && l.rescheduledFromDate) || '').slice(0, 10)
         })).filter(l => l.product || l.description || l.quantity);
         saved = {
           id: id,

@@ -3087,6 +3087,7 @@ function renderOrdersPage(){
     +'<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">'
       +'<button class="btn btn-primary btn-sm" onclick="showNewOrderForm()">+ New Order</button>'
       +'<button id="matchQbBtn" class="btn btn-sm" onclick="matchOrdersWithQuickBooks()" title="Checks each not-yet-shipped order for a matching QuickBooks Invoice (same customer, invoiced on or after the order date) and moves it to Shipped Orders">Match with QuickBooks</button>'
+      +'<button id="rescanShortageBtn" class="btn btn-sm" onclick="rescanShortageLines()" title="Finds any Received Order line with a Count of 0 that has not yet been rescheduled to the next day, and reschedules it now — use this once after this feature was added (existing 0 counts do not retroactively trigger it), or if a reschedule attempt failed">⚠ Rescan for shortages</button>'
       +'<button class="btn btn-sm" onclick="printProcessingSheet(orders.filter(function(o){return !o.shipped;}).map(function(o){return o.id;}),\'Processing — All Drivers\')" title="Prints every product across all Received Orders (any driver) that\'s checked as needing processing">🏭 Print processing sheet</button>'
       +'<input id="ordersSearch" type="text" placeholder="Search customer, product, description, driver…" value="'+esc(_ordersSearchQuery)+'" oninput="_ordersSearchQuery=this.value;_renderOrdersWeekSummary();_renderShippedOrdersSummary()" style="flex:1;min-width:220px;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--panel);color:var(--ink)"/>'
     +'</div>'
@@ -4307,6 +4308,59 @@ async function _rescheduleShortageLine(o,lineIdx){
   }
   return await saveOrder({ date:nextDate, customer:o.customer, driver:o.driver, lines:[newLine] });
 }
+// One-time catch-up utility: scans every order already on the books for a
+// line whose Count is 0 but that never got the shortage/reschedule
+// treatment — either because it was entered before this feature existed,
+// or because a prior reschedule attempt silently failed (network hiccup,
+// etc). Needed because the auto-reschedule in updateOrderLineFinalCount
+// only fires on an actual change event; loading new code doesn't
+// retroactively re-check data that's already saved server-side.
+async function rescanShortageLines(){
+  var btn=document.getElementById('rescanShortageBtn');
+  if(btn){ btn.disabled=true; btn.textContent='Rescanning…'; }
+  var fixed=0, failed=0;
+  try{
+    // Snapshot first — orders already flagged as shipped are done and
+    // shouldn't be touched, and we want a stable list to iterate since
+    // saveOrder calls below will be pushing/mutating the live `orders`
+    // array as they land.
+    var candidates=[];
+    orders.forEach(function(o){
+      if(o.shipped) return;
+      _orderLinesOf(o).forEach(function(l,li){
+        var isZero=(l.finalCount||'').trim()!=='' && _parseQtyNumber(l.finalCount)===0;
+        if(isZero && !l.shortage && !l.rescheduledOrderId) candidates.push({orderId:o.id,lineIdx:li});
+      });
+    });
+    for(var i=0;i<candidates.length;i++){
+      var c=candidates[i];
+      var o=orders.find(function(x){return x.id===c.orderId;});
+      if(!o) continue;
+      var lines=_orderLinesOf(o).map(function(l){ return Object.assign({},l); });
+      if(!lines[c.lineIdx]) continue;
+      lines[c.lineIdx].shortage=true;
+      try{
+        var resc=await _rescheduleShortageLine(o,c.lineIdx);
+        if(resc){
+          lines[c.lineIdx].rescheduledOrderId=resc.id;
+          lines[c.lineIdx].rescheduledToDate=resc.date;
+          var fullOrder={ id:o.id, date:o.date, customer:o.customer, driver:o.driver, lines:lines };
+          var saved=await saveOrder(fullOrder);
+          if(saved) fixed++; else failed++;
+        } else {
+          failed++;
+        }
+      }catch(e){ console.error('Rescan reschedule failed for order',c.orderId,'line',c.lineIdx,e); failed++; }
+    }
+  } finally {
+    if(btn){ btn.disabled=false; btn.textContent='⚠ Rescan for shortages'; }
+  }
+  _renderOrdersWeekSummary();
+  alert(fixed||failed
+    ? 'Rescan complete: '+fixed+' shortage'+(fixed!==1?'s':'')+' rescheduled to the next day.'+(failed?' '+failed+' could not be processed (check your connection and try again).':'')
+    : 'Rescan complete: no unprocessed 0-count lines found.');
+}
+window.rescanShortageLines=rescanShortageLines;
 // Saves the final physical count typed directly into one product line
 // within a Received Orders row. Same reasoning as toggleOrderShippedManually
 // above: sends the FULL existing record (all lines, not just the one being

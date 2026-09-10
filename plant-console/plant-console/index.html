@@ -3229,6 +3229,30 @@ window.matchOrdersWithQuickBooks=matchOrdersWithQuickBooks;
 // route that carried it matters less than knowing it's invoiced and
 // accounted for). Each row shows the matched invoice # for direct
 // reference against QuickBooks.
+// Monday of the ISO week containing dateStr (YYYY-MM-DD in, YYYY-MM-DD out).
+function _weekMondayOf(dateStr){
+  var d=new Date(dateStr+'T00:00:00');
+  var day=d.getDay(); // 0=Sun..6=Sat
+  d.setDate(d.getDate()+(day===0?-6:1-day));
+  return d.toISOString().slice(0,10);
+}
+function _weekRangeLabel(mondayStr){
+  var start=new Date(mondayStr+'T00:00:00');
+  var end=new Date(start.getTime()); end.setDate(end.getDate()+6);
+  var sameMonth=start.getMonth()===end.getMonth();
+  return start.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' – '
+    +end.toLocaleDateString('en-US', sameMonth?{day:'numeric'}:{month:'short',day:'numeric'});
+}
+// Expanding/collapsing a WEEK re-renders the whole shipped-orders section
+// (cheap — see below) rather than just toggling a hidden div, because a
+// collapsed week's day/driver/order breakdown isn't in the DOM at all, not
+// just hidden. It has to actually be built the moment the week opens.
+function toggleShippedWeek(weekOpenKey){
+  var q=(_ordersSearchQuery||'').trim().toLowerCase();
+  _ordersRowOpen[weekOpenKey]=!_ordersIsOpen(weekOpenKey,q);
+  _renderShippedOrdersSummary();
+}
+window.toggleShippedWeek=toggleShippedWeek;
 function _renderShippedOrdersSummary(){
   var el=document.getElementById('ordersShippedSummary');
   if(!el) return;
@@ -3248,15 +3272,46 @@ function _renderShippedOrdersSummary(){
     el.innerHTML='<div class="txn-empty" style="border-radius:0 0 12px 12px"><p>No shipped orders yet.</p><p>Orders move here automatically once "Match with QuickBooks" finds an invoice for them.</p></div>';
     return;
   }
-  var byDay={};
-  shipped.forEach(function(o){ (byDay[o.date]=byDay[o.date]||[]).push(o); });
-  var dayKeys=Object.keys(byDay).sort().reverse(); // most recently shipped first
+  // Grouped by WEEK first, collapsed by default (same "closed unless
+  // searching or explicitly opened" rule as everything else in Orders).
+  // CRITICAL for performance: a collapsed week's day/driver/order HTML is
+  // NOT built at all — earlier this rendered every shipped order ever,
+  // every 1.5s on the background poll, just hidden with display:none,
+  // which is what made this section slow once there were months of
+  // history. Now only the week(s) actually expanded pay that cost.
+  var byWeek={};
+  shipped.forEach(function(o){ var wk=_weekMondayOf(o.date); (byWeek[wk]=byWeek[wk]||[]).push(o); });
+  var weekKeys=Object.keys(byWeek).sort().reverse(); // most recent week first
   var html='<div style="border:1px solid var(--line);border-radius:0 0 12px 12px;overflow:hidden">';
-  dayKeys.forEach(function(dk,di){
+  weekKeys.forEach(function(wk,wi){
+    var weekOrders=byWeek[wk];
+    var weekOpenKey='shipweek:'+wk;
+    var isOpen=_ordersIsOpen(weekOpenKey,q);
+    html+='<div onclick="toggleShippedWeek(\''+_jsStrEsc(weekOpenKey)+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:11px 14px;background:#cfe9d6;border-bottom:1px solid #b9dfc0">'
+      +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#1b5e2f;flex-shrink:0'+(isOpen?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
+      +'<span style="font-weight:700;font-size:13.5px;color:#1b5e2f">Week of '+_weekRangeLabel(wk)+'</span>'
+      +'<span style="font-size:11.5px;color:#3d6e46">'+weekOrders.length+' order'+(weekOrders.length!==1?'s':'')+'</span>'
+    +'</div>'
+    +(isOpen ? _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd) : '');
+  });
+  html+='</div>';
+  el.innerHTML=html;
+}
+// Builds the day → driver → order breakdown for ONE already-expanded week.
+// Pulled out of _renderShippedOrdersSummary unchanged apart from element
+// IDs now being namespaced by week index (wi) as well as day index (di),
+// since day dates no longer guarantee unique element ids on their own once
+// grouped under multiple weeks in the same render pass — though in
+// practice a given date only ever falls in one week anyway.
+function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
+  var byDay={};
+  weekOrders.forEach(function(o){ (byDay[o.date]=byDay[o.date]||[]).push(o); });
+  var dayKeys=Object.keys(byDay).sort().reverse();
+  return dayKeys.map(function(dk,di){
     var count=byDay[dk].length;
     var openKey='shipday:'+dk;
-    var rowId='ordShipDay-'+di;
-    html+='<div onclick="toggleOrdersRow(\''+rowId+'\',\''+_jsStrEsc(openKey)+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:10px 14px;background:#e3f3e6;border-bottom:1px solid #b9dfc0">'
+    var rowId='ordShipDay-'+wi+'-'+di;
+    return '<div onclick="toggleOrdersRow(\''+rowId+'\',\''+_jsStrEsc(openKey)+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:10px 14px 10px 26px;background:#e3f3e6;border-bottom:1px solid #b9dfc0">'
       +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#1b5e2f;flex-shrink:0'+(_ordersRowOpen[openKey]?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
       +'<span style="font-weight:700;font-size:13px;color:#1b5e2f">'+fmtDayOrd(dk)+' ('+count+')</span>'
     +'</div>'
@@ -3274,7 +3329,7 @@ function _renderShippedOrdersSummary(){
         });
         return driverKeys.map(function(dName,dri){
           var driverOrders=byDriver[dName].slice().sort(function(a,b){return (a.customer||'')<(b.customer||'')?-1:1;});
-          var driverRowId='ordShipDay-'+di+'-drv-'+dri;
+          var driverRowId='ordShipDay-'+wi+'-'+di+'-drv-'+dri;
           var driverOpenKey='shipdrv:'+dk+'|'+dName;
           return '<div style="display:flex;align-items:center;gap:8px;padding:6px 14px 4px 30px;background:var(--cold-soft)">'
               +'<svg onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="cursor:pointer;width:11px;height:11px;stroke:var(--cold);flex-shrink:0'+(_ordersIsOpen(driverOpenKey,q)?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
@@ -3285,7 +3340,7 @@ function _renderShippedOrdersSummary(){
             +driverOrders.map(function(o,oi){
         var lines=_orderLinesOf(o);
         var orderOpenKey='shiporder:'+o.id;
-        var orderRowId='ordShipOrder-'+di+'-'+dri+'-'+oi;
+        var orderRowId='ordShipOrder-'+wi+'-'+di+'-'+dri+'-'+oi;
         return '<div style="border-bottom:1px dashed var(--line)">'
           +'<div style="display:flex;align-items:center;gap:10px;padding:8px 16px 8px 44px;font-size:12.5px">'
             +'<svg onclick="toggleOrdersRow(\''+orderRowId+'\',\''+_jsStrEsc(orderOpenKey)+'\')" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="cursor:pointer;width:11px;height:11px;stroke:var(--muted);flex-shrink:0'+(_ordersRowOpen[orderOpenKey]?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
@@ -3316,9 +3371,7 @@ function _renderShippedOrdersSummary(){
         }).join('');
       })()
     +'</div>';
-  });
-  html+='</div>';
-  el.innerHTML=html;
+  }).join('');
 }
 window._renderShippedOrdersSummary=_renderShippedOrdersSummary;
 // Splits a shipped order by product line: checked lines stay here

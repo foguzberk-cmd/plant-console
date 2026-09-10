@@ -4015,11 +4015,23 @@ function _renderOrderRow(o){
     +'</div>';
   }
   var lines=_orderLinesOf(o);
+  // A shortage line that's already been rescheduled is fully handled —
+  // its replacement now lives on the next day's order (which shows the
+  // red "Shortage reorder" badge instead). Leaving the original 0-count
+  // line visible here just clutters the working list with something
+  // nobody needs to act on anymore, so it's skipped in THIS view only —
+  // the underlying data stays put, and it still shows in the Order
+  // Detail modal and on printed sheets for anyone who wants the history.
+  var visibleLines=lines.filter(function(l){ return !(l.shortage && l.rescheduledOrderId); });
   return '<div id="ordRow-'+esc(o.id)+'" style="display:flex;align-items:flex-start;gap:14px;padding:8px 16px 8px 30px;font-size:12.5px;border-bottom:1px dashed var(--line)">'
     +'<span onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;width:80px;flex-shrink:0;color:var(--muted);padding-top:5px">'+esc(o.date)+'</span>'
     +'<span style="flex:1;min-width:0">'
-      +(lines.length
-        ? lines.map(function(l,li){
+      +(!lines.length
+        ? '<span style="color:var(--muted);font-style:italic">(no products listed)</span>'
+        : !visibleLines.length
+          ? '<span style="color:var(--muted);font-style:italic">All items here were out of stock and already rescheduled to the next day — click the date to see the details.</span>'
+          : lines.map(function(l,li){
+            if(l.shortage && l.rescheduledOrderId) return ''; // hidden — see comment above; li is preserved for the ones still rendered
             var stripeBg=li%2===1?'background:rgba(0,0,0,.035);':'';
             // Shortage flags take priority over the plain "needs processing"
             // amber, since they explain something more urgent (a delivery
@@ -4044,8 +4056,7 @@ function _renderOrderRow(o){
               +'</label>'
               +'<input type="text" value="'+esc(l.finalCount||'')+'" placeholder="Count" title="Final physical count for this product" onchange="updateOrderLineFinalCount(\''+esc(o.id)+'\','+li+',this.value)" style="width:78px;flex-shrink:0;padding:5px 6px;border:1.5px solid var(--line);border-radius:6px;font-size:12px;font-family:var(--mono);text-align:right;background:var(--bg);color:var(--ink)"/>'
             +'</div>';
-          }).join('')
-        : '<span style="color:var(--muted);font-style:italic">(no products listed)</span>')
+          }).join(''))
     +'</span>'
     +'<span style="flex-shrink:0;display:flex;gap:4px;padding-top:2px">'
       +'<button title="Print this order" onclick="event.stopPropagation();printOrders([\''+esc(o.id)+'\'],\''+esc((o.customer||'Order')+' — '+(o.date||''))+'\')" style="border:0;background:transparent;cursor:pointer;padding:4px;color:var(--muted)">🖨</button>'

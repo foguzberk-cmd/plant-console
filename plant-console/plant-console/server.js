@@ -2364,39 +2364,41 @@ const server = http.createServer(async (req, res) => {
         const rawLines = Array.isArray(order.lines) && order.lines.length
           ? order.lines
           : (order.product || order.description || order.quantity ? [{ product: order.product, description: order.description, quantity: order.quantity }] : []);
-        const lines = rawLines.map(l => ({
-          product: String((l && l.product) || '').trim().slice(0, 200),
-          description: String((l && l.description) || '').trim().slice(0, 1000),
-          quantity: String((l && l.quantity !== undefined && l.quantity !== null) ? l.quantity : '').trim().slice(0, 50),
-          // Final physical count — entered per-product directly in the
-          // Received Orders row while loading, not part of what the
-          // customer ordered. Kept alongside product/description/quantity
-          // on each line rather than as one order-level field, since a
-          // multi-product order needs a separate count per product.
-          finalCount: String((l && l.finalCount) || '').trim().slice(0, 50),
-          // Whether this specific product needs to go through the
-          // processing department before it can ship — a per-product flag,
-          // same reasoning as finalCount: one order can easily mix
-          // products that need processing with ones that don't.
-          needsProcessing: !!(l && l.needsProcessing),
-          // Shortage tracking: set on the ORIGINAL line when its count was
-          // entered as 0 (out of stock, didn't actually deliver).
-          shortage: !!(l && l.shortage),
-          // Set on the NEW line that gets auto-created on the next day's
-          // order to cover that shortage — this is what tells the
-          // Received Orders view and the printed picking sheet to
-          // highlight it as "this exists because of a prior shortage",
-          // not a normal add-on.
-          shortageReschedule: !!(l && l.shortageReschedule),
-          // Cross-references so each side can show/find the other: the
-          // shortage line points at the order it was rescheduled into,
-          // and the reschedule line points back at the order/date it
-          // originated from.
-          rescheduledOrderId: String((l && l.rescheduledOrderId) || '').trim().slice(0, 100),
-          rescheduledToDate: String((l && l.rescheduledToDate) || '').slice(0, 10),
-          rescheduledFromOrderId: String((l && l.rescheduledFromOrderId) || '').trim().slice(0, 100),
-          rescheduledFromDate: String((l && l.rescheduledFromDate) || '').slice(0, 10)
-        })).filter(l => l.product || l.description || l.quantity);
+        const lines = rawLines.map(l => {
+          const base = {
+            product: String((l && l.product) || '').trim().slice(0, 200),
+            description: String((l && l.description) || '').trim().slice(0, 1000),
+            quantity: String((l && l.quantity !== undefined && l.quantity !== null) ? l.quantity : '').trim().slice(0, 50),
+            // Final physical count — entered per-product directly in the
+            // Received Orders row while loading, not part of what the
+            // customer ordered. Kept alongside product/description/quantity
+            // on each line rather than as one order-level field, since a
+            // multi-product order needs a separate count per product.
+            finalCount: String((l && l.finalCount) || '').trim().slice(0, 50),
+            // Whether this specific product needs to go through the
+            // processing department before it can ship — a per-product flag,
+            // same reasoning as finalCount: one order can easily mix
+            // products that need processing with ones that don't.
+            needsProcessing: !!(l && l.needsProcessing)
+          };
+          // Shortage-tracking fields are added ONLY when they actually carry
+          // information, rather than unconditionally on every line. CONFIRMED
+          // live (Sep 2026): writing all six of these on every single order
+          // line — including the vast majority that were never a shortage —
+          // was measurably bloating the full-data payload that every open
+          // tab re-downloads and re-parses every 1.5s (the background sync
+          // poll), to the point of contributing to browser tabs crashing
+          // with Out of Memory after a few minutes open. A normal line now
+          // costs nothing extra; only a line actually touched by the
+          // shortage/reschedule flow carries the extra keys.
+          if (l && l.shortage) base.shortage = true;
+          if (l && l.shortageReschedule) base.shortageReschedule = true;
+          if (l && l.rescheduledOrderId) base.rescheduledOrderId = String(l.rescheduledOrderId).trim().slice(0, 100);
+          if (l && l.rescheduledToDate) base.rescheduledToDate = String(l.rescheduledToDate).slice(0, 10);
+          if (l && l.rescheduledFromOrderId) base.rescheduledFromOrderId = String(l.rescheduledFromOrderId).trim().slice(0, 100);
+          if (l && l.rescheduledFromDate) base.rescheduledFromDate = String(l.rescheduledFromDate).slice(0, 10);
+          return base;
+        }).filter(l => l.product || l.description || l.quantity);
         saved = {
           id: id,
           date: String(order.date || '').slice(0, 10),

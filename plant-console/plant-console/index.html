@@ -7019,11 +7019,16 @@ function _srpTierMult(tiers,rate){
 function _srpComputeRows(){
   if(!_srpCurDocs) return [];
   var reps={}; // rep name -> {custIds:{}}
+  // Keyed by qbId (the actual QuickBooks Customer.Id, which is what an
+  // Invoice's CustomerRef.value contains), NOT the local `id` field —
+  // `id` is a client-generated "cust_<timestamp>_<random>" string used
+  // only to key this app's own records (see qbSyncCustomersCore), and
+  // never matches anything QuickBooks returns.
   customers.forEach(function(c){
     var rep=(c&&c.salesRep||'').trim();
-    if(!rep||!c.id) return;
+    if(!rep||!c.qbId) return;
     if(!reps[rep]) reps[rep]={custIds:{}};
-    reps[rep].custIds[c.id]=true;
+    reps[rep].custIds[c.qbId]=true;
   });
   return Object.keys(reps).sort().map(function(rep){
     var custIds=reps[rep].custIds;

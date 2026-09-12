@@ -663,6 +663,7 @@ const PERMISSIONS=[
   {id:'viewReportsAudit',      label:'— Audit',              desc:'View the Audit report',group:'Reports'},
   {id:'viewReportsPurchasing', label:'— Purchasing',         desc:'View the Weekly Purchase report',group:'Reports'},
   {id:'viewReportsSalesByCustomer', label:'— Sales by Customer', desc:'View the Sales by Customer report',group:'Reports'},
+  {id:'viewReportsSalesPlan', label:'— Sales Rep Plan', desc:'View the Sales Rep benefit/commission plan calculator',group:'Reports'},
   {id:'cfSchedulePayment',label:'Schedule payments',   desc:'Pick a date to schedule a vendor bill for payment, full or partial',group:'Reports'},
   {id:'cfApprovePayment', label:'Approve payments',    desc:'Approve a scheduled payment as ready to pay',group:'Reports'},
   {id:'cfInitiatePayment',label:'Initiate payments',   desc:'Mark an approved payment as sent by wire or check',group:'Reports'},
@@ -683,7 +684,7 @@ const PERMISSIONS=[
 // shipped, since none of them have ever had these specific keys set
 // before. They only actually restrict someone once an admin explicitly
 // unchecks the box for them in the new Permissions Matrix.
-const VIEW_PERMS_DEFAULT_ALLOW=['viewItems','viewTxns','viewScaleLog','viewReports','viewReportsCollection','viewReportsCashflow','viewReportsChecks','viewReportsInventory','viewReportsAudit','viewReportsPurchasing','viewReportsSalesByCustomer','viewSettings','viewLegal'];
+const VIEW_PERMS_DEFAULT_ALLOW=['viewItems','viewTxns','viewScaleLog','viewReports','viewReportsCollection','viewReportsCashflow','viewReportsChecks','viewReportsInventory','viewReportsAudit','viewReportsPurchasing','viewReportsSalesByCustomer','viewReportsSalesPlan','viewSettings','viewLegal'];
 function hasViewPerm(permId){
   if(!currentUser) return false;
   if(currentUser.role==='admin') return true;
@@ -897,7 +898,7 @@ function savePurchaseEstimatesWeek(weekId){
   setTimeout(function(){ delete _recentlySavedPurchaseEstimateWeeks[weekId]; },8000);
   pushToServer();
 }
-let users=JSON.parse(localStorage.getItem('pc_users')||'[]');
+let users=usersForLocalCache(JSON.parse(localStorage.getItem('pc_users')||'[]')); // strips any plaintext pin/pinHash left over from before this was sanitized on write
 let savedReports=JSON.parse(localStorage.getItem('pc_savedreports')||'[]'); // frozen report snapshots for later viewing/printing
 let currentUser=null;
 let editingStorageId=null,editingTxnId=null,editingUserId=null,editingDocId=null;
@@ -957,7 +958,7 @@ async function retryTxnsSaveUntilConfirmed(){
 // the server. This was the exact cause of "added user disappears after
 // refresh."
 async function saveUsers(){
-  safeSetLocal('pc_users',JSON.stringify(users));
+  safeSetLocal('pc_users',JSON.stringify(usersForLocalCache(users)));
   _writeInFlight++;
   var ok=false;
   try{
@@ -1045,6 +1046,21 @@ function safeSetLocal(key,value){
   }catch(e){
     console.warn('localStorage quota exceeded saving "'+key+'" ('+((value||'').length/1024).toFixed(0)+'KB) — data is still saved to the server, just not cached locally in this browser.',e);
   }
+}
+// SECURITY: the server never sends pin/pinHash back to any client (see /api/data
+// in server.js) — the only place a plaintext `pin` ever exists here is briefly,
+// in memory, right after this SAME browser sets/changes a PIN in saveUser()/
+// saveProfile(), on its way to being pushed (and hashed server-side). It must
+// never be written to localStorage, where it would sit in plaintext on disk
+// readable by anyone with access to this machine/profile. Always route the
+// `users` array through this before caching it locally.
+function usersForLocalCache(arr){
+  return (arr||[]).map(function(u){
+    if(!u) return u;
+    var c=Object.assign({},u);
+    delete c.pin; delete c.pinHash;
+    return c;
+  });
 }
 
 // ===== SHARED SYNC (fixes "can't log in from another browser") =====
@@ -1420,7 +1436,7 @@ async function pullFromServer(){
     // collections that are most likely to hit the limit.
     safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs));
     safeSetLocal('pc_labelallowed',JSON.stringify(labelAllowed));
-    safeSetLocal('pc_users',JSON.stringify(users));
+    safeSetLocal('pc_users',JSON.stringify(usersForLocalCache(users)));
     safeSetLocal('pc_savedreports',JSON.stringify(savedReports));
     safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed));
     safeSetLocal('pc_labeltemplates',JSON.stringify(labelTemplates));
@@ -1550,7 +1566,7 @@ async function _pushToServerImpl(){
         var smallData=await smallRes.json();
         var afterUnion=unionById(users, smallData.users);
         var newUsers=dedupeUsersByEmail(afterUnion);
-        if(afterUnion!==users || newUsers.length!==afterUnion.length){ users=newUsers; safeSetLocal('pc_users',JSON.stringify(users)); }
+        if(afterUnion!==users || newUsers.length!==afterUnion.length){ users=newUsers; safeSetLocal('pc_users',JSON.stringify(usersForLocalCache(users))); }
         var mergedScaleLogs=unionById(scaleLogs, smallData.scaleLogs).filter(function(l){ return !_deletedScaleLogIds[l.id]; });
         scaleLogs=mergedScaleLogs; safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs));
         var mergedOrders=unionById(orders, smallData.orders).filter(function(o){ return !_deletedOrderIds[o.id]; });
@@ -3088,6 +3104,7 @@ function renderOrdersPage(){
       +'<button class="btn btn-primary btn-sm" onclick="showNewOrderForm()">+ New Order</button>'
       +'<button id="matchQbBtn" class="btn btn-sm" onclick="matchOrdersWithQuickBooks()" title="Checks each not-yet-shipped order for a matching QuickBooks Invoice (same customer, invoiced on or after the order date) and moves it to Shipped Orders. Also rescans for any 0-count line that hasn\'t been rescheduled to the next day yet.">Match with QuickBooks</button>'
       +'<button class="btn btn-sm" onclick="printProcessingSheet(orders.filter(function(o){return !o.shipped;}).map(function(o){return o.id;}),\'Processing — All Drivers\')" title="Prints every product across all Received Orders (any driver) that\'s checked as needing processing">🏭 Print processing sheet</button>'
+      +'<button class="btn btn-sm" onclick="showManageDriversModal()" title="Add, rename, or remove drivers — renaming merges duplicates (e.g. two case variants of the same name) into one">🚚 Manage drivers</button>'
       +'<input id="ordersSearch" type="text" placeholder="Search customer, product, description, driver…" value="'+esc(_ordersSearchQuery)+'" oninput="_ordersSearchQuery=this.value;_renderOrdersWeekSummary();_renderShippedOrdersSummary()" style="flex:1;min-width:220px;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--panel);color:var(--ink)"/>'
     +'</div>'
     +'<div id="newOrderFormWrap"></div>'
@@ -3319,7 +3336,7 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
       +(function(){
         var byDriver={};
         byDay[dk].forEach(function(o){
-          var dName=o.driver||'(no driver assigned)';
+          var dName=_driverGroupKey(o.driver);
           (byDriver[dName]=byDriver[dName]||[]).push(o);
         });
         var driverKeys=Object.keys(byDriver).sort(function(a,b){
@@ -3596,6 +3613,16 @@ window._ordProdKeydown=_ordProdKeydown;
 // (including old case-variant duplicates like "BASARAN OKUR" vs "Basaran
 // Okur": whichever spelling no order actually uses just stops showing up,
 // with no need to merge or clean up the underlying driver list itself).
+// Groups "same driver, different exact string" back together — e.g. an
+// order whose driver was saved before names were normalized to uppercase
+// (see _promptAddDriver), or with stray leading/trailing whitespace. Without
+// this, orders/day summaries split one driver into two rows that render
+// identically (the label has text-transform:uppercase applied), which looks
+// like a plain duplicate rather than a case/whitespace mismatch in the data.
+function _driverGroupKey(name){
+  var t=(name||'').trim();
+  return t ? t.toUpperCase() : '(no driver assigned)';
+}
 function _driversInUse(){
   var set={};
   orders.forEach(function(o){ if(o.driver) set[o.driver]=true; });
@@ -3723,6 +3750,143 @@ async function _promptAddDriver(selectEl){
   }
 }
 window._promptAddDriver=_promptAddDriver;
+/* ===== Manage Drivers modal =====
+   Lets an admin add, rename, or remove entries in the driver picklist.
+   Renaming is also how a duplicate gets fixed: two case/whitespace variants
+   of the same person (e.g. "Ibrahim Gungor" and "IBRAHIM GUNGOR") that used
+   to split into two separate rows in the Orders week summary (see
+   _driverGroupKey()) get merged into one real entry by renaming one to
+   exactly match the other — the server updates every order pointing at the
+   old name in the same request. */
+function showManageDriversModal(){
+  if(document.getElementById('manageDriversModalBg')) return;
+  var bg=document.createElement('div');
+  bg.className='modal-bg';
+  bg.id='manageDriversModalBg';
+  bg.setAttribute('role','dialog');
+  bg.setAttribute('aria-modal','true');
+  bg.addEventListener('mousedown',function(e){ bg._downOnBg=(e.target===bg); });
+  bg.addEventListener('mouseup',function(e){ if(bg._downOnBg && e.target===bg) closeManageDriversModal(); bg._downOnBg=false; });
+  document.body.appendChild(bg);
+  _renderManageDriversModal();
+}
+window.showManageDriversModal=showManageDriversModal;
+function closeManageDriversModal(){
+  var bg=document.getElementById('manageDriversModalBg');
+  if(bg) bg.remove();
+}
+window.closeManageDriversModal=closeManageDriversModal;
+function _renderManageDriversModal(){
+  var bg=document.getElementById('manageDriversModalBg');
+  if(!bg) return;
+  var driverList=drivers.slice().sort();
+  bg.innerHTML='<div class="modal" style="max-width:540px">'
+    +'<h3 style="margin:0 0 4px">Manage Drivers</h3>'
+    +'<p style="color:var(--muted);font-size:12.5px;margin:0 0 16px">Renaming a driver updates every order currently assigned to it — use this to merge accidental duplicates (e.g. two different capitalizations of the same name) into one.</p>'
+    +'<div style="display:flex;gap:8px;margin-bottom:14px">'
+      +'<input id="newDriverNameInput" type="text" placeholder="New driver name" style="flex:1;padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();addDriverFromModal();}"/>'
+      +'<button class="btn btn-primary btn-sm" onclick="addDriverFromModal()">+ Add</button>'
+    +'</div>'
+    +(driverList.length
+      ? '<div style="border:1px solid var(--line);border-radius:9px;overflow:hidden;max-height:360px;overflow-y:auto">'
+        +driverList.map(function(d,i){
+          var count=orders.filter(function(o){return o.driver===d;}).length;
+          return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;'+(i<driverList.length-1?'border-bottom:1px solid var(--line);':'')+'">'
+            +'<input type="text" value="'+esc(d)+'" data-orig="'+esc(d)+'" class="driver-edit-input" style="flex:1;padding:6px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;background:var(--panel);color:var(--ink)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.nextElementSibling.nextElementSibling.click();}"/>'
+            +'<span style="color:var(--muted);font-size:11px;white-space:nowrap;min-width:56px;text-align:right">'+count+' order'+(count!==1?'s':'')+'</span>'
+            +'<button class="btn btn-sm" title="Save rename" onclick="saveDriverRename(this)">💾</button>'
+            +'<button class="btn btn-sm" style="color:#b8460b" title="Delete driver" onclick="deleteDriverFromModal(\''+esc(d)+'\','+count+')">🗑</button>'
+          +'</div>';
+        }).join('')
+        +'</div>'
+      : '<p style="color:var(--muted);font-style:italic">No drivers yet.</p>')
+    +'<div class="modal-footer"><button class="btn" onclick="closeManageDriversModal()">Close</button></div>'
+  +'</div>';
+}
+async function addDriverFromModal(){
+  var input=document.getElementById('newDriverNameInput');
+  if(!input) return;
+  var name=(input.value||'').trim();
+  if(!name) return;
+  name=name.toUpperCase();
+  input.disabled=true;
+  try{
+    var res=await fetch('/api/data/add-driver',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:name})
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    var data=await res.json();
+    if(Array.isArray(data.drivers)) drivers=data.drivers;
+    else if(drivers.indexOf(name)<0){ drivers.push(name); drivers.sort(); }
+    safeSetLocal('pc_drivers',JSON.stringify(drivers));
+  }catch(e){
+    console.error('Add driver failed:',e);
+    alert('Could not add driver: '+(e&&e.message?e.message:e));
+  }
+  _renderManageDriversModal();
+}
+window.addDriverFromModal=addDriverFromModal;
+async function saveDriverRename(btn){
+  var row=btn.closest('div');
+  var input=row.querySelector('.driver-edit-input');
+  var oldName=input.getAttribute('data-orig');
+  var newName=(input.value||'').trim();
+  if(!newName){ alert('Driver name cannot be blank.'); input.value=oldName; return; }
+  newName=newName.toUpperCase();
+  if(newName===oldName) return; // nothing actually changed
+  var affectedCount=orders.filter(function(o){return o.driver===oldName;}).length;
+  var mergingIntoExisting=drivers.indexOf(newName)>=0;
+  var msg='Rename "'+oldName+'" to "'+newName+'"?'
+    +(affectedCount?(' This updates '+affectedCount+' order'+(affectedCount!==1?'s':'')+' currently assigned to it.'):'')
+    +(mergingIntoExisting?'\n\n"'+newName+'" already exists — the two will be merged into one driver.':'');
+  if(!confirm(msg)){ input.value=oldName; return; }
+  btn.disabled=true;
+  try{
+    var res=await fetch('/api/data/rename-driver',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({oldName:oldName,newName:newName})
+    });
+    if(!res.ok){ var errBody=await res.json().catch(function(){return{};}); throw new Error(errBody.error||('HTTP '+res.status)); }
+    var data=await res.json();
+    if(Array.isArray(data.drivers)) drivers=data.drivers;
+    // Reflect the merge locally right away rather than waiting on the next
+    // background pull, so the Orders lists don't briefly show the old name.
+    orders=orders.map(function(o){ return (o&&o.driver===oldName)?Object.assign({},o,{driver:newName}):o; });
+    safeSetLocal('pc_drivers',JSON.stringify(drivers));
+    safeSetLocal('pc_orders',JSON.stringify(orders));
+  }catch(e){
+    console.error('Rename driver failed:',e);
+    alert('Could not rename driver: '+(e&&e.message?e.message:e));
+  }
+  _renderManageDriversModal();
+  _renderOrdersWeekSummary();
+  _renderShippedOrdersSummary();
+}
+window.saveDriverRename=saveDriverRename;
+async function deleteDriverFromModal(name,count){
+  if(count>0){
+    alert('Cannot delete "'+name+'" — it\'s still assigned to '+count+' order'+(count!==1?'s':'')+'. Rename it to merge into another driver, or reassign those orders first.');
+    return;
+  }
+  if(!confirm('Delete driver "'+name+'"? It can be re-added later if needed.')) return;
+  try{
+    var res=await fetch('/api/data/delete-driver',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:name})
+    });
+    if(!res.ok){ var errBody=await res.json().catch(function(){return{};}); throw new Error(errBody.error||('HTTP '+res.status)); }
+    var data=await res.json();
+    if(Array.isArray(data.drivers)) drivers=data.drivers;
+    else drivers=drivers.filter(function(d){return d!==name;});
+    safeSetLocal('pc_drivers',JSON.stringify(drivers));
+  }catch(e){
+    console.error('Delete driver failed:',e);
+    alert('Could not delete driver: '+(e&&e.message?e.message:e));
+  }
+  _renderManageDriversModal();
+}
+window.deleteDriverFromModal=deleteDriverFromModal;
 function _orderFormFields(o){
   o=o||{};
   var lines=_orderLinesOf(o);
@@ -3849,6 +4013,18 @@ async function saveOrder(orderFields){
   _recentlyAddedOrders[finalId]=orders.find(function(o){return o.id===finalId;})||optimistic;
   var fallbackGuardTimeout=setTimeout(function(){ delete _recentlyAddedOrders[finalId]; },20000);
   safeSetLocal('pc_orders',JSON.stringify(orders));
+  // BUG FIX: _recentlyAddedOrders only re-adds an order that's MISSING from
+  // a pull's response — it does nothing to protect an order that's already
+  // ON the server (this one) from being wholesale-overwritten by a pull
+  // whose request went out BEFORE this save started and whose response
+  // lands only after it. That pull's data.orders still has the pre-edit
+  // copy, pullFromServer does a plain `orders=mergedPulledOrders` (not a
+  // per-field merge), and the edit — e.g. a Process checkbox someone just
+  // ticked — reverts right back, looking like it "unchecked itself".
+  // _writeInFlight is the same guard every other save function in this
+  // file (saveTxns, etc.) already uses to hold off ambient pulls until a
+  // write actually lands — see pullFromServer's own check for it.
+  _writeInFlight++;
   try{
     // Without a timeout, a server that's slow to respond (or mid-restart)
     // leaves this fetch hanging indefinitely — and since
@@ -3888,6 +4064,8 @@ async function saveOrder(orderFields){
   }catch(e){
     console.error('Order save failed:',e&&e.name==='AbortError'?'timed out after 25s waiting for the server':e);
     return null;
+  }finally{
+    _writeInFlight--;
   }
 }
 window.saveOrder=saveOrder;
@@ -3956,7 +4134,7 @@ function _renderOrdersWeekSummary(){
         // rather than a flat, non-expandable summary line.
         var byDriver={};
         byDay[dk].forEach(function(o){
-          var dName=o.driver||'(no driver assigned)';
+          var dName=_driverGroupKey(o.driver);
           (byDriver[dName]=byDriver[dName]||[]).push(o);
         });
         var driverKeys=Object.keys(byDriver).sort(function(a,b){
@@ -4573,6 +4751,7 @@ function renderReports(){
     +'<div id="rpt-tabs-bar" style="display:flex;gap:8px;margin:6px 0 18px;border-bottom:1px solid var(--line);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none">'
       +(hasViewPerm('viewReportsCollection')?'<button id="rpt-tab-collection" class="btn" onclick="switchReportTab(\'collection\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:#fff;font-weight:700;color:var(--brand);border-top:3px solid var(--brand);border-left:1.5px solid var(--line);border-right:1.5px solid var(--line)">Customer Payments</button>':'')
       +(hasViewPerm('viewReportsSalesByCustomer')?'<button id="rpt-tab-salesbycustomer" class="btn" onclick="switchReportTab(\'salesbycustomer\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Sales by Customer</button>':'')
+      +(hasViewPerm('viewReportsSalesPlan')?'<button id="rpt-tab-salesplan" class="btn" onclick="switchReportTab(\'salesplan\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Sales Rep Plan</button>':'')
       +(hasViewPerm('viewReportsCashflow')?'<button id="rpt-tab-cashflow" class="btn" onclick="switchReportTab(\'cashflow\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Scheduled Payments</button>':'')
       +(hasViewPerm('viewReportsPurchasing')?'<button id="rpt-tab-purchasing" class="btn" onclick="switchReportTab(\'purchasing\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Purchasing</button>':'')
       +(hasViewPerm('viewReportsChecks')?'<button id="rpt-tab-checks" class="btn" onclick="switchReportTab(\'checks\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Checks</button>':'')
@@ -4704,11 +4883,25 @@ function renderReports(){
         +'<div id="purch-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'</div>'
       +'<div id="purch-body"></div>'
+    +'</div>'
+    +'<div id="rpt-panel-salesplan" style="display:none">'
+      +'<div id="srp-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
+        +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:14px">'
+          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">From</label>'
+          +'<input type="date" id="srp-from" value="'+today.slice(0,7)+'-01" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
+          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">To</label>'
+          +'<input type="date" id="srp-to" value="'+today+'" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"/></div>'
+          +'<button class="btn btn-primary" onclick="runSalesRepPlanReport()">Pull from QuickBooks</button>'
+        +'</div>'
+        +'<div id="srp-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
+      +'</div>'
+      +'<div id="srp-body"></div>'
     +'</div>';
   buildBalanceReport();
   buildCashFlowTableShell();
   buildChecksTableShell();
   renderSavedReportsList();
+  renderSalesRepPlanReport();
   // Customer Payments is now the default visible tab (Inventory Statement
   // moved to the end) — switchReportTab() is also what physically
   // relocates the title+tabs block into the sticky toolbar (see there for
@@ -5088,6 +5281,7 @@ function _reportToolbarIdForTab(tab){
     inventory:'inv-toolbar-sticky',
     collection:'coll-toolbar-sticky',
     salesbycustomer:'sbc-toolbar-sticky',
+    salesplan:'srp-toolbar-sticky',
     cashflow:'cf-toolbar-sticky',
     checks:'chk-toolbar-sticky',
     audit:'audit-toolbar-sticky',
@@ -5099,6 +5293,7 @@ function _reportPanelIdForTab(tab){
     inventory:'rpt-panel-inventory',
     collection:'rpt-panel-collection',
     salesbycustomer:'rpt-panel-salesbycustomer',
+    salesplan:'rpt-panel-salesplan',
     cashflow:'rpt-panel-cashflow',
     checks:'rpt-panel-checks',
     audit:'rpt-panel-audit',
@@ -6685,6 +6880,283 @@ function exportSalesByCustomerCSV(){
   _downloadCSVRows(rows,'sales-by-customer-'+suffix+'.csv');
 }
 window.exportSalesByCustomerCSV=exportSalesByCustomerCSV;
+
+/* ===== SALES REP PLAN (Reports → Sales Rep Plan) =====
+   A what-if calculator for a sales-rep benefit/commission plan, driven by
+   three things: sales revenue attainment vs. quota, growth in the rep's
+   active customer base, and how much of this period's invoiced sales has
+   actually been collected (not just booked). Nothing here is pushed to
+   QuickBooks or saved as real payroll data — it's a live "what would this
+   look like" view over a period you pick, with every rate/tier/bonus
+   editable so it can be tuned to match a real plan once one is finalized.
+   Rep assignment comes from the existing per-customer Sales Rep field
+   (Settings → Customers) — nothing new to configure there. */
+var _srpConfig=(function(){
+  var defaults={
+    defaultQuota:50000,
+    // Tiered commission on TOTAL sales, keyed by attainment (sales/quota).
+    // min/max are attainment fractions (1.0 = 100% of quota); max:null = no ceiling.
+    salesTiers:[
+      {min:0,   max:0.8,  rate:0},
+      {min:0.8, max:1.0,  rate:0.01},
+      {min:1.0, max:1.2,  rate:0.015},
+      {min:1.2, max:null, rate:0.02}
+    ],
+    newCustomerBonus:150,
+    collectionsBaseRate:0.005,
+    // Multiplier on the collections commission, keyed by this period's
+    // collection rate (collected / invoiced). Checked highest-min-first.
+    collectionTiers:[
+      {min:0.95, mult:1.2},
+      {min:0.85, mult:1.0},
+      {min:0.70, mult:0.75},
+      {min:0,    mult:0.5}
+    ],
+    repQuotas:{} // rep name -> quota override
+  };
+  try{
+    var saved=JSON.parse(localStorage.getItem('pc_srp_config')||'null');
+    if(saved && typeof saved==='object'){
+      return Object.assign({},defaults,saved,{
+        salesTiers:Array.isArray(saved.salesTiers)?saved.salesTiers:defaults.salesTiers,
+        collectionTiers:Array.isArray(saved.collectionTiers)?saved.collectionTiers:defaults.collectionTiers,
+        repQuotas:(saved.repQuotas && typeof saved.repQuotas==='object')?saved.repQuotas:{}
+      });
+    }
+  }catch(e){}
+  return defaults;
+})();
+function _srpSaveConfig(){ safeSetLocal('pc_srp_config',JSON.stringify(_srpConfig)); }
+function srpSetDefaultQuota(v){ _srpConfig.defaultQuota=Math.max(0,Number(v)||0); _srpSaveConfig(); renderSalesRepPlanReport(); }
+function srpSetNewCustomerBonus(v){ _srpConfig.newCustomerBonus=Math.max(0,Number(v)||0); _srpSaveConfig(); renderSalesRepPlanReport(); }
+function srpSetCollectionsBaseRate(vPct){ _srpConfig.collectionsBaseRate=Math.max(0,Number(vPct)||0)/100; _srpSaveConfig(); renderSalesRepPlanReport(); }
+function srpSetSalesTierThreshold(i,vPct){
+  var v=Number(vPct); if(isNaN(v)) return;
+  _srpConfig.salesTiers[i].min=Math.max(0,v)/100;
+  if(_srpConfig.salesTiers[i-1]) _srpConfig.salesTiers[i-1].max=_srpConfig.salesTiers[i].min;
+  _srpSaveConfig(); renderSalesRepPlanReport();
+}
+function srpSetSalesTierRate(i,vPct){ var v=Number(vPct); if(isNaN(v)) return; _srpConfig.salesTiers[i].rate=v/100; _srpSaveConfig(); renderSalesRepPlanReport(); }
+function srpSetCollectionTierThreshold(i,vPct){ var v=Number(vPct); if(isNaN(v)) return; _srpConfig.collectionTiers[i].min=Math.max(0,v)/100; _srpSaveConfig(); renderSalesRepPlanReport(); }
+function srpSetCollectionTierMult(i,v){ var n=Number(v); if(isNaN(n)) return; _srpConfig.collectionTiers[i].mult=n; _srpSaveConfig(); renderSalesRepPlanReport(); }
+function srpSetRepQuota(rep,v){
+  if(!_srpConfig.repQuotas) _srpConfig.repQuotas={};
+  var n=Number(v);
+  if(v===''||isNaN(n)) delete _srpConfig.repQuotas[rep]; else _srpConfig.repQuotas[rep]=n;
+  _srpSaveConfig(); renderSalesRepPlanReport();
+}
+window.srpSetDefaultQuota=srpSetDefaultQuota;
+window.srpSetNewCustomerBonus=srpSetNewCustomerBonus;
+window.srpSetCollectionsBaseRate=srpSetCollectionsBaseRate;
+window.srpSetSalesTierThreshold=srpSetSalesTierThreshold;
+window.srpSetSalesTierRate=srpSetSalesTierRate;
+window.srpSetCollectionTierThreshold=srpSetCollectionTierThreshold;
+window.srpSetCollectionTierMult=srpSetCollectionTierMult;
+window.srpSetRepQuota=srpSetRepQuota;
+
+var _srpSettingsOpen=false;
+function toggleSrpSettings(){ _srpSettingsOpen=!_srpSettingsOpen; renderSalesRepPlanReport(); }
+window.toggleSrpSettings=toggleSrpSettings;
+
+var _srpCurDocs=null, _srpPriorDocs=null, _srpPriorDays=0;
+async function _srpFetchInvoices(from,to){
+  var base=window.location.origin;
+  var rows=[]; var start=1, safety=0;
+  while(true){
+    safety++;
+    if(safety>500) break; // generous cap — a single period's invoices should never approach this
+    var url=base+'/api/qb/documents?entity=Invoice&startposition='+start+'&from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to);
+    var r=await fetch(url);
+    if(r.status===401) throw new Error('QuickBooks connection expired — reconnect from the Items tab.');
+    var jd=await r.json();
+    if(jd&&jd.error) throw new Error(jd.error);
+    var page=jd.Invoice||[];
+    rows=rows.concat(page);
+    if(page.length<100) break;
+    start+=100;
+  }
+  return rows;
+}
+async function runSalesRepPlanReport(){
+  var statusEl=document.getElementById('srp-status');
+  var fromEl=document.getElementById('srp-from'), toEl=document.getElementById('srp-to');
+  var from=fromEl?fromEl.value:'', to=toEl?toEl.value:'';
+  if(!from||!to||from>to){
+    if(statusEl){ statusEl.textContent='Pick a valid date range.'; statusEl.style.color='#c23b33'; }
+    return;
+  }
+  var days=Math.round((new Date(to+'T00:00:00')-new Date(from+'T00:00:00'))/86400000)+1;
+  var priorTo=new Date(from+'T00:00:00'); priorTo.setDate(priorTo.getDate()-1);
+  var priorFrom=new Date(priorTo); priorFrom.setDate(priorFrom.getDate()-(days-1));
+  var priorFromStr=priorFrom.toISOString().slice(0,10), priorToStr=priorTo.toISOString().slice(0,10);
+  if(statusEl){ statusEl.textContent='Fetching invoices from QuickBooks…'; statusEl.style.color=''; }
+  try{
+    var results=await Promise.all([
+      _srpFetchInvoices(from,to),
+      _srpFetchInvoices(priorFromStr,priorToStr)
+    ]);
+    _srpCurDocs=results[0]; _srpPriorDocs=results[1]; _srpPriorDays=days;
+    if(statusEl){ statusEl.textContent=_srpCurDocs.length+' invoice(s) this period, compared against '+_srpPriorDocs.length+' in the prior '+days+'-day period ('+priorFromStr+' to '+priorToStr+').'; statusEl.style.color='#1a7a3c'; }
+    renderSalesRepPlanReport();
+  }catch(e){
+    if(statusEl){ statusEl.textContent='Could not load: '+(e&&e.message?e.message:e); statusEl.style.color='#c23b33'; }
+  }
+}
+window.runSalesRepPlanReport=runSalesRepPlanReport;
+
+function _srpTierRate(tiers,attainment){
+  for(var i=0;i<tiers.length;i++){
+    var t=tiers[i];
+    if(attainment>=t.min && (t.max===null||t.max===undefined||attainment<t.max)) return t.rate;
+  }
+  return 0;
+}
+function _srpTierMult(tiers,rate){
+  var sorted=tiers.slice().sort(function(a,b){return b.min-a.min;});
+  for(var i=0;i<sorted.length;i++){ if(rate>=sorted[i].min) return sorted[i].mult; }
+  return sorted.length?sorted[sorted.length-1].mult:1;
+}
+function _srpComputeRows(){
+  if(!_srpCurDocs) return [];
+  var reps={}; // rep name -> {custIds:{}}
+  customers.forEach(function(c){
+    var rep=(c&&c.salesRep||'').trim();
+    if(!rep||!c.id) return;
+    if(!reps[rep]) reps[rep]={custIds:{}};
+    reps[rep].custIds[c.id]=true;
+  });
+  return Object.keys(reps).sort().map(function(rep){
+    var custIds=reps[rep].custIds;
+    var curInv=_srpCurDocs.filter(function(d){ return d.CustomerRef && custIds[d.CustomerRef.value]; });
+    var priorInv=(_srpPriorDocs||[]).filter(function(d){ return d.CustomerRef && custIds[d.CustomerRef.value]; });
+    var curCustCounts={};
+    curInv.forEach(function(d){ var k=d.CustomerRef.value; curCustCounts[k]=(curCustCounts[k]||0)+1; });
+    var priorCustSet={};
+    priorInv.forEach(function(d){ priorCustSet[d.CustomerRef.value]=true; });
+    var activeCur=Object.keys(curCustCounts);
+    var activePriorCount=Object.keys(priorCustSet).length;
+    var newRepeatCustomers=activeCur.filter(function(k){ return !priorCustSet[k] && curCustCounts[k]>=2; });
+    var churned=activeCur.length<activePriorCount;
+    var sales=curInv.reduce(function(s,d){ return s+Number(d.TotalAmt||0); },0);
+    var outstanding=curInv.reduce(function(s,d){ return s+Number(d.Balance||0); },0);
+    var collected=Math.max(0,sales-outstanding);
+    var collectionRate=sales>0.004?(collected/sales):null;
+    var quota=(_srpConfig.repQuotas&&_srpConfig.repQuotas[rep])||_srpConfig.defaultQuota||1;
+    var attainment=quota>0?(sales/quota):0;
+    var salesRate=_srpTierRate(_srpConfig.salesTiers,attainment);
+    var salesCommission=sales*salesRate;
+    var customerBonus=churned?0:(newRepeatCustomers.length*(_srpConfig.newCustomerBonus||0));
+    var collMult=collectionRate===null?1:_srpTierMult(_srpConfig.collectionTiers,collectionRate);
+    var collectionsCommission=collected*(_srpConfig.collectionsBaseRate||0)*collMult;
+    return {
+      rep:rep, activeCustomers:activeCur.length, activePriorCount:activePriorCount,
+      newCustomers:newRepeatCustomers.length, churned:churned,
+      sales:sales, quota:quota, attainment:attainment, salesRate:salesRate, salesCommission:salesCommission,
+      collected:collected, outstanding:outstanding, collectionRate:collectionRate, collMult:collMult, collectionsCommission:collectionsCommission,
+      customerBonus:customerBonus, total:salesCommission+customerBonus+collectionsCommission
+    };
+  });
+}
+function _srpNumField(label,value,onchangeExpr){
+  return '<div><label style="display:block;font-size:10.5px;color:var(--muted);margin-bottom:3px">'+label+'</label>'
+    +'<input type="number" step="0.01" value="'+value+'" style="width:150px;padding:6px 8px;border:1px solid var(--line);border-radius:7px;font-family:var(--mono);background:var(--panel);color:var(--ink)" onchange="'+onchangeExpr+'"/></div>';
+}
+function renderSalesRepPlanReport(){
+  var bodyEl=document.getElementById('srp-body');
+  if(!bodyEl) return;
+  function money(n){ return '$'+Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  function pctStr(n){ return (Math.round(Number(n||0)*1000)/10)+'%'; }
+  var html='<div style="margin-bottom:16px;border:1px solid var(--line);border-radius:12px;overflow:hidden">'
+    +'<div onclick="toggleSrpSettings()" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--panel);font-weight:700;font-size:13px">'
+      +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:var(--muted);flex-shrink:0'+(_srpSettingsOpen?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
+      +'⚙ Plan settings — rates, tiers &amp; bonuses (adjust to match your real plan)'
+    +'</div>';
+  if(_srpSettingsOpen){
+    html+='<div style="padding:16px;background:var(--bg);display:grid;gap:18px">'
+      +'<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px">Basics</div>'
+        +'<div style="display:flex;gap:16px;flex-wrap:wrap">'
+        +_srpNumField('Default quota per rep ($/period)',_srpConfig.defaultQuota,'srpSetDefaultQuota(this.value)')
+        +_srpNumField('New repeat-customer bonus ($ each)',_srpConfig.newCustomerBonus,'srpSetNewCustomerBonus(this.value)')
+        +_srpNumField('Collections base rate (% of $ collected)',(_srpConfig.collectionsBaseRate*100),'srpSetCollectionsBaseRate(this.value)')
+        +'</div></div>'
+      +'<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px">Sales commission tiers (rate applied to total sales once attainment reaches this % of quota)</div>'
+        +'<div style="display:flex;gap:10px;flex-wrap:wrap">'
+        +_srpConfig.salesTiers.map(function(t,i){
+          return '<div style="border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--panel)">'
+            +'<div style="font-size:10px;color:var(--muted);margin-bottom:4px">Tier '+(i+1)+' — at ≥'
+            +(i===0?'0':'<input type="number" value="'+Math.round(t.min*100)+'" style="width:50px;padding:2px 4px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--ink)" onchange="srpSetSalesTierThreshold('+i+',this.value)"/>')
+            +'% of quota</div>'
+            +'<div style="display:flex;align-items:center;gap:4px"><input type="number" step="0.1" value="'+(t.rate*100)+'" style="width:60px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)" onchange="srpSetSalesTierRate('+i+',this.value)"/><span style="font-size:12px;color:var(--muted)">% commission</span></div>'
+          +'</div>';
+        }).join('')
+        +'</div></div>'
+      +'<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px">Collections multiplier (based on % of this period\'s invoiced sales already collected, as of today)</div>'
+        +'<div style="display:flex;gap:10px;flex-wrap:wrap">'
+        +_srpConfig.collectionTiers.map(function(t,i){
+          return '<div style="border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--panel)">'
+            +'<div style="font-size:10px;color:var(--muted);margin-bottom:4px">At ≥<input type="number" value="'+Math.round(t.min*100)+'" style="width:50px;padding:2px 4px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--ink)" onchange="srpSetCollectionTierThreshold('+i+',this.value)"/>% collected</div>'
+            +'<div style="display:flex;align-items:center;gap:4px"><input type="number" step="0.05" value="'+t.mult+'" style="width:55px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)" onchange="srpSetCollectionTierMult('+i+',this.value)"/><span style="font-size:12px;color:var(--muted)">× multiplier</span></div>'
+          +'</div>';
+        }).join('')
+        +'</div></div>'
+    +'</div>';
+  }
+  html+='</div>';
+
+  if(!_srpCurDocs){
+    html+='<div class="txn-empty"><p>Click "Pull from QuickBooks" above to calculate this period\'s plan.</p></div>';
+    bodyEl.innerHTML=html;
+    return;
+  }
+  var rows=_srpComputeRows();
+  if(!rows.length){
+    html+='<div class="txn-empty"><p>No customers have a Sales Rep assigned yet — set it under Settings → Customers.</p></div>';
+    bodyEl.innerHTML=html;
+    return;
+  }
+  var totals=rows.reduce(function(a,r){
+    a.sales+=r.sales; a.salesCommission+=r.salesCommission; a.customerBonus+=r.customerBonus;
+    a.collectionsCommission+=r.collectionsCommission; a.total+=r.total; return a;
+  },{sales:0,salesCommission:0,customerBonus:0,collectionsCommission:0,total:0});
+
+  html+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'
+    +'<thead><tr style="background:var(--panel);border-bottom:2px solid var(--line)">'
+      +['Sales Rep','Active Customers','New (repeat)','Sales','Quota','Attain.','Sales Comm.','Collected','Coll. Rate','Coll. Comm.','Cust. Bonus','Total Payout'].map(function(h){
+        return '<th style="text-align:left;padding:8px 10px;white-space:nowrap;font-weight:700">'+h+'</th>';
+      }).join('')
+    +'</tr></thead><tbody>'
+    +rows.map(function(r){
+      var churnBadge=r.churned?'<span title="Active customer count dropped vs. the prior period — customer bonus withheld" style="color:#c23b33;font-size:10px;font-weight:700;margin-left:4px">⚠ churn</span>':'';
+      return '<tr style="border-bottom:1px solid var(--line)">'
+        +'<td style="padding:8px 10px;font-weight:600">'+esc(r.rep)+'</td>'
+        +'<td style="padding:8px 10px">'+r.activeCustomers+churnBadge+'</td>'
+        +'<td style="padding:8px 10px">'+r.newCustomers+'</td>'
+        +'<td style="padding:8px 10px;font-family:var(--mono)">'+money(r.sales)+'</td>'
+        +'<td style="padding:8px 10px"><input type="number" value="'+r.quota+'" title="Override this rep\'s quota for future recalculations" style="width:90px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-family:var(--mono);background:var(--panel);color:var(--ink)" onchange="srpSetRepQuota(\''+_jsStrEsc(r.rep)+'\',this.value)"/></td>'
+        +'<td style="padding:8px 10px;font-family:var(--mono)">'+pctStr(r.attainment)+'</td>'
+        +'<td style="padding:8px 10px;font-family:var(--mono);color:var(--cold)">'+money(r.salesCommission)+'</td>'
+        +'<td style="padding:8px 10px;font-family:var(--mono)">'+money(r.collected)+'</td>'
+        +'<td style="padding:8px 10px;font-family:var(--mono)">'+(r.collectionRate===null?'—':pctStr(r.collectionRate))+'</td>'
+        +'<td style="padding:8px 10px;font-family:var(--mono);color:var(--cold)">'+money(r.collectionsCommission)+'</td>'
+        +'<td style="padding:8px 10px;font-family:var(--mono);color:var(--cold)">'+money(r.customerBonus)+'</td>'
+        +'<td style="padding:8px 10px;font-family:var(--mono);font-weight:800">'+money(r.total)+'</td>'
+      +'</tr>';
+    }).join('')
+    +'</tbody><tfoot><tr style="border-top:2px solid var(--line);font-weight:800">'
+      +'<td style="padding:8px 10px">Total</td><td></td><td></td>'
+      +'<td style="padding:8px 10px;font-family:var(--mono)">'+money(totals.sales)+'</td>'
+      +'<td></td><td></td>'
+      +'<td style="padding:8px 10px;font-family:var(--mono)">'+money(totals.salesCommission)+'</td>'
+      +'<td></td><td></td>'
+      +'<td style="padding:8px 10px;font-family:var(--mono)">'+money(totals.collectionsCommission)+'</td>'
+      +'<td style="padding:8px 10px;font-family:var(--mono)">'+money(totals.customerBonus)+'</td>'
+      +'<td style="padding:8px 10px;font-family:var(--mono)">'+money(totals.total)+'</td>'
+    +'</tr></tfoot></table></div>'
+    +'<div style="font-size:11px;color:var(--muted);margin-top:10px">"Coll. Rate" is the share of THIS period\'s invoiced sales already paid as of today (TotalAmt minus the invoice\'s current open Balance) — a live snapshot, not a full DSO/aging calculation, and it will keep rising after the period closes as more of it gets paid. "New (repeat)" counts a customer once they\'ve been invoiced at least twice this period and were not invoiced at all in the prior period of the same length; the customer bonus is withheld entirely for a rep whose active-customer count dropped period over period. Everything above is a live what-if calculation — nothing here is saved as actual payroll.</div>';
+
+  bodyEl.innerHTML=html;
+}
+window.renderSalesRepPlanReport=renderSalesRepPlanReport;
 
 function renderCollectionReport(){
   function money(n){ return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
@@ -10138,7 +10610,7 @@ function undepositCheck(paymentId){
 window.undepositCheck=undepositCheck;
 
 function switchReportTab(tab){
-  var _tabPermMap={collection:'viewReportsCollection',salesbycustomer:'viewReportsSalesByCustomer',cashflow:'viewReportsCashflow',checks:'viewReportsChecks',inventory:'viewReportsInventory',audit:'viewReportsAudit',purchasing:'viewReportsPurchasing'};
+  var _tabPermMap={collection:'viewReportsCollection',salesbycustomer:'viewReportsSalesByCustomer',salesplan:'viewReportsSalesPlan',cashflow:'viewReportsCashflow',checks:'viewReportsChecks',inventory:'viewReportsInventory',audit:'viewReportsAudit',purchasing:'viewReportsPurchasing'};
   if(_tabPermMap[tab] && !hasViewPerm(_tabPermMap[tab])){
     var fallback=Object.keys(_tabPermMap).find(function(t){ return hasViewPerm(_tabPermMap[t]); });
     if(!fallback) return; // no report tab at all is visible to this user
@@ -10147,6 +10619,7 @@ function switchReportTab(tab){
   var invPanel=document.getElementById('rpt-panel-inventory');
   var collPanel=document.getElementById('rpt-panel-collection');
   var sbcPanel=document.getElementById('rpt-panel-salesbycustomer');
+  var srpPanel=document.getElementById('rpt-panel-salesplan');
   var cfPanel=document.getElementById('rpt-panel-cashflow');
   var chkPanel=document.getElementById('rpt-panel-checks');
   var auditPanel=document.getElementById('rpt-panel-audit');
@@ -10154,14 +10627,16 @@ function switchReportTab(tab){
   var invTab=document.getElementById('rpt-tab-inventory');
   var collTab=document.getElementById('rpt-tab-collection');
   var sbcTab=document.getElementById('rpt-tab-salesbycustomer');
+  var srpTab=document.getElementById('rpt-tab-salesplan');
   var cfTab=document.getElementById('rpt-tab-cashflow');
   var chkTab=document.getElementById('rpt-tab-checks');
   var auditTab=document.getElementById('rpt-tab-audit');
   var purchTab=document.getElementById('rpt-tab-purchasing');
-  if(!invPanel||!collPanel||!sbcPanel||!cfPanel||!chkPanel||!auditPanel||!purchPanel) return;
+  if(!invPanel||!collPanel||!sbcPanel||!srpPanel||!cfPanel||!chkPanel||!auditPanel||!purchPanel) return;
   invPanel.style.display=(tab==='inventory')?'block':'none';
   collPanel.style.display=(tab==='collection')?'block':'none';
   sbcPanel.style.display=(tab==='salesbycustomer')?'block':'none';
+  srpPanel.style.display=(tab==='salesplan')?'block':'none';
   cfPanel.style.display=(tab==='cashflow')?'block':'none';
   chkPanel.style.display=(tab==='checks')?'block':'none';
   auditPanel.style.display=(tab==='audit')?'block':'none';
@@ -10181,7 +10656,7 @@ function switchReportTab(tab){
       if(sbcStatusEl){ sbcStatusEl.textContent='Showing results from your last pull this session — click "Pull from QuickBooks" to refresh.'; sbcStatusEl.style.color='var(--muted)'; }
     }
   }
-  [[invTab,'inventory'],[collTab,'collection'],[sbcTab,'salesbycustomer'],[cfTab,'cashflow'],[chkTab,'checks'],[auditTab,'audit'],[purchTab,'purchasing']].forEach(function(pair){
+  [[invTab,'inventory'],[collTab,'collection'],[sbcTab,'salesbycustomer'],[srpTab,'salesplan'],[cfTab,'cashflow'],[chkTab,'checks'],[auditTab,'audit'],[purchTab,'purchasing']].forEach(function(pair){
     var active=(tab===pair[1]);
     pair[0].style.background=active?'#fff':'var(--bg)';
     pair[0].style.fontWeight=active?'700':'400';
@@ -11900,6 +12375,7 @@ function renderDashboard(){
     +card('Labels printed today',labelsToday.length.toLocaleString(),weightToday.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0})+' lbs scaled')
     +'</div>';
 
+  html+='<div id="mtdRevenueCard" style="margin:0 0 22px"></div>';
   html+='<div id="bankBalanceCard" style="margin:0 0 22px"></div>';
 
   // Two-column layout: recent activity + top value
@@ -12004,8 +12480,124 @@ function renderDashboard(){
   }
 
   view.innerHTML=html;
+  renderMTDRevenueCard();
   renderBankBalanceCard();
 }
+
+// --- Month-to-Date Revenue card (Dashboard) ---
+// Net revenue = Invoices + Sales Receipts, minus Credit Memos (which is also
+// where this business's "Customer Credit Adjustments" live — see the
+// existing comments on the Collections report elsewhere in this file;
+// QuickBooks has no separate "Adjustment" document type), minus/plus the net
+// effect of any Journal Entry lines posted directly to an Income-type
+// account this month (a Credit to an Income account increases revenue, a
+// Debit decreases it — standard accounting sign convention; identified via
+// the Chart of Accounts the same way the Collections report already
+// identifies Accounts Receivable/Undeposited Funds accounts). Journal
+// entries that don't touch an Income account (e.g. inventory/COGS entries)
+// are correctly excluded.
+// Click-to-refresh, like the bank balance card, and cached the same way
+// (see the long comment on renderBankBalanceCard) — the background sync
+// re-renders the whole Dashboard from scratch roughly every 1.5s, and
+// without this cache that would mean a fresh multi-entity QuickBooks pull
+// every 1.5s.
+var _mtdRevenueHTML=null;
+var _mtdRevenueCacheMonth=null; // caches per calendar month — a new month always forces a fresh pull
+async function renderMTDRevenueCard(force){
+  var el=document.getElementById('mtdRevenueCard');
+  if(!el) return;
+  var monthKey=new Date().toISOString().slice(0,7);
+  if(_mtdRevenueCacheMonth!==monthKey){ _mtdRevenueHTML=null; _mtdRevenueCacheMonth=monthKey; }
+  if(_mtdRevenueHTML!==null && !force){
+    el.innerHTML=_mtdRevenueHTML;
+    return;
+  }
+  el.innerHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 20px;font-size:13px;color:var(--muted)">Checking QuickBooks connection…</div>';
+  var status;
+  try{
+    var statusRes=await fetch('/api/qb/status',{cache:'no-store'});
+    status=await statusRes.json();
+  }catch(e){
+    _mtdRevenueHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 20px;font-size:13px;color:#c23b33">Could not check QuickBooks connection.</div>';
+    el.innerHTML=_mtdRevenueHTML;
+    return;
+  }
+  if(!status.connected){
+    _mtdRevenueHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">'
+      +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)">Month-to-Date Revenue</div>'
+      +'<div style="font-size:14px;margin-top:4px">Connect QuickBooks to see this</div></div>'
+    +'</div>';
+    el.innerHTML=_mtdRevenueHTML;
+    return;
+  }
+  el.innerHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 20px;font-size:13px;color:var(--muted)">Loading month-to-date revenue…</div>';
+  var base=window.location.origin;
+  var from=monthKey+'-01';
+  var to=new Date().toISOString().slice(0,10);
+  async function fetchAllPages(entity,extraParams){
+    var rows=[]; var start=1, safety=0;
+    while(true){
+      safety++;
+      if(safety>500) break; // generous hard cap — a single month's docs should never approach this
+      var url=base+'/api/qb/documents?entity='+entity+'&startposition='+start+(extraParams||'');
+      var r=await fetch(url);
+      if(r.status===401) throw new Error('QuickBooks connection expired — reconnect from the Items tab.');
+      var jd=await r.json();
+      if(jd&&jd.error) throw new Error(jd.error);
+      var page=jd[entity]||[];
+      rows=rows.concat(page);
+      if(page.length<100) break;
+      start+=100;
+    }
+    return rows;
+  }
+  try{
+    var dateParams='&from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to);
+    var results=await Promise.all([
+      fetchAllPages('Invoice',dateParams),
+      fetchAllPages('SalesReceipt',dateParams),
+      fetchAllPages('CreditMemo',dateParams),
+      fetchAllPages('JournalEntry',dateParams),
+      fetchAllPages('Account','')
+    ]);
+    var invoices=results[0], salesReceipts=results[1], creditMemos=results[2], journalEntries=results[3], accounts=results[4];
+    var incomeAccountIds={};
+    accounts.forEach(function(a){ if(a.AccountType==='Income') incomeAccountIds[a.Id]=true; });
+    var grossInvoices=invoices.reduce(function(s,d){return s+Number(d.TotalAmt||0);},0);
+    var grossSalesReceipts=salesReceipts.reduce(function(s,d){return s+Number(d.TotalAmt||0);},0);
+    var creditMemoTotal=creditMemos.reduce(function(s,d){return s+Number(d.TotalAmt||0);},0);
+    var journalNet=0;
+    journalEntries.forEach(function(je){
+      (je.Line||[]).forEach(function(line){
+        var detail=line.JournalEntryLineDetail;
+        if(!detail||!detail.AccountRef||!incomeAccountIds[detail.AccountRef.value]) return;
+        var amt=Number(line.Amount||0);
+        journalNet+=(detail.PostingType==='Credit')?amt:-amt;
+      });
+    });
+    var netRevenue=grossInvoices+grossSalesReceipts-creditMemoTotal+journalNet;
+    var monthLabel=new Date(monthKey+'-01T00:00:00').toLocaleDateString('en-US',{month:'long',year:'numeric'});
+    var asOf=new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+    _mtdRevenueHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px">'
+      +'<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">'
+        +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)">Month-to-Date Revenue — '+esc(monthLabel)+'</div>'
+        +'<div style="font-size:26px;font-weight:800;margin-top:6px;color:var(--cold)">$'+netRevenue.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div>'
+        +'<div style="font-size:11px;color:var(--muted);margin-top:2px">Net of credit memos, adjustments &amp; journal entries · as of '+asOf+'</div></div>'
+        +'<button class="btn btn-sm" onclick="renderMTDRevenueCard(true)">Refresh</button>'
+      +'</div>'
+      +'<div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:12px">'
+        +'<div><span style="color:var(--muted)">Invoices + Sales Receipts</span> <b style="font-family:var(--mono)">$'+(grossInvoices+grossSalesReceipts).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</b></div>'
+        +'<div><span style="color:var(--muted)">Credit memos / adjustments</span> <b style="font-family:var(--mono);color:'+(creditMemoTotal>0?'#c23b33':'var(--ink)')+'">−$'+creditMemoTotal.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</b></div>'
+        +'<div><span style="color:var(--muted)">Journal entries (Income accts)</span> <b style="font-family:var(--mono);color:'+(journalNet<0?'#c23b33':'var(--ink)')+'">'+(journalNet<0?'−':'+')+'$'+Math.abs(journalNet).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</b></div>'
+      +'</div>'
+    +'</div>';
+    el.innerHTML=_mtdRevenueHTML;
+  }catch(e){
+    _mtdRevenueHTML='<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 20px;font-size:13px;color:#c23b33">Could not load month-to-date revenue: '+esc(e.message)+' <button class="btn btn-sm" onclick="renderMTDRevenueCard(true)" style="margin-left:8px">Retry</button></div>';
+    el.innerHTML=_mtdRevenueHTML;
+  }
+}
+window.renderMTDRevenueCard=renderMTDRevenueCard;
 
 // --- Plaid bank balance card (Dashboard) ---
 // Click-to-refresh, like "Pull from QuickBooks" — balance checks count

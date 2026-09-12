@@ -1903,14 +1903,34 @@ const server = http.createServer(async (req, res) => {
         // defaults for a brand-new user id the server doesn't know yet).
         const actingUser = current.users.find(u => u.id === _dataPostSession.userId);
         const actingUserCanManageUsers = _dataPostSession.role === 'admin' || !!(actingUser && actingUser.perms && actingUser.perms.manageUsers);
-        if (Array.isArray(incoming.users) && !actingUserCanManageUsers) {
+        if (Array.isArray(incoming.users)) {
           incoming.users = incoming.users.map(u => {
             if (!u) return u;
             const existing = current.users.find(x => x.id === u.id);
-            return Object.assign({}, u, {
-              role: existing ? existing.role : 'staff',
-              perms: existing ? (existing.perms || {}) : {}
-            });
+            const out = Object.assign({}, u);
+            // SECURITY: `pinHash` must NEVER be accepted from the client — it is
+            // only ever produced server-side (see hashPin()/_writeSharedDataUnlocked).
+            // Without this, any logged-in session (any role, any perms) could hand-craft
+            // a `users` payload carrying an attacker-chosen pinHash for ANY user id —
+            // including an admin's — and take over that account outright, since nothing
+            // else in this handler ever inspects or rejects an incoming pinHash.
+            delete out.pinHash;
+            if (existing) out.pinHash = existing.pinHash;
+            // A plaintext `pin` (hashed on write, see _writeSharedDataUnlocked) may only
+            // be set by someone who can manage users, or by a session changing its OWN
+            // pin. Anyone else attempting to set/change another user's pin has it
+            // silently reverted to whatever is already on file, same principle as the
+            // role/perms guard below.
+            const editingSelf = !!(actingUser && u.id === actingUser.id);
+            if (!actingUserCanManageUsers && !editingSelf) {
+              if (existing) { out.pin = existing.pin; out.pinHash = existing.pinHash; }
+              else { delete out.pin; delete out.pinHash; }
+            }
+            if (!actingUserCanManageUsers) {
+              out.role = existing ? existing.role : 'staff';
+              out.perms = existing ? (existing.perms || {}) : {};
+            }
+            return out;
           });
         }
         // Same gap found in vendors above, also closed during the same
@@ -2289,7 +2309,12 @@ const server = http.createServer(async (req, res) => {
     try {
       const bodyStr = await readRequestBody(req);
       const body = JSON.parse(bodyStr || '{}');
-      const name = typeof body.name === 'string' ? body.name.trim().slice(0, 100) : '';
+      // Normalized to uppercase here too (not just client-side in
+      // _promptAddDriver) so this endpoint can't reintroduce the exact
+      // case-variant duplicates ("Ibrahim Gungor" vs "IBRAHIM GUNGOR") that
+      // used to split one driver's orders into two separate groups in the
+      // Orders week summary — see _driverGroupKey() in index.html.
+      const name = typeof body.name === 'string' ? body.name.trim().toUpperCase().slice(0, 100) : '';
       if (!name) {
         res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
         res.end(JSON.stringify({ error: 'Missing name' }));
@@ -2324,15 +2349,75 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: 'Missing name' }));
         return;
       }
+      // Refuse to delete a driver still assigned to at least one order — the
+      // Manage Drivers UI already checks this and steers the user to rename
+      // (merge) instead, but this endpoint is re-checked here too so it's
+      // safe against any other caller: deleting an in-use driver would leave
+      // orders pointing at a name that's no longer in the picklist at all,
+      // rather than just a case/whitespace variant of one that is.
+      let blocked = false;
       await updateSharedData(async (current) => {
+        const stillInUse = (Array.isArray(current.orders) ? current.orders : []).some(o => o && o.driver === name);
+        if (stillInUse) { blocked = true; return { data: current }; }
         const drivers = (Array.isArray(current.drivers) ? current.drivers : []).filter(d => d !== name);
         const deletedDrivers = Array.isArray(current.deletedDrivers) ? current.deletedDrivers.slice() : [];
         if (!deletedDrivers.includes(name)) deletedDrivers.push(name);
         const capped = deletedDrivers.length > 2000 ? deletedDrivers.slice(deletedDrivers.length - 2000) : deletedDrivers;
         return { data: Object.assign({}, current, { drivers, deletedDrivers: capped }) };
       });
+      if (blocked) {
+        res.writeHead(409, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+        res.end(JSON.stringify({ error: 'Driver is still assigned to at least one order — rename it to merge into another driver, or reassign those orders first.' }));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ success: true }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  // Renames a driver everywhere at once: the picklist entry AND every order
+  // currently assigned to it. This is also how two case/whitespace-variant
+  // duplicates (e.g. "Ibrahim Gungor" and "IBRAHIM GUNGOR") get merged into
+  // one real entry — rename one to exactly match the other and their orders
+  // combine under a single driver. See _driverGroupKey() in index.html for
+  // the display-side half of this same bug.
+  if (url === '/api/data/rename-driver' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      const oldName = typeof body.oldName === 'string' ? body.oldName.trim() : '';
+      const newName = typeof body.newName === 'string' ? body.newName.trim().toUpperCase().slice(0, 100) : '';
+      if (!oldName || !newName) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+        res.end(JSON.stringify({ error: 'Missing oldName/newName' }));
+        return;
+      }
+      let finalDrivers = [];
+      let ordersUpdated = 0;
+      await updateSharedData(async (current) => {
+        const driverSet = new Set(Array.isArray(current.drivers) ? current.drivers : []);
+        driverSet.delete(oldName);
+        driverSet.add(newName);
+        finalDrivers = Array.from(driverSet).sort();
+        // Tombstone oldName (same as an explicit delete) so a stale device
+        // that still has it cached locally can't resurrect it in the
+        // picklist on its next routine sync push; un-tombstone newName in
+        // case it was previously deleted.
+        const deletedDrivers = (Array.isArray(current.deletedDrivers) ? current.deletedDrivers : []).filter(d => d !== newName);
+        if (oldName !== newName && !deletedDrivers.includes(oldName)) deletedDrivers.push(oldName);
+        const capped = deletedDrivers.length > 2000 ? deletedDrivers.slice(deletedDrivers.length - 2000) : deletedDrivers;
+        const orders = (Array.isArray(current.orders) ? current.orders : []).map(o => {
+          if (o && o.driver === oldName) { ordersUpdated++; return Object.assign({}, o, { driver: newName }); }
+          return o;
+        });
+        return { data: Object.assign({}, current, { drivers: finalDrivers, deletedDrivers: capped, orders }) };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, drivers: finalDrivers, ordersUpdated }));
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: e.message }));

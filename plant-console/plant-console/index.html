@@ -3790,7 +3790,13 @@ function _renderManageDriversModal(){
     +(driverList.length
       ? '<div style="border:1px solid var(--line);border-radius:9px;overflow:hidden;max-height:360px;overflow-y:auto">'
         +driverList.map(function(d,i){
-          var count=orders.filter(function(o){return o.driver===d;}).length;
+          // Normalized match (same trim+uppercase as _driverGroupKey, which
+          // is what the Orders page itself groups by) — NOT an exact
+          // string match. A plain === here is what let a driver show 0
+          // orders right after a merge: the orders could genuinely be
+          // sitting under a slightly different-cased/whitespace variant of
+          // this same name, which an exact match would silently miss.
+          var count=orders.filter(function(o){return _driverGroupKey(o.driver)===_driverGroupKey(d);}).length;
           return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;'+(i<driverList.length-1?'border-bottom:1px solid var(--line);':'')+'">'
             +'<input type="text" value="'+esc(d)+'" data-orig="'+esc(d)+'" class="driver-edit-input" style="flex:1;padding:6px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;background:var(--panel);color:var(--ink)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.nextElementSibling.nextElementSibling.click();}"/>'
             +'<span style="color:var(--muted);font-size:11px;white-space:nowrap;min-width:56px;text-align:right">'+count+' order'+(count!==1?'s':'')+'</span>'
@@ -3835,7 +3841,7 @@ async function saveDriverRename(btn){
   if(!newName){ alert('Driver name cannot be blank.'); input.value=oldName; return; }
   newName=newName.toUpperCase();
   if(newName===oldName) return; // nothing actually changed
-  var affectedCount=orders.filter(function(o){return o.driver===oldName;}).length;
+  var affectedCount=orders.filter(function(o){return _driverGroupKey(o.driver)===_driverGroupKey(oldName);}).length;
   var mergingIntoExisting=drivers.indexOf(newName)>=0;
   var msg='Rename "'+oldName+'" to "'+newName+'"?'
     +(affectedCount?(' This updates '+affectedCount+' order'+(affectedCount!==1?'s':'')+' currently assigned to it.'):'')
@@ -3852,7 +3858,7 @@ async function saveDriverRename(btn){
     if(Array.isArray(data.drivers)) drivers=data.drivers;
     // Reflect the merge locally right away rather than waiting on the next
     // background pull, so the Orders lists don't briefly show the old name.
-    orders=orders.map(function(o){ return (o&&o.driver===oldName)?Object.assign({},o,{driver:newName}):o; });
+    orders=orders.map(function(o){ return (o&&_driverGroupKey(o.driver)===_driverGroupKey(oldName))?Object.assign({},o,{driver:newName}):o; });
     safeSetLocal('pc_drivers',JSON.stringify(drivers));
     safeSetLocal('pc_orders',JSON.stringify(orders));
   }catch(e){

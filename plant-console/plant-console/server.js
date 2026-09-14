@@ -257,6 +257,22 @@ function writeSharedData(data) {
     maybeAutoBackup(); // fire-and-forget is fine for this one — it's a courtesy snapshot, not part of what the caller needs to wait on
   })();
 }
+// Server-side mirror of _driverGroupKey() in index.html: same
+// trim+uppercase normalization, used anywhere a driver name gets COMPARED
+// (rename/merge matching, in-use checks) rather than just displayed. The
+// Orders page has always used the client-side version to visually group
+// case/whitespace variants of the same driver together, but the
+// rename/delete endpoints below used to compare driver names with plain
+// === — meaning a driver record could genuinely have orders attached
+// under a slightly different-cased string that an exact match would never
+// find, so a rename/merge into it could look like it did nothing (the
+// merged-into driver still showing 0 orders) even though the data really
+// did move. Using the same normalization here as the display does closes
+// that gap.
+function driverGroupKey(name) {
+  const t = typeof name === 'string' ? name.trim() : '';
+  return t ? t.toUpperCase() : '';
+}
 // Atomic "read, modify, write" as ONE queued step — use this whenever the
 // write depends on first reading the current data (e.g. merging incoming
 // sync data), so no other request's read/write can slip in between.
@@ -2357,7 +2373,7 @@ const server = http.createServer(async (req, res) => {
       // rather than just a case/whitespace variant of one that is.
       let blocked = false;
       await updateSharedData(async (current) => {
-        const stillInUse = (Array.isArray(current.orders) ? current.orders : []).some(o => o && o.driver === name);
+        const stillInUse = (Array.isArray(current.orders) ? current.orders : []).some(o => o && driverGroupKey(o.driver) === driverGroupKey(name));
         if (stillInUse) { blocked = true; return { data: current }; }
         const drivers = (Array.isArray(current.drivers) ? current.drivers : []).filter(d => d !== name);
         const deletedDrivers = Array.isArray(current.deletedDrivers) ? current.deletedDrivers.slice() : [];
@@ -2411,7 +2427,11 @@ const server = http.createServer(async (req, res) => {
         if (oldName !== newName && !deletedDrivers.includes(oldName)) deletedDrivers.push(oldName);
         const capped = deletedDrivers.length > 2000 ? deletedDrivers.slice(deletedDrivers.length - 2000) : deletedDrivers;
         const orders = (Array.isArray(current.orders) ? current.orders : []).map(o => {
-          if (o && o.driver === oldName) { ordersUpdated++; return Object.assign({}, o, { driver: newName }); }
+          // Matches by NORMALIZED name (see driverGroupKey above), not an
+          // exact string — so one rename sweeps up every case/whitespace
+          // variant of oldName in one shot, instead of only the literal
+          // string that happened to be typed into the picklist entry.
+          if (o && driverGroupKey(o.driver) === driverGroupKey(oldName)) { ordersUpdated++; return Object.assign({}, o, { driver: newName }); }
           return o;
         });
         return { data: Object.assign({}, current, { drivers: finalDrivers, deletedDrivers: capped, orders }) };

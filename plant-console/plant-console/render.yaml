@@ -41,3 +41,10 @@ services:
       # only real-time Customer/Vendor webhook updates need it.
       - key: QB_WEBHOOK_VERIFIER_TOKEN
         sync: false
+      # Google Maps Platform API key with the Directions API enabled and
+      # billing set up — powers the driver route-mileage estimate
+      # (/api/data/driver-route-miles). Entirely optional: everything else
+      # in the app works fine without this set, that one feature just
+      # returns a clear "no API key configured" error until it is.
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false

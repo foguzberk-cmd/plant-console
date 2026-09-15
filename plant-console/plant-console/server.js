@@ -18,6 +18,18 @@ const REDIRECT_URI = process.env.QB_REDIRECT_URI || 'https://plant-console-app.o
 // unaffected if it's missing.
 const QB_WEBHOOK_VERIFIER_TOKEN = process.env.QB_WEBHOOK_VERIFIER_TOKEN || '';
 
+// Used for driver route-mileage estimates (see fetchDrivingRouteMiles and
+// /api/data/driver-route-miles below) — a Google Maps Platform key with the
+// Directions API enabled and billing set up. Entirely optional: nothing
+// else in the app depends on this being set, so a missing key only
+// disables that one feature (the endpoint below returns a clear NO_API_KEY
+// error the client can show, rather than the whole app failing to start).
+const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
+// Leader Meat's own address — the fixed origin AND destination for every
+// driver's estimated route, since every route is a real round trip back to
+// the plant. Update this if the plant ever moves.
+const LEADER_MEAT_ADDRESS = '254 Sykesville Road, Chesterfield, NJ 08515';
+
 // Fail loudly rather than silently running with a broken QuickBooks integration.
 // (Previously these had real credentials hardcoded as fallback defaults — that
 // meant the secrets shipped in source control. They must now be set as
@@ -1093,6 +1105,48 @@ let _backgroundSyncInFlight = false;
 let _lastBackgroundSyncAt = 0;
 let _lastBackgroundSyncResult = null; // { at, customers: {ok,count,error}, vendors: {ok,count,error} }
 
+// Builds one printable/geocodable address line out of a QuickBooks address
+// sub-object (BillAddr/ShipAddr) — used to feed the driver route-mileage
+// estimate (see fetchDrivingRouteMiles below), which needs a single string
+// per stop, not QB's structured fields.
+function formatQBAddress(addr) {
+  if (!addr) return '';
+  const parts = [addr.Line1, addr.Line2, addr.City, addr.CountrySubDivisionCode, addr.PostalCode].filter(Boolean);
+  return parts.join(', ');
+}
+// Calls Google's Directions API for one driver's whole day: origin AND
+// destination are both Leader Meat (a real round trip), with every stop as
+// a waypoint. optimize:true lets Google reorder the waypoints for the
+// shortest total route — this is meant as a planning ESTIMATE of total
+// miles/time for the day, not a turn-by-turn assignment of stop order, so
+// the shortest-possible ordering is the more useful number here than
+// whatever raw order the stops happened to be listed in.
+async function fetchDrivingRouteMiles(stopAddresses) {
+  if (!GOOGLE_MAPS_API_KEY) throw new Error('NO_API_KEY');
+  const origin = encodeURIComponent(LEADER_MEAT_ADDRESS);
+  const waypointsParam = 'optimize:true|' + stopAddresses.map(a => encodeURIComponent(a)).join('|');
+  const reqPath = `/maps/api/directions/json?origin=${origin}&destination=${origin}&waypoints=${waypointsParam}&key=${GOOGLE_MAPS_API_KEY}`;
+  const res = await httpsRequest({
+    hostname: 'maps.googleapis.com',
+    path: reqPath,
+    method: 'GET',
+    headers: { 'Accept': 'application/json' }
+  });
+  if (res.status !== 200) throw new Error('Google Maps API error ' + res.status + ': ' + res.body);
+  const data = JSON.parse(res.body);
+  if (data.status !== 'OK') throw new Error('Google Directions API status: ' + data.status + (data.error_message ? ' — ' + data.error_message : ''));
+  const route = data.routes && data.routes[0];
+  if (!route) throw new Error('No route returned.');
+  let meters = 0, seconds = 0;
+  (route.legs || []).forEach(leg => {
+    meters += (leg.distance && leg.distance.value) || 0;
+    seconds += (leg.duration && leg.duration.value) || 0;
+  });
+  return {
+    miles: Math.round((meters / 1609.344) * 10) / 10,
+    minutes: Math.round(seconds / 60)
+  };
+}
 async function backgroundSyncCustomers() {
   const data = await fetchQBCustomers(false);
   const qbCustomers = (data.QueryResponse && data.QueryResponse.Customer) || [];
@@ -1120,6 +1174,13 @@ async function backgroundSyncCustomers() {
         // /api/customers/:id/dunsnumber for the manual-entry path instead.)
         salesRep: existing >= 0 ? (customers[existing].salesRep || '') : '',
         dunsNumber: existing >= 0 ? (customers[existing].dunsNumber || '') : '',
+        // Delivery address for driver route-mileage estimates — ShipAddr is
+        // preferred (it's where the truck actually goes) with BillAddr as a
+        // fallback for customers who never set one separately. If QB
+        // returns neither on a given sync, keep whatever was already saved
+        // rather than wiping it out — same reasoning as salesRep/dunsNumber
+        // above, both of which use this same existing-value fallback.
+        address: formatQBAddress(qc.ShipAddr) || formatQBAddress(qc.BillAddr) || (existing >= 0 ? (customers[existing].address || '') : ''),
         balance: Number(qc.Balance || 0)
       };
       if (existing >= 0) customers[existing] = mapped; else customers.push(mapped);
@@ -2441,6 +2502,33 @@ const server = http.createServer(async (req, res) => {
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  // Estimates a driver's total round-trip mileage for one day's route: the
+  // client resolves each stop's customer name to an address (from the
+  // synced QuickBooks customer records) and sends the plain address list
+  // here — this endpoint just calls Google's Directions API (keeping the
+  // API key itself server-side, never exposed to the browser) and returns
+  // the total distance/time. Read-only — never touches saved order data.
+  if (url === '/api/data/driver-route-miles' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      const addresses = Array.isArray(body.addresses) ? body.addresses.filter(a => typeof a === 'string' && a.trim()) : [];
+      if (!addresses.length) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+        res.end(JSON.stringify({ error: 'No stop addresses provided.' }));
+        return;
+      }
+      const result = await fetchDrivingRouteMiles(addresses);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify(Object.assign({ success: true, stopCount: addresses.length }, result)));
+    } catch (e) {
+      const noKey = e.message === 'NO_API_KEY';
+      res.writeHead(noKey ? 501 : 500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: noKey ? 'No Google Maps API key is configured on the server yet (GOOGLE_MAPS_API_KEY).' : e.message }));
     }
     return;
   }

@@ -4162,7 +4162,7 @@ function _renderOrdersWeekSummary(){
               +'<svg onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="cursor:pointer;width:11px;height:11px;stroke:var(--cold);flex-shrink:0'+(_ordersRowOpen[driverOpenKey]?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
               +'<span onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" style="cursor:pointer;flex:1;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold)">'+esc(dName)+' ('+driverOrders.length+')</span>'
               +'<button title="Print this driver\'s route (form + orders)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\',\''+esc(dk)+'\')" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:var(--cold);font-size:13px">🖨</button>'
-              +'<button title="Estimate this driver\'s round-trip route mileage from Leader Meat, using each customer\'s QuickBooks address" onclick="event.stopPropagation();estimateDriverRouteMiles(this,['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\')" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:var(--cold);font-size:13px">📏</button>'
+              +_routeMilesLabelHtml(driverOrders,dName,dk)
               +'<button title="Print processing sheet for this driver only" onclick="event.stopPropagation();printProcessingSheet(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName+' — Processing')+'\')" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:#8a6d1a;font-size:13px">🏭</button>'
             +'</div>'
             +'<div id="'+driverRowId+'" style="display:'+(_ordersIsOpen(driverOpenKey,q)?'block':'none')+'">'
@@ -4353,31 +4353,47 @@ function _findQbCustomerMatch(name){
   var nameLower=name.trim().toLowerCase();
   return customers.find(function(c){ return c.qbId && (c.name||'').trim().toLowerCase()===nameLower; })||null;
 }
-// Estimates one driver's total round-trip mileage for a day's stops: looks
-// up each stop's customer in the synced QuickBooks records (see
-// _findQbCustomerMatch) for its address, then asks the server to run those
-// through Google's Directions API (the API key stays server-side — see
-// /api/data/driver-route-miles). Google is asked to optimize the stop
-// order for shortest total distance, since this is meant as a planning
-// estimate of the day's total driving, not a fixed turn-by-turn sequence.
-function estimateDriverRouteMiles(btn,orderIds,driverName){
+// Auto-computed, cached mileage label for a driver's day — replaces the
+// old click-to-estimate button so this just shows up in the row on its
+// own. Caching (keyed on driver+day+the exact set of resolved addresses)
+// is what keeps this from re-hitting Google's API on every 1.5s background
+// poll re-render while a day stays expanded: once a key resolves, the
+// cached result is reused until the address set actually changes or the
+// person clicks the small ↻ to force a recheck (e.g. after fixing an
+// address in QuickBooks).
+var _routeMilesCache={}; // key -> {state:'loading'|'ok'|'error', miles, minutes, error}
+function _routeMilesKey(dName,dk,addresses){
+  return dName+'|'+dk+'|'+addresses.slice().sort().join(';');
+}
+function _routeMilesLabelHtml(driverOrders,dName,dk){
   var custNames=[];
-  orderIds.forEach(function(id){
-    var o=orders.find(function(x){return x.id===id;});
-    if(o&&o.customer&&custNames.indexOf(o.customer)<0) custNames.push(o.customer);
-  });
-  if(!custNames.length){ alert('No customers found on '+driverName+'\'s route for that day.'); return; }
+  driverOrders.forEach(function(o){ if(o.customer&&custNames.indexOf(o.customer)<0) custNames.push(o.customer); });
+  if(!custNames.length) return '';
   var addresses=[], missing=[];
   custNames.forEach(function(name){
     var c=_findQbCustomerMatch(name);
     if(c&&c.address){ addresses.push(c.address); } else { missing.push(name); }
   });
   if(!addresses.length){
-    alert('None of '+driverName+'\'s '+custNames.length+' stop(s) have an address on file in QuickBooks yet, so a route can\'t be estimated.\n\nMissing: '+missing.join(', '));
-    return;
+    return '<span title="None of these customers have an address on file in QuickBooks yet" style="flex-shrink:0;font-size:10px;color:var(--muted);white-space:nowrap;cursor:help">no addresses on file</span>';
   }
-  var origText=btn?btn.textContent:'';
-  if(btn){ btn.disabled=true; btn.textContent='…'; }
+  var key=_routeMilesKey(dName,dk,addresses);
+  var entry=_routeMilesCache[key];
+  if(!entry){
+    entry=_routeMilesCache[key]={state:'loading'};
+    _fetchRouteMilesForCache(key,addresses);
+  }
+  var missingNote=missing.length?(' <span title="No address on file: '+esc(missing.join(', '))+'" style="cursor:help;color:var(--muted)">('+missing.length+' skipped)</span>'):'';
+  var refreshBtn='<span onclick="event.stopPropagation();_refreshRouteMiles(\''+_jsStrEsc(key)+'\')" title="Recalculate" style="cursor:pointer;color:var(--muted);font-size:10px;margin-left:3px">↻</span>';
+  if(entry.state==='loading'){
+    return '<span style="flex-shrink:0;font-size:10px;color:var(--muted);font-style:italic;white-space:nowrap">calculating miles…</span>';
+  }
+  if(entry.state==='error'){
+    return '<span title="'+esc(entry.error||'')+'" style="flex-shrink:0;font-size:10px;color:#a3231b;white-space:nowrap;cursor:help">⚠ route error</span>'+refreshBtn;
+  }
+  return '<span style="flex-shrink:0;font-size:10.5px;color:var(--cold);white-space:nowrap;font-family:var(--mono)">≈'+entry.miles+' mi'+missingNote+'</span>'+refreshBtn;
+}
+function _fetchRouteMilesForCache(key,addresses){
   fetch('/api/data/driver-route-miles',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
@@ -4385,23 +4401,22 @@ function estimateDriverRouteMiles(btn,orderIds,driverName){
   }).then(function(res){
     return res.json().then(function(data){ return {ok:res.ok,data:data}; });
   }).then(function(result){
-    if(btn){ btn.disabled=false; btn.textContent=origText; }
     if(!result.ok||!result.data||!result.data.success){
-      alert('Could not estimate route miles: '+((result.data&&result.data.error)||'unknown error'));
-      return;
+      _routeMilesCache[key]={state:'error',error:(result.data&&result.data.error)||'unknown error'};
+    } else {
+      _routeMilesCache[key]={state:'ok',miles:result.data.miles,minutes:result.data.minutes};
     }
-    var mins=result.data.minutes||0;
-    var hrs=Math.floor(mins/60), remMins=mins%60;
-    var timeStr=(hrs?hrs+'h ':'')+remMins+'m';
-    var msg='Estimated round trip for '+driverName+': ≈ '+result.data.miles+' miles (~'+timeStr+' driving), '+result.data.stopCount+' stop(s) from Leader Meat and back, in Google\'s shortest-route order.';
-    if(missing.length) msg+='\n\n'+missing.length+' customer(s) skipped — no address on file in QuickBooks: '+missing.join(', ');
-    alert(msg);
+    _renderOrdersWeekSummary();
   }).catch(function(){
-    if(btn){ btn.disabled=false; btn.textContent=origText; }
-    alert('Could not reach the server to estimate route miles — check your connection and try again.');
+    _routeMilesCache[key]={state:'error',error:'Could not reach the server.'};
+    _renderOrdersWeekSummary();
   });
 }
-window.estimateDriverRouteMiles=estimateDriverRouteMiles;
+function _refreshRouteMiles(key){
+  delete _routeMilesCache[key];
+  _renderOrdersWeekSummary();
+}
+window._refreshRouteMiles=_refreshRouteMiles;
 function _findQbItemMatch(name){
   if(!name) return null;
   var nameLower=name.trim().toLowerCase();

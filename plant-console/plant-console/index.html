@@ -4745,6 +4745,17 @@ function renderReports(){
   // Recompute balances first so physical-count differences (countedDiff) reflect
   // the current data before the report reads them.
   try{ recalcQuantities(); }catch(e){}
+  // This whole function rebuilds the entire Reports HTML from scratch,
+  // including the Cash Flow search box — every time you navigate to
+  // Reports, even just switching away and back. That fresh box always
+  // starts visually blank (its template below has no value= attribute),
+  // but _cfSearchQuery lives in a separate JS variable that this rebuild
+  // never touched — so a term searched earlier kept silently filtering
+  // every Cash Flow section while the box itself looked empty, and even
+  // clicking its own ✕ clear button couldn't fix that if the section got
+  // rebuilt again afterward. Resetting it here keeps the visible box and
+  // the actual filter state from ever being able to drift apart.
+  _cfSearchQuery='';
   // Default date range: from earliest opening count (or 30 days ago) to today
   var today=new Date().toISOString().slice(0,10);
   var firstOpen=earliestOpeningDate()||today;
@@ -4847,8 +4858,8 @@ function renderReports(){
           +'<button class="btn" onclick="findLikelyBadPaidEntries()" title="Scans the Paid section for entries where the confirmed-paid amount doesn\'t match what was actually scheduled — the pattern left by an old, now-disabled bug — and pre-selects them below for review">🔍 Find likely-bad Paid entries</button>'
         +'</div>'
         +'<div style="position:relative;margin-bottom:14px;max-width:320px">'
-          +'<input type="text" id="cf-search" placeholder="Search bill #, amount, or vendor…" oninput="filterCFSearch()" style="width:100%;padding:9px 34px 9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
-          +'<button id="cf-search-clear" onclick="document.getElementById(\'cf-search\').value=\'\';filterCFSearch();" style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);border:none;background:none;color:var(--muted);cursor:pointer;font-size:15px;padding:2px 4px">✕</button>'
+          +'<input type="text" id="cf-search" placeholder="Search bill #, amount, or vendor…" value="'+esc(_cfSearchQuery)+'" oninput="filterCFSearch()" style="width:100%;padding:9px 34px 9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
+          +'<button id="cf-search-clear" onclick="document.getElementById(\'cf-search\').value=\'\';filterCFSearch();" style="display:'+(_cfSearchQuery?'block':'none')+';position:absolute;right:8px;top:50%;transform:translateY(-50%);border:none;background:none;color:var(--muted);cursor:pointer;font-size:15px;padding:2px 4px">✕</button>'
         +'</div>'
         +'<div id="cf-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'</div>'

@@ -2603,6 +2603,12 @@ const server = http.createServer(async (req, res) => {
           if (l && l.rescheduledOrderId) base.rescheduledOrderId = String(l.rescheduledOrderId).trim().slice(0, 100);
           if (l && l.rescheduledToDate) base.rescheduledToDate = String(l.rescheduledToDate).slice(0, 10);
           if (l && l.rescheduledFromOrderId) base.rescheduledFromOrderId = String(l.rescheduledFromOrderId).trim().slice(0, 100);
+          // Which line index (within the ORIGINAL order) this reschedule came
+          // from — needed alongside rescheduledFromOrderId to identify the
+          // exact line, since one order can have more than one shortage.
+          // Used client-side as an idempotency check before creating another
+          // reschedule for the same original line (see _rescheduleShortageLine).
+          if (l && Number.isInteger(l.rescheduledFromLineIdx)) base.rescheduledFromLineIdx = l.rescheduledFromLineIdx;
           if (l && l.rescheduledFromDate) base.rescheduledFromDate = String(l.rescheduledFromDate).slice(0, 10);
           return base;
         }).filter(l => l.product || l.description || l.quantity);

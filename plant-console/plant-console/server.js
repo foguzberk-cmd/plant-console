@@ -1114,34 +1114,48 @@ function formatQBAddress(addr) {
   const parts = [addr.Line1, addr.Line2, addr.City, addr.CountrySubDivisionCode, addr.PostalCode].filter(Boolean);
   return parts.join(', ');
 }
-// Calls Google's Directions API for one driver's whole day: origin AND
-// destination are both Leader Meat (a real round trip), with every stop as
-// a waypoint. optimize:true lets Google reorder the waypoints for the
-// shortest total route — this is meant as a planning ESTIMATE of total
-// miles/time for the day, not a turn-by-turn assignment of stop order, so
-// the shortest-possible ordering is the more useful number here than
-// whatever raw order the stops happened to be listed in.
+// Calls Google's newer Routes API (the legacy Directions API is blocked
+// for new Google Cloud projects — CONFIRMED live, Sep 2026: a fresh
+// project got REQUEST_DENIED / "legacy API not enabled" from
+// /maps/api/directions/json, with Google's own error message pointing at
+// this replacement) for one driver's whole day: origin AND destination are
+// both Leader Meat (a real round trip), with every stop as an
+// "intermediate". optimizeWaypointOrder:true lets Google reorder the
+// stops for the shortest total route — this is meant as a planning
+// ESTIMATE of total miles/time for the day, not a turn-by-turn assignment
+// of stop order, so the shortest-possible ordering is the more useful
+// number here than whatever raw order the stops happened to be listed in.
 async function fetchDrivingRouteMiles(stopAddresses) {
   if (!GOOGLE_MAPS_API_KEY) throw new Error('NO_API_KEY');
-  const origin = encodeURIComponent(LEADER_MEAT_ADDRESS);
-  const waypointsParam = 'optimize:true|' + stopAddresses.map(a => encodeURIComponent(a)).join('|');
-  const reqPath = `/maps/api/directions/json?origin=${origin}&destination=${origin}&waypoints=${waypointsParam}&key=${GOOGLE_MAPS_API_KEY}`;
-  const res = await httpsRequest({
-    hostname: 'maps.googleapis.com',
-    path: reqPath,
-    method: 'GET',
-    headers: { 'Accept': 'application/json' }
+  const bodyStr = JSON.stringify({
+    origin: { address: LEADER_MEAT_ADDRESS },
+    destination: { address: LEADER_MEAT_ADDRESS },
+    intermediates: stopAddresses.map(a => ({ address: a })),
+    travelMode: 'DRIVE',
+    optimizeWaypointOrder: true
   });
-  if (res.status !== 200) throw new Error('Google Maps API error ' + res.status + ': ' + res.body);
-  const data = JSON.parse(res.body);
-  if (data.status !== 'OK') throw new Error('Google Directions API status: ' + data.status + (data.error_message ? ' — ' + data.error_message : ''));
+  const res = await httpsRequest({
+    hostname: 'routes.googleapis.com',
+    path: '/directions/v2:computeRoutes',
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': GOOGLE_MAPS_API_KEY,
+      // Routes API requires an explicit field mask on every request — it
+      // returns nothing at all (an empty route) without one.
+      'X-Goog-FieldMask': 'routes.distanceMeters,routes.duration,routes.optimizedIntermediateWaypointIndex'
+    }
+  }, bodyStr);
+  const data = JSON.parse(res.body || '{}');
+  if (res.status !== 200) {
+    const msg = (data.error && data.error.message) || res.body;
+    throw new Error('Google Routes API error ' + res.status + ': ' + msg);
+  }
   const route = data.routes && data.routes[0];
   if (!route) throw new Error('No route returned.');
-  let meters = 0, seconds = 0;
-  (route.legs || []).forEach(leg => {
-    meters += (leg.distance && leg.distance.value) || 0;
-    seconds += (leg.duration && leg.duration.value) || 0;
-  });
+  const meters = Number(route.distanceMeters || 0);
+  // duration comes back as a string like "1234s", not a number.
+  const seconds = Number(String(route.duration || '0').replace('s', '')) || 0;
   return {
     miles: Math.round((meters / 1609.344) * 10) / 10,
     minutes: Math.round(seconds / 60)

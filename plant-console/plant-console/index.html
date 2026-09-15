@@ -3035,6 +3035,19 @@ function printProcessingSheet(orderIds,title){
     });
   });
   if(!rows.length){ alert('Nothing is currently checked as needing processing.'); return; }
+  // CONFIRMED live (Sep 2026): the "all drivers" print button pulls from
+  // EVERY unshipped order in the system — Received Orders has no date
+  // limit at all, unlike Shipped Orders. If unshipped orders have quietly
+  // built up over weeks (unmatched QuickBooks invoices, orphaned
+  // reschedule orders that never got shipped, etc), the printable table
+  // built from that can get large enough to hang or crash the tab. A few
+  // thousand rows is already far more than anyone could usefully print or
+  // read on paper anyway, so this asks first rather than silently trying
+  // to build and print a giant document.
+  if(rows.length>2000){
+    var proceed=confirm('This would print '+rows.length+' items — that\'s unusually large and may be slow or crash the tab.\n\nThis usually means old unshipped orders have piled up in Received Orders. It may be worth checking why so many haven\'t been matched to QuickBooks yet, rather than printing all of them.\n\nPrint anyway?');
+    if(!proceed) return;
+  }
   rows.sort(function(a,b){ return a.customer<b.customer?-1:(a.customer>b.customer?1:0); });
   var w=window.open('','_blank');
   if(!w){ alert('Please allow pop-ups for this site to print.'); return; }

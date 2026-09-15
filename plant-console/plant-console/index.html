@@ -3123,7 +3123,7 @@ function renderOrdersPage(){
     +'<div id="newOrderFormWrap"></div>'
     +'<div style="padding:12px 16px;background:#EAF3EC;border:1px solid var(--line);border-bottom:none;border-radius:14px 14px 0 0;font-weight:700;font-size:13px;letter-spacing:.02em;color:#1b5e2f">Shipped Orders <span style="font-weight:400;color:var(--muted)">— invoiced in QuickBooks</span></div>'
     +'<div id="ordersShippedSummary" style="margin-bottom:22px"></div>'
-    +'<div style="padding:12px 16px;background:#F5EFE8;border:1px solid var(--line);border-bottom:none;border-radius:14px 14px 0 0;font-weight:700;font-size:13px;letter-spacing:.02em">Received Orders</div>'
+    +'<div style="padding:12px 16px;background:#F5EFE8;border:1px solid var(--line);border-bottom:none;border-radius:14px 14px 0 0;font-weight:700;font-size:13px;letter-spacing:.02em">Received Orders <span id="receivedOrdersTotalCount" style="font-weight:400;color:var(--muted)"></span></div>'
     +'<div id="ordersWeekSummary"></div>';
   _renderShippedOrdersSummary();
   _renderOrdersWeekSummary();
@@ -4094,6 +4094,17 @@ window.showNewOrderForm=showNewOrderForm;
 function _renderOrdersWeekSummary(){
   var el=document.getElementById('ordersWeekSummary');
   if(!el) return;
+  // A cheap, always-on diagnostic: total unshipped order count, visible
+  // WITHOUT needing to click "Print processing sheet" (which walks every
+  // one of these and can freeze the tab if the number has quietly grown
+  // very large — see the size-confirmation added to printProcessingSheet).
+  // Just a .length on an already-filtered array, not per-order work, so
+  // safe to run on every 1.5s re-render.
+  var countEl=document.getElementById('receivedOrdersTotalCount');
+  if(countEl){
+    var totalUnshipped=orders.filter(function(o){return !o.shipped;}).length;
+    countEl.textContent='('+totalUnshipped+' total)';
+  }
   function fmtDayOrd(dateStr){
     var d=new Date(dateStr+'T00:00:00');
     return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
@@ -4618,6 +4629,23 @@ function _addOneDay(dateStr){
 async function _rescheduleShortageLine(o,lineIdx){
   var line=_orderLinesOf(o)[lineIdx];
   if(!line) return null;
+  // Idempotency guard: if this EXACT original line already produced a
+  // reschedule line somewhere (identified by which order+line it came
+  // from, not just a customer/date match — a customer can legitimately
+  // have more than one shortage on the same order), don't create another
+  // one. CONFIRMED live (Sep 2026) this was missing: if the ORIGINAL
+  // line's own save (setting shortage:true + rescheduledOrderId) ever
+  // failed after the reschedule target order had already been saved
+  // successfully, the original line looked unprocessed again on the next
+  // rescan/retry — so every retry kept appending another duplicate stop
+  // onto the next day's order, snowballing the total order count over
+  // repeated "Match with QuickBooks" clicks.
+  var alreadyExists=orders.some(function(x){
+    return _orderLinesOf(x).some(function(l){
+      return l.rescheduledFromOrderId===o.id && l.rescheduledFromLineIdx===lineIdx;
+    });
+  });
+  if(alreadyExists) return null;
   var nextDate=_addOneDay(o.date);
   if(!nextDate) return null;
   var custKey=(o.customer||'').trim().toLowerCase();
@@ -4630,6 +4658,7 @@ async function _rescheduleShortageLine(o,lineIdx){
     quantity:line.quantity||'',
     shortageReschedule:true,
     rescheduledFromOrderId:o.id,
+    rescheduledFromLineIdx:lineIdx,
     rescheduledFromDate:o.date
   };
   if(target){
@@ -4674,12 +4703,20 @@ async function _runShortageRescan(){
       if(resc){
         lines[c.lineIdx].rescheduledOrderId=resc.id;
         lines[c.lineIdx].rescheduledToDate=resc.date;
-        var fullOrder={ id:o.id, date:o.date, customer:o.customer, driver:o.driver, lines:lines };
-        var saved=await saveOrder(fullOrder);
-        if(saved) fixed++; else failed++;
-      } else {
-        failed++;
       }
+      // Save regardless of whether resc came back. A null result means
+      // EITHER a matching reschedule already exists elsewhere (the new
+      // idempotency guard in _rescheduleShortageLine) or something
+      // genuinely failed — either way, this line is now marked
+      // shortage:true and won't be picked up as a candidate again on the
+      // next rescan. CONFIRMED live (Sep 2026): only saving inside the
+      // `if(resc)` branch was the actual bug — a null result meant this
+      // exact line got retried, and re-duplicated, on every single future
+      // "Match with QuickBooks" click, which is how the order count could
+      // quietly balloon over repeated daily use.
+      var fullOrder={ id:o.id, date:o.date, customer:o.customer, driver:o.driver, lines:lines };
+      var saved=await saveOrder(fullOrder);
+      if(saved && resc) fixed++; else if(!saved) failed++;
     }catch(e){ console.error('Shortage rescan failed for order',c.orderId,'line',c.lineIdx,e); failed++; }
   }
   return {fixed:fixed, failed:failed};

@@ -1129,9 +1129,16 @@ function formatQBAddress(addr) {
 // means the next route estimate after that re-geocodes once; well within
 // the free 3,000 credits/day either way.
 var _geoapifyGeocodeCache = {}; // address string -> {lat, lon}
-async function geoapifyGeocode(address) {
+async function geoapifyGeocode(address, biasCoords) {
   if (_geoapifyGeocodeCache[address]) return _geoapifyGeocodeCache[address];
-  const path = '/v1/geocode/search?text=' + encodeURIComponent(address) + '&filter=countrycode:us&limit=1&format=json&apiKey=' + GEOAPIFY_API_KEY;
+  // Biasing toward Leader Meat's own location (when we have it) is what
+  // keeps an ambiguous/incomplete address in QuickBooks — missing a city
+  // or state, say — from silently matching a same-named street somewhere
+  // else in the country instead of the actual regional customer.
+  // CONFIRMED live (Sep 2026): this was missing and produced a ~300 mile
+  // "round trip" for what should have been a short local delivery.
+  var biasParam = biasCoords ? ('&bias=proximity:' + biasCoords.lon + ',' + biasCoords.lat) : '';
+  const path = '/v1/geocode/search?text=' + encodeURIComponent(address) + '&filter=countrycode:us' + biasParam + '&limit=1&format=json&apiKey=' + GEOAPIFY_API_KEY;
   const res = await httpsRequest({ hostname: 'api.geoapify.com', path, method: 'GET' });
   const data = JSON.parse(res.body || '{}');
   if (res.status !== 200) throw new Error('Geoapify geocoding error ' + res.status + ': ' + (data.message || res.body));
@@ -1140,6 +1147,17 @@ async function geoapifyGeocode(address) {
   const coords = { lat: first.lat, lon: first.lon };
   _geoapifyGeocodeCache[address] = coords;
   return coords;
+}
+// Straight-line (great-circle) distance in miles — used only as a sanity
+// check on geocoded stops below, not for the actual route mileage (which
+// comes from Geoapify's real driving route).
+function _haversineMiles(a, b) {
+  var R = 3958.8;
+  var toRad = function (d) { return d * Math.PI / 180; };
+  var dLat = toRad(b.lat - a.lat);
+  var dLon = toRad(b.lon - a.lon);
+  var h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.asin(Math.sqrt(h));
 }
 // Calls Geoapify's truck-mode Routing API for one driver's whole day:
 // origin AND destination are both Leader Meat (a real round trip), with
@@ -1156,12 +1174,20 @@ async function fetchDrivingRouteMiles(stopAddresses) {
   // Addresses that fail to geocode (malformed/incomplete data in
   // QuickBooks) are skipped rather than failing the whole estimate — same
   // leniency the client already applies to customers with no address on
-  // file at all.
+  // file at all. A stop that DOES geocode but lands implausibly far from
+  // Leader Meat (see _haversineMiles below) is treated the same way: it's
+  // almost certainly a wrong match for an ambiguous address, not a real
+  // 300-mile delivery — Leader Meat's actual delivery area is regional, so
+  // this is a generous sanity ceiling, not a hard business rule.
   const stopCoords = [];
   const failedToGeocode = [];
   for (const addr of stopAddresses) {
-    try { stopCoords.push(await geoapifyGeocode(addr)); }
-    catch (e) { failedToGeocode.push(addr); }
+    try {
+      const coords = await geoapifyGeocode(addr, originCoords);
+      const straightLineMiles = _haversineMiles(originCoords, coords);
+      if (straightLineMiles > 100) { failedToGeocode.push(addr + ' (matched ~' + Math.round(straightLineMiles) + ' mi away — likely a wrong address match)'); continue; }
+      stopCoords.push(coords);
+    } catch (e) { failedToGeocode.push(addr); }
   }
   if (!stopCoords.length) throw new Error('None of the stop addresses could be located: ' + failedToGeocode.join('; '));
   const waypointsRaw = [originCoords].concat(stopCoords, [originCoords]).map(c => c.lat + ',' + c.lon).join('|');

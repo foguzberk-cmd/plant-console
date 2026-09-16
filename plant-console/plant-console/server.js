@@ -19,12 +19,18 @@ const REDIRECT_URI = process.env.QB_REDIRECT_URI || 'https://plant-console-app.o
 const QB_WEBHOOK_VERIFIER_TOKEN = process.env.QB_WEBHOOK_VERIFIER_TOKEN || '';
 
 // Used for driver route-mileage estimates (see fetchDrivingRouteMiles and
-// /api/data/driver-route-miles below) — a Google Maps Platform key with the
-// Directions API enabled and billing set up. Entirely optional: nothing
+// /api/data/driver-route-miles below) — a free Geoapify API key (no credit
+// card required, 3,000 credits/day). Switched from Google Maps (Sep 2026):
+// Google's Directions/Routes API only offers a blunt "avoid all highways"
+// toggle, not "avoid parkways specifically" — and these are commercial
+// trucks that can't legally use NJ parkways but CAN and should use the
+// Turnpike/interstates, so that toggle made estimates worse, not better.
+// Geoapify's truck travel modes route using real truck road-restriction
+// data instead of a blanket highway avoidance. Entirely optional: nothing
 // else in the app depends on this being set, so a missing key only
-// disables that one feature (the endpoint below returns a clear NO_API_KEY
+// disables this one feature (the endpoint below returns a clear NO_API_KEY
 // error the client can show, rather than the whole app failing to start).
-const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
+const GEOAPIFY_API_KEY = process.env.GEOAPIFY_API_KEY || '';
 // Leader Meat's own address — the fixed origin AND destination for every
 // driver's estimated route, since every route is a real round trip back to
 // the plant. Update this if the plant ever moves.
@@ -1114,51 +1120,60 @@ function formatQBAddress(addr) {
   const parts = [addr.Line1, addr.Line2, addr.City, addr.CountrySubDivisionCode, addr.PostalCode].filter(Boolean);
   return parts.join(', ');
 }
-// Calls Google's newer Routes API (the legacy Directions API is blocked
-// for new Google Cloud projects — CONFIRMED live, Sep 2026: a fresh
-// project got REQUEST_DENIED / "legacy API not enabled" from
-// /maps/api/directions/json, with Google's own error message pointing at
-// this replacement) for one driver's whole day: origin AND destination are
-// both Leader Meat (a real round trip), with every stop as an
-// "intermediate". optimizeWaypointOrder:true lets Google reorder the
-// stops for the shortest total route — this is meant as a planning
-// ESTIMATE of total miles/time for the day, not a turn-by-turn assignment
-// of stop order, so the shortest-possible ordering is the more useful
-// number here than whatever raw order the stops happened to be listed in.
-async function fetchDrivingRouteMiles(stopAddresses) {
-  if (!GOOGLE_MAPS_API_KEY) throw new Error('NO_API_KEY');
-  const bodyStr = JSON.stringify({
-    origin: { address: LEADER_MEAT_ADDRESS },
-    destination: { address: LEADER_MEAT_ADDRESS },
-    intermediates: stopAddresses.map(a => ({ address: a })),
-    travelMode: 'DRIVE',
-    optimizeWaypointOrder: true
-  });
-  const res = await httpsRequest({
-    hostname: 'routes.googleapis.com',
-    path: '/directions/v2:computeRoutes',
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Goog-Api-Key': GOOGLE_MAPS_API_KEY,
-      // Routes API requires an explicit field mask on every request — it
-      // returns nothing at all (an empty route) without one.
-      'X-Goog-FieldMask': 'routes.distanceMeters,routes.duration,routes.optimizedIntermediateWaypointIndex'
-    }
-  }, bodyStr);
+// Geoapify's Routing API needs lat/lon waypoints, not plain address
+// strings, so every stop has to be geocoded first. Geocoded coordinates
+// for a fixed address essentially never change, so results are cached
+// in-memory per server process — this is what keeps repeated route
+// estimates (same customers, different days) from re-geocoding the same
+// address over and over. Cleared on a server restart/redeploy, which just
+// means the next route estimate after that re-geocodes once; well within
+// the free 3,000 credits/day either way.
+var _geoapifyGeocodeCache = {}; // address string -> {lat, lon}
+async function geoapifyGeocode(address) {
+  if (_geoapifyGeocodeCache[address]) return _geoapifyGeocodeCache[address];
+  const path = '/v1/geocode/search?text=' + encodeURIComponent(address) + '&filter=countrycode:us&limit=1&format=json&apiKey=' + GEOAPIFY_API_KEY;
+  const res = await httpsRequest({ hostname: 'api.geoapify.com', path, method: 'GET' });
   const data = JSON.parse(res.body || '{}');
-  if (res.status !== 200) {
-    const msg = (data.error && data.error.message) || res.body;
-    throw new Error('Google Routes API error ' + res.status + ': ' + msg);
+  if (res.status !== 200) throw new Error('Geoapify geocoding error ' + res.status + ': ' + (data.message || res.body));
+  const first = data.results && data.results[0];
+  if (!first) throw new Error('Could not find coordinates for address: ' + address);
+  const coords = { lat: first.lat, lon: first.lon };
+  _geoapifyGeocodeCache[address] = coords;
+  return coords;
+}
+// Calls Geoapify's truck-mode Routing API for one driver's whole day:
+// origin AND destination are both Leader Meat (a real round trip), with
+// every stop as a waypoint in between. optimize_stops:true lets it reorder
+// the stops for the shortest total route — this is meant as a planning
+// ESTIMATE of total miles/time for the day, not a turn-by-turn assignment
+// of stop order. mode=truck (22t) is a general commercial-truck profile
+// that routes using real truck road-restriction data (including roads
+// legally closed to trucks, like NJ parkways), rather than Google's
+// all-or-nothing "avoid every highway" toggle that this replaced.
+async function fetchDrivingRouteMiles(stopAddresses) {
+  if (!GEOAPIFY_API_KEY) throw new Error('NO_API_KEY');
+  const originCoords = await geoapifyGeocode(LEADER_MEAT_ADDRESS);
+  // Addresses that fail to geocode (malformed/incomplete data in
+  // QuickBooks) are skipped rather than failing the whole estimate — same
+  // leniency the client already applies to customers with no address on
+  // file at all.
+  const stopCoords = [];
+  const failedToGeocode = [];
+  for (const addr of stopAddresses) {
+    try { stopCoords.push(await geoapifyGeocode(addr)); }
+    catch (e) { failedToGeocode.push(addr); }
   }
-  const route = data.routes && data.routes[0];
+  if (!stopCoords.length) throw new Error('None of the stop addresses could be located: ' + failedToGeocode.join('; '));
+  const waypointsRaw = [originCoords].concat(stopCoords, [originCoords]).map(c => c.lat + ',' + c.lon).join('|');
+  const path = '/v1/routing?waypoints=' + encodeURIComponent(waypointsRaw) + '&mode=truck&optimize_stops=true&units=imperial&format=json&apiKey=' + GEOAPIFY_API_KEY;
+  const res = await httpsRequest({ hostname: 'api.geoapify.com', path, method: 'GET' });
+  const data = JSON.parse(res.body || '{}');
+  if (res.status !== 200) throw new Error('Geoapify Routing API error ' + res.status + ': ' + (data.message || res.body));
+  const route = data.results && data.results[0];
   if (!route) throw new Error('No route returned.');
-  const meters = Number(route.distanceMeters || 0);
-  // duration comes back as a string like "1234s", not a number.
-  const seconds = Number(String(route.duration || '0').replace('s', '')) || 0;
   return {
-    miles: Math.round((meters / 1609.344) * 10) / 10,
-    minutes: Math.round(seconds / 60)
+    miles: Math.round(route.distance * 10) / 10,
+    minutes: Math.round(route.time / 60)
   };
 }
 async function backgroundSyncCustomers() {
@@ -2542,7 +2557,7 @@ const server = http.createServer(async (req, res) => {
     } catch (e) {
       const noKey = e.message === 'NO_API_KEY';
       res.writeHead(noKey ? 501 : 500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
-      res.end(JSON.stringify({ error: noKey ? 'No Google Maps API key is configured on the server yet (GOOGLE_MAPS_API_KEY).' : e.message }));
+      res.end(JSON.stringify({ error: noKey ? 'No Geoapify API key is configured on the server yet (GEOAPIFY_API_KEY).' : e.message }));
     }
     return;
   }

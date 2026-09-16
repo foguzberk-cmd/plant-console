@@ -51,3 +51,15 @@ services:
       # it is. Get a key at myprojects.geoapify.com (free, no card).
       - key: GEOAPIFY_API_KEY
         sync: false
+      # Optional second key that adds a "regular route" comparison number
+      # next to the truck-route mileage above — a normal car/passenger
+      # route via Google's Directions API, free to use parkways/highways
+      # a commercial truck legally can't, so the gap between the two
+      # numbers shows the extra distance the truck restriction actually
+      # costs. Unlike Geoapify, Google requires a Cloud project with
+      # billing enabled (Directions API turned on) — no free/card-free
+      # tier. Entirely optional: everything else, including the truck
+      # mileage above, works fine without this set; only the "regular
+      # route" comparison number is disabled until it is.
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false

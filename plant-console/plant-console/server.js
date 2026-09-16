@@ -31,6 +31,15 @@ const QB_WEBHOOK_VERIFIER_TOKEN = process.env.QB_WEBHOOK_VERIFIER_TOKEN || '';
 // disables this one feature (the endpoint below returns a clear NO_API_KEY
 // error the client can show, rather than the whole app failing to start).
 const GEOAPIFY_API_KEY = process.env.GEOAPIFY_API_KEY || '';
+// Optional second key used ONLY to show a "regular route" comparison
+// number next to the truck-route mileage above — a normal car/passenger
+// route (free to use parkways/highways) so it's easy to see how many
+// extra miles the truck route costs by having to avoid them. Requires a
+// Google Cloud project with billing enabled and the Directions API turned
+// on (unlike Geoapify, Google's free tier isn't card-free) — entirely
+// optional: missing this only disables the "regular route" number, the
+// truck-route estimate above still works with just GEOAPIFY_API_KEY.
+const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
 // Leader Meat's own address — the fixed origin AND destination for every
 // driver's estimated route, since every route is a real round trip back to
 // the plant. Update this if the plant ever moves.
@@ -1219,6 +1228,37 @@ async function fetchDrivingRouteMiles(stopAddresses) {
     stopDetails,
     miles: Math.round(route.distance * 10) / 10,
     minutes: Math.round(route.time / 60)
+  };
+}
+// Companion to fetchDrivingRouteMiles above, but for a NORMAL car/passenger
+// route via Google's Directions API — free to use parkways/highways a
+// commercial truck legally can't, so the gap between this number and the
+// truck-mode one is exactly the extra distance the truck-route restriction
+// costs. Uses Google's own waypoint optimization (optimize:true) rather
+// than Geoapify's geocode-then-route flow, so there's no separate
+// straight-line sanity check here — a stop Google's own geocoder can't
+// resolve simply comes back as a leg-level error from the API itself.
+async function fetchGoogleDrivingRouteMiles(stopAddresses) {
+  if (!GOOGLE_MAPS_API_KEY) throw new Error('NO_GOOGLE_KEY');
+  const waypoints = 'optimize:true|' + stopAddresses.map(a => encodeURIComponent(a)).join('|');
+  const originDest = encodeURIComponent(LEADER_MEAT_ADDRESS);
+  const qs = 'origin=' + originDest + '&destination=' + originDest + '&waypoints=' + waypoints + '&mode=driving&key=' + GOOGLE_MAPS_API_KEY;
+  const res = await httpsRequest({ hostname: 'maps.googleapis.com', path: '/maps/api/directions/json?' + qs, method: 'GET' });
+  const data = JSON.parse(res.body || '{}');
+  if (res.status !== 200) throw new Error('Google Directions API error ' + res.status + ': ' + (data.error_message || res.body));
+  if (data.status !== 'OK') throw new Error('Google Directions API: ' + data.status + (data.error_message ? ' — ' + data.error_message : ''));
+  const route = data.routes && data.routes[0];
+  if (!route || !Array.isArray(route.legs) || !route.legs.length) throw new Error('No route returned.');
+  var totalMeters = 0, totalSeconds = 0;
+  const stopDetails = route.legs.map(function (leg) {
+    totalMeters += (leg.distance && leg.distance.value) || 0;
+    totalSeconds += (leg.duration && leg.duration.value) || 0;
+    return { address: leg.end_address, distanceMiles: Math.round(((leg.distance && leg.distance.value) || 0) / 1609.34 * 10) / 10 };
+  });
+  return {
+    stopDetails,
+    miles: Math.round(totalMeters / 1609.34 * 10) / 10,
+    minutes: Math.round(totalSeconds / 60)
   };
 }
 async function backgroundSyncCustomers() {
@@ -2582,27 +2622,34 @@ const server = http.createServer(async (req, res) => {
   // Estimates a driver's total round-trip mileage for one day's route: the
   // client resolves each stop's customer name to an address (from the
   // synced QuickBooks customer records) and sends the plain address list
-  // here — this endpoint just calls Google's Directions API (keeping the
-  // API key itself server-side, never exposed to the browser) and returns
-  // the total distance/time. Read-only — never touches saved order data.
+  // here — this endpoint keeps the routing API key(s) server-side, never
+  // exposed to the browser, and returns the total distance/time. Read-only
+  // — never touches saved order data.
+  // body.mode: 'truck' (default) uses Geoapify's truck-restricted routing
+  // (see fetchDrivingRouteMiles); 'regular' uses Google's normal car
+  // routing (see fetchGoogleDrivingRouteMiles) as a comparison number —
+  // the gap between the two is the extra distance the truck-route
+  // restrictions actually cost.
   if (url === '/api/data/driver-route-miles' && req.method === 'POST') {
     if (!requireAuth(req, res)) return;
     try {
       const bodyStr = await readRequestBody(req);
       const body = JSON.parse(bodyStr || '{}');
       const addresses = Array.isArray(body.addresses) ? body.addresses.filter(a => typeof a === 'string' && a.trim()) : [];
+      const mode = body.mode === 'regular' ? 'regular' : 'truck';
       if (!addresses.length) {
         res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
         res.end(JSON.stringify({ error: 'No stop addresses provided.' }));
         return;
       }
-      const result = await fetchDrivingRouteMiles(addresses);
+      const result = mode === 'regular' ? await fetchGoogleDrivingRouteMiles(addresses) : await fetchDrivingRouteMiles(addresses);
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
-      res.end(JSON.stringify(Object.assign({ success: true, stopCount: addresses.length }, result)));
+      res.end(JSON.stringify(Object.assign({ success: true, stopCount: addresses.length, mode }, result)));
     } catch (e) {
-      const noKey = e.message === 'NO_API_KEY';
+      const noKey = e.message === 'NO_API_KEY' || e.message === 'NO_GOOGLE_KEY';
+      const keyName = e.message === 'NO_GOOGLE_KEY' ? 'GOOGLE_MAPS_API_KEY' : 'GEOAPIFY_API_KEY';
       res.writeHead(noKey ? 501 : 500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
-      res.end(JSON.stringify({ error: noKey ? 'No Geoapify API key is configured on the server yet (GEOAPIFY_API_KEY).' : e.message }));
+      res.end(JSON.stringify({ error: noKey ? ('No ' + (keyName === 'GOOGLE_MAPS_API_KEY' ? 'Google Maps' : 'Geoapify') + ' API key is configured on the server yet (' + keyName + ').') : e.message }));
     }
     return;
   }

@@ -4438,8 +4438,23 @@ function _routeMilesLabelHtml(driverOrders,dName,dk){
   if(entry.state==='error'){
     return '<span title="'+esc(entry.error||'')+'" style="flex-shrink:0;font-size:10px;color:#a3231b;white-space:nowrap;cursor:help">⚠ route error</span>'+refreshBtn;
   }
-  return '<span style="flex-shrink:0;font-size:10.5px;color:var(--cold);white-space:nowrap;font-family:var(--mono)">≈'+entry.miles+' mi'+missingNote+'</span>'+refreshBtn;
+  return '<span onclick="event.stopPropagation();_showRouteMilesBreakdown(\''+_jsStrEsc(entry.key)+'\')" title="Click to see what each stop resolved to" style="flex-shrink:0;font-size:10.5px;color:var(--cold);white-space:nowrap;font-family:var(--mono);cursor:pointer;text-decoration:underline dotted">≈'+entry.miles+' mi'+missingNote+'</span>'+refreshBtn;
 }
+// Shows exactly what each stop's address resolved to (coordinates and
+// straight-line distance from Leader Meat), so a wrong-looking mileage
+// total can be traced to a specific customer's bad address in QuickBooks
+// instead of guessing from the final number alone.
+function _showRouteMilesBreakdown(key){
+  var entry=_routeMilesCache[key];
+  if(!entry||!entry.stopDetails||!entry.stopDetails.length){ alert('No stop-by-stop details are available for this route yet.'); return; }
+  var lines=entry.stopDetails.map(function(s){
+    if(s.error) return '⚠ '+s.address+' — could not be located ('+s.error+')';
+    var flag=s.excluded?' — EXCLUDED (too far, likely wrong match)':'';
+    return (s.excluded?'⚠ ':'✓ ')+s.address+' — '+s.straightLineMiles+' mi straight-line from Leader Meat'+flag+' ['+s.lat+', '+s.lon+']';
+  });
+  alert('Stop-by-stop breakdown (≈'+entry.miles+' mi total):\n\n'+lines.join('\n\n')+'\n\nIf a stop looks wrong, check that customer\'s address in QuickBooks for a missing city/state/ZIP.');
+}
+window._showRouteMilesBreakdown=_showRouteMilesBreakdown;
 // Per-driver total mileage across one week — sums each day's route-miles
 // entry (same cache the per-row labels use, grouped by day+driver) so it
 // stays consistent with whatever the individual rows show. Reads from
@@ -4487,7 +4502,14 @@ function _fetchRouteMilesForCache(key,addresses){
     if(!result.ok||!result.data||!result.data.success){
       _routeMilesCache[key]={state:'error',error:(result.data&&result.data.error)||'unknown error'};
     } else {
-      _routeMilesCache[key]={state:'ok',miles:result.data.miles,minutes:result.data.minutes};
+      // stopDetails carries what EACH stop's address actually resolved to
+      // (coordinates + straight-line miles from Leader Meat, or an
+      // excluded/error flag) — kept in the cache so clicking the number
+      // can show it without a second network round trip. This is the
+      // troubleshooting view for exactly the "these miles look wrong"
+      // case: rather than guessing which customer is the problem, it's
+      // right there per-address.
+      _routeMilesCache[key]={state:'ok',miles:result.data.miles,minutes:result.data.minutes,stopDetails:result.data.stopDetails||[]};
     }
     _renderOrdersWeekSummary();
   }).catch(function(){

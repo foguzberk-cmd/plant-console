@@ -959,6 +959,21 @@ async function retryTxnsSaveUntilConfirmed(){
 // refresh."
 async function saveUsers(){
   safeSetLocal('pc_users',JSON.stringify(usersForLocalCache(users)));
+  // Snapshot every user record right now, before the push even starts, so
+  // that ANY pull landing in the next few seconds (whether the push is
+  // still in flight, just finished, or got its perms silently stripped by
+  // the server's own privilege-escalation guard) reapplies this exact
+  // edit on top instead of letting a stale/guarded server copy win. Same
+  // pattern as _recentlySavedCustomers above.
+  var _usersSnapshotIds=[];
+  users.forEach(function(u){
+    if(!u||!u.id) return;
+    _recentlySavedUsers[u.id]=JSON.parse(JSON.stringify(u));
+    _usersSnapshotIds.push(u.id);
+  });
+  setTimeout(function(){
+    _usersSnapshotIds.forEach(function(id){ delete _recentlySavedUsers[id]; });
+  },8000);
   _writeInFlight++;
   var ok=false;
   try{
@@ -1136,6 +1151,18 @@ var _recentlySavedCustomerAllowed={};
 // customers right back to their pre-edit state, on the very device that
 // just imported them.
 var _recentlySavedCustomers={};
+// Same idea, for user records (permissions matrix edits, role/perm toggles,
+// added/edited accounts) — keyed by user id -> the just-saved record. This
+// was the one shared collection that had NO such protection: a pull
+// landing between the optimistic local edit and that edit's own push being
+// fully confirmed (or being partially reverted server-side by the
+// privilege-escalation guard for a non-admin/non-manageUsers session) would
+// silently overwrite a just-checked permissions-matrix checkbox back to
+// its pre-edit state the moment the admin so much as expanded/collapsed a
+// different row and triggered a re-render off the pulled-in data. Users
+// reported this as "I set a permission, then click elsewhere and it
+// disappears."
+var _recentlySavedUsers={};
 var _recentlySavedVendors={}; // same idea, for vendor edits (department/Purch Rep) — protects against a pull already in flight before a save reaches the server
 var _recentlySavedVendorDepartments={};
 // Same idea, for Cash Flow's scheduled/approved payment plan — keyed by
@@ -1296,7 +1323,24 @@ async function pullFromServer(){
     if(Array.isArray(data.items)&&data.items.length) items=data.items;
     if(Array.isArray(data.transactions)&&data.transactions.length) transactions=data.transactions;
     if(Array.isArray(data.storages)&&data.storages.length) storages=data.storages;
-    if(Array.isArray(data.users)&&data.users.length) users=dedupeUsersByEmail(data.users);
+    if(Array.isArray(data.users)&&data.users.length){
+      // Same reasoning as _recentlySavedCustomers/_recentlyAddedScaleLogs:
+      // adopt the server's copy, but re-apply anything THIS device saved
+      // in the last few seconds on top of it. This is what actually fixes
+      // the permissions-matrix bug where a just-toggled checkbox reverted
+      // the moment a pull landed (whether because the push hadn't fully
+      // committed yet, or because the server's own guard against
+      // privilege escalation stripped a legitimate admin edit for some
+      // other reason) — the device's own very-recent edit always wins for
+      // the few seconds it takes for the round trip to settle.
+      var pulledUsers=dedupeUsersByEmail(data.users);
+      Object.keys(_recentlySavedUsers).forEach(function(uid){
+        var i=pulledUsers.findIndex(function(u){ return u.id===uid; });
+        if(i>=0) pulledUsers[i]=_recentlySavedUsers[uid];
+        else pulledUsers.push(_recentlySavedUsers[uid]);
+      });
+      users=pulledUsers;
+    }
     if(Array.isArray(data.savedReports)&&data.savedReports.length) savedReports=data.savedReports;
     if(Array.isArray(data.scaleLogs)&&data.scaleLogs.length){
       // The server is the single source of truth here: every write now goes

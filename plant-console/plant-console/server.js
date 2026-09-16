@@ -1179,15 +1179,28 @@ async function fetchDrivingRouteMiles(stopAddresses) {
   // almost certainly a wrong match for an ambiguous address, not a real
   // 300-mile delivery — Leader Meat's actual delivery area is regional, so
   // this is a generous sanity ceiling, not a hard business rule.
+  //
+  // stopDetails carries every address's geocode result (used or excluded)
+  // back to the client for troubleshooting — CONFIRMED live (Sep 2026)
+  // that biasing toward Leader Meat alone didn't fix every bad match, so
+  // being able to actually SEE which address resolved where (rather than
+  // guessing from a final mileage number) is what's needed to pin down
+  // which specific customer has a bad address in QuickBooks.
   const stopCoords = [];
   const failedToGeocode = [];
+  const stopDetails = [];
   for (const addr of stopAddresses) {
     try {
       const coords = await geoapifyGeocode(addr, originCoords);
-      const straightLineMiles = _haversineMiles(originCoords, coords);
-      if (straightLineMiles > 100) { failedToGeocode.push(addr + ' (matched ~' + Math.round(straightLineMiles) + ' mi away — likely a wrong address match)'); continue; }
+      const straightLineMiles = Math.round(_haversineMiles(originCoords, coords) * 10) / 10;
+      const excluded = straightLineMiles > 100;
+      stopDetails.push({ address: addr, lat: coords.lat, lon: coords.lon, straightLineMiles, excluded });
+      if (excluded) { failedToGeocode.push(addr + ' (matched ~' + Math.round(straightLineMiles) + ' mi away — likely a wrong address match)'); continue; }
       stopCoords.push(coords);
-    } catch (e) { failedToGeocode.push(addr); }
+    } catch (e) {
+      stopDetails.push({ address: addr, error: e.message, excluded: true });
+      failedToGeocode.push(addr);
+    }
   }
   if (!stopCoords.length) throw new Error('None of the stop addresses could be located: ' + failedToGeocode.join('; '));
   const waypointsRaw = [originCoords].concat(stopCoords, [originCoords]).map(c => c.lat + ',' + c.lon).join('|');
@@ -1198,6 +1211,7 @@ async function fetchDrivingRouteMiles(stopAddresses) {
   const route = data.results && data.results[0];
   if (!route) throw new Error('No route returned.');
   return {
+    stopDetails,
     miles: Math.round(route.distance * 10) / 10,
     minutes: Math.round(route.time / 60)
   };

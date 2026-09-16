@@ -3337,7 +3337,7 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
   var byDay={};
   weekOrders.forEach(function(o){ (byDay[o.date]=byDay[o.date]||[]).push(o); });
   var dayKeys=Object.keys(byDay).sort().reverse();
-  return dayKeys.map(function(dk,di){
+  return _weekDriverMileageSummaryHtml(weekOrders)+dayKeys.map(function(dk,di){
     var count=byDay[dk].length;
     var openKey='shipday:'+dk;
     var rowId='ordShipDay-'+wi+'-'+di;
@@ -3365,6 +3365,7 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
               +'<svg onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="cursor:pointer;width:11px;height:11px;stroke:var(--cold);flex-shrink:0'+(_ordersIsOpen(driverOpenKey,q)?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
               +'<span onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" style="cursor:pointer;flex:1;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold)">'+esc(dName)+' ('+driverOrders.length+')</span>'
               +'<button title="Print this driver\'s route form only (deliveries/payments + returns — no product sheets, since these already shipped)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\',\''+esc(dk)+'\',true)" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:var(--cold);font-size:13px">🖨</button>'
+              +_routeMilesLabelHtml(driverOrders,dName,dk)
             +'</div>'
             +'<div id="'+driverRowId+'" style="display:'+(_ordersIsOpen(driverOpenKey,q)?'block':'none')+'">'
             +driverOrders.map(function(o,oi){
@@ -4399,26 +4400,38 @@ var _routeMilesCache={}; // key -> {state:'loading'|'ok'|'error', miles, minutes
 function _routeMilesKey(dName,dk,addresses){
   return dName+'|'+dk+'|'+addresses.slice().sort().join(';');
 }
-function _routeMilesLabelHtml(driverOrders,dName,dk){
+// Resolves a driver's stops for one day to a cached (or freshly-triggered)
+// route-miles entry, WITHOUT building any HTML — shared by the per-row
+// label (_routeMilesLabelHtml, used in both Received and Shipped Orders)
+// and the weekly per-driver mileage summary (_weekDriverMileageSummaryHtml
+// in the Shipped Orders week body), so both read from and populate the
+// exact same cache instead of duplicating the resolve/trigger logic.
+function _resolveRouteMilesEntry(driverOrders,dName,dk){
   var custNames=[];
   driverOrders.forEach(function(o){ if(o.customer&&custNames.indexOf(o.customer)<0) custNames.push(o.customer); });
-  if(!custNames.length) return '';
+  if(!custNames.length) return {state:'none'};
   var addresses=[], missing=[];
   custNames.forEach(function(name){
     var c=_findQbCustomerMatch(name);
     if(c&&c.address){ addresses.push(c.address); } else { missing.push(name); }
   });
-  if(!addresses.length){
-    return '<span title="None of these customers have an address on file in QuickBooks yet" style="flex-shrink:0;font-size:10px;color:var(--muted);white-space:nowrap;cursor:help">no addresses on file</span>';
-  }
+  if(!addresses.length) return {state:'noaddr'};
   var key=_routeMilesKey(dName,dk,addresses);
   var entry=_routeMilesCache[key];
   if(!entry){
     entry=_routeMilesCache[key]={state:'loading'};
     _fetchRouteMilesForCache(key,addresses);
   }
-  var missingNote=missing.length?(' <span title="No address on file: '+esc(missing.join(', '))+'" style="cursor:help;color:var(--muted)">('+missing.length+' skipped)</span>'):'';
-  var refreshBtn='<span onclick="event.stopPropagation();_refreshRouteMiles(\''+_jsStrEsc(key)+'\')" title="Recalculate" style="cursor:pointer;color:var(--muted);font-size:10px;margin-left:3px">↻</span>';
+  return Object.assign({missing:missing,key:key},entry);
+}
+function _routeMilesLabelHtml(driverOrders,dName,dk){
+  var entry=_resolveRouteMilesEntry(driverOrders,dName,dk);
+  if(entry.state==='none') return '';
+  if(entry.state==='noaddr'){
+    return '<span title="None of these customers have an address on file in QuickBooks yet" style="flex-shrink:0;font-size:10px;color:var(--muted);white-space:nowrap;cursor:help">no addresses on file</span>';
+  }
+  var missingNote=(entry.missing&&entry.missing.length)?(' <span title="No address on file: '+esc(entry.missing.join(', '))+'" style="cursor:help;color:var(--muted)">('+entry.missing.length+' skipped)</span>'):'';
+  var refreshBtn='<span onclick="event.stopPropagation();_refreshRouteMiles(\''+_jsStrEsc(entry.key)+'\')" title="Recalculate" style="cursor:pointer;color:var(--muted);font-size:10px;margin-left:3px">↻</span>';
   if(entry.state==='loading'){
     return '<span style="flex-shrink:0;font-size:10px;color:var(--muted);font-style:italic;white-space:nowrap">calculating miles…</span>';
   }
@@ -4426,6 +4439,42 @@ function _routeMilesLabelHtml(driverOrders,dName,dk){
     return '<span title="'+esc(entry.error||'')+'" style="flex-shrink:0;font-size:10px;color:#a3231b;white-space:nowrap;cursor:help">⚠ route error</span>'+refreshBtn;
   }
   return '<span style="flex-shrink:0;font-size:10.5px;color:var(--cold);white-space:nowrap;font-family:var(--mono)">≈'+entry.miles+' mi'+missingNote+'</span>'+refreshBtn;
+}
+// Per-driver total mileage across one week — sums each day's route-miles
+// entry (same cache the per-row labels use, grouped by day+driver) so it
+// stays consistent with whatever the individual rows show. Reads from
+// whatever's already resolved and triggers a fetch for anything that
+// isn't yet — opening a week for the first time may show a few days still
+// "calculating…" for a moment, filling in as each resolves.
+function _weekDriverMileageSummaryHtml(weekOrders){
+  var byDayDriver={};
+  weekOrders.forEach(function(o){
+    var dName=_driverGroupKey(o.driver);
+    var k=o.date+'|'+dName;
+    (byDayDriver[k]=byDayDriver[k]||{date:o.date,driver:dName,orders:[]}).orders.push(o);
+  });
+  var perDriver={};
+  Object.keys(byDayDriver).forEach(function(k){
+    var g=byDayDriver[k];
+    var entry=_resolveRouteMilesEntry(g.orders,g.driver,g.date);
+    var pd=perDriver[g.driver]=perDriver[g.driver]||{totalMiles:0,daysDone:0,daysPending:0};
+    if(entry.state==='ok'){ pd.totalMiles+=entry.miles; pd.daysDone++; }
+    else if(entry.state==='loading'){ pd.daysPending++; }
+  });
+  var driverNames=Object.keys(perDriver).sort();
+  if(!driverNames.length) return '';
+  var rows=driverNames.map(function(dName){
+    var pd=perDriver[dName];
+    var pendingNote=pd.daysPending?(' <span style="color:var(--muted);font-style:italic">('+pd.daysPending+' calculating…)</span>'):'';
+    return '<div style="display:flex;justify-content:space-between;gap:12px;padding:5px 14px;font-size:11.5px">'
+      +'<span style="font-family:var(--mono);color:#1b5e2f">'+esc(dName)+'</span>'
+      +'<span style="font-family:var(--mono);color:#1b5e2f">'+(pd.daysDone?'≈'+(Math.round(pd.totalMiles*10)/10)+' mi across '+pd.daysDone+' day'+(pd.daysDone!==1?'s':''):'—')+pendingNote+'</span>'
+    +'</div>';
+  }).join('');
+  return '<div style="background:#dcefe1;border-bottom:1px solid #b9dfc0;padding:6px 0">'
+    +'<div style="padding:4px 14px;font-size:10.5px;font-weight:700;color:#1b5e2f;text-transform:uppercase;letter-spacing:.03em">Weekly mileage by driver</div>'
+    +rows
+  +'</div>';
 }
 function _fetchRouteMilesForCache(key,addresses){
   fetch('/api/data/driver-route-miles',{

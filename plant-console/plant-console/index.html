@@ -4127,8 +4127,18 @@ function _renderOrdersWeekSummary(){
   }
   var filtered=orders.filter(function(o){
     if(o.shipped) return false;
-    if(!q) return true;
+    // Once every line on an order was a shortage that already got
+    // rescheduled to the next day, there's nothing left to act on here —
+    // its replacement lives on that next day's order instead (shown there
+    // with the red "Shortage reorder" badge). Previously this still
+    // showed as an order row with a placeholder message; now it's left
+    // out of the day/driver/customer grouping entirely, same as its
+    // individual line already was in _renderOrderRow — so the counts at
+    // every level (day, driver, customer) only reflect orders that
+    // actually still need attention.
     var lines=_orderLinesOf(o);
+    if(lines.length && lines.every(function(l){ return l.shortage && l.rescheduledOrderId; })) return false;
+    if(!q) return true;
     if([o.customer,o.driver].some(function(f){ return (f||'').toLowerCase().indexOf(q)>=0; })) return true;
     return lines.some(function(l){ return [l.product,l.description].some(function(f){ return (f||'').toLowerCase().indexOf(q)>=0; }); });
   });

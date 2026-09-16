@@ -1177,8 +1177,13 @@ async function fetchDrivingRouteMiles(stopAddresses) {
   // file at all. A stop that DOES geocode but lands implausibly far from
   // Leader Meat (see _haversineMiles below) is treated the same way: it's
   // almost certainly a wrong match for an ambiguous address, not a real
-  // 300-mile delivery — Leader Meat's actual delivery area is regional, so
-  // this is a generous sanity ceiling, not a hard business rule.
+  // delivery — this is a sanity ceiling for catching things like a typo'd
+  // ZIP that geocodes three states away, not a hard business rule. 350 mi
+  // (raised from 100 — CONFIRMED live Sep 2026 that regular deliveries go
+  // as far as the Boston, MA area, ~250 mi straight-line from the plant,
+  // which the original 100 mi ceiling was wrongly excluding as a bad
+  // match) comfortably covers that real route while still catching a
+  // geocode landing genuinely far off.
   //
   // stopDetails carries every address's geocode result (used or excluded)
   // back to the client for troubleshooting — CONFIRMED live (Sep 2026)
@@ -1193,7 +1198,7 @@ async function fetchDrivingRouteMiles(stopAddresses) {
     try {
       const coords = await geoapifyGeocode(addr, originCoords);
       const straightLineMiles = Math.round(_haversineMiles(originCoords, coords) * 10) / 10;
-      const excluded = straightLineMiles > 100;
+      const excluded = straightLineMiles > 350;
       stopDetails.push({ address: addr, lat: coords.lat, lon: coords.lon, straightLineMiles, excluded });
       if (excluded) { failedToGeocode.push(addr + ' (matched ~' + Math.round(straightLineMiles) + ' mi away — likely a wrong address match)'); continue; }
       stopCoords.push(coords);

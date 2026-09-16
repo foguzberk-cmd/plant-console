@@ -4441,6 +4441,12 @@ function _findQbCustomerMatch(name){
 // person clicks the small ↻ to force a recheck (e.g. after fixing an
 // address in QuickBooks).
 var _routeMilesCache={}; // key -> {state:'loading'|'ok'|'error', miles, minutes, error}
+// Same shape/caching as _routeMilesCache above, but for the "regular route"
+// comparison number (a normal car route via Google's Directions API, free
+// to use parkways/highways) shown right next to the truck-mode mileage —
+// the difference between the two is how many extra miles the truck route
+// costs from having to avoid roads it can't legally use.
+var _regularRouteMilesCache={};
 function _routeMilesKey(dName,dk,addresses){
   return dName+'|'+dk+'|'+addresses.slice().sort().join(';');
 }
@@ -4468,6 +4474,31 @@ function _resolveRouteMilesEntry(driverOrders,dName,dk){
   }
   return Object.assign({missing:missing,key:key},entry);
 }
+// Same address-resolution as _resolveRouteMilesEntry above (same customer
+// names -> same QuickBooks addresses), but reads/populates the SEPARATE
+// _regularRouteMilesCache and triggers the Google-backed 'regular' mode
+// fetch instead of the Geoapify truck-mode one. Kept as its own function
+// rather than a mode param threaded through the original, since the two
+// caches, fetch functions, and refresh handlers all need to stay distinct
+// anyway — this mirrors that split at the resolve step too.
+function _resolveRegularRouteMilesEntry(driverOrders,dName,dk){
+  var custNames=[];
+  driverOrders.forEach(function(o){ if(o.customer&&custNames.indexOf(o.customer)<0) custNames.push(o.customer); });
+  if(!custNames.length) return {state:'none'};
+  var addresses=[], missing=[];
+  custNames.forEach(function(name){
+    var c=_findQbCustomerMatch(name);
+    if(c&&c.address){ addresses.push(c.address); } else { missing.push(name); }
+  });
+  if(!addresses.length) return {state:'noaddr'};
+  var key=_routeMilesKey(dName,dk,addresses);
+  var entry=_regularRouteMilesCache[key];
+  if(!entry){
+    entry=_regularRouteMilesCache[key]={state:'loading'};
+    _fetchRegularRouteMilesForCache(key,addresses);
+  }
+  return Object.assign({missing:missing,key:key},entry);
+}
 function _routeMilesLabelHtml(driverOrders,dName,dk){
   var entry=_resolveRouteMilesEntry(driverOrders,dName,dk);
   if(entry.state==='none') return '';
@@ -4482,7 +4513,24 @@ function _routeMilesLabelHtml(driverOrders,dName,dk){
   if(entry.state==='error'){
     return '<span title="'+esc(entry.error||'')+'" style="flex-shrink:0;font-size:10px;color:#a3231b;white-space:nowrap;cursor:help">⚠ route error</span>'+refreshBtn;
   }
-  return '<span onclick="event.stopPropagation();_showRouteMilesBreakdown(\''+_jsStrEsc(entry.key)+'\')" title="Click to see what each stop resolved to" style="flex-shrink:0;font-size:10.5px;color:var(--cold);white-space:nowrap;font-family:var(--mono);cursor:pointer;text-decoration:underline dotted">≈'+entry.miles+' mi'+missingNote+'</span>'+refreshBtn;
+  return '<span onclick="event.stopPropagation();_showRouteMilesBreakdown(\''+_jsStrEsc(entry.key)+'\')" title="Click to see what each stop resolved to" style="flex-shrink:0;font-size:10.5px;color:var(--cold);white-space:nowrap;font-family:var(--mono);cursor:pointer;text-decoration:underline dotted">≈'+entry.miles+' mi'+missingNote+'</span>'+refreshBtn
+    +_regularRouteMilesLabelHtml(driverOrders,dName,dk);
+}
+// Small companion label rendered right after the truck-mode mileage above
+// — the "regular route" comparison number (normal car routing via
+// Google's Directions API). Deliberately quiet/muted styling so it reads
+// as a secondary comparison figure, not a second primary metric.
+function _regularRouteMilesLabelHtml(driverOrders,dName,dk){
+  var entry=_resolveRegularRouteMilesEntry(driverOrders,dName,dk);
+  if(entry.state==='none'||entry.state==='noaddr') return ''; // same addresses as the truck number above — already explained there
+  var refreshBtn='<span onclick="event.stopPropagation();_refreshRegularRouteMiles(\''+_jsStrEsc(entry.key)+'\')" title="Recalculate" style="cursor:pointer;color:var(--muted);font-size:9.5px;margin-left:2px">↻</span>';
+  if(entry.state==='loading'){
+    return ' <span style="flex-shrink:0;font-size:9.5px;color:var(--muted);font-style:italic;white-space:nowrap">· regular route: calculating…</span>';
+  }
+  if(entry.state==='error'){
+    return ' <span title="'+esc(entry.error||'')+'" style="flex-shrink:0;font-size:9.5px;color:var(--muted);white-space:nowrap;cursor:help">· regular route: ⚠ error</span>'+refreshBtn;
+  }
+  return ' <span onclick="event.stopPropagation();_showRegularRouteMilesBreakdown(\''+_jsStrEsc(entry.key)+'\')" title="Normal car route (no truck restrictions) — click to see the leg-by-leg breakdown" style="flex-shrink:0;font-size:9.5px;color:var(--muted);white-space:nowrap;font-family:var(--mono);cursor:pointer;text-decoration:underline dotted">· regular route: ≈'+entry.miles+' mi</span>'+refreshBtn;
 }
 // Shows exactly what each stop's address resolved to (coordinates and
 // straight-line distance from Leader Meat), so a wrong-looking mileage
@@ -4499,6 +4547,18 @@ function _showRouteMilesBreakdown(key){
   alert('Stop-by-stop breakdown (≈'+entry.miles+' mi total):\n\n'+lines.join('\n\n')+'\n\nIf a stop looks wrong, check that customer\'s address in QuickBooks for a missing city/state/ZIP.');
 }
 window._showRouteMilesBreakdown=_showRouteMilesBreakdown;
+// Same idea as _showRouteMilesBreakdown above, but for the regular-route
+// (Google) entry — leg-by-leg since Google's Directions API returns actual
+// driving legs between consecutive stops (in ITS optimized stop order),
+// not a single geocode-per-stop list, so there's no separate
+// excluded/error-per-stop flag to show here.
+function _showRegularRouteMilesBreakdown(key){
+  var entry=_regularRouteMilesCache[key];
+  if(!entry||!entry.stopDetails||!entry.stopDetails.length){ alert('No stop-by-stop details are available for this route yet.'); return; }
+  var lines=entry.stopDetails.map(function(s){ return '✓ to '+s.address+' — '+s.distanceMiles+' mi'; });
+  alert('Regular route, stop-by-stop (≈'+entry.miles+' mi total, normal car routing):\n\n'+lines.join('\n\n'));
+}
+window._showRegularRouteMilesBreakdown=_showRegularRouteMilesBreakdown;
 // Per-driver total mileage across one week — sums each day's route-miles
 // entry (same cache the per-row labels use, grouped by day+driver) so it
 // stays consistent with whatever the individual rows show. Reads from
@@ -4566,6 +4626,33 @@ function _refreshRouteMiles(key){
   _renderOrdersWeekSummary();
 }
 window._refreshRouteMiles=_refreshRouteMiles;
+// Same as _fetchRouteMilesForCache above, but sends mode:'regular' so the
+// server calls Google's Directions API instead of Geoapify, and writes
+// into the separate _regularRouteMilesCache.
+function _fetchRegularRouteMilesForCache(key,addresses){
+  fetch('/api/data/driver-route-miles',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({addresses:addresses,mode:'regular'})
+  }).then(function(res){
+    return res.json().then(function(data){ return {ok:res.ok,data:data}; });
+  }).then(function(result){
+    if(!result.ok||!result.data||!result.data.success){
+      _regularRouteMilesCache[key]={state:'error',error:(result.data&&result.data.error)||'unknown error'};
+    } else {
+      _regularRouteMilesCache[key]={state:'ok',miles:result.data.miles,minutes:result.data.minutes,stopDetails:result.data.stopDetails||[]};
+    }
+    _renderOrdersWeekSummary();
+  }).catch(function(){
+    _regularRouteMilesCache[key]={state:'error',error:'Could not reach the server.'};
+    _renderOrdersWeekSummary();
+  });
+}
+function _refreshRegularRouteMiles(key){
+  delete _regularRouteMilesCache[key];
+  _renderOrdersWeekSummary();
+}
+window._refreshRegularRouteMiles=_refreshRegularRouteMiles;
 function _findQbItemMatch(name){
   if(!name) return null;
   var nameLower=name.trim().toLowerCase();

@@ -1132,7 +1132,18 @@ async function fetchDrivingRouteMiles(stopAddresses) {
     destination: { address: LEADER_MEAT_ADDRESS },
     intermediates: stopAddresses.map(a => ({ address: a })),
     travelMode: 'DRIVE',
-    optimizeWaypointOrder: true
+    optimizeWaypointOrder: true,
+    // CONFIRMED live (Sep 2026): the trucks are commercial vehicles and
+    // can't legally use NJ parkways (Garden State Parkway, Palisades
+    // Parkway), which the owner flagged as making estimates unrealistic.
+    // Google's Directions/Routes API has no "avoid parkways specifically"
+    // option — only this blunter avoidHighways, which also routes away
+    // from the NJ Turnpike and interstates that trucks CAN and should
+    // use. Accepted as a known trade-off (owner's choice) rather than a
+    // real fix — true truck-legal routing (respecting which highways are
+    // actually banned vs. allowed) needs a dedicated commercial routing
+    // service like HERE Truck Routing or PC*Miler/Trimble, not this API.
+    routeModifiers: { avoidHighways: true }
   });
   const res = await httpsRequest({
     hostname: 'routes.googleapis.com',

@@ -41,10 +41,13 @@ services:
       # only real-time Customer/Vendor webhook updates need it.
       - key: QB_WEBHOOK_VERIFIER_TOKEN
         sync: false
-      # Google Maps Platform API key with the Directions API enabled and
-      # billing set up — powers the driver route-mileage estimate
-      # (/api/data/driver-route-miles). Entirely optional: everything else
-      # in the app works fine without this set, that one feature just
-      # returns a clear "no API key configured" error until it is.
-      - key: GOOGLE_MAPS_API_KEY
+      # Free Geoapify API key (no credit card, 3,000 credits/day) — powers
+      # the driver route-mileage estimate (/api/data/driver-route-miles),
+      # using Geoapify's truck-mode routing so estimates account for real
+      # truck road restrictions (like NJ parkway bans) instead of Google's
+      # all-or-nothing "avoid every highway" toggle. Entirely optional:
+      # everything else in the app works fine without this set, that one
+      # feature just returns a clear "no API key configured" error until
+      # it is. Get a key at myprojects.geoapify.com (free, no card).
+      - key: GEOAPIFY_API_KEY
         sync: false

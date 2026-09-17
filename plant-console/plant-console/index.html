@@ -4737,19 +4737,29 @@ function _weekDriverMileageSummaryHtml(weekOrders){
   });
   var driverNames=Object.keys(perDriver).sort();
   if(!driverNames.length) return '';
+  // Fixed-width, centered columns for Orders/Miles (same pattern as the
+  // per-row TRUCKING ROUTE/REGULAR ROUTE columns elsewhere) — CONFIRMED
+  // live (Sep 2026) that without a shared fixed width, numbers of
+  // different lengths didn't line up into real columns; "across N days"
+  // dropped since the two numbers alone are what's wanted here.
+  var colW=90;
+  var colStyle='width:'+colW+'px;text-align:center;flex-shrink:0';
   var rows=driverNames.map(function(dName,i){
     var pd=perDriver[dName];
-    var pendingNote=pd.daysPending?(' <span style="color:var(--muted);font-style:italic">('+pd.daysPending+' calculating…)</span>'):'';
-    // Faint alternating row shading — CONFIRMED live (Sep 2026) that this
-    // alone (no dotted leader line needed) is enough for the eye to track
-    // a name across to its number on a wide row.
-    return '<div style="display:flex;justify-content:space-between;gap:12px;padding:5px 14px;font-size:11.5px'+(i%2?';background:rgba(27,94,47,.05)':'')+'">'
-      +'<span style="font-family:var(--mono);color:#1b5e2f;white-space:nowrap;flex-shrink:0">'+esc(dName)+'</span>'
-      +'<span style="font-family:var(--mono);color:#1b5e2f;white-space:nowrap;flex-shrink:0">'+pd.orderCount+' order'+(pd.orderCount!==1?'s':'')+' · '+(pd.daysDone?'≈'+(Math.round(pd.totalMiles*10)/10)+' mi across '+pd.daysDone+' day'+(pd.daysDone!==1?'s':''):'—')+pendingNote+'</span>'
+    var pendingNote=pd.daysPending?(' <span style="color:var(--muted);font-style:italic;font-size:10px">('+pd.daysPending+' calc…)</span>'):'';
+    return '<div style="display:flex;align-items:center;gap:12px;padding:5px 14px;font-size:11.5px'+(i%2?';background:rgba(27,94,47,.05)':'')+'">'
+      +'<span style="flex:1;font-family:var(--mono);color:#1b5e2f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(dName)+'</span>'
+      +'<span style="'+colStyle+';font-family:var(--mono);color:#1b5e2f">'+pd.orderCount+'</span>'
+      +'<span style="'+colStyle+';font-family:var(--mono);color:#1b5e2f;white-space:nowrap">'+(pd.daysDone?'≈'+(Math.round(pd.totalMiles*10)/10)+' mi':'—')+pendingNote+'</span>'
     +'</div>';
   }).join('');
   return '<div style="background:#dcefe1;border-bottom:1px solid #b9dfc0;padding:6px 0">'
     +'<div style="padding:4px 14px;font-size:10.5px;font-weight:700;color:#1b5e2f;text-transform:uppercase;letter-spacing:.03em">Weekly mileage by driver</div>'
+    +'<div style="display:flex;align-items:center;gap:12px;padding:2px 14px 4px">'
+      +'<span style="flex:1"></span>'
+      +'<span style="'+colStyle+';font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#1b5e2f;opacity:.65">Orders</span>'
+      +'<span style="'+colStyle+';font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#1b5e2f;opacity:.65">Miles</span>'
+    +'</div>'
     +rows
   +'</div>';
 }

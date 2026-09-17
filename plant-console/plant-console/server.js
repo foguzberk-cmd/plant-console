@@ -1227,14 +1227,37 @@ async function fetchDrivingRouteMiles(stopAddresses) {
   // need to avoid parkways — medium_truck (< 7.5 t, < ~4.1 m / 13.5 ft
   // height) matches a typical box truck's real legal restrictions much
   // more closely without over-restricting the route.
-  const path = '/v1/routing?waypoints=' + encodeURIComponent(waypointsRaw) + '&mode=medium_truck&optimize_stops=true&units=imperial&format=json&apiKey=' + GEOAPIFY_API_KEY;
+  const path = '/v1/routing?waypoints=' + encodeURIComponent(waypointsRaw) + '&mode=medium_truck&optimize_stops=true&units=imperial&format=json&details=instruction_details&apiKey=' + GEOAPIFY_API_KEY;
   const res = await httpsRequest({ hostname: 'api.geoapify.com', path, method: 'GET' });
   const data = JSON.parse(res.body || '{}');
   if (res.status !== 200) throw new Error('Geoapify Routing API error ' + res.status + ': ' + (data.message || res.body));
   const route = data.results && data.results[0];
   if (!route) throw new Error('No route returned.');
+  // Which actual roads it drove, by total distance on each — this is what
+  // finally answers "is this mileage really right?" instead of trusting a
+  // single number: CONFIRMED live (Sep 2026) that a huge NJ->Brooklyn
+  // detour looked wrong at a glance, and it turned out to be real (the
+  // direct bridge/parkway route is barred to ALL trucks regardless of
+  // size, not just heavy ones) — but that took pulling turn-by-turn data
+  // to actually confirm rather than assume. Aggregated by street name
+  // (steps on the same street, even non-consecutively, are summed) since
+  // a single street can span several steps around turns/intersections.
+  const roadTotals = {};
+  (route.legs || []).forEach(function (leg) {
+    (leg.steps || []).forEach(function (step) {
+      const streets = (step.instruction && step.instruction.streets) || [];
+      const name = streets.length ? streets.join('/') : ((step.instruction && step.instruction.text) || '(unnamed road)');
+      roadTotals[name] = (roadTotals[name] || 0) + (step.distance || 0);
+    });
+  });
+  const majorRoads = Object.keys(roadTotals)
+    .map(function (name) { return { name: name, miles: Math.round(roadTotals[name] / 1609.34 * 10) / 10 }; })
+    .filter(function (r) { return r.miles >= 0.3; }) // drop tiny local turns/intersections, keep anything that's an actual stretch of driving
+    .sort(function (a, b) { return b.miles - a.miles; })
+    .slice(0, 12);
   return {
     stopDetails,
+    majorRoads,
     miles: Math.round(route.distance * 10) / 10,
     minutes: Math.round(route.time / 60)
   };

@@ -1173,9 +1173,9 @@ function _haversineMiles(a, b) {
 // every stop as a waypoint in between. optimize_stops:true lets it reorder
 // the stops for the shortest total route — this is meant as a planning
 // ESTIMATE of total miles/time for the day, not a turn-by-turn assignment
-// of stop order. mode=truck (22t) is a general commercial-truck profile
-// that routes using real truck road-restriction data (including roads
-// legally closed to trucks, like NJ parkways), rather than Google's
+// of stop order. mode=medium_truck (see below) routes using real truck
+// road-restriction data (including roads legally closed to trucks, like NJ
+// parkways) sized for an actual box truck, rather than Google's
 // all-or-nothing "avoid every highway" toggle that this replaced.
 async function fetchDrivingRouteMiles(stopAddresses) {
   if (!GEOAPIFY_API_KEY) throw new Error('NO_API_KEY');
@@ -1218,7 +1218,16 @@ async function fetchDrivingRouteMiles(stopAddresses) {
   }
   if (!stopCoords.length) throw new Error('None of the stop addresses could be located: ' + failedToGeocode.join('; '));
   const waypointsRaw = [originCoords].concat(stopCoords, [originCoords]).map(c => c.lat + ',' + c.lon).join('|');
-  const path = '/v1/routing?waypoints=' + encodeURIComponent(waypointsRaw) + '&mode=truck&optimize_stops=true&units=imperial&format=json&apiKey=' + GEOAPIFY_API_KEY;
+  // mode=medium_truck (not the plain "truck" mode) — Geoapify's "truck"
+  // profile is actually their heaviest non-hazmat class (up to 22 tonnes,
+  // ~21.6 m long: a full semi/tractor-trailer), which was routing AROUND
+  // low bridges/tunnels a regular box truck can clear just fine, on top of
+  // the parkway-ban restriction that's actually wanted. CONFIRMED live
+  // (Sep 2026) that these are regular box trucks, not semis, and only
+  // need to avoid parkways — medium_truck (< 7.5 t, < ~4.1 m / 13.5 ft
+  // height) matches a typical box truck's real legal restrictions much
+  // more closely without over-restricting the route.
+  const path = '/v1/routing?waypoints=' + encodeURIComponent(waypointsRaw) + '&mode=medium_truck&optimize_stops=true&units=imperial&format=json&apiKey=' + GEOAPIFY_API_KEY;
   const res = await httpsRequest({ hostname: 'api.geoapify.com', path, method: 'GET' });
   const data = JSON.parse(res.body || '{}');
   if (res.status !== 200) throw new Error('Geoapify Routing API error ' + res.status + ': ' + (data.message || res.body));

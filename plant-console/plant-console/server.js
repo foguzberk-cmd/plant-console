@@ -1287,8 +1287,14 @@ async function fetchDrivingRouteMiles(stopAddresses) {
       roadTotals[name] = (roadTotals[name] || 0) + (step.distance || 0);
     });
   });
+  // NOTE: the request above passes units=imperial, so Geoapify returns
+  // step.distance already in MILES here — NOT meters. (Confirmed live
+  // Sep 2026: an earlier version of this code divided by 1609.34 again,
+  // as if converting meters to miles, which silently shrank every road's
+  // total by ~1600x and meant it always failed the >= 0.3 mi filter below
+  // — "Roads driven" never actually appeared in the breakdown popup.)
   const majorRoads = Object.keys(roadTotals)
-    .map(function (name) { return { name: name, miles: Math.round(roadTotals[name] / 1609.34 * 10) / 10 }; })
+    .map(function (name) { return { name: name, miles: Math.round(roadTotals[name] * 10) / 10 }; })
     .filter(function (r) { return r.miles >= 0.3; }) // drop tiny local turns/intersections, keep anything that's an actual stretch of driving
     .sort(function (a, b) { return b.miles - a.miles; })
     .slice(0, 12);

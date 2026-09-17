@@ -3385,9 +3385,13 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
     var count=byDay[dk].length;
     var openKey='shipday:'+dk;
     var rowId='ordShipDay-'+wi+'-'+di;
-    return '<div onclick="toggleOrdersRow(\''+rowId+'\',\''+_jsStrEsc(openKey)+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:10px 14px 10px 26px;background:#e3f3e6;border-bottom:1px solid #b9dfc0">'
-      +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#1b5e2f;flex-shrink:0'+(_ordersRowOpen[openKey]?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
-      +'<span style="font-weight:700;font-size:13px;color:#1b5e2f">'+fmtDayOrd(dk)+' ('+count+')</span>'
+    return '<div style="display:flex;align-items:center;gap:8px;padding:10px 14px 10px 26px;background:#e3f3e6;border-bottom:1px solid #b9dfc0">'
+      +'<span onclick="toggleOrdersRow(\''+rowId+'\',\''+_jsStrEsc(openKey)+'\')" style="cursor:pointer;flex:1;display:flex;align-items:center;gap:8px">'
+        +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#1b5e2f;flex-shrink:0'+(_ordersRowOpen[openKey]?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
+        +'<span style="font-weight:700;font-size:13px;color:#1b5e2f">'+fmtDayOrd(dk)+' ('+count+')</span>'
+      +'</span>'
+      +'<span style="flex-shrink:0;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#1b5e2f;opacity:.65;margin-right:10px">Trucking route</span>'
+      +'<span style="flex-shrink:0;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#1b5e2f;opacity:.65">Regular route</span>'
     +'</div>'
     +'<div id="'+rowId+'" style="display:'+(_ordersIsOpen(openKey,q)?'block':'none')+'">'
       +(function(){
@@ -4208,6 +4212,7 @@ function _renderOrdersWeekSummary(){
         +'<svg id="ordDay-'+di+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#8a6d1a;flex-shrink:0'+(_ordersIsOpen('day:'+dk,q)?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
         +'<span style="font-weight:700;font-size:13px;color:#5c4813">'+label+'</span>'
       +'</span>'
+      +_routeMilesColumnHeadersHtml()
       +'<button title="Print processing sheet for this whole day, all drivers combined" onclick="event.stopPropagation();printProcessingSheet(['+byDay[dk].map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(fmtDayOrd(dk)+' — Processing (All Drivers)')+'\')" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:#8a6d1a;font-size:14px">🏭</button>'
     +'</div>'
     +'<div id="ordDay-'+di+'" style="display:'+(_ordersIsOpen('day:'+dk,q)?'block':'none')+'">'
@@ -4459,6 +4464,14 @@ var _regularRouteMilesCache={};
 function _routeMilesKey(dName,dk,addresses){
   return dName+'|'+dk+'|'+addresses.slice().sort().join(';');
 }
+// Static column-header labels shown once per day (not repeated on every
+// driver row anymore — see _regularRouteMilesLabelHtml) identifying the
+// two mileage numbers that appear on each driver row below: the bold
+// truck-route figure and the quieter regular-route comparison figure.
+function _routeMilesColumnHeadersHtml(){
+  return '<span style="flex-shrink:0;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#8a6d1a;opacity:.75;margin-right:10px">Trucking route</span>'
+    +'<span style="flex-shrink:0;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#8a6d1a;opacity:.75;margin-right:6px">Regular route</span>';
+}
 // Resolves a driver's stops for one day to a cached (or freshly-triggered)
 // route-miles entry, WITHOUT building any HTML — shared by the per-row
 // label (_routeMilesLabelHtml, used in both Received and Shipped Orders)
@@ -4515,31 +4528,40 @@ function _routeMilesLabelHtml(driverOrders,dName,dk){
     return '<span title="None of these customers have an address on file in QuickBooks yet" style="flex-shrink:0;font-size:13px;color:var(--muted);white-space:nowrap;cursor:help">no addresses on file</span>';
   }
   var missingNote=(entry.missing&&entry.missing.length)?(' <span title="No address on file: '+esc(entry.missing.join(', '))+'" style="cursor:help;color:var(--muted)">('+entry.missing.length+' skipped)</span>'):'';
-  var refreshBtn='<span onclick="event.stopPropagation();_refreshRouteMiles(\''+_jsStrEsc(entry.key)+'\')" title="Recalculate" style="cursor:pointer;color:var(--muted);font-size:13px;margin-left:4px">↻</span>';
+  var truckPart;
   if(entry.state==='loading'){
-    return '<span style="flex-shrink:0;font-size:13px;color:var(--muted);font-style:italic;white-space:nowrap">calculating miles…</span>';
+    truckPart='<span style="flex-shrink:0;font-size:13px;color:var(--muted);font-style:italic;white-space:nowrap">calculating miles…</span>';
+  } else if(entry.state==='error'){
+    truckPart='<span title="'+esc(entry.error||'')+'" style="flex-shrink:0;font-size:13px;color:#a3231b;white-space:nowrap;cursor:help">⚠ route error</span>';
+  } else {
+    truckPart='<span onclick="event.stopPropagation();_showRouteMilesBreakdown(\''+_jsStrEsc(entry.key)+'\')" title="Truck route — click to see what each stop resolved to" style="flex-shrink:0;font-size:14px;font-weight:700;color:var(--cold);white-space:nowrap;font-family:var(--mono);cursor:pointer;text-decoration:underline dotted">≈'+entry.miles+' mi'+missingNote+'</span>';
   }
-  if(entry.state==='error'){
-    return '<span title="'+esc(entry.error||'')+'" style="flex-shrink:0;font-size:13px;color:#a3231b;white-space:nowrap;cursor:help">⚠ route error</span>'+refreshBtn;
-  }
-  return '<span onclick="event.stopPropagation();_showRouteMilesBreakdown(\''+_jsStrEsc(entry.key)+'\')" title="Click to see what each stop resolved to" style="flex-shrink:0;font-size:14px;font-weight:700;color:var(--cold);white-space:nowrap;font-family:var(--mono);cursor:pointer;text-decoration:underline dotted">≈'+entry.miles+' mi'+missingNote+'</span>'+refreshBtn
-    +_regularRouteMilesLabelHtml(driverOrders,dName,dk);
+  // ONE refresh button for both numbers (CONFIRMED live Sep 2026 — two
+  // separate ↻ buttons, one per number, was confusing since they always
+  // need refreshing together after any real change to the stop list).
+  // Both caches use the exact same key (same driver+day+address set), so
+  // entry.key from the truck side is all _refreshBothRouteMiles needs.
+  var refreshBtn='<span onclick="event.stopPropagation();_refreshBothRouteMiles(\''+_jsStrEsc(entry.key)+'\')" title="Recalculate both truck and regular route" style="cursor:pointer;color:var(--muted);font-size:13px;margin-left:4px">↻</span>';
+  return truckPart+_regularRouteMilesLabelHtml(driverOrders,dName,dk)+refreshBtn;
 }
 // Small companion label rendered right after the truck-mode mileage above
 // — the "regular route" comparison number (normal car routing via
 // Google's Directions API). Deliberately quiet/muted styling so it reads
-// as a secondary comparison figure, not a second primary metric.
+// as a secondary comparison figure, not a second primary metric. No
+// "regular route:" prefix text or its own refresh button anymore — the
+// day header above now labels the two columns once instead of repeating
+// the label on every single row, and refreshing is shared (see
+// _routeMilesLabelHtml above).
 function _regularRouteMilesLabelHtml(driverOrders,dName,dk){
   var entry=_resolveRegularRouteMilesEntry(driverOrders,dName,dk);
   if(entry.state==='none'||entry.state==='noaddr') return ''; // same addresses as the truck number above — already explained there
-  var refreshBtn='<span onclick="event.stopPropagation();_refreshRegularRouteMiles(\''+_jsStrEsc(entry.key)+'\')" title="Recalculate" style="cursor:pointer;color:var(--muted);font-size:12px;margin-left:3px">↻</span>';
   if(entry.state==='loading'){
-    return ' <span style="flex-shrink:0;font-size:12px;color:var(--muted);font-style:italic;white-space:nowrap">· regular route: calculating…</span>';
+    return ' <span style="flex-shrink:0;font-size:12px;color:var(--muted);font-style:italic;white-space:nowrap">· calculating…</span>';
   }
   if(entry.state==='error'){
-    return ' <span title="'+esc(entry.error||'')+'" style="flex-shrink:0;font-size:12px;color:var(--muted);white-space:nowrap;cursor:help">· regular route: ⚠ error</span>'+refreshBtn;
+    return ' <span title="'+esc(entry.error||'')+'" style="flex-shrink:0;font-size:12px;color:var(--muted);white-space:nowrap;cursor:help">· ⚠ error</span>';
   }
-  return ' <span onclick="event.stopPropagation();_showRegularRouteMilesBreakdown(\''+_jsStrEsc(entry.key)+'\')" title="Normal car route (no truck restrictions) — click to see the leg-by-leg breakdown" style="flex-shrink:0;font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap;font-family:var(--mono);cursor:pointer;text-decoration:underline dotted">· regular route: ≈'+entry.miles+' mi</span>'+refreshBtn;
+  return ' <span onclick="event.stopPropagation();_showRegularRouteMilesBreakdown(\''+_jsStrEsc(entry.key)+'\')" title="Regular route (normal car, no truck restrictions) — click to see the leg-by-leg breakdown" style="flex-shrink:0;font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap;font-family:var(--mono);cursor:pointer;text-decoration:underline dotted">· ≈'+entry.miles+' mi</span>';
 }
 // Shows exactly what each stop's address resolved to (coordinates and
 // straight-line distance from Leader Meat), so a wrong-looking mileage
@@ -4640,11 +4662,15 @@ function _fetchRouteMilesForCache(key,addresses){
     _renderOrdersWeekSummary();
   });
 }
-function _refreshRouteMiles(key){
+// One shared refresh for both numbers — both caches key on the exact same
+// driver+day+address-set string (see _routeMilesKey), so a single key
+// clears both entries and triggers a fresh fetch of each.
+function _refreshBothRouteMiles(key){
   delete _routeMilesCache[key];
+  delete _regularRouteMilesCache[key];
   _renderOrdersWeekSummary();
 }
-window._refreshRouteMiles=_refreshRouteMiles;
+window._refreshBothRouteMiles=_refreshBothRouteMiles;
 // Same as _fetchRouteMilesForCache above, but sends mode:'regular' so the
 // server calls Google's Directions API instead of Geoapify, and writes
 // into the separate _regularRouteMilesCache.
@@ -4667,11 +4693,6 @@ function _fetchRegularRouteMilesForCache(key,addresses){
     _renderOrdersWeekSummary();
   });
 }
-function _refreshRegularRouteMiles(key){
-  delete _regularRouteMilesCache[key];
-  _renderOrdersWeekSummary();
-}
-window._refreshRegularRouteMiles=_refreshRegularRouteMiles;
 function _findQbItemMatch(name){
   if(!name) return null;
   var nameLower=name.trim().toLowerCase();

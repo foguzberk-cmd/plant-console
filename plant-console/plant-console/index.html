@@ -8446,6 +8446,18 @@ function _cfScheduledAmountFor(billId){
   if(!rec||!rec.splits) return 0;
   return rec.splits.reduce(function(s,sp){ return sp.paid?s:s+Number(sp.amount||0); },0);
 }
+// The bill's issue date (QuickBooks TxnDate) for display in the
+// Scheduled/Approved/In Process/Paid tables. Prefers the value pinned onto
+// the record at schedule time (rec.issued); records created before that
+// field existed won't have it, so this falls back to looking the bill up
+// in the last live pull (_cashFlowBills) — works as long as the bill is
+// still open/in that pull, blank otherwise (e.g. a bill that's since been
+// fully paid off and dropped from the open-bills pull).
+function _cfIssuedDateFor(billId,rec){
+  if(rec&&rec.issued) return rec.issued;
+  var bill=(_cashFlowBills||[]).find(function(b){ return b.Id===billId; });
+  return (bill&&bill.TxnDate)||'';
+}
 // What's left of a bill's balance that ISN'T actively committed yet — this
 // is what still shows in the main vendor table.
 function _cfRemainingFor(bill){
@@ -8475,6 +8487,7 @@ function _cfAddSplit(billId,date,amount){
       vendorId:vendorId,
       docNum:(bill&&bill.DocNumber)||'',
       due:(bill&&bill.DueDate)||'',
+      issued:(bill&&bill.TxnDate)||'', // the bill's own issue date in QuickBooks — shown as its own column across the Scheduled/Approved/In Process/Paid sections, separate from the due date
       balance:Number(bill&&bill.Balance||0),
       vendorBalanceAtSchedule:Math.round(vendorTotalBalance*100)/100,
       splits:[]
@@ -9311,7 +9324,7 @@ function renderScheduledPaymentsSection(){
       if(split.initiated) return;
       if(!_cfMatchesSearch(rec.vendor,rec.docNum,split.amount)) return;
       if(!byDate[split.date]) byDate[split.date]=[];
-      byDate[split.date].push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,split:split});
+      byDate[split.date].push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,issued:_cfIssuedDateFor(billId,rec),split:split});
     });
   });
 
@@ -9349,18 +9362,19 @@ function renderScheduledPaymentsSection(){
       +'<button class="btn btn-sm" onclick="clearCFSchedSelection()">Clear selection</button>'
     +'</div>'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#fffdf5;color:#000;border:1px solid #e0c56b">'
-    +'<colgroup><col style="width:130px"><col style="width:220px"><col style="width:100px"><col style="width:140px"><col style="width:150px"><col style="width:64px"></colgroup>'
+    +'<colgroup><col style="width:130px"><col style="width:220px"><col style="width:100px"><col style="width:110px"><col style="width:140px"><col style="width:150px"><col style="width:64px"></colgroup>'
     +'<thead><tr>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Scheduled Date</th>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Vendor</th>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Bill #</th>'
+      +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Bill Issued</th>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:left;font-weight:700">Payment Date (QB)</th>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:right;font-weight:700">Balance</th>'
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:center">'+(hasPerm('cfApprovePayment')?'<input type="checkbox" id="cfSchedSelectAll" onchange="toggleCFSchedSelectAll(this.checked)" title="Select all" style="cursor:pointer"/>':'')+'</th>'
     +'</tr></thead><tbody>';
 
   if(!dateKeys.length){
-    html+='<tr><td colspan="6" style="border:1px solid #e0c56b;padding:14px;text-align:center;color:#888">Nothing scheduled right now.</td></tr></tbody></table></div>';
+    html+='<tr><td colspan="7" style="border:1px solid #e0c56b;padding:14px;text-align:center;color:#888">Nothing scheduled right now.</td></tr></tbody></table></div>';
     el.innerHTML=html;
     return;
   }
@@ -9378,7 +9392,7 @@ function renderScheduledPaymentsSection(){
     var rowClass='wk-cfScheduled-'+weekMonday;
     var weekIsCollapsed=!!_weekCollapsed[weekKey];
     html+='<tr class="'+rowClass+'-hdr" onclick="toggleCFWeekGroup(\''+weekKey+'\',\''+rowClass+'\')" style="cursor:pointer">'
-      +'<td colspan="4" style="border:1px solid #c9a227;padding:7px 10px;font-weight:700;background:#ffe082">'
+      +'<td colspan="5" style="border:1px solid #c9a227;padding:7px 10px;font-weight:700;background:#ffe082">'
         +'<span id="wk-chev-'+rowClass+'" style="display:inline-block;transition:transform .12s;margin-right:8px;transform:rotate('+(weekIsCollapsed?'-90deg':'0deg')+');font-size:16px;line-height:1;vertical-align:middle;color:#000">▾</span>'
         +esc(weekLabel)
       +'</td>'
@@ -9402,6 +9416,7 @@ function renderScheduledPaymentsSection(){
           +'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(row.docNum||'')+'</td>'
+          +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(row.issued?fmtDateUS(row.issued):'—')+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px">'+esc(row.due?fmtDateUS(row.due):'—')+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
           +'<td style="border:1px solid #e0c56b;padding:5px 10px;text-align:right;white-space:nowrap">'
@@ -9415,7 +9430,7 @@ function renderScheduledPaymentsSection(){
   });
 
   html+='<tr>'
-    +'<td colspan="4" style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe58a">TOTAL SCHEDULED</td>'
+    +'<td colspan="5" style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe58a">TOTAL SCHEDULED</td>'
     +'<td style="border:1px solid #c9a227;padding:7px 10px;text-align:right;font-weight:700;background:#ffe58a;font-family:var(--mono)">'+money(grandTotal)+'</td>'
     +'<td style="border:1px solid #c9a227;background:#ffe58a;text-align:center">'
       +'<button class="no-print" onclick="printReportSection(\'cf-scheduled-section\',\'Scheduled Payments\')" title="Print entire list" style="padding:1px 5px;font-size:12px;line-height:1;border:1px solid #c9a227;border-radius:5px;background:#fff8e1;cursor:pointer">🖨</button>'
@@ -9448,7 +9463,7 @@ function renderApprovedPaymentsSection(){
       if(!split.initiated || split.inProcess || split.paid) return;
       if(!_cfMatchesSearch(rec.vendor,rec.docNum,split.amount)) return;
       if(!byDate[split.date]) byDate[split.date]=[];
-      byDate[split.date].push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,split:split});
+      byDate[split.date].push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,issued:_cfIssuedDateFor(billId,rec),split:split});
     });
   });
 
@@ -9460,18 +9475,19 @@ function renderApprovedPaymentsSection(){
   var html=_collapsibleHeader('cfApproved','✅ Approved Payments — ready to pay',totalCount,'cf-approved-section','Approved Payments')
     +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#f3fbf4;color:#000;border:1px solid #8fcf9a">'
-    +'<colgroup><col style="width:130px"><col style="width:220px"><col style="width:100px"><col style="width:140px"><col style="width:150px"><col style="width:44px"></colgroup>'
+    +'<colgroup><col style="width:130px"><col style="width:220px"><col style="width:100px"><col style="width:110px"><col style="width:140px"><col style="width:150px"><col style="width:44px"></colgroup>'
     +'<thead><tr>'
       +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px;text-align:left;font-weight:700">Scheduled Date</th>'
       +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px;text-align:left;font-weight:700">Vendor</th>'
       +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px;text-align:left;font-weight:700">Bill #</th>'
+      +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px;text-align:left;font-weight:700">Bill Issued</th>'
       +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px;text-align:left;font-weight:700">Payment Date (QB)</th>'
       +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px;text-align:right;font-weight:700">Balance</th>'
       +'<th style="border:1px solid #8fcf9a;background:#d9f0dc;padding:6px 10px"></th>'
     +'</tr></thead><tbody>';
 
   if(!dateKeys.length){
-    html+='<tr><td colspan="6" style="border:1px solid #8fcf9a;padding:14px;text-align:center;color:#888">Nothing approved right now.</td></tr></tbody></table></div>';
+    html+='<tr><td colspan="7" style="border:1px solid #8fcf9a;padding:14px;text-align:center;color:#888">Nothing approved right now.</td></tr></tbody></table></div>';
     el.innerHTML=html;
     return;
   }
@@ -9489,6 +9505,7 @@ function renderApprovedPaymentsSection(){
         +'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>'+esc(row.docNum||'')+'</span>'+(row.docNum?'<span onclick="copyToClipboard(this,\''+esc(row.docNum)+'\')" title="Copy bill #" style="cursor:pointer;opacity:.6;font-size:16px;flex-shrink:0">📋</span>':'')+'</div></td>'
+        +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.issued?fmtDateUS(row.issued):'—')+'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px">'+esc(row.due?fmtDateUS(row.due):'—')+'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
         +'<td style="border:1px solid #8fcf9a;padding:5px 10px;text-align:right">'
@@ -9500,7 +9517,7 @@ function renderApprovedPaymentsSection(){
   });
 
   html+='<tr>'
-    +'<td colspan="4" style="border:1px solid #388e3c;padding:7px 10px;text-align:right;font-weight:700;background:#c8e6c9">TOTAL APPROVED</td>'
+    +'<td colspan="5" style="border:1px solid #388e3c;padding:7px 10px;text-align:right;font-weight:700;background:#c8e6c9">TOTAL APPROVED</td>'
     +'<td style="border:1px solid #388e3c;padding:7px 10px;text-align:right;font-weight:700;background:#c8e6c9;font-family:var(--mono)">'+money(grandTotal)+'</td>'
     +'<td style="border:1px solid #388e3c;background:#c8e6c9;text-align:center">'
       +'<button class="no-print" onclick="printReportSection(\'cf-approved-section\',\'Approved Payments\')" title="Print entire list" style="padding:1px 5px;font-size:12px;line-height:1;border:1px solid #388e3c;border-radius:5px;background:#e8f5e9;cursor:pointer">🖨</button>'
@@ -9528,7 +9545,7 @@ function renderInProcessPaymentsSection(){
       if(!split.inProcess || split.paid) return;
       if(!_cfMatchesSearch(rec.vendor,rec.docNum,split.amount)) return;
       if(!byDate[split.date]) byDate[split.date]=[];
-      byDate[split.date].push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,split:split});
+      byDate[split.date].push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,issued:_cfIssuedDateFor(billId,rec),split:split});
     });
   });
 
@@ -9560,11 +9577,12 @@ function renderInProcessPaymentsSection(){
   var html=_collapsibleHeader('cfInProcess','🔄 In Process — payment sent, awaiting confirmation',totalCount,'cf-inprocess-section','In Process Payments')
     +'<div style="display:'+(collapsed?'none':'block')+'">'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#eef4fb;color:#000;border:1px solid #a9c6e8">'
-    +'<colgroup><col style="width:130px"><col style="width:190px"><col style="width:90px"><col style="width:130px"><col style="width:90px"><col style="width:150px"><col style="width:44px"></colgroup>'
+    +'<colgroup><col style="width:130px"><col style="width:190px"><col style="width:90px"><col style="width:100px"><col style="width:130px"><col style="width:90px"><col style="width:150px"><col style="width:44px"></colgroup>'
     +'<thead><tr>'
       +'<th style="border:1px solid #a9c6e8;background:#d7e6f7;padding:6px 10px;text-align:left;font-weight:700">Scheduled Date</th>'
       +'<th style="border:1px solid #a9c6e8;background:#d7e6f7;padding:6px 10px;text-align:left;font-weight:700">Vendor</th>'
       +'<th style="border:1px solid #a9c6e8;background:#d7e6f7;padding:6px 10px;text-align:left;font-weight:700">Bill #</th>'
+      +'<th style="border:1px solid #a9c6e8;background:#d7e6f7;padding:6px 10px;text-align:left;font-weight:700">Bill Issued</th>'
       +'<th style="border:1px solid #a9c6e8;background:#d7e6f7;padding:6px 10px;text-align:left;font-weight:700">Payment Date (QB)</th>'
       +'<th style="border:1px solid #a9c6e8;background:#d7e6f7;padding:6px 10px;text-align:left;font-weight:700">Method</th>'
       +'<th style="border:1px solid #a9c6e8;background:#d7e6f7;padding:6px 10px;text-align:right;font-weight:700">Balance</th>'
@@ -9572,7 +9590,7 @@ function renderInProcessPaymentsSection(){
     +'</tr></thead><tbody>';
 
   if(!dateKeys.length){
-    html+='<tr><td colspan="7" style="border:1px solid #a9c6e8;padding:14px;text-align:center;color:#888">Nothing in process right now.</td></tr></tbody></table></div>';
+    html+='<tr><td colspan="8" style="border:1px solid #a9c6e8;padding:14px;text-align:center;color:#888">Nothing in process right now.</td></tr></tbody></table></div>';
     el.innerHTML=html;
     return;
   }
@@ -9588,7 +9606,7 @@ function renderInProcessPaymentsSection(){
     var rowClass='wk-cfInProcess-'+weekMonday;
     var weekIsCollapsed=!!_weekCollapsed[weekKey];
     html+='<tr class="'+rowClass+'-hdr" onclick="toggleCFWeekGroup(\''+weekKey+'\',\''+rowClass+'\')" style="cursor:pointer">'
-      +'<td colspan="5" style="border:1px solid #1565c0;padding:7px 10px;font-weight:700;background:#bbdefb">'
+      +'<td colspan="6" style="border:1px solid #1565c0;padding:7px 10px;font-weight:700;background:#bbdefb">'
         +'<span id="wk-chev-'+rowClass+'" style="display:inline-block;transition:transform .12s;margin-right:8px;transform:rotate('+(weekIsCollapsed?'-90deg':'0deg')+');font-size:16px;line-height:1;vertical-align:middle;color:#000">▾</span>'
         +esc(weekLabel)
       +'</td>'
@@ -9611,6 +9629,7 @@ function renderInProcessPaymentsSection(){
           +'</td>'
           +'<td style="border:1px solid #a9c6e8;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vName)+'</td>'
           +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(row.docNum||'')+'</td>'
+          +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(row.issued?fmtDateUS(row.issued):'—')+'</td>'
           +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+esc(row.due?fmtDateUS(row.due):'—')+'</td>'
           +'<td style="border:1px solid #a9c6e8;padding:5px 10px">'+methodLabel+'</td>'
           +'<td style="border:1px solid #a9c6e8;padding:5px 10px;text-align:right;font-family:var(--mono)">'+money(bal)+'</td>'
@@ -9624,7 +9643,7 @@ function renderInProcessPaymentsSection(){
   });
 
   html+='<tr>'
-    +'<td colspan="5" style="border:1px solid #1565c0;padding:7px 10px;text-align:right;font-weight:700;background:#bbdefb">TOTAL IN PROCESS</td>'
+    +'<td colspan="6" style="border:1px solid #1565c0;padding:7px 10px;text-align:right;font-weight:700;background:#bbdefb">TOTAL IN PROCESS</td>'
     +'<td style="border:1px solid #1565c0;padding:7px 10px;text-align:right;font-weight:700;background:#bbdefb;font-family:var(--mono)">'+money(grandTotal)+'</td>'
     +'<td style="border:1px solid #1565c0;background:#bbdefb;text-align:center">'
       +'<button class="no-print" onclick="printReportSection(\'cf-inprocess-section\',\'In Process Payments\')" title="Print entire list" style="padding:1px 5px;font-size:12px;line-height:1;border:1px solid #1565c0;border-radius:5px;background:#e3f2fd;cursor:pointer">🖨</button>'
@@ -9659,7 +9678,7 @@ function renderPaidPaymentsSection(){
       if(!_cfMatchesSearch(rec.vendor,rec.docNum,split.paid.amount!==undefined?split.paid.amount:split.amount)) return;
       var dk=split.date||'unknown';
       if(!byDate[dk]) byDate[dk]=[];
-      byDate[dk].push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,split:split});
+      byDate[dk].push({billId:billId,vendor:rec.vendor,docNum:rec.docNum,due:rec.due,issued:_cfIssuedDateFor(billId,rec),split:split});
     });
   });
   var dateKeys=Object.keys(byDate).sort();
@@ -9698,10 +9717,11 @@ function renderPaidPaymentsSection(){
       +'<button class="btn btn-sm" onclick="clearCFPaidSelection()">Clear selection</button>'
     +'</div>'
     +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;background:#f5f5f5;color:#000;border:1px solid #bbb">'
-    +'<colgroup><col style="width:220px"><col style="width:100px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:80px"></colgroup>'
+    +'<colgroup><col style="width:220px"><col style="width:100px"><col style="width:110px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:80px"></colgroup>'
     +'<thead><tr>'
       +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:left;font-weight:700">Vendor</th>'
       +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:left;font-weight:700">Bill #</th>'
+      +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:left;font-weight:700">Bill Issued</th>'
       +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:right;font-weight:700">Scheduled Amount</th>'
       +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:right;font-weight:700">Confirmed Paid</th>'
       +'<th style="border:1px solid #bbb;background:#e2e2e2;padding:6px 10px;text-align:left;font-weight:700">Confirmed On</th>'
@@ -9709,7 +9729,7 @@ function renderPaidPaymentsSection(){
     +'</tr></thead><tbody>';
 
   if(!dateKeys.length){
-    html+='<tr><td colspan="6" style="border:1px solid #bbb;padding:14px;text-align:center;color:#888">Nothing marked paid yet.</td></tr></tbody></table></div>';
+    html+='<tr><td colspan="7" style="border:1px solid #bbb;padding:14px;text-align:center;color:#888">Nothing marked paid yet.</td></tr></tbody></table></div>';
     el.innerHTML=html;
     return;
   }
@@ -9731,7 +9751,7 @@ function renderPaidPaymentsSection(){
     var rowClass='wk-cfPaid-'+weekMonday;
     var weekIsCollapsed=!!_weekCollapsed[weekKey];
     html+='<tr class="'+rowClass+'-hdr" onclick="toggleCFWeekGroup(\''+weekKey+'\',\''+rowClass+'\')" style="cursor:pointer">'
-      +'<td colspan="4" style="border:1px solid #bbb;padding:7px 10px;font-weight:700;background:#e2e2e2">'
+      +'<td colspan="5" style="border:1px solid #bbb;padding:7px 10px;font-weight:700;background:#e2e2e2">'
         +'<span id="wk-chev-'+rowClass+'" style="display:inline-block;transition:transform .12s;margin-right:8px;transform:rotate('+(weekIsCollapsed?'-90deg':'0deg')+');font-size:16px;line-height:1;vertical-align:middle;color:#000">▾</span>'
         +esc(weekLabel)
       +'</td>'
@@ -9750,6 +9770,7 @@ function renderPaidPaymentsSection(){
         html+='<tr class="'+rowClass+'" style="display:'+(weekIsCollapsed?'none':'table-row')+';text-decoration:line-through;text-decoration-color:#999;text-decoration-thickness:1.5px">'
           +'<td style="border:1px solid #bbb;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#555">'+esc(vName)+'</td>'
           +'<td style="border:1px solid #bbb;padding:5px 10px;color:#555">'+esc(row.docNum||'')+'</td>'
+          +'<td style="border:1px solid #bbb;padding:5px 10px;color:#555">'+esc(row.issued?fmtDateUS(row.issued):'—')+'</td>'
           +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:right;font-family:var(--mono);color:#555">'+money(split.amount)+'</td>'
           +'<td style="border:1px solid #bbb;padding:5px 10px;text-align:right;font-family:var(--mono);font-weight:700;color:#555">'+money(split.paid.amount)+(isPartial?' <span style="font-size:10px;font-weight:400;color:#b8460b">(partial)</span>':'')+'</td>'
           +'<td style="border:1px solid #bbb;padding:5px 10px;color:#555">'+esc(whenStr)+'</td>'
@@ -9763,7 +9784,7 @@ function renderPaidPaymentsSection(){
   });
 
   html+='<tr>'
-    +'<td colspan="4" style="border:1px solid #bbb;padding:7px 10px;text-align:right;font-weight:700;background:#e2e2e2">TOTAL PAID</td>'
+    +'<td colspan="5" style="border:1px solid #bbb;padding:7px 10px;text-align:right;font-weight:700;background:#e2e2e2">TOTAL PAID</td>'
     +'<td style="border:1px solid #bbb;padding:7px 10px;text-align:right;font-weight:700;background:#e2e2e2;font-family:var(--mono)">'+money(grandTotal)+'</td>'
     +'<td style="border:1px solid #bbb;background:#e2e2e2;text-align:center">'
       +'<button class="no-print" onclick="printReportSection(\'cf-paid-section\',\'Paid Payments\')" title="Print entire list" style="padding:1px 5px;font-size:12px;line-height:1;border:1px solid #bbb;border-radius:5px;background:#fff;cursor:pointer">🖨</button>'

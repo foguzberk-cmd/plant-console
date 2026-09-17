@@ -3408,8 +3408,10 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
           return '<div style="display:flex;align-items:center;gap:8px;padding:6px 14px 4px 30px;background:var(--cold-soft)">'
               +'<svg onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="cursor:pointer;width:11px;height:11px;stroke:var(--cold);flex-shrink:0'+(_ordersIsOpen(driverOpenKey,q)?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
               +'<span onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" style="cursor:pointer;flex:1;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold)">'+esc(dName)+' ('+driverOrders.length+')</span>'
-              +'<button title="Print this driver\'s route form only (deliveries/payments + returns — no product sheets, since these already shipped)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\',\''+esc(dk)+'\',true)" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:var(--cold);font-size:13px">🖨</button>'
               +_routeMilesLabelHtml(driverOrders,dName,dk)
+              +'<span style="display:flex;align-items:center;background:#fff;border:1px solid var(--line);border-radius:8px;padding:2px;flex-shrink:0;margin-left:2px">'
+                +'<button title="Print this driver\'s route form only (deliveries/payments + returns — no product sheets, since these already shipped)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\',\''+esc(dk)+'\',true)" style="border:0;background:transparent;cursor:pointer;padding:3px 5px;color:var(--cold);font-size:17px;line-height:1;border-radius:5px">🖨</button>'
+              +'</span>'
             +'</div>'
             +'<div id="'+driverRowId+'" style="display:'+(_ordersIsOpen(driverOpenKey,q)?'block':'none')+'">'
             +driverOrders.map(function(o,oi){
@@ -4240,9 +4242,16 @@ function _renderOrdersWeekSummary(){
           return '<div style="display:flex;align-items:center;gap:8px;padding:6px 14px 4px 30px;background:var(--cold-soft)">'
               +'<svg onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="cursor:pointer;width:11px;height:11px;stroke:var(--cold);flex-shrink:0'+(_ordersRowOpen[driverOpenKey]?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
               +'<span onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" style="cursor:pointer;flex:1;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold)">'+esc(dName)+' ('+driverOrders.length+')</span>'
-              +'<button title="Print this driver\'s route (form + orders)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\',\''+esc(dk)+'\')" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:var(--cold);font-size:13px">🖨</button>'
               +_routeMilesLabelHtml(driverOrders,dName,dk)
-              +'<button title="Print processing sheet for this driver only" onclick="event.stopPropagation();printProcessingSheet(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName+' — Processing')+'\')" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:#8a6d1a;font-size:13px">🏭</button>'
+              // Print buttons grouped into one visible pill (CONFIRMED live
+              // Sep 2026 — previously one sat before the mileage and the
+              // other after, plus both were small/low-contrast; grouping
+              // them and bumping size makes them easier to actually find
+              // and tap in this dense row) rather than scattered/tiny icons.
+              +'<span style="display:flex;align-items:center;gap:2px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:2px;flex-shrink:0;margin-left:2px">'
+                +'<button title="Print this driver\'s route (form + orders)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\',\''+esc(dk)+'\')" style="border:0;background:transparent;cursor:pointer;padding:3px 5px;color:var(--cold);font-size:17px;line-height:1;border-radius:5px">🖨</button>'
+                +'<button title="Print processing sheet for this driver only" onclick="event.stopPropagation();printProcessingSheet(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName+' — Processing')+'\')" style="border:0;background:transparent;cursor:pointer;padding:3px 5px;color:#8a6d1a;font-size:17px;line-height:1;border-radius:5px">🏭</button>'
+              +'</span>'
             +'</div>'
             +'<div id="'+driverRowId+'" style="display:'+(_ordersIsOpen(driverOpenKey,q)?'block':'none')+'">'
             +custKeys.map(function(key,ci){
@@ -4503,17 +4512,17 @@ function _routeMilesLabelHtml(driverOrders,dName,dk){
   var entry=_resolveRouteMilesEntry(driverOrders,dName,dk);
   if(entry.state==='none') return '';
   if(entry.state==='noaddr'){
-    return '<span title="None of these customers have an address on file in QuickBooks yet" style="flex-shrink:0;font-size:10px;color:var(--muted);white-space:nowrap;cursor:help">no addresses on file</span>';
+    return '<span title="None of these customers have an address on file in QuickBooks yet" style="flex-shrink:0;font-size:13px;color:var(--muted);white-space:nowrap;cursor:help">no addresses on file</span>';
   }
   var missingNote=(entry.missing&&entry.missing.length)?(' <span title="No address on file: '+esc(entry.missing.join(', '))+'" style="cursor:help;color:var(--muted)">('+entry.missing.length+' skipped)</span>'):'';
-  var refreshBtn='<span onclick="event.stopPropagation();_refreshRouteMiles(\''+_jsStrEsc(entry.key)+'\')" title="Recalculate" style="cursor:pointer;color:var(--muted);font-size:10px;margin-left:3px">↻</span>';
+  var refreshBtn='<span onclick="event.stopPropagation();_refreshRouteMiles(\''+_jsStrEsc(entry.key)+'\')" title="Recalculate" style="cursor:pointer;color:var(--muted);font-size:13px;margin-left:4px">↻</span>';
   if(entry.state==='loading'){
-    return '<span style="flex-shrink:0;font-size:10px;color:var(--muted);font-style:italic;white-space:nowrap">calculating miles…</span>';
+    return '<span style="flex-shrink:0;font-size:13px;color:var(--muted);font-style:italic;white-space:nowrap">calculating miles…</span>';
   }
   if(entry.state==='error'){
-    return '<span title="'+esc(entry.error||'')+'" style="flex-shrink:0;font-size:10px;color:#a3231b;white-space:nowrap;cursor:help">⚠ route error</span>'+refreshBtn;
+    return '<span title="'+esc(entry.error||'')+'" style="flex-shrink:0;font-size:13px;color:#a3231b;white-space:nowrap;cursor:help">⚠ route error</span>'+refreshBtn;
   }
-  return '<span onclick="event.stopPropagation();_showRouteMilesBreakdown(\''+_jsStrEsc(entry.key)+'\')" title="Click to see what each stop resolved to" style="flex-shrink:0;font-size:10.5px;color:var(--cold);white-space:nowrap;font-family:var(--mono);cursor:pointer;text-decoration:underline dotted">≈'+entry.miles+' mi'+missingNote+'</span>'+refreshBtn
+  return '<span onclick="event.stopPropagation();_showRouteMilesBreakdown(\''+_jsStrEsc(entry.key)+'\')" title="Click to see what each stop resolved to" style="flex-shrink:0;font-size:14px;font-weight:700;color:var(--cold);white-space:nowrap;font-family:var(--mono);cursor:pointer;text-decoration:underline dotted">≈'+entry.miles+' mi'+missingNote+'</span>'+refreshBtn
     +_regularRouteMilesLabelHtml(driverOrders,dName,dk);
 }
 // Small companion label rendered right after the truck-mode mileage above
@@ -4523,14 +4532,14 @@ function _routeMilesLabelHtml(driverOrders,dName,dk){
 function _regularRouteMilesLabelHtml(driverOrders,dName,dk){
   var entry=_resolveRegularRouteMilesEntry(driverOrders,dName,dk);
   if(entry.state==='none'||entry.state==='noaddr') return ''; // same addresses as the truck number above — already explained there
-  var refreshBtn='<span onclick="event.stopPropagation();_refreshRegularRouteMiles(\''+_jsStrEsc(entry.key)+'\')" title="Recalculate" style="cursor:pointer;color:var(--muted);font-size:9.5px;margin-left:2px">↻</span>';
+  var refreshBtn='<span onclick="event.stopPropagation();_refreshRegularRouteMiles(\''+_jsStrEsc(entry.key)+'\')" title="Recalculate" style="cursor:pointer;color:var(--muted);font-size:12px;margin-left:3px">↻</span>';
   if(entry.state==='loading'){
-    return ' <span style="flex-shrink:0;font-size:9.5px;color:var(--muted);font-style:italic;white-space:nowrap">· regular route: calculating…</span>';
+    return ' <span style="flex-shrink:0;font-size:12px;color:var(--muted);font-style:italic;white-space:nowrap">· regular route: calculating…</span>';
   }
   if(entry.state==='error'){
-    return ' <span title="'+esc(entry.error||'')+'" style="flex-shrink:0;font-size:9.5px;color:var(--muted);white-space:nowrap;cursor:help">· regular route: ⚠ error</span>'+refreshBtn;
+    return ' <span title="'+esc(entry.error||'')+'" style="flex-shrink:0;font-size:12px;color:var(--muted);white-space:nowrap;cursor:help">· regular route: ⚠ error</span>'+refreshBtn;
   }
-  return ' <span onclick="event.stopPropagation();_showRegularRouteMilesBreakdown(\''+_jsStrEsc(entry.key)+'\')" title="Normal car route (no truck restrictions) — click to see the leg-by-leg breakdown" style="flex-shrink:0;font-size:9.5px;color:var(--muted);white-space:nowrap;font-family:var(--mono);cursor:pointer;text-decoration:underline dotted">· regular route: ≈'+entry.miles+' mi</span>'+refreshBtn;
+  return ' <span onclick="event.stopPropagation();_showRegularRouteMilesBreakdown(\''+_jsStrEsc(entry.key)+'\')" title="Normal car route (no truck restrictions) — click to see the leg-by-leg breakdown" style="flex-shrink:0;font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap;font-family:var(--mono);cursor:pointer;text-decoration:underline dotted">· regular route: ≈'+entry.miles+' mi</span>'+refreshBtn;
 }
 // Shows exactly what each stop's address resolved to (coordinates and
 // straight-line distance from Leader Meat), so a wrong-looking mileage

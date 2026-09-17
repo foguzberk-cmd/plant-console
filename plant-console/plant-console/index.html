@@ -3390,8 +3390,8 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
         +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;stroke:#1b5e2f;flex-shrink:0'+(_ordersRowOpen[openKey]?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
         +'<span style="font-weight:700;font-size:13px;color:#1b5e2f">'+fmtDayOrd(dk)+' ('+count+')</span>'
       +'</span>'
-      +'<span style="flex-shrink:0;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#1b5e2f;opacity:.65;margin-right:10px">Trucking route</span>'
-      +'<span style="flex-shrink:0;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#1b5e2f;opacity:.65">Regular route</span>'
+      +'<span style="width:'+ROUTE_MILES_COL_WIDTH+'px;text-align:center;flex-shrink:0;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#1b5e2f;opacity:.65">Trucking route</span>'
+      +'<span style="width:'+ROUTE_MILES_COL_WIDTH+'px;text-align:center;flex-shrink:0;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#1b5e2f;opacity:.65">Regular route</span>'
     +'</div>'
     +'<div id="'+rowId+'" style="display:'+(_ordersIsOpen(openKey,q)?'block':'none')+'">'
       +(function(){
@@ -4469,8 +4469,11 @@ function _routeMilesKey(dName,dk,addresses){
 // two mileage numbers that appear on each driver row below: the bold
 // truck-route figure and the quieter regular-route comparison figure.
 function _routeMilesColumnHeadersHtml(){
-  return '<span style="flex-shrink:0;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#8a6d1a;opacity:.75;margin-right:10px">Trucking route</span>'
-    +'<span style="flex-shrink:0;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#8a6d1a;opacity:.75;margin-right:6px">Regular route</span>';
+  var w=ROUTE_MILES_COL_WIDTH;
+  return '<span style="display:flex;align-items:center">'
+    +'<span style="width:'+w+'px;text-align:center;flex-shrink:0;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#8a6d1a;opacity:.75">Trucking route</span>'
+    +'<span style="width:'+w+'px;text-align:center;flex-shrink:0;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#8a6d1a;opacity:.75">Regular route</span>'
+  +'</span>';
 }
 // Resolves a driver's stops for one day to a cached (or freshly-triggered)
 // route-miles entry, WITHOUT building any HTML — shared by the per-row
@@ -4521,28 +4524,40 @@ function _resolveRegularRouteMilesEntry(driverOrders,dName,dk){
   }
   return Object.assign({missing:missing,key:key},entry);
 }
+// Fixed column width for the two mileage figures (rows AND header labels
+// both use this same constant) — this is what actually makes them line up
+// as real columns instead of drifting based on driver-name length or
+// digit count. CONFIRMED live (Sep 2026) that just centering text without
+// a shared fixed width doesn't align anything since each cell was still
+// sized to its own content.
+var ROUTE_MILES_COL_WIDTH=108;
 function _routeMilesLabelHtml(driverOrders,dName,dk){
   var entry=_resolveRouteMilesEntry(driverOrders,dName,dk);
   if(entry.state==='none') return '';
+  var cellStyle='width:'+ROUTE_MILES_COL_WIDTH+'px;text-align:center;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
   if(entry.state==='noaddr'){
-    return '<span title="None of these customers have an address on file in QuickBooks yet" style="flex-shrink:0;font-size:13px;color:var(--muted);white-space:nowrap;cursor:help">no addresses on file</span>';
+    return '<span style="display:flex;align-items:center">'
+      +'<span title="None of these customers have an address on file in QuickBooks yet" style="width:'+(ROUTE_MILES_COL_WIDTH*2)+'px;text-align:center;flex-shrink:0;font-size:12px;color:var(--muted);white-space:nowrap;cursor:help">no addresses on file</span>'
+    +'</span>';
   }
   var missingNote=(entry.missing&&entry.missing.length)?(' <span title="No address on file: '+esc(entry.missing.join(', '))+'" style="cursor:help;color:var(--muted)">('+entry.missing.length+' skipped)</span>'):'';
   var truckPart;
   if(entry.state==='loading'){
-    truckPart='<span style="flex-shrink:0;font-size:13px;color:var(--muted);font-style:italic;white-space:nowrap">calculating miles…</span>';
+    truckPart='<span style="'+cellStyle+';font-size:12px;color:var(--muted);font-style:italic">calculating…</span>';
   } else if(entry.state==='error'){
-    truckPart='<span title="'+esc(entry.error||'')+'" style="flex-shrink:0;font-size:13px;color:#a3231b;white-space:nowrap;cursor:help">⚠ route error</span>';
+    truckPart='<span title="'+esc(entry.error||'')+'" style="'+cellStyle+';font-size:13px;color:#a3231b;cursor:help">⚠ route error</span>';
   } else {
-    truckPart='<span onclick="event.stopPropagation();_showRouteMilesBreakdown(\''+_jsStrEsc(entry.key)+'\')" title="Truck route — click to see what each stop resolved to" style="flex-shrink:0;font-size:14px;font-weight:700;color:var(--cold);white-space:nowrap;font-family:var(--mono);cursor:pointer;text-decoration:underline dotted">≈'+entry.miles+' mi'+missingNote+'</span>';
+    truckPart='<span style="'+cellStyle+'"><span onclick="event.stopPropagation();_showRouteMilesBreakdown(\''+_jsStrEsc(entry.key)+'\')" title="Truck route — click to see what each stop resolved to" style="font-size:14px;font-weight:700;color:var(--cold);font-family:var(--mono);cursor:pointer;text-decoration:underline dotted">≈'+entry.miles+' mi</span>'+missingNote+'</span>';
   }
   // ONE refresh button for both numbers (CONFIRMED live Sep 2026 — two
   // separate ↻ buttons, one per number, was confusing since they always
   // need refreshing together after any real change to the stop list).
   // Both caches use the exact same key (same driver+day+address set), so
   // entry.key from the truck side is all _refreshBothRouteMiles needs.
-  var refreshBtn='<span onclick="event.stopPropagation();_refreshBothRouteMiles(\''+_jsStrEsc(entry.key)+'\')" title="Recalculate both truck and regular route" style="cursor:pointer;color:var(--muted);font-size:13px;margin-left:4px">↻</span>';
-  return truckPart+_regularRouteMilesLabelHtml(driverOrders,dName,dk)+refreshBtn;
+  var refreshBtn='<span onclick="event.stopPropagation();_refreshBothRouteMiles(\''+_jsStrEsc(entry.key)+'\')" title="Recalculate both truck and regular route" style="cursor:pointer;color:var(--muted);font-size:13px;margin-left:2px;flex-shrink:0">↻</span>';
+  return '<span style="display:flex;align-items:center">'
+    +truckPart+_regularRouteMilesLabelHtml(driverOrders,dName,dk)+refreshBtn
+  +'</span>';
 }
 // Small companion label rendered right after the truck-mode mileage above
 // — the "regular route" comparison number (normal car routing via
@@ -4554,14 +4569,15 @@ function _routeMilesLabelHtml(driverOrders,dName,dk){
 // _routeMilesLabelHtml above).
 function _regularRouteMilesLabelHtml(driverOrders,dName,dk){
   var entry=_resolveRegularRouteMilesEntry(driverOrders,dName,dk);
-  if(entry.state==='none'||entry.state==='noaddr') return ''; // same addresses as the truck number above — already explained there
+  var cellStyle='width:'+ROUTE_MILES_COL_WIDTH+'px;text-align:center;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+  if(entry.state==='none'||entry.state==='noaddr') return '<span style="'+cellStyle+'"></span>'; // same addresses as the truck number above — already explained there; empty cell keeps the column aligned
   if(entry.state==='loading'){
-    return ' <span style="flex-shrink:0;font-size:12px;color:var(--muted);font-style:italic;white-space:nowrap">· calculating…</span>';
+    return '<span style="'+cellStyle+';font-size:12px;color:var(--muted);font-style:italic">calculating…</span>';
   }
   if(entry.state==='error'){
-    return ' <span title="'+esc(entry.error||'')+'" style="flex-shrink:0;font-size:12px;color:var(--muted);white-space:nowrap;cursor:help">· ⚠ error</span>';
+    return '<span title="'+esc(entry.error||'')+'" style="'+cellStyle+';font-size:12px;color:var(--muted);cursor:help">⚠ error</span>';
   }
-  return ' <span onclick="event.stopPropagation();_showRegularRouteMilesBreakdown(\''+_jsStrEsc(entry.key)+'\')" title="Regular route (normal car, no truck restrictions) — click to see the leg-by-leg breakdown" style="flex-shrink:0;font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap;font-family:var(--mono);cursor:pointer;text-decoration:underline dotted">· ≈'+entry.miles+' mi</span>';
+  return '<span style="'+cellStyle+'"><span onclick="event.stopPropagation();_showRegularRouteMilesBreakdown(\''+_jsStrEsc(entry.key)+'\')" title="Regular route (normal car, no truck restrictions) — click to see the leg-by-leg breakdown" style="font-size:12px;font-weight:600;color:var(--muted);font-family:var(--mono);cursor:pointer;text-decoration:underline dotted">≈'+entry.miles+' mi</span></span>';
 }
 // Shows exactly what each stop's address resolved to (coordinates and
 // straight-line distance from Leader Meat), so a wrong-looking mileage

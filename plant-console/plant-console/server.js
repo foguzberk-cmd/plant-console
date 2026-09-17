@@ -1264,7 +1264,20 @@ async function fetchDrivingRouteMiles(stopAddresses) {
   // need to avoid parkways — medium_truck (< 7.5 t, < ~4.1 m / 13.5 ft
   // height) matches a typical box truck's real legal restrictions much
   // more closely without over-restricting the route.
-  const path = '/v1/routing?waypoints=' + encodeURIComponent(waypointsRaw) + '&mode=medium_truck&units=imperial&format=json&details=instruction_details&apiKey=' + GEOAPIFY_API_KEY;
+  // mode=light_truck — TRYING this instead of medium_truck (Sep 2026):
+  // CONFIRMED live that medium_truck was sending a real NJ->Brooklyn route
+  // up to the Tappan Zee Bridge (I-287/I-87), ~40 mi north, and back down
+  // again, rather than the George Washington Bridge — a huge, clearly-
+  // wrong detour for a regular box truck. Since going from truck to
+  // medium_truck didn't change this, the George Washington Bridge crossing
+  // itself looks to be flagged truck-restricted in Geoapify's road data
+  // for ALL truck size classes here, not a weight/height limit that
+  // shrinking the vehicle class would get around — light_truck is the
+  // next (and smallest) class left to rule that theory out with. If this
+  // still detours the same way, the fix isn't a size-class change at all;
+  // see the comment further down where majorRoads is computed for how to
+  // confirm that from the actual road list next.
+  const path = '/v1/routing?waypoints=' + encodeURIComponent(waypointsRaw) + '&mode=light_truck&units=imperial&format=json&details=instruction_details&apiKey=' + GEOAPIFY_API_KEY;
   const res = await httpsRequest({ hostname: 'api.geoapify.com', path, method: 'GET' });
   const data = JSON.parse(res.body || '{}');
   if (res.status !== 200) throw new Error('Geoapify Routing API error ' + res.status + ': ' + (data.message || res.body));

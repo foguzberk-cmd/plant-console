@@ -4544,7 +4544,17 @@ function _showRouteMilesBreakdown(key){
     var flag=s.excluded?' — EXCLUDED (too far, likely wrong match)':'';
     return (s.excluded?'⚠ ':'✓ ')+s.address+' — '+s.straightLineMiles+' mi straight-line from Leader Meat'+flag+' ['+s.lat+', '+s.lon+']';
   });
-  alert('Stop-by-stop breakdown (≈'+entry.miles+' mi total):\n\n'+lines.join('\n\n')+'\n\nIf a stop looks wrong, check that customer\'s address in QuickBooks for a missing city/state/ZIP.');
+  // majorRoads (added Sep 2026): the actual roads it drove, longest
+  // stretches first — this is what actually answers "is this mileage
+  // really right?" instead of trusting a single number. A mileage that
+  // looks too high is either a real restriction (a parkway/bridge the
+  // route legitimately has to go around) or a bad address match — seeing
+  // the real road names is how to tell which, instead of guessing.
+  var roadsBlock='';
+  if(entry.majorRoads&&entry.majorRoads.length){
+    roadsBlock='\n\nRoads driven (longest stretches first):\n'+entry.majorRoads.map(function(r){ return '• '+r.name+' — '+r.miles+' mi'; }).join('\n');
+  }
+  alert('Stop-by-stop breakdown (≈'+entry.miles+' mi total):\n\n'+lines.join('\n\n')+roadsBlock+'\n\nIf a stop looks wrong, check that customer\'s address in QuickBooks for a missing city/state/ZIP.');
 }
 window._showRouteMilesBreakdown=_showRouteMilesBreakdown;
 // Same idea as _showRouteMilesBreakdown above, but for the regular-route
@@ -4613,7 +4623,7 @@ function _fetchRouteMilesForCache(key,addresses){
       // troubleshooting view for exactly the "these miles look wrong"
       // case: rather than guessing which customer is the problem, it's
       // right there per-address.
-      _routeMilesCache[key]={state:'ok',miles:result.data.miles,minutes:result.data.minutes,stopDetails:result.data.stopDetails||[]};
+      _routeMilesCache[key]={state:'ok',miles:result.data.miles,minutes:result.data.minutes,stopDetails:result.data.stopDetails||[],majorRoads:result.data.majorRoads||[]};
     }
     _renderOrdersWeekSummary();
   }).catch(function(){

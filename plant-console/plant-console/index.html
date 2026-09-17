@@ -4739,15 +4739,11 @@ function _weekDriverMileageSummaryHtml(weekOrders){
   var rows=driverNames.map(function(dName,i){
     var pd=perDriver[dName];
     var pendingNote=pd.daysPending?(' <span style="color:var(--muted);font-style:italic">('+pd.daysPending+' calculating…)</span>'):'';
-    // Dotted leader line between the name and the number (like a table of
-    // contents) plus faint alternating row shading — CONFIRMED live (Sep
-    // 2026) that with just two ends of a flex row and a lot of empty space
-    // between them, it was hard to tell which number belonged to which
-    // driver at a glance; the dotted fill and striping give the eye a
-    // line to actually follow across.
-    return '<div style="display:flex;align-items:baseline;gap:8px;padding:5px 14px;font-size:11.5px'+(i%2?';background:rgba(27,94,47,.05)':'')+'">'
+    // Faint alternating row shading — CONFIRMED live (Sep 2026) that this
+    // alone (no dotted leader line needed) is enough for the eye to track
+    // a name across to its number on a wide row.
+    return '<div style="display:flex;justify-content:space-between;gap:12px;padding:5px 14px;font-size:11.5px'+(i%2?';background:rgba(27,94,47,.05)':'')+'">'
       +'<span style="font-family:var(--mono);color:#1b5e2f;white-space:nowrap;flex-shrink:0">'+esc(dName)+'</span>'
-      +'<span style="flex:1;min-width:16px;border-bottom:1px dotted #8fbf9a;margin-bottom:3px"></span>'
       +'<span style="font-family:var(--mono);color:#1b5e2f;white-space:nowrap;flex-shrink:0">'+(pd.daysDone?'≈'+(Math.round(pd.totalMiles*10)/10)+' mi across '+pd.daysDone+' day'+(pd.daysDone!==1?'s':''):'—')+pendingNote+'</span>'
     +'</div>';
   }).join('');

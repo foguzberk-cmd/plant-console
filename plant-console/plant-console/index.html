@@ -3392,6 +3392,7 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
       +'</span>'
       +'<span style="width:'+ROUTE_MILES_COL_WIDTH+'px;text-align:center;flex-shrink:0;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#1b5e2f;opacity:.65">Trucking route</span>'
       +'<span style="width:'+ROUTE_MILES_COL_WIDTH+'px;text-align:center;flex-shrink:0;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#1b5e2f;opacity:.65">Regular route</span>'
+      +'<span style="width:'+ROUTE_MILES_TRAILING_ZONE_WIDTH_SHIPPED+'px;flex-shrink:0"></span>'
     +'</div>'
     +'<div id="'+rowId+'" style="display:'+(_ordersIsOpen(openKey,q)?'block':'none')+'">'
       +(function(){
@@ -3413,8 +3414,11 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
               +'<svg onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="cursor:pointer;width:11px;height:11px;stroke:var(--cold);flex-shrink:0'+(_ordersIsOpen(driverOpenKey,q)?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
               +'<span onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" style="cursor:pointer;flex:1;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold)">'+esc(dName)+' ('+driverOrders.length+')</span>'
               +_routeMilesLabelHtml(driverOrders,dName,dk)
-              +'<span style="display:flex;align-items:center;background:#fff;border:1px solid var(--line);border-radius:8px;padding:2px;flex-shrink:0;margin-left:2px">'
-                +'<button title="Print this driver\'s route form only (deliveries/payments + returns — no product sheets, since these already shipped)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\',\''+esc(dk)+'\',true)" style="border:0;background:transparent;cursor:pointer;padding:3px 5px;color:var(--cold);font-size:17px;line-height:1;border-radius:5px">🖨</button>'
+              +'<span style="width:'+ROUTE_MILES_TRAILING_ZONE_WIDTH_SHIPPED+'px;display:flex;align-items:center;justify-content:flex-end;gap:3px;flex-shrink:0">'
+                +_routeMilesRefreshBtnHtml(driverOrders,dName,dk)
+                +'<span style="display:flex;align-items:center;background:#fff;border:1px solid var(--line);border-radius:8px;padding:2px;flex-shrink:0">'
+                  +'<button title="Print this driver\'s route form only (deliveries/payments + returns — no product sheets, since these already shipped)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\',\''+esc(dk)+'\',true)" style="border:0;background:transparent;cursor:pointer;padding:3px 5px;color:var(--cold);font-size:17px;line-height:1;border-radius:5px">🖨</button>'
+                +'</span>'
               +'</span>'
             +'</div>'
             +'<div id="'+driverRowId+'" style="display:'+(_ordersIsOpen(driverOpenKey,q)?'block':'none')+'">'
@@ -4213,7 +4217,9 @@ function _renderOrdersWeekSummary(){
         +'<span style="font-weight:700;font-size:13px;color:#5c4813">'+label+'</span>'
       +'</span>'
       +_routeMilesColumnHeadersHtml()
-      +'<button title="Print processing sheet for this whole day, all drivers combined" onclick="event.stopPropagation();printProcessingSheet(['+byDay[dk].map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(fmtDayOrd(dk)+' — Processing (All Drivers)')+'\')" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:#8a6d1a;font-size:14px">🏭</button>'
+      +'<span style="width:'+ROUTE_MILES_TRAILING_ZONE_WIDTH_RECEIVED+'px;display:flex;align-items:center;justify-content:flex-end;flex-shrink:0">'
+        +'<button title="Print processing sheet for this whole day, all drivers combined" onclick="event.stopPropagation();printProcessingSheet(['+byDay[dk].map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(fmtDayOrd(dk)+' — Processing (All Drivers)')+'\')" style="border:0;background:transparent;cursor:pointer;padding:2px 4px;color:#8a6d1a;font-size:14px">🏭</button>'
+      +'</span>'
     +'</div>'
     +'<div id="ordDay-'+di+'" style="display:'+(_ordersIsOpen('day:'+dk,q)?'block':'none')+'">'
       +(function(){
@@ -4248,14 +4254,20 @@ function _renderOrdersWeekSummary(){
               +'<svg onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="cursor:pointer;width:11px;height:11px;stroke:var(--cold);flex-shrink:0'+(_ordersRowOpen[driverOpenKey]?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
               +'<span onclick="toggleOrdersRow(\''+driverRowId+'\',\''+_jsStrEsc(driverOpenKey)+'\')" style="cursor:pointer;flex:1;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold)">'+esc(dName)+' ('+driverOrders.length+')</span>'
               +_routeMilesLabelHtml(driverOrders,dName,dk)
-              // Print buttons grouped into one visible pill (CONFIRMED live
-              // Sep 2026 — previously one sat before the mileage and the
-              // other after, plus both were small/low-contrast; grouping
-              // them and bumping size makes them easier to actually find
-              // and tap in this dense row) rather than scattered/tiny icons.
-              +'<span style="display:flex;align-items:center;gap:2px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:2px;flex-shrink:0;margin-left:2px">'
-                +'<button title="Print this driver\'s route (form + orders)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\',\''+esc(dk)+'\')" style="border:0;background:transparent;cursor:pointer;padding:3px 5px;color:var(--cold);font-size:17px;line-height:1;border-radius:5px">🖨</button>'
-                +'<button title="Print processing sheet for this driver only" onclick="event.stopPropagation();printProcessingSheet(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName+' — Processing')+'\')" style="border:0;background:transparent;cursor:pointer;padding:3px 5px;color:#8a6d1a;font-size:17px;line-height:1;border-radius:5px">🏭</button>'
+              // Print buttons grouped into one visible pill, inside a
+              // FIXED-width trailing zone shared with the day header's
+              // print button above (ROUTE_MILES_TRAILING_ZONE_WIDTH_RECEIVED)
+              // — that shared width is what keeps the two mileage columns
+              // lined up with the "TRUCKING ROUTE"/"REGULAR ROUTE" labels
+              // in the header (CONFIRMED live Sep 2026: without a matching
+              // width here, this pill being wider than the header's single
+              // button was exactly what pushed the columns out of sync).
+              +'<span style="width:'+ROUTE_MILES_TRAILING_ZONE_WIDTH_RECEIVED+'px;display:flex;align-items:center;justify-content:flex-end;gap:3px;flex-shrink:0">'
+                +_routeMilesRefreshBtnHtml(driverOrders,dName,dk)
+                +'<span style="display:flex;align-items:center;gap:2px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:2px;flex-shrink:0">'
+                  +'<button title="Print this driver\'s route (form + orders)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\',\''+esc(dk)+'\')" style="border:0;background:transparent;cursor:pointer;padding:3px 5px;color:var(--cold);font-size:17px;line-height:1;border-radius:5px">🖨</button>'
+                  +'<button title="Print processing sheet for this driver only" onclick="event.stopPropagation();printProcessingSheet(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName+' — Processing')+'\')" style="border:0;background:transparent;cursor:pointer;padding:3px 5px;color:#8a6d1a;font-size:17px;line-height:1;border-radius:5px">🏭</button>'
+                +'</span>'
               +'</span>'
             +'</div>'
             +'<div id="'+driverRowId+'" style="display:'+(_ordersIsOpen(driverOpenKey,q)?'block':'none')+'">'
@@ -4531,6 +4543,16 @@ function _resolveRegularRouteMilesEntry(driverOrders,dName,dk){
 // a shared fixed width doesn't align anything since each cell was still
 // sized to its own content.
 var ROUTE_MILES_COL_WIDTH=108;
+// Width of the zone AFTER the two mileage columns (refresh + print icons
+// in a row; just the print button in the day header) — this has to be
+// fixed and IDENTICAL between a day header and its driver rows, or the
+// mileage columns drift out of alignment with the header labels above
+// them even though both use the same ROUTE_MILES_COL_WIDTH (see the long
+// comment on _routeMilesRefreshBtnHtml for why). Received Orders rows
+// carry two print icons (route + processing sheet) so need more room than
+// Shipped Orders rows, which only ever show one.
+var ROUTE_MILES_TRAILING_ZONE_WIDTH_RECEIVED=112;
+var ROUTE_MILES_TRAILING_ZONE_WIDTH_SHIPPED=66;
 function _routeMilesLabelHtml(driverOrders,dName,dk){
   var entry=_resolveRouteMilesEntry(driverOrders,dName,dk);
   if(entry.state==='none') return '';
@@ -4549,15 +4571,30 @@ function _routeMilesLabelHtml(driverOrders,dName,dk){
   } else {
     truckPart='<span style="'+cellStyle+'"><span onclick="event.stopPropagation();_showRouteMilesBreakdown(\''+_jsStrEsc(entry.key)+'\')" title="Truck route — click to see what each stop resolved to" style="font-size:14px;font-weight:700;color:var(--cold);font-family:var(--mono);cursor:pointer;text-decoration:underline dotted">≈'+entry.miles+' mi</span>'+missingNote+'</span>';
   }
-  // ONE refresh button for both numbers (CONFIRMED live Sep 2026 — two
-  // separate ↻ buttons, one per number, was confusing since they always
-  // need refreshing together after any real change to the stop list).
-  // Both caches use the exact same key (same driver+day+address set), so
-  // entry.key from the truck side is all _refreshBothRouteMiles needs.
-  var refreshBtn='<span onclick="event.stopPropagation();_refreshBothRouteMiles(\''+_jsStrEsc(entry.key)+'\')" title="Recalculate both truck and regular route" style="cursor:pointer;color:var(--muted);font-size:13px;margin-left:2px;flex-shrink:0">↻</span>';
+  // Refresh button lives OUTSIDE this function now (see
+  // _routeMilesRefreshBtnHtml below) — it needs to sit in the fixed-width
+  // trailing zone alongside the print icons, not inside these two 108px
+  // mileage columns, or the column widths stop matching the header's
+  // (see that function's comment for why the trailing zone has to be a
+  // fixed width shared with the header at all).
   return '<span style="display:flex;align-items:center">'
-    +truckPart+_regularRouteMilesLabelHtml(driverOrders,dName,dk)+refreshBtn
+    +truckPart+_regularRouteMilesLabelHtml(driverOrders,dName,dk)
   +'</span>';
+}
+// Split out from _routeMilesLabelHtml so it can be placed in the row's
+// fixed-width trailing zone (alongside the print icons) rather than
+// inside the two 108px mileage columns. CONFIRMED live (Sep 2026): the
+// header row's trailing content (just the day/week print button) is a
+// different width than a driver row's trailing content (refresh + the
+// print-icon pill) — with the refresh button living inside the mileage
+// block, that width mismatch pushed the mileage columns out of sync with
+// the header labels above them. Giving both rows a same-width trailing
+// zone (see the driver-row and header call sites) is what actually fixes
+// the alignment; this function is what goes inside that zone for rows.
+function _routeMilesRefreshBtnHtml(driverOrders,dName,dk){
+  var entry=_resolveRouteMilesEntry(driverOrders,dName,dk);
+  if(entry.state==='none'||entry.state==='noaddr') return '';
+  return '<span onclick="event.stopPropagation();_refreshBothRouteMiles(\''+_jsStrEsc(entry.key)+'\')" title="Recalculate both truck and regular route" style="cursor:pointer;color:var(--muted);font-size:13px;flex-shrink:0">↻</span>';
 }
 // Small companion label rendered right after the truck-mode mileage above
 // — the "regular route" comparison number (normal car routing via

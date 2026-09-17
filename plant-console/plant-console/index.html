@@ -4730,7 +4730,8 @@ function _weekDriverMileageSummaryHtml(weekOrders){
   Object.keys(byDayDriver).forEach(function(k){
     var g=byDayDriver[k];
     var entry=_resolveRouteMilesEntry(g.orders,g.driver,g.date);
-    var pd=perDriver[g.driver]=perDriver[g.driver]||{totalMiles:0,daysDone:0,daysPending:0};
+    var pd=perDriver[g.driver]=perDriver[g.driver]||{totalMiles:0,daysDone:0,daysPending:0,orderCount:0};
+    pd.orderCount+=g.orders.length;
     if(entry.state==='ok'){ pd.totalMiles+=entry.miles; pd.daysDone++; }
     else if(entry.state==='loading'){ pd.daysPending++; }
   });
@@ -4744,7 +4745,7 @@ function _weekDriverMileageSummaryHtml(weekOrders){
     // a name across to its number on a wide row.
     return '<div style="display:flex;justify-content:space-between;gap:12px;padding:5px 14px;font-size:11.5px'+(i%2?';background:rgba(27,94,47,.05)':'')+'">'
       +'<span style="font-family:var(--mono);color:#1b5e2f;white-space:nowrap;flex-shrink:0">'+esc(dName)+'</span>'
-      +'<span style="font-family:var(--mono);color:#1b5e2f;white-space:nowrap;flex-shrink:0">'+(pd.daysDone?'≈'+(Math.round(pd.totalMiles*10)/10)+' mi across '+pd.daysDone+' day'+(pd.daysDone!==1?'s':''):'—')+pendingNote+'</span>'
+      +'<span style="font-family:var(--mono);color:#1b5e2f;white-space:nowrap;flex-shrink:0">'+pd.orderCount+' order'+(pd.orderCount!==1?'s':'')+' · '+(pd.daysDone?'≈'+(Math.round(pd.totalMiles*10)/10)+' mi across '+pd.daysDone+' day'+(pd.daysDone!==1?'s':''):'—')+pendingNote+'</span>'
     +'</div>';
   }).join('');
   return '<div style="background:#dcefe1;border-bottom:1px solid #b9dfc0;padding:6px 0">'

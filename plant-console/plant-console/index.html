@@ -3407,7 +3407,16 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
           return a<b?-1:1;
         });
         return driverKeys.map(function(dName,dri){
-          var driverOrders=byDriver[dName].slice().sort(function(a,b){return (a.customer||'')<(b.customer||'')?-1:1;});
+          var driverOrdersUnsorted=byDriver[dName];
+          var _visitSeq=_routeVisitOrderCustomerSequence(driverOrdersUnsorted,dName,dk);
+          var driverOrders=driverOrdersUnsorted.slice().sort(function(a,b){
+            if(_visitSeq){
+              var ia=_visitSeq.indexOf(a.customer||''), ib=_visitSeq.indexOf(b.customer||'');
+              if(ia<0) ia=999; if(ib<0) ib=999;
+              if(ia!==ib) return ia-ib;
+            }
+            return (a.customer||'')<(b.customer||'')?-1:1;
+          });
           var driverRowId='ordShipDay-'+wi+'-'+di+'-drv-'+dri;
           var driverOpenKey='shipdrv:'+dk+'|'+dName;
           return '<div style="display:flex;align-items:center;gap:8px;padding:6px 14px 4px 30px;background:var(--cold-soft)">'
@@ -3426,9 +3435,14 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
         var lines=_orderLinesOf(o);
         var orderOpenKey='shiporder:'+o.id;
         var orderRowId='ordShipOrder-'+wi+'-'+di+'-'+dri+'-'+oi;
+        var stopIdx=_visitSeq?_visitSeq.indexOf(o.customer||''):-1;
+        var stopBadge=stopIdx>=0
+          ?'<span title="Stop '+(stopIdx+1)+' on the truck route" style="flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 5px;background:var(--cold);color:#fff;border-radius:10px;font-size:11px;font-weight:700;font-family:var(--mono);margin-right:2px">'+(stopIdx+1)+'</span>'
+          :'';
         return '<div style="border-bottom:1px dashed var(--line)">'
           +'<div style="display:flex;align-items:center;gap:10px;padding:8px 16px 8px 44px;font-size:12.5px">'
             +'<svg onclick="toggleOrdersRow(\''+orderRowId+'\',\''+_jsStrEsc(orderOpenKey)+'\')" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="cursor:pointer;width:11px;height:11px;stroke:var(--muted);flex-shrink:0'+(_ordersRowOpen[orderOpenKey]?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
+            +stopBadge
             +'<span onclick="toggleOrdersRow(\''+orderRowId+'\',\''+_jsStrEsc(orderOpenKey)+'\')" style="cursor:pointer;width:170px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">'+esc(o.customer)+'</span>'
             +'<span onclick="toggleOrdersRow(\''+orderRowId+'\',\''+_jsStrEsc(orderOpenKey)+'\')" style="cursor:pointer;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">'+lines.length+' product'+(lines.length!==1?'s':'')+'</span>'
             +'<span style="flex-shrink:0;font-family:var(--mono);font-size:11px;color:#1b5e2f;background:#e3f3e6;padding:2px 8px;border-radius:10px">Inv #'+esc(o.invoiceDocNumber||'?')+'</span>'
@@ -4247,7 +4261,15 @@ function _renderOrdersWeekSummary(){
             var key=o.customer||'(no customer)';
             (byCust[key]=byCust[key]||[]).push(o);
           });
-          var custKeys=Object.keys(byCust).sort();
+          var _visitSeq=_routeVisitOrderCustomerSequence(driverOrders,dName,dk);
+          var custKeys=Object.keys(byCust).sort(function(a,b){
+            if(_visitSeq){
+              var ia=_visitSeq.indexOf(a), ib=_visitSeq.indexOf(b);
+              if(ia<0) ia=999; if(ib<0) ib=999;
+              if(ia!==ib) return ia-ib;
+            }
+            return a<b?-1:1;
+          });
           var driverRowId='ordDay-'+di+'-drv-'+dri;
           var driverOpenKey='drv:'+dk+'|'+dName;
           return '<div style="display:flex;align-items:center;gap:8px;padding:6px 14px 4px 30px;background:var(--cold-soft)">'
@@ -4275,9 +4297,16 @@ function _renderOrdersWeekSummary(){
               var custOrders=byCust[key].slice().sort(function(a,b){return a.date<b.date?1:-1;});
               var rowId='ordDay-'+di+'-drv-'+dri+'-cust-'+ci;
               var custOpenKey='cust:'+dk+'|'+dName+'|'+key;
+              // Stop number badge — only shown once the truck route has
+              // actually resolved a real visit order (_visitSeq), so it's
+              // never shown next to a merely-alphabetical guess.
+              var stopBadge=(_visitSeq&&_visitSeq.indexOf(key)>=0)
+                ?'<span title="Stop '+(_visitSeq.indexOf(key)+1)+' on the truck route" style="flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 5px;background:var(--cold);color:#fff;border-radius:10px;font-size:11px;font-weight:700;font-family:var(--mono)">'+(_visitSeq.indexOf(key)+1)+'</span>'
+                :'';
               return '<div style="border-bottom:1px dashed var(--line)">'
                 +'<div onclick="toggleOrdersRow(\''+rowId+'\',\''+_jsStrEsc(custOpenKey)+'\')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:9px 16px 9px 44px;background:var(--panel)">'
                   +'<svg id="'+rowId+'-chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;stroke:var(--muted);flex-shrink:0'+(_ordersIsOpen(custOpenKey,q)?';transform:rotate(90deg)':'')+'"><polyline points="9 6 15 12 9 18"/></svg>'
+                  +stopBadge
                   +'<span style="font-weight:600;font-size:13.5px">'+esc(key)+'</span>'
                   +'<span style="color:var(--muted);font-family:var(--mono);font-size:11.5px">('+custOrders.length+' order'+(custOrders.length!==1?'s':'')+')</span>'
                 +'</div>'
@@ -4553,6 +4582,37 @@ var ROUTE_MILES_COL_WIDTH=108;
 // Shipped Orders rows, which only ever show one.
 var ROUTE_MILES_TRAILING_ZONE_WIDTH_RECEIVED=112;
 var ROUTE_MILES_TRAILING_ZONE_WIDTH_SHIPPED=66;
+// Reorders a driver's stops to match the actual truck route sequence
+// (visitOrder — decided server-side by _nearestNeighborOrder in
+// fetchDrivingRouteMiles, then sent along with the mileage) instead of
+// alphabetical by customer name, so the list actually reads "stop 1, stop
+// 2, stop 3…" in the order the driver will really drive it — this is what
+// answers "which order should I go in" rather than just "how far total".
+// Falls back to null (caller keeps whatever ordering it already had —
+// alphabetical) whenever the route hasn't resolved yet, failed, or a
+// customer's address didn't resolve; this is a nice-to-have ordering, not
+// something that should block the list from rendering.
+function _routeVisitOrderCustomerSequence(driverOrders,dName,dk){
+  var custNames=[];
+  driverOrders.forEach(function(o){ if(o.customer&&custNames.indexOf(o.customer)<0) custNames.push(o.customer); });
+  if(custNames.length<2) return null; // nothing meaningful to reorder
+  var addresses=[], addrToCust={};
+  custNames.forEach(function(name){
+    var c=_findQbCustomerMatch(name);
+    if(c&&c.address){ addresses.push(c.address); addrToCust[c.address]=name; }
+  });
+  if(!addresses.length) return null;
+  var key=_routeMilesKey(dName,dk,addresses);
+  var entry=_routeMilesCache[key];
+  if(!entry||entry.state!=='ok'||!entry.visitOrder||!entry.visitOrder.length) return null;
+  var ordered=[];
+  entry.visitOrder.forEach(function(addr){ var name=addrToCust[addr]; if(name&&ordered.indexOf(name)<0) ordered.push(name); });
+  // Any customer visitOrder somehow didn't account for (shouldn't happen,
+  // since it's built from these exact addresses) is appended at the end
+  // rather than silently dropped from the list.
+  custNames.forEach(function(name){ if(ordered.indexOf(name)<0) ordered.push(name); });
+  return ordered;
+}
 function _routeMilesLabelHtml(driverOrders,dName,dk){
   var entry=_resolveRouteMilesEntry(driverOrders,dName,dk);
   if(entry.state==='none') return '';
@@ -4707,7 +4767,7 @@ function _fetchRouteMilesForCache(key,addresses){
       // troubleshooting view for exactly the "these miles look wrong"
       // case: rather than guessing which customer is the problem, it's
       // right there per-address.
-      _routeMilesCache[key]={state:'ok',miles:result.data.miles,minutes:result.data.minutes,stopDetails:result.data.stopDetails||[],majorRoads:result.data.majorRoads||[]};
+      _routeMilesCache[key]={state:'ok',miles:result.data.miles,minutes:result.data.minutes,stopDetails:result.data.stopDetails||[],majorRoads:result.data.majorRoads||[],visitOrder:result.data.visitOrder||[]};
     }
     _renderOrdersWeekSummary();
   }).catch(function(){

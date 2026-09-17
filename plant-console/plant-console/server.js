@@ -1168,6 +1168,32 @@ function _haversineMiles(a, b) {
   var h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.asin(Math.sqrt(h));
 }
+// Decides the order to visit a driver's stops in — nearest-neighbor
+// starting from Leader Meat: repeatedly jump to whichever remaining stop
+// is straight-line closest to wherever the route currently is. This is a
+// heuristic, not a guaranteed-optimal solve (true optimal ordering for
+// more than a handful of stops is combinatorially expensive), but it's a
+// reasonable, fast, free-to-compute stand-in — and CRITICALLY, deciding
+// the order ourselves (rather than letting Geoapify's optimize_stops
+// silently pick one) is what lets the app actually tell the driver "stop
+// 1, stop 2, stop 3…" instead of only reporting a total mileage number
+// with no visible sequence.
+function _nearestNeighborOrder(origin, stops) {
+  var remaining = stops.slice();
+  var order = [];
+  var current = origin;
+  while (remaining.length) {
+    var bestIdx = 0, bestDist = Infinity;
+    remaining.forEach(function (s, i) {
+      var d = _haversineMiles(current, s);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    });
+    var next = remaining.splice(bestIdx, 1)[0];
+    order.push(next);
+    current = next;
+  }
+  return order;
+}
 // Calls Geoapify's truck-mode Routing API for one driver's whole day:
 // origin AND destination are both Leader Meat (a real round trip), with
 // every stop as a waypoint in between. optimize_stops:true lets it reorder
@@ -1210,14 +1236,25 @@ async function fetchDrivingRouteMiles(stopAddresses) {
       const excluded = straightLineMiles > 350;
       stopDetails.push({ address: addr, lat: coords.lat, lon: coords.lon, straightLineMiles, excluded });
       if (excluded) { failedToGeocode.push(addr + ' (matched ~' + Math.round(straightLineMiles) + ' mi away — likely a wrong address match)'); continue; }
-      stopCoords.push(coords);
+      stopCoords.push({ address: addr, lat: coords.lat, lon: coords.lon });
     } catch (e) {
       stopDetails.push({ address: addr, error: e.message, excluded: true });
       failedToGeocode.push(addr);
     }
   }
   if (!stopCoords.length) throw new Error('None of the stop addresses could be located: ' + failedToGeocode.join('; '));
-  const waypointsRaw = [originCoords].concat(stopCoords, [originCoords]).map(c => c.lat + ',' + c.lon).join('|');
+  // Decide the actual visiting order ourselves (see _nearestNeighborOrder)
+  // rather than leaving it to Geoapify's own optimize_stops — this is what
+  // lets the response hand back a real "stop 1, stop 2, stop 3…" sequence
+  // for the client to sort the driver's order list by, not just a total
+  // mileage number. The waypoints below are sent in THIS decided order,
+  // fixed (no optimize_stops), so the distance/time Geoapify returns is
+  // for the exact sequence being reported as visitOrder — the two can't
+  // drift apart. Bonus: dropping optimize_stops also avoids its per-call
+  // credit surcharge on Geoapify's pricing (calcMatrixCost(n-2,n-2)).
+  const orderedStops = _nearestNeighborOrder(originCoords, stopCoords);
+  const visitOrder = orderedStops.map(function (s) { return s.address; });
+  const waypointsRaw = [originCoords].concat(orderedStops, [originCoords]).map(c => c.lat + ',' + c.lon).join('|');
   // mode=medium_truck (not the plain "truck" mode) — Geoapify's "truck"
   // profile is actually their heaviest non-hazmat class (up to 22 tonnes,
   // ~21.6 m long: a full semi/tractor-trailer), which was routing AROUND
@@ -1227,7 +1264,7 @@ async function fetchDrivingRouteMiles(stopAddresses) {
   // need to avoid parkways — medium_truck (< 7.5 t, < ~4.1 m / 13.5 ft
   // height) matches a typical box truck's real legal restrictions much
   // more closely without over-restricting the route.
-  const path = '/v1/routing?waypoints=' + encodeURIComponent(waypointsRaw) + '&mode=medium_truck&optimize_stops=true&units=imperial&format=json&details=instruction_details&apiKey=' + GEOAPIFY_API_KEY;
+  const path = '/v1/routing?waypoints=' + encodeURIComponent(waypointsRaw) + '&mode=medium_truck&units=imperial&format=json&details=instruction_details&apiKey=' + GEOAPIFY_API_KEY;
   const res = await httpsRequest({ hostname: 'api.geoapify.com', path, method: 'GET' });
   const data = JSON.parse(res.body || '{}');
   if (res.status !== 200) throw new Error('Geoapify Routing API error ' + res.status + ': ' + (data.message || res.body));
@@ -1258,6 +1295,7 @@ async function fetchDrivingRouteMiles(stopAddresses) {
   return {
     stopDetails,
     majorRoads,
+    visitOrder,
     miles: Math.round(route.distance * 10) / 10,
     minutes: Math.round(route.time / 60)
   };

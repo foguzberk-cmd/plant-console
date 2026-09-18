@@ -1225,6 +1225,48 @@ function _nearestNeighborOrder(origin, stops) {
   }
   return order;
 }
+// Nearest-neighbor's classic weakness: it decides greedily, one hop at a
+// time, with no look-ahead — so it can easily strand one stop far off to
+// the side (visited last, or visited early then backtracked past later)
+// in a way that's obviously wrong to a human glancing at a map, even
+// though each individual hop it made really was the closest one at that
+// moment. CONFIRMED live (Sep 2026) — a driver's actual printed stop
+// order looked illogical for exactly this reason. This is the standard
+// fix: 2-opt local search. It repeatedly tries reversing every possible
+// stretch of the route and keeps the reversal if it shortens the total
+// round-trip distance (origin -> stop 1 -> ... -> stop N -> origin),
+// until no single reversal helps anymore. This is what actually untangles
+// the kind of zigzag/straggler pattern nearest-neighbor alone produces —
+// still a heuristic (not a proven-optimal solve), but a much better one,
+// and still effectively instant for the realistic stop counts here (low
+// double digits at most).
+function _twoOptImprove(origin, order) {
+  var route = order.slice();
+  var n = route.length;
+  if (n < 3) return route;
+  function routeMiles(r) {
+    var total = _haversineMiles(origin, r[0]);
+    for (var i = 0; i < r.length - 1; i++) total += _haversineMiles(r[i], r[i + 1]);
+    total += _haversineMiles(r[r.length - 1], origin);
+    return total;
+  }
+  var improved = true;
+  var guard = 0;
+  while (improved && guard < 200) {
+    improved = false;
+    guard++;
+    for (var i = 0; i < n - 1; i++) {
+      for (var j = i + 1; j < n; j++) {
+        var candidate = route.slice(0, i).concat(route.slice(i, j + 1).reverse(), route.slice(j + 1));
+        if (routeMiles(candidate) < routeMiles(route) - 0.01) {
+          route = candidate;
+          improved = true;
+        }
+      }
+    }
+  }
+  return route;
+}
 // Calls Geoapify's truck-mode Routing API for one driver's whole day:
 // origin AND destination are both Leader Meat (a real round trip), with
 // every stop as a waypoint in between. optimize_stops:true lets it reorder
@@ -1283,7 +1325,7 @@ async function fetchDrivingRouteMiles(stopAddresses) {
   // for the exact sequence being reported as visitOrder — the two can't
   // drift apart. Bonus: dropping optimize_stops also avoids its per-call
   // credit surcharge on Geoapify's pricing (calcMatrixCost(n-2,n-2)).
-  const orderedStops = _nearestNeighborOrder(originCoords, stopCoords);
+  const orderedStops = _twoOptImprove(originCoords, _nearestNeighborOrder(originCoords, stopCoords));
   const visitOrder = orderedStops.map(function (s) { return s.address; });
   const waypointsRaw = [originCoords].concat(orderedStops, [originCoords]).map(c => c.lat + ',' + c.lon).join('|');
   // mode=medium_truck (not the plain "truck" mode) — Geoapify's "truck"

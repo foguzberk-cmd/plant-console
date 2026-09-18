@@ -3014,13 +3014,13 @@ function printDriverOrders(orderIds,driverName,dateStr,formOnly){
   var w=window.open('','_blank');
   if(!w){ alert('Please allow pop-ups for this site to print.'); return; }
   var deliveryRows=custNames.map(function(name){
-    return '<tr><td>'+esc(name)+'</td><td></td><td></td><td></td><td></td></tr>';
+    return '<tr><td class="custcol">'+esc(name)+'</td><td></td><td></td><td></td><td></td></tr>';
   }).join('')
     // A few extra blank rows in case something gets added to the route
     // after this prints, or a stop needs to be split into two lines.
-    +'<tr><td></td><td></td><td></td><td></td><td></td></tr>'
-    +'<tr><td></td><td></td><td></td><td></td><td></td></tr>';
-  var returnRows=Array(5).fill('<tr><td></td><td></td><td></td><td></td></tr>').join('');
+    +'<tr><td class="custcol"></td><td></td><td></td><td></td><td></td></tr>'
+    +'<tr><td class="custcol"></td><td></td><td></td><td></td><td></td></tr>';
+  var returnRows=Array(5).fill('<tr><td class="custcol"></td><td></td><td></td><td></td></tr>').join('');
   var formHtml='<div class="coldform"'+(formOnly?'':' style="page-break-after:always"')+'>'
     +'<div style="text-align:center;font-size:16px;font-weight:700;margin-bottom:14px">Leader Meat Packing Corp.</div>'
     +'<table class="hdrtbl">'
@@ -3033,10 +3033,12 @@ function printDriverOrders(orderIds,driverName,dateStr,formOnly){
       +'<tr><td class="lbl">Miles begin:</td><td class="val"></td><td class="lbl">Miles end:</td><td class="val"></td></tr>'
     +'</table>'
     +'<div class="sectiontitle">Deliveries / Payments</div>'
-    +'<table class="formtbl"><thead><tr><th>Customer</th><th>Cash $</th><th>Check #</th><th>Check $</th><th>Total $</th></tr></thead>'
+    +'<table class="formtbl"><colgroup><col style="width:37%"><col style="width:15.75%"><col style="width:15.75%"><col style="width:15.75%"><col style="width:15.75%"></colgroup>'
+    +'<thead><tr><th class="custcol">Customer</th><th>Cash $</th><th>Check #</th><th>Check $</th><th>Total $</th></tr></thead>'
     +'<tbody>'+deliveryRows+'</tbody></table>'
     +'<div class="sectiontitle">Returns / Mispicks</div>'
-    +'<table class="formtbl"><thead><tr><th>Customer</th><th>Item</th><th>Quantity</th><th>Cause</th></tr></thead>'
+    +'<table class="formtbl"><colgroup><col style="width:31%"><col style="width:23%"><col style="width:23%"><col style="width:23%"></colgroup>'
+    +'<thead><tr><th class="custcol">Customer</th><th>Item</th><th>Quantity</th><th>Cause</th></tr></thead>'
     +'<tbody>'+returnRows+'</tbody></table>'
     +'<div style="margin-top:24px;display:flex;gap:60px;font-size:13px">'
       +'<div>Relinquished by: ______________________</div>'
@@ -3061,6 +3063,15 @@ function printDriverOrders(orderIds,driverName,dateStr,formOnly){
       +'table.formtbl th,table.formtbl td{border:1px solid #333;padding:7px 8px;text-align:left;vertical-align:middle;height:22px;word-wrap:break-word;overflow-wrap:break-word}'
       +'table.formtbl th{background:#f0f0f0}'
       +'table.formtbl tr{page-break-inside:avoid;break-inside:avoid-page}'
+      // .custcol: the Customer column gets ~37%/31% of the table (up from
+      // an even split) plus white-space:nowrap and a slightly smaller
+      // font — CONFIRMED live (Sep 2026) that a long customer name
+      // ("Truva Cafe & Grill | Galata Restaurant Inc") was wrapping onto
+      // 2-3 lines and making every row on the sheet needlessly tall; kept
+      // to one line even if that means a very long name runs slightly
+      // past its column's visual border on rare cases — one line was the
+      // explicit ask, over strictly staying inside the border.
+      +'table.formtbl td.custcol,table.formtbl th.custcol{white-space:nowrap;overflow:visible;font-size:11px}'
       // page-break-inside:avoid on the table itself is what fixes the bug
       // in the screenshot (CONFIRMED live Sep 2026): a table with no
       // pagination hint just splits wherever the page happens to run

@@ -3045,13 +3045,20 @@ function printDriverOrders(orderIds,driverName,dateStr,formOnly){
   var title=(driverName||'Driver')+' — '+dateDisplay;
   w.document.write('<html><head><title>'+esc(title)+'</title>'
     +'<style>'+_ORDERS_PRINT_STYLE
-      +'table.hdrtbl{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:18px;border:1px solid #333}'
-      +'table.hdrtbl td{border:1px solid #333;padding:8px}'
+      // Taller rows/bigger padding throughout (CONFIRMED live Sep 2026 —
+      // the form was printing with a lot of empty space at the bottom of
+      // the page; these numbers were picked to spread the same content
+      // out to use that space rather than leave it blank) — header table
+      // padding 8px->13px, section titles a bit more breathing room, and
+      // the Deliveries/Returns table rows roughly 60% taller (22px->36px)
+      // with room for a pen signature/dollar amount inside each cell.
+      +'table.hdrtbl{width:100%;border-collapse:collapse;font-size:14px;margin-bottom:20px;border:1px solid #333}'
+      +'table.hdrtbl td{border:1px solid #333;padding:13px 10px}'
       +'table.hdrtbl td.lbl{font-weight:700;white-space:nowrap}'
       +'table.hdrtbl td.val{min-width:120px}'
-      +'.sectiontitle{text-align:center;font-size:14px;font-weight:700;margin:16px 0 8px}'
-      +'table.formtbl{width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:10px}'
-      +'table.formtbl th,table.formtbl td{border:1px solid #333;padding:7px 8px;text-align:left;height:22px}'
+      +'.sectiontitle{text-align:center;font-size:15px;font-weight:700;margin:22px 0 10px}'
+      +'table.formtbl{width:100%;border-collapse:collapse;font-size:13.5px;margin-bottom:14px}'
+      +'table.formtbl th,table.formtbl td{border:1px solid #333;padding:11px 10px;text-align:left;height:36px}'
       +'table.formtbl th{background:#f0f0f0}'
     +'</style></head><body>'
     +formHtml

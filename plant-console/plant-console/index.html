@@ -3053,13 +3053,26 @@ function printDriverOrders(orderIds,driverName,dateStr,formOnly){
       // (like "Time before drive away / ON / OFF / Need repair") from
       // overflowing off the page — unrelated to font/padding size and
       // worth keeping regardless of how compact the form is.
-      +'table.hdrtbl{width:100%;table-layout:fixed;border-collapse:collapse;font-size:13px;margin-bottom:18px;border:1px solid #333}'
+      +'table.hdrtbl{width:100%;table-layout:fixed;border-collapse:collapse;font-size:13px;margin-bottom:18px;border:1px solid #333;page-break-inside:avoid;break-inside:avoid-page}'
       +'table.hdrtbl td{border:1px solid #333;padding:8px;vertical-align:middle;word-wrap:break-word;overflow-wrap:break-word;line-height:1.5}'
       +'table.hdrtbl td.lbl{font-weight:700}'
-      +'.sectiontitle{text-align:center;font-size:14px;font-weight:700;margin:16px 0 8px}'
-      +'table.formtbl{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12.5px;margin-bottom:10px}'
+      +'.sectiontitle{text-align:center;font-size:14px;font-weight:700;margin:16px 0 8px;page-break-after:avoid;break-after:avoid-page}'
+      +'table.formtbl{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12.5px;margin-bottom:10px;page-break-inside:avoid;break-inside:avoid-page}'
       +'table.formtbl th,table.formtbl td{border:1px solid #333;padding:7px 8px;text-align:left;vertical-align:middle;height:22px;word-wrap:break-word;overflow-wrap:break-word}'
       +'table.formtbl th{background:#f0f0f0}'
+      +'table.formtbl tr{page-break-inside:avoid;break-inside:avoid-page}'
+      // page-break-inside:avoid on the table itself is what fixes the bug
+      // in the screenshot (CONFIRMED live Sep 2026): a table with no
+      // pagination hint just splits wherever the page happens to run
+      // out — header and one row on page 1, the rest on page 2. This
+      // tells the browser to treat the whole table as one unbreakable
+      // block: fits on the current page → stays there; doesn't fit →
+      // the ENTIRE table (not a partial slice of it) moves to the next
+      // page instead. page-break-after:avoid on .sectiontitle keeps a
+      // section's heading from getting stranded on one page while its
+      // table starts on the next. The per-row rule is a fallback for the
+      // rare case a table alone is taller than a full page and has to
+      // split somewhere regardless — at least it won't cut a row in half.
     +'</style></head><body>'
     +formHtml
     +(formOnly?'':('<h1>'+esc(title)+'</h1><div class="meta">'+toPrint.length+' order'+(toPrint.length!==1?'s':'')+'</div>'+_ordersProductTablesHtml(toPrint)))

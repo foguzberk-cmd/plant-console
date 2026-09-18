@@ -3024,6 +3024,7 @@ function printDriverOrders(orderIds,driverName,dateStr,formOnly){
   var formHtml='<div class="coldform"'+(formOnly?'':' style="page-break-after:always"')+'>'
     +'<div style="text-align:center;font-size:16px;font-weight:700;margin-bottom:14px">Leader Meat Packing Corp.</div>'
     +'<table class="hdrtbl">'
+      +'<colgroup><col style="width:19%"><col style="width:31%"><col style="width:19%"><col style="width:31%"></colgroup>'
       +'<tr><td class="lbl">Date:</td><td class="val">'+esc(dateDisplay)+'</td><td class="lbl">Name:</td><td class="val">'+esc(driverName||'')+'</td></tr>'
       +'<tr><td class="lbl">Truck#:</td><td class="val"></td><td class="lbl" colspan="2">Sanitary condition: &nbsp;&#9633; Good &nbsp;&#9633; Not good, but cleaned</td></tr>'
       +'<tr><td class="lbl">Time (turn on the refer):</td><td class="val">______ &nbsp;&#9633; ON &nbsp;&nbsp;Setting Temp (&le;40F): ______</td>'
@@ -3045,25 +3046,24 @@ function printDriverOrders(orderIds,driverName,dateStr,formOnly){
   var title=(driverName||'Driver')+' — '+dateDisplay;
   w.document.write('<html><head><title>'+esc(title)+'</title>'
     +'<style>'+_ORDERS_PRINT_STYLE
-      // Taller rows/bigger padding throughout (CONFIRMED live Sep 2026 —
-      // the form was printing with a lot of empty space at the bottom of
-      // the page; these numbers were picked to spread the same content
-      // out to use that space rather than leave it blank) — header table
-      // padding 8px->13px, section titles a bit more breathing room, and
-      // Taller rows/bigger padding throughout (CONFIRMED live Sep 2026,
-      // twice — first pass wasn't enough; this pass goes noticeably
-      // further: header rows ~24px padding, Deliveries/Returns rows
-      // ~52px tall, font sizes bumped too) to actually use the blank
-      // space at the bottom of the printed page. vertical-align:middle
-      // everywhere so the taller cells don't leave text stuck to the top
-      // edge — that's the "alignment" fix alongside the size bump.
-      +'table.hdrtbl{width:100%;border-collapse:collapse;font-size:15px;margin-bottom:22px;border:1px solid #333}'
-      +'table.hdrtbl td{border:1px solid #333;padding:22px 12px;vertical-align:middle}'
-      +'table.hdrtbl td.lbl{font-weight:700;white-space:nowrap}'
-      +'table.hdrtbl td.val{min-width:120px}'
+      // Taller rows/bigger padding (CONFIRMED live Sep 2026, twice — first
+      // pass wasn't enough) to use the blank space at the bottom of the
+      // page: header rows ~22px padding, Deliveries/Returns rows ~52px
+      // tall, font sizes bumped. vertical-align:middle everywhere so text
+      // sits centered in the taller cells rather than stuck to the top.
+      // table-layout:fixed + the <colgroup> on hdrtbl (see above) + word
+      // wrapping is the actual overflow fix (CONFIRMED live Sep 2026):
+      // without a fixed layout, a table sizes its columns to fit content,
+      // so the bigger font size pushed the widest row (Time before drive
+      // away / ON / OFF / Need repair) past the page's right edge instead
+      // of wrapping — fixed layout with explicit column widths forces
+      // long content to wrap within its column instead.
+      +'table.hdrtbl{width:100%;table-layout:fixed;border-collapse:collapse;font-size:15px;margin-bottom:22px;border:1px solid #333}'
+      +'table.hdrtbl td{border:1px solid #333;padding:22px 12px;vertical-align:middle;word-wrap:break-word;overflow-wrap:break-word}'
+      +'table.hdrtbl td.lbl{font-weight:700}'
       +'.sectiontitle{text-align:center;font-size:16px;font-weight:700;margin:26px 0 12px}'
-      +'table.formtbl{width:100%;border-collapse:collapse;font-size:14.5px;margin-bottom:16px}'
-      +'table.formtbl th,table.formtbl td{border:1px solid #333;padding:15px 12px;text-align:left;vertical-align:middle;height:52px}'
+      +'table.formtbl{width:100%;table-layout:fixed;border-collapse:collapse;font-size:14.5px;margin-bottom:16px}'
+      +'table.formtbl th,table.formtbl td{border:1px solid #333;padding:15px 12px;text-align:left;vertical-align:middle;height:52px;word-wrap:break-word;overflow-wrap:break-word}'
       +'table.formtbl th{background:#f0f0f0;vertical-align:middle}'
     +'</style></head><body>'
     +formHtml

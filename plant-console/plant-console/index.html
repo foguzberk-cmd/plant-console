@@ -3024,11 +3024,12 @@ function printDriverOrders(orderIds,driverName,dateStr,formOnly){
   var formHtml='<div class="coldform"'+(formOnly?'':' style="page-break-after:always"')+'>'
     +'<div style="text-align:center;font-size:16px;font-weight:700;margin-bottom:14px">Leader Meat Packing Corp.</div>'
     +'<table class="hdrtbl">'
+      +'<colgroup><col style="width:19%"><col style="width:31%"><col style="width:19%"><col style="width:31%"></colgroup>'
       +'<tr><td class="lbl">Date:</td><td class="val">'+esc(dateDisplay)+'</td><td class="lbl">Name:</td><td class="val">'+esc(driverName||'')+'</td></tr>'
       +'<tr><td class="lbl">Truck#:</td><td class="val"></td><td class="lbl" colspan="2">Sanitary condition: &nbsp;&#9633; Good &nbsp;&#9633; Not good, but cleaned</td></tr>'
-      +'<tr><td class="lbl">Time (turn on the refer):</td><td class="val">&#9633; ON &nbsp;&nbsp;Setting Temp (&le;40F): ______</td>'
-        +'<td class="lbl">Time (before drive away):</td><td class="val">&#9633; ON &nbsp;&#9633; OFF / Need repair</td></tr>'
-      +'<tr><td class="lbl" colspan="4">Refer unit temp before loading (calibrated handheld thermometer, reading stabilized): ______________ &deg;F (&lt;45F)</td></tr>'
+      +'<tr><td class="lbl">Time (turn on the refer):</td><td class="val">Time: ______ &nbsp;&#9633; ON<br>Setting Temp (&le;40F): ______</td>'
+        +'<td class="lbl">Time (before drive away):</td><td class="val">Time: ______<br>&#9633; ON &nbsp;&#9633; OFF / Need repair</td></tr>'
+      +'<tr><td class="lbl" colspan="4">Refer unit temp before loading: monitored by holding a calibrated handheld thermometer in the truck until the reading is stabilized: ______________ &deg;F (&lt;45F)</td></tr>'
       +'<tr><td class="lbl">Miles begin:</td><td class="val"></td><td class="lbl">Miles end:</td><td class="val"></td></tr>'
     +'</table>'
     +'<div class="sectiontitle">Deliveries / Payments</div>'
@@ -3045,13 +3046,19 @@ function printDriverOrders(orderIds,driverName,dateStr,formOnly){
   var title=(driverName||'Driver')+' — '+dateDisplay;
   w.document.write('<html><head><title>'+esc(title)+'</title>'
     +'<style>'+_ORDERS_PRINT_STYLE
-      +'table.hdrtbl{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:18px;border:1px solid #333}'
-      +'table.hdrtbl td{border:1px solid #333;padding:8px}'
-      +'table.hdrtbl td.lbl{font-weight:700;white-space:nowrap}'
-      +'table.hdrtbl td.val{min-width:120px}'
+      // Back to the original compact sizing (CONFIRMED live Sep 2026 —
+      // the larger-padding version from earlier today wasn't wanted after
+      // all; reverted). table-layout:fixed + the <colgroup> on hdrtbl +
+      // word wrapping stay, though, since those are what stop a long cell
+      // (like "Time before drive away / ON / OFF / Need repair") from
+      // overflowing off the page — unrelated to font/padding size and
+      // worth keeping regardless of how compact the form is.
+      +'table.hdrtbl{width:100%;table-layout:fixed;border-collapse:collapse;font-size:13px;margin-bottom:18px;border:1px solid #333}'
+      +'table.hdrtbl td{border:1px solid #333;padding:8px;vertical-align:middle;word-wrap:break-word;overflow-wrap:break-word;line-height:1.5}'
+      +'table.hdrtbl td.lbl{font-weight:700}'
       +'.sectiontitle{text-align:center;font-size:14px;font-weight:700;margin:16px 0 8px}'
-      +'table.formtbl{width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:10px}'
-      +'table.formtbl th,table.formtbl td{border:1px solid #333;padding:7px 8px;text-align:left;height:22px}'
+      +'table.formtbl{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12.5px;margin-bottom:10px}'
+      +'table.formtbl th,table.formtbl td{border:1px solid #333;padding:7px 8px;text-align:left;vertical-align:middle;height:22px;word-wrap:break-word;overflow-wrap:break-word}'
       +'table.formtbl th{background:#f0f0f0}'
     +'</style></head><body>'
     +formHtml

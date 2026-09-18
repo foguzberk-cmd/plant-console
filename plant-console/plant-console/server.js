@@ -814,9 +814,23 @@ async function fetchQBItemsPage(startPosition, retry) {
       'Accept': 'application/json'
     }
   });
-  if (res.status === 401 && !retry) {
-    const ok = await refreshAccessToken();
-    if (ok) return fetchQBItemsPage(startPosition, true);
+  // Any 401 here means "this session isn't authorized right now" — whether
+  // that's because the access token was simply stale (the refresh+retry
+  // below fixes that transparently) or because the QuickBooks connection
+  // itself is actually broken (disconnected/revoked in Intuit, or the
+  // refresh token itself has expired) — in which case the refresh above
+  // either fails outright OR "succeeds" but the retry STILL comes back
+  // 401. CONFIRMED live (Sep 2026): that second case used to fall through
+  // to the generic error below, surfacing a raw, confusing
+  // "QB API error 401: {Fault:...AuthorizationFailure...}" blob instead of
+  // the same clear "reconnect QuickBooks" prompt used everywhere else —
+  // both paths now land on NEEDS_RECONNECT, which the client already
+  // knows how to show a real "Reconnect QuickBooks" link for.
+  if (res.status === 401) {
+    if (!retry) {
+      const ok = await refreshAccessToken();
+      if (ok) return fetchQBItemsPage(startPosition, true);
+    }
     throw new Error('NEEDS_RECONNECT');
   }
   if (res.status !== 200) throw new Error('QB API error ' + res.status + ': ' + res.body);
@@ -851,9 +865,14 @@ async function fetchQBCustomersPage(startPosition, retry) {
       'Accept': 'application/json'
     }
   });
-  if (res.status === 401 && !retry) {
-    const ok = await refreshAccessToken();
-    if (ok) return fetchQBCustomersPage(startPosition, true);
+  // See the long comment on the same pattern in fetchQBItemsPage above —
+  // a retry that STILL comes back 401 also means NEEDS_RECONNECT, not a
+  // raw error blob.
+  if (res.status === 401) {
+    if (!retry) {
+      const ok = await refreshAccessToken();
+      if (ok) return fetchQBCustomersPage(startPosition, true);
+    }
     throw new Error('NEEDS_RECONNECT');
   }
   if (res.status !== 200) throw new Error('QB API error ' + res.status + ': ' + res.body);
@@ -899,9 +918,15 @@ async function fetchQBEntityPage(entity, startPosition, retry, since, from, to) 
     method: 'GET',
     headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/json' }
   });
-  if (res.status === 401 && !retry) {
-    const ok = await refreshAccessToken();
-    if (ok) return fetchQBEntityPage(entity, startPosition, true, since, from, to);
+  // See the long comment on the same pattern in fetchQBItemsPage above —
+  // this is the exact case the screenshot bug report showed: a retry that
+  // STILL comes back 401 also means NEEDS_RECONNECT, not a raw
+  // "QB API error 401 on Payment: {...AuthorizationFailure...}" blob.
+  if (res.status === 401) {
+    if (!retry) {
+      const ok = await refreshAccessToken();
+      if (ok) return fetchQBEntityPage(entity, startPosition, true, since, from, to);
+    }
     throw new Error('NEEDS_RECONNECT');
   }
   if (res.status !== 200) throw new Error('QB API error ' + res.status + ' on ' + entity + ': ' + res.body);
@@ -937,9 +962,12 @@ async function fetchQBEntityById(entity, id, retry) {
     method: 'GET',
     headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/json' }
   });
-  if (res.status === 401 && !retry) {
-    const ok = await refreshAccessToken();
-    if (ok) return fetchQBEntityById(entity, id, true);
+  // See the long comment on the same pattern in fetchQBItemsPage above.
+  if (res.status === 401) {
+    if (!retry) {
+      const ok = await refreshAccessToken();
+      if (ok) return fetchQBEntityById(entity, id, true);
+    }
     throw new Error('NEEDS_RECONNECT');
   }
   if (res.status === 404) return null; // e.g. deleted between the webhook firing and this fetch
@@ -969,9 +997,12 @@ async function createQBInvoice(invoicePayload, retry) {
       'Content-Length': Buffer.byteLength(bodyStr)
     }
   }, bodyStr);
-  if (res.status === 401 && !retry) {
-    const ok = await refreshAccessToken();
-    if (ok) return createQBInvoice(invoicePayload, true);
+  // See the long comment on the same pattern in fetchQBItemsPage above.
+  if (res.status === 401) {
+    if (!retry) {
+      const ok = await refreshAccessToken();
+      if (ok) return createQBInvoice(invoicePayload, true);
+    }
     throw new Error('NEEDS_RECONNECT');
   }
   if (res.status !== 200) throw new Error('QB API error ' + res.status + ' creating invoice: ' + res.body);

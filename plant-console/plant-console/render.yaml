@@ -33,7 +33,19 @@ services:
       - key: QB_REFRESH_TOKEN
         sync: false
       - key: QB_REDIRECT_URI
-        value: https://plant-console-app.onrender.com/callback
+        # CONFIRMED live (Sep 2026): Render assigned this service the
+        # live URL plant-console-app-cu5c.onrender.com (a random suffix
+        # Render appends when the plain name is already taken), not the
+        # plain plant-console-app.onrender.com this used to point at —
+        # that mismatch is exactly what threw Intuit's "redirect_uri
+        # query parameter value is invalid" error when reconnecting
+        # QuickBooks. If Render ever reassigns this service a different
+        # URL again (e.g. after deleting and recreating the service),
+        # this value AND the Redirect URIs list on the Intuit Developer
+        # Portal (your app -> Keys & OAuth tab) both need updating to
+        # match the new URL exactly, or reconnecting will break the same
+        # way again.
+        value: https://plant-console-app-cu5c.onrender.com/callback
       # From the Intuit Developer Portal -> your app -> Webhooks page (a
       # separate secret from CLIENT_ID/CLIENT_SECRET). Required for
       # /api/qb-webhook to verify that incoming requests genuinely came

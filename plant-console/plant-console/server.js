@@ -1541,10 +1541,28 @@ async function diagnose(retry) {
       method: 'GET',
       headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/json' }
     });
+    // Truncated to 300 chars for display — fine for the Item probes below
+    // (their whole point is just the status code / a short COUNT result),
+    // but NOT safe for CompanyInfo (see companyRaw below), whose response
+    // is routinely well over 300 characters and would truncate mid-object,
+    // making JSON.parse throw and silently leaving companyName null below
+    // — CONFIRMED live (Sep 2026): exactly this happened, hiding the one
+    // piece of information (the real connected company's name) this
+    // endpoint exists to surface in the first place.
     return { status: res.status, body: res.body.slice(0, 300) };
   }
+  async function runQueryFull(q) {
+    const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(q)}&minorversion=75`;
+    const res = await httpsRequest({
+      hostname: 'quickbooks.api.intuit.com',
+      path: reqPath,
+      method: 'GET',
+      headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/json' }
+    });
+    return { status: res.status, body: res.body };
+  }
 
-  const company = await runQuery('SELECT * FROM CompanyInfo');
+  const company = await runQueryFull('SELECT * FROM CompanyInfo');
   const itemCount = await runQuery('SELECT COUNT(*) FROM Item');
   const item1 = await runQuery('SELECT * FROM Item MAXRESULTS 1');
   const item100 = await runQuery('SELECT * FROM Item STARTPOSITION 1 MAXRESULTS 100');

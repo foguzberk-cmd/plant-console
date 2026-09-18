@@ -794,7 +794,7 @@ async function ensureFreshToken() {
   }
 }
 
-async function fetchQBItemsPage(startPosition, retry) {
+async function fetchQBItemsPage(startPosition, retry, skipActiveFilter) {
   // QuickBooks Online silently defaults to Active=true when a query has no
   // WHERE clause on Active at all — any item that's since been deactivated
   // or merged in QuickBooks never comes back from a plain "SELECT * FROM
@@ -803,7 +803,19 @@ async function fetchQBItemsPage(startPosition, retry) {
   // and inactive items fixes this — without it, thousands of historical
   // line items end up permanently unmatchable ("item not matched") no
   // matter how many times items are re-synced.
-  const query = `SELECT * FROM Item WHERE Active IN (true, false) STARTPOSITION ${startPosition} MAXRESULTS 100`;
+  // skipActiveFilter: CONFIRMED live (Sep 2026) — this exact "Active IN
+  // (true, false)" syntax is Intuit's own documented pattern and works
+  // fine on other companies, but one specific company rejected it with a
+  // 400 (errorCode 3202). Rather than leave item sync completely broken
+  // for that company while the actual cause gets tracked down separately,
+  // a 400 on the first attempt falls back to the plain query below (which
+  // only returns Active=true items — inactive/deleted historical items
+  // won't be fetched under this fallback, so some old line items may go
+  // back to showing "item not matched" until the real cause is found) —
+  // better than nothing syncing at all.
+  const query = skipActiveFilter
+    ? `SELECT * FROM Item STARTPOSITION ${startPosition} MAXRESULTS 100`
+    : `SELECT * FROM Item WHERE Active IN (true, false) STARTPOSITION ${startPosition} MAXRESULTS 100`;
   const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
   const res = await httpsRequest({
     hostname: 'quickbooks.api.intuit.com',
@@ -814,6 +826,9 @@ async function fetchQBItemsPage(startPosition, retry) {
       'Accept': 'application/json'
     }
   });
+  if (res.status === 400 && !skipActiveFilter) {
+    return fetchQBItemsPage(startPosition, retry, true);
+  }
   // Any 401 here means "this session isn't authorized right now" — whether
   // that's because the access token was simply stale (the refresh+retry
   // below fixes that transparently) or because the QuickBooks connection

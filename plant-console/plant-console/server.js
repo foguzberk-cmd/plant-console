@@ -1935,6 +1935,71 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
+  // Finds Plant Console items that no longer exist under the CURRENTLY
+  // connected QuickBooks company at all — not inactive, not deleted,
+  // genuinely absent — which is exactly what happens to an item that was
+  // only ever synced in while the app was accidentally connected to a
+  // DIFFERENT QuickBooks company (see the Legacy-company mixup, Sep
+  // 2026): the sync only ever adds/updates items by qbId, it never
+  // removes one that stops showing up, so anything that only ever
+  // existed under that other company is stuck here forever as a ghost
+  // record with numbers that don't correspond to anything real anymore.
+  // Does a real, live, minimal-field (just Id) pull of every item id the
+  // CURRENT company actually has, and reports which local items' qbId
+  // isn't in that set — read-only, doesn't delete anything itself.
+  if (url === '/api/data/items-find-orphans' && req.method === 'GET') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const liveIds = new Set();
+      let startPosition = 1;
+      for (;;) {
+        const query = `SELECT Id FROM Item WHERE Active IN (true, false) STARTPOSITION ${startPosition} MAXRESULTS 1000`;
+        const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
+        const res2 = await httpsRequest({
+          hostname: 'quickbooks.api.intuit.com',
+          path: reqPath,
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/json' }
+        });
+        if (res2.status !== 200) throw new Error('QB API error ' + res2.status + ' checking item ids: ' + res2.body);
+        const data2 = JSON.parse(res2.body || '{}');
+        const batch = (data2.QueryResponse && data2.QueryResponse.Item) || [];
+        batch.forEach(it => liveIds.add(it.Id));
+        if (batch.length < 1000) break;
+        startPosition += 1000;
+      }
+      const itemsTxn = await readItemsTxnData();
+      const orphans = (itemsTxn.items || []).filter(it => it && it.qbId && !liveIds.has(it.qbId));
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, checkedAgainst: liveIds.size, orphans: orphans.map(o => ({ id: o.id, qbId: o.qbId, name: o.name, qty: o.qty, cost: o.cost })) }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  // Deletes specific Plant Console items by id — used only from the
+  // orphaned-items finder above (the person reviews the list and picks
+  // which ones to actually remove; nothing here deletes automatically).
+  // Admin-only, same as backup/restore — this is a real, permanent
+  // deletion of inventory records, not something to expose to every role.
+  if (url === '/api/data/items-delete' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      const idsToDelete = new Set((Array.isArray(body.ids) ? body.ids : []).filter(x => typeof x === 'string'));
+      const itemsTxn = await readItemsTxnData();
+      const items = (itemsTxn.items || []).filter(it => !it || !idsToDelete.has(it.id));
+      await writeItemsTxnData({ items, transactions: itemsTxn.transactions || [] });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, remaining: items.length }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
   // Lightweight read of the SMALL shared collections only (users, scale logs,
   // label-allowed list, saved reports, customer-allowed list) — used by the
   // browser to check for anything added/edited on OTHER devices right before

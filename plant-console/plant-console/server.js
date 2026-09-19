@@ -1565,22 +1565,31 @@ async function backgroundSyncItems() {
   return qbItems.length;
 }
 
-let _itemsSyncInFlight = false;
 let _lastItemsSyncRunAt = 0;
 let _lastItemsSyncResult = null;
-async function runItemsBackgroundSync() {
-  if (_itemsSyncInFlight) return;
-  if (!accessToken && !refreshToken) return; // QuickBooks isn't connected yet
-  _itemsSyncInFlight = true;
-  try {
-    const count = await backgroundSyncItems();
-    _lastItemsSyncResult = { ok: true, count, incremental: !!_lastItemSyncAt, at: new Date().toISOString() };
-  } catch (e) {
-    _lastItemsSyncResult = { ok: false, error: e.message, at: new Date().toISOString() };
-    console.error('Background item sync failed:', e.message);
-  }
-  _lastItemsSyncRunAt = Date.now();
-  _itemsSyncInFlight = false;
+// A promise-based lock rather than a plain boolean — a caller that
+// arrives while a sync is ALREADY running (e.g. the "Sync now" button
+// gets clicked at the exact moment the 5-min timer fires) awaits that
+// SAME in-progress sync and gets its genuinely-fresh result, instead of
+// a boolean guard just no-op'ing immediately and handing back
+// whatever's leftover from before that overlapping run finishes —
+// important specifically for the manual "Sync now" case below, where
+// the whole point is a real, current answer, not a stale one.
+let _itemsSyncPromise = null;
+function runItemsBackgroundSync() {
+  if (_itemsSyncPromise) return _itemsSyncPromise;
+  if (!accessToken && !refreshToken) return Promise.resolve(); // QuickBooks isn't connected yet
+  _itemsSyncPromise = (async () => {
+    try {
+      const count = await backgroundSyncItems();
+      _lastItemsSyncResult = { ok: true, count, incremental: !!_lastItemSyncAt, at: new Date().toISOString() };
+    } catch (e) {
+      _lastItemsSyncResult = { ok: false, error: e.message, at: new Date().toISOString() };
+      console.error('Background item sync failed:', e.message);
+    }
+    _lastItemsSyncRunAt = Date.now();
+  })();
+  return _itemsSyncPromise.finally(() => { _itemsSyncPromise = null; });
 }
 
 async function backgroundSyncVendors() {
@@ -1892,6 +1901,30 @@ const server = http.createServer(async (req, res) => {
     const itemsTxn = await readItemsTxnData();
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
     res.end(JSON.stringify({ items: itemsTxn.items || [] }));
+    return;
+  }
+  // Forces an item sync to run RIGHT NOW instead of waiting for the next
+  // 5-minute tick — CONFIRMED live (Sep 2026): the automatic background
+  // sync (see runItemsBackgroundSync) is great for "stays current without
+  // touching anything", but there are real moments (checking a number
+  // that matters right now, right after fixing something in QuickBooks)
+  // where waiting even a few minutes isn't good enough. This reuses the
+  // exact same runItemsBackgroundSync used by the timer — including its
+  // incremental-since-last-sync behavior and its in-flight guard, so
+  // mashing this doesn't trigger overlapping full pulls — the request
+  // just waits for whatever sync (already running or freshly started)
+  // to finish, then returns the current items.
+  if (url === '/api/data/items-sync-now' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    try {
+      await runItemsBackgroundSync();
+      const itemsTxn = await readItemsTxnData();
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, items: itemsTxn.items || [], result: _lastItemsSyncResult }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
     return;
   }
   // Lightweight read of the SMALL shared collections only (users, scale logs,
@@ -3569,7 +3602,7 @@ const server = http.createServer(async (req, res) => {
       lastSyncAt: _lastBackgroundSyncAt || null,
       lastResult: _lastBackgroundSyncResult,
       items: {
-        inFlight: _itemsSyncInFlight,
+        inFlight: !!_itemsSyncPromise,
         lastSyncAt: _lastItemsSyncRunAt || null,
         lastResult: _lastItemsSyncResult,
         incrementalSinceAt: _lastItemSyncAt || null

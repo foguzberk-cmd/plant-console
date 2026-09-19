@@ -22,6 +22,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
 <style>
+  @keyframes spin{ from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
   :root{
     --bg:#EFEDEA;--panel:#FFFFFF;--ink:#1C1517;--muted:#877E79;
     --line:#DED9D4;--sidebar:#221316;--sb-ink:#CBC0BB;--sb-dim:#83716D;
@@ -1858,6 +1859,34 @@ function pollItemsFromServer(){
   }).catch(function(){ _itemsPollInFlight=false; });
 }
 setInterval(pollItemsFromServer,60000);
+// Manual escape hatch for "I need the real number right now, not in up
+// to 5 minutes" — calls the server's items-sync-now endpoint, which runs
+// a real sync immediately (same incremental logic as the automatic
+// cycle, just triggered on demand instead of waiting for the timer) and
+// waits for it to actually finish before updating the table, rather than
+// just kicking it off and hoping.
+function syncItemsNow(){
+  var btn=document.getElementById('itemsSyncNowBtn');
+  var statusEl=document.getElementById('qbStatus');
+  if(btn){ btn.disabled=true; btn.querySelector('svg').style.animation='spin 0.8s linear infinite'; }
+  if(statusEl) statusEl.textContent='Syncing with QuickBooks…';
+  fetch('/api/data/items-sync-now',{method:'POST'}).then(function(res){
+    return res.json().then(function(data){ return {ok:res.ok,data:data}; });
+  }).then(function(result){
+    if(btn){ btn.disabled=false; var svg=btn.querySelector('svg'); if(svg) svg.style.animation=''; }
+    if(!result.ok || !result.data || !result.data.success){
+      if(statusEl) statusEl.textContent='Sync failed: '+((result.data&&result.data.error)||'unknown error');
+      return;
+    }
+    items=result.data.items||[];
+    safeSetLocal('pc_items', JSON.stringify(items));
+    if(typeof renderItemsTable==='function') renderItemsTable();
+    if(statusEl) statusEl.textContent=items.length+' item'+(items.length!==1?'s':'')+' on file — just synced';
+  }).catch(function(){
+    if(btn){ btn.disabled=false; var svg=btn.querySelector('svg'); if(svg) svg.style.animation=''; }
+    if(statusEl) statusEl.textContent='Sync failed: could not reach the server.';
+  });
+}
 // Mobile browsers throttle (or fully pause) background-tab timers, so a
 // phone that's been sitting in the background for a while can easily be
 // showing data that's several minutes (or longer) stale even though the
@@ -13702,10 +13731,14 @@ function renderItemsView(){
     <div class="txn-toolbar">
       <span id="qbStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted)">${items.length} item${items.length!==1?'s':''} on file</span>
       <div style="display:flex;gap:8px;align-items:center">
-        <span id="qbAutoSyncNote" title="Items now sync automatically from QuickBooks — no manual sync needed. The server checks for anything changed every 5 minutes, and this page checks for updates every minute while it's open." style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;color:var(--muted);padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);cursor:help">
+        <span id="qbAutoSyncNote" title="Items now sync automatically from QuickBooks — no manual sync needed. The server checks for anything changed every 5 minutes, and this page checks for updates every minute while it's open. Click 'Sync now' for the real, right-now numbers instead of waiting." style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;color:var(--muted);padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);cursor:help">
           <span style="width:7px;height:7px;border-radius:50%;background:#3a9e5f;flex-shrink:0"></span>
           Auto-synced from QuickBooks
         </span>
+        <button id="itemsSyncNowBtn" class="btn btn-primary" onclick="syncItemsNow()" title="Pull the real, current numbers from QuickBooks right now — doesn't wait for the automatic 5-minute check">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          Sync now
+        </button>
         <button class="btn" onclick="recalcQuantities()" title="Rebuild per-location quantities from transaction history">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/></svg>
           Recalculate

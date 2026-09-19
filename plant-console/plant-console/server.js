@@ -1481,6 +1481,70 @@ async function backgroundSyncCustomers() {
   return qbCustomers.length;
 }
 
+// Pulls the full Item list from QuickBooks and merges it into the
+// server's own items store (readItemsTxnData/writeItemsTxnData) — same
+// idea as backgroundSyncCustomers/backgroundSyncVendors above, so Items
+// updates automatically on the same 30-minute cycle instead of requiring
+// someone to click "Quick sync"/"Full sync" (CONFIRMED live Sep 2026,
+// removed those buttons in favor of this). Deliberately reuses the
+// EXISTING 30-min interval rather than adding a new, more frequent one —
+// a full Item pull (paginated, hundreds+ of records) is real work, and
+// there's an active, unresolved investigation into repeated server OOM
+// crashes (see the memcheck logging at startup) — adding a heavier or
+// more frequent recurring job right now is exactly the kind of change
+// that could make that worse, so this deliberately stays on the same
+// cadence already proven safe for customers/vendors rather than syncing
+// items more aggressively.
+async function backgroundSyncItems() {
+  const qbItems = [];
+  let startPosition = 1;
+  for (;;) {
+    const page = await fetchQBItemsPage(startPosition);
+    const batch = (page.QueryResponse && page.QueryResponse.Item) || [];
+    qbItems.push(...batch);
+    if (batch.length < 100) break;
+    startPosition += 100;
+  }
+  const itemsTxn = await readItemsTxnData();
+  const items = Array.isArray(itemsTxn.items) ? itemsTxn.items.slice() : [];
+  qbItems.forEach(qi => {
+    const existing = items.findIndex(x => x && x.qbId === qi.Id);
+    // Same FullyQualifiedName-first grouping logic as the client's
+    // qbSyncItemsCore (kept identical so a background-synced item looks
+    // no different from one synced by hand).
+    let groupName = '';
+    if (qi.FullyQualifiedName && qi.FullyQualifiedName.indexOf(':') >= 0) {
+      groupName = qi.FullyQualifiedName.split(':')[0];
+    } else if (qi.ParentRef && qi.ParentRef.name) {
+      groupName = qi.ParentRef.name;
+    }
+    const mapped = {
+      id: existing >= 0 ? items[existing].id : 'item_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+      qbId: qi.Id,
+      name: qi.Name || '',
+      type: qi.Type || '',
+      description: qi.Description || qi.FullyQualifiedName || '',
+      sku: qi.Sku || '',
+      price: qi.UnitPrice || 0,
+      cost: qi.PurchaseCost || 0,
+      qty: qi.QtyOnHand || 0,
+      qbQty: qi.QtyOnHand || 0,
+      active: qi.Active !== false,
+      groupName: groupName,
+      qbSynced: new Date().toISOString(),
+      // Plant-Console-only fields QuickBooks knows nothing about — always
+      // carried forward from whatever's already saved, same reasoning as
+      // salesRep/dunsNumber in backgroundSyncCustomers above.
+      locationId: existing >= 0 ? items[existing].locationId : undefined,
+      locQtys: existing >= 0 ? items[existing].locQtys : undefined,
+      openingDate: existing >= 0 ? items[existing].openingDate : undefined
+    };
+    if (existing >= 0) items[existing] = mapped; else items.push(mapped);
+  });
+  await writeItemsTxnData({ items, transactions: itemsTxn.transactions || [] });
+  return qbItems.length;
+}
+
 async function backgroundSyncVendors() {
   const qbVendors = await fetchQBEntity('Vendor');
   await updateSharedData(async (current) => {
@@ -1516,7 +1580,7 @@ async function runBackgroundSync() {
   if (_backgroundSyncInFlight) return; // never overlap two runs
   if (!accessToken && !refreshToken) return; // QuickBooks isn't connected yet — nothing to sync
   _backgroundSyncInFlight = true;
-  const result = { at: new Date().toISOString(), customers: null, vendors: null };
+  const result = { at: new Date().toISOString(), customers: null, vendors: null, items: null };
   try {
     const count = await backgroundSyncCustomers();
     result.customers = { ok: true, count };
@@ -1530,6 +1594,13 @@ async function runBackgroundSync() {
   } catch (e) {
     result.vendors = { ok: false, error: e.message };
     console.error('Background vendor sync failed:', e.message);
+  }
+  try {
+    const count = await backgroundSyncItems();
+    result.items = { ok: true, count };
+  } catch (e) {
+    result.items = { ok: false, error: e.message };
+    console.error('Background item sync failed:', e.message);
   }
   _lastBackgroundSyncAt = Date.now();
   _lastBackgroundSyncResult = result;
@@ -1776,6 +1847,17 @@ const server = http.createServer(async (req, res) => {
     });
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
     res.end(JSON.stringify(safe));
+    return;
+  }
+  // Lightweight read of JUST the items list (no transactions, no other
+  // shared collections) — used to poll for background-synced item changes
+  // (see backgroundSyncItems above) without paying the cost of the full
+  // /api/data payload or the multi-MB transactions array on every poll.
+  if (url === '/api/data/items-only' && req.method === 'GET') {
+    if (!requireAuth(req, res)) return;
+    const itemsTxn = await readItemsTxnData();
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+    res.end(JSON.stringify({ items: itemsTxn.items || [] }));
     return;
   }
   // Lightweight read of the SMALL shared collections only (users, scale logs,

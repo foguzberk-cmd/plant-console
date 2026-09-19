@@ -802,7 +802,7 @@ async function ensureFreshToken() {
   }
 }
 
-async function fetchQBItemsPage(startPosition, retry, skipActiveFilter, sinceIso) {
+async function fetchQBItemsPage(startPosition, retry, activeMode, sinceIso) {
   // QuickBooks Online silently defaults to Active=true when a query has no
   // WHERE clause on Active at all — any item that's since been deactivated
   // or merged in QuickBooks never comes back from a plain "SELECT * FROM
@@ -811,23 +811,29 @@ async function fetchQBItemsPage(startPosition, retry, skipActiveFilter, sinceIso
   // and inactive items fixes this — without it, thousands of historical
   // line items end up permanently unmatchable ("item not matched") no
   // matter how many times items are re-synced.
-  // skipActiveFilter: CONFIRMED live (Sep 2026) — this exact "Active IN
-  // (true, false)" syntax is Intuit's own documented pattern and works
-  // fine on other companies, but one specific company rejected it with a
-  // 400 (errorCode 3202). Rather than leave item sync completely broken
-  // for that company while the actual cause gets tracked down separately,
-  // a 400 on the first attempt falls back to the plain query below (which
-  // only returns Active=true items — inactive/deleted historical items
-  // won't be fetched under this fallback, so some old line items may go
-  // back to showing "item not matched" until the real cause is found) —
-  // better than nothing syncing at all.
+  // activeMode: 'both' (default) uses "Active IN (true, false)" — Intuit's
+  // own documented pattern, and works fine on most companies. CONFIRMED
+  // live (Sep 2026) — one specific company rejects that combined syntax
+  // outright with a 400 (errorCode 3202). An EARLIER version of this
+  // function "fixed" that by falling back to a plain query with NO active
+  // filter at all on that 400 — which silently missed every inactive item
+  // for that company (QuickBooks' own default with no Active clause is
+  // Active=true only), wrongly flagging ~229 real, legitimately-inactive
+  // items as "not found in QuickBooks" the next time anything checked for
+  // them. On a 400 with activeMode 'both', this now throws
+  // ACTIVE_IN_UNSUPPORTED instead of silently degrading — see
+  // fetchAllQBItems below, which is what actually recovers from that by
+  // running two separate, always-reliable single-value queries
+  // (Active = true, then Active = false) and merging them, rather than
+  // dropping the active filter and losing half the catalog.
   // sinceIso: when set, adds "AND MetaData.LastUpdatedTime >= X" so a
   // background sync only fetches items that actually changed instead of
   // the whole catalog every time — see backgroundSyncItems below for why
   // this matters (it's what lets the sync run every few minutes instead
   // of every 30, without hammering QuickBooks for the full item list each
   // time).
-  const activeClause = skipActiveFilter ? '' : 'Active IN (true, false)';
+  const mode = activeMode || 'both';
+  const activeClause = mode === 'both' ? 'Active IN (true, false)' : ('Active = ' + mode);
   const sinceClause = sinceIso ? `MetaData.LastUpdatedTime >= '${sinceIso}'` : '';
   const whereParts = [activeClause, sinceClause].filter(Boolean);
   const whereClause = whereParts.length ? ('WHERE ' + whereParts.join(' AND ') + ' ') : '';
@@ -842,8 +848,8 @@ async function fetchQBItemsPage(startPosition, retry, skipActiveFilter, sinceIso
       'Accept': 'application/json'
     }
   });
-  if (res.status === 400 && !skipActiveFilter) {
-    return fetchQBItemsPage(startPosition, retry, true, sinceIso);
+  if (res.status === 400 && mode === 'both') {
+    throw new Error('ACTIVE_IN_UNSUPPORTED');
   }
   // Any 401 here means "this session isn't authorized right now" — whether
   // that's because the access token was simply stale (the refresh+retry
@@ -860,7 +866,7 @@ async function fetchQBItemsPage(startPosition, retry, skipActiveFilter, sinceIso
   if (res.status === 401) {
     if (!retry) {
       const ok = await refreshAccessToken();
-      if (ok) return fetchQBItemsPage(startPosition, true, skipActiveFilter, sinceIso);
+      if (ok) return fetchQBItemsPage(startPosition, true, activeMode, sinceIso);
     }
     throw new Error('NEEDS_RECONNECT');
   }
@@ -868,19 +874,47 @@ async function fetchQBItemsPage(startPosition, retry, skipActiveFilter, sinceIso
   return JSON.parse(res.body);
 }
 
-async function fetchQBItems(retry) {
-  // Paginate through all items using STARTPOSITION (QB is 1-indexed)
+// Full pagination for ONE active-mode ('true' or 'false' — never 'both'
+// here, callers use fetchAllQBItems for that), collecting every page.
+async function _fetchAllQBItemsForMode(activeMode, sinceIso) {
   let allItems = [];
   let start = 1;
-  const pageSize = 100;
-  while (true) {
-    const data = await fetchQBItemsPage(start, retry);
-    const items = (data.QueryResponse && data.QueryResponse.Item) || [];
-    allItems = allItems.concat(items);
-    if (items.length < pageSize) break; // last page
-    start += pageSize;
-    if (start > 10000) break; // safety cap
+  for (;;) {
+    const data = await fetchQBItemsPage(start, false, activeMode, sinceIso);
+    const batch = (data.QueryResponse && data.QueryResponse.Item) || [];
+    allItems = allItems.concat(batch);
+    if (batch.length < 100) break;
+    start += 100;
+    if (start > 20000) break; // safety cap
   }
+  return allItems;
+}
+// The one function anything wanting "every item" (optionally, only ones
+// changed since sinceIso) should call. Handles the ACTIVE_IN_UNSUPPORTED
+// case (see fetchQBItemsPage) by transparently falling back to two
+// separate full passes — Active=true, then Active=false — and merging
+// them, rather than ever silently dropping every inactive item the way
+// the old "just retry with no active filter at all" fallback used to.
+// CONFIRMED live (Sep 2026): that old behavior was live for a while and
+// caused ~229 genuinely-inactive-but-real items to wrongly show as "not
+// found in QuickBooks" — this is the actual fix, applied once here so
+// every caller (the background sync, the orphaned-items finder, the
+// /api/qb/items proxy) benefits instead of patching each separately.
+async function fetchAllQBItems(sinceIso) {
+  try {
+    return await _fetchAllQBItemsForMode('both', sinceIso);
+  } catch (e) {
+    if (e.message !== 'ACTIVE_IN_UNSUPPORTED') throw e;
+    const [activeItems, inactiveItems] = await Promise.all([
+      _fetchAllQBItemsForMode('true', sinceIso),
+      _fetchAllQBItemsForMode('false', sinceIso)
+    ]);
+    return activeItems.concat(inactiveItems);
+  }
+}
+
+async function fetchQBItems(retry) {
+  const allItems = await fetchAllQBItems();
   return { QueryResponse: { Item: allItems, maxResults: allItems.length } };
 }
 
@@ -1523,15 +1557,7 @@ let _lastItemSyncAt = null; // ISO string, or null until the first successful ru
 async function backgroundSyncItems() {
   const syncStartedAt = new Date().toISOString();
   const sinceIso = _lastItemSyncAt; // capture before this run, so a slow run doesn't miss anything that changes mid-sync
-  const qbItems = [];
-  let startPosition = 1;
-  for (;;) {
-    const page = await fetchQBItemsPage(startPosition, false, false, sinceIso);
-    const batch = (page.QueryResponse && page.QueryResponse.Item) || [];
-    qbItems.push(...batch);
-    if (batch.length < 100) break;
-    startPosition += 100;
-  }
+  const qbItems = await fetchAllQBItems(sinceIso);
   const itemsTxn = await readItemsTxnData();
   const items = Array.isArray(itemsTxn.items) ? itemsTxn.items.slice() : [];
   qbItems.forEach(qi => {
@@ -1957,15 +1983,8 @@ const server = http.createServer(async (req, res) => {
   if (url === '/api/data/items-find-orphans' && req.method === 'GET') {
     if (!requireAuth(req, res)) return;
     try {
-      const liveIds = new Set();
-      let startPosition = 1;
-      for (;;) {
-        const page = await fetchQBItemsPage(startPosition);
-        const batch = (page.QueryResponse && page.QueryResponse.Item) || [];
-        batch.forEach(it => liveIds.add(it.Id));
-        if (batch.length < 100) break;
-        startPosition += 100;
-      }
+      const qbItems = await fetchAllQBItems();
+      const liveIds = new Set(qbItems.map(it => it.Id));
       const itemsTxn = await readItemsTxnData();
       const orphans = (itemsTxn.items || []).filter(it => it && it.qbId && !liveIds.has(it.qbId));
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });

@@ -1892,6 +1892,87 @@ setInterval(pollItemsFromServer,60000);
 // localStorage-only version "got wiped" the moment the person signed in
 // from a different browser/device/incognito window, since localStorage
 // never follows a person anywhere; this does.
+// Checks every locally-stored item against what the CURRENTLY connected
+// QuickBooks company actually has, and offers to delete any that don't
+// exist there at all — this is how a leftover from an old/wrong
+// QuickBooks connection (see the Legacy-company mixup, Sep 2026) gets
+// cleaned out, since the regular sync only ever adds/updates items and
+// never removes one that's genuinely absent.
+function findOrphanedItems(){
+  var btn=event&&event.target?event.target.closest('button'):null;
+  if(btn) btn.disabled=true;
+  fetch('/api/data/items-find-orphans').then(function(res){
+    return res.json().then(function(data){ return {ok:res.ok,data:data}; });
+  }).then(function(result){
+    if(btn) btn.disabled=false;
+    if(!result.ok||!result.data||!result.data.success){
+      alert('Could not check: '+((result.data&&result.data.error)||'unknown error'));
+      return;
+    }
+    var orphans=result.data.orphans||[];
+    if(!orphans.length){
+      alert('No orphaned items found — every item here matches something in the currently connected QuickBooks company ('+result.data.checkedAgainst+' items checked against).');
+      return;
+    }
+    _showOrphanedItemsModal(orphans);
+  }).catch(function(){
+    if(btn) btn.disabled=false;
+    alert('Could not reach the server to check.');
+  });
+}
+function _showOrphanedItemsModal(orphans){
+  var overlay=document.createElement('div');
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  var rows=orphans.map(function(o,i){
+    return '<label style="display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid var(--line);cursor:pointer">'
+      +'<input type="checkbox" class="orphanChk" data-id="'+esc(o.id)+'" checked style="width:15px;height:15px;flex-shrink:0"/>'
+      +'<span style="flex:1;font-size:13px">'+esc(o.name)+'</span>'
+      +'<span style="font-family:var(--mono);font-size:12px;color:var(--muted)">qty '+esc(String(o.qty))+' · $'+esc(String(o.cost))+'</span>'
+    +'</label>';
+  }).join('');
+  overlay.innerHTML='<div style="background:var(--panel);border-radius:12px;max-width:560px;width:100%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3)">'
+    +'<div style="padding:18px 20px;border-bottom:1px solid var(--line)">'
+      +'<div style="font-weight:700;font-size:15px">'+orphans.length+' item'+(orphans.length!==1?'s':'')+' not found in the current QuickBooks company</div>'
+      +'<div style="font-size:12.5px;color:var(--muted);margin-top:4px">These likely came from a different QuickBooks connection (e.g. a wrong-company mixup) and no longer correspond to anything real. Uncheck any you want to keep.</div>'
+    +'</div>'
+    +'<div style="overflow-y:auto;padding:8px 20px;flex:1">'+rows+'</div>'
+    +'<div style="padding:14px 20px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px">'
+      +'<button class="btn" id="orphanCancelBtn">Cancel</button>'
+      +'<button class="btn btn-primary" id="orphanDeleteBtn" style="background:#a3231b;border-color:#a3231b">Delete selected</button>'
+    +'</div>'
+  +'</div>';
+  document.body.appendChild(overlay);
+  overlay.querySelector('#orphanCancelBtn').onclick=function(){ overlay.remove(); };
+  overlay.onclick=function(e){ if(e.target===overlay) overlay.remove(); };
+  overlay.querySelector('#orphanDeleteBtn').onclick=function(){
+    var ids=Array.prototype.slice.call(overlay.querySelectorAll('.orphanChk:checked')).map(function(c){ return c.getAttribute('data-id'); });
+    if(!ids.length){ overlay.remove(); return; }
+    if(!confirm('Permanently delete '+ids.length+' item'+(ids.length!==1?'s':'')+' from Plant Console? This cannot be undone.')) return;
+    var delBtn=overlay.querySelector('#orphanDeleteBtn');
+    delBtn.disabled=true; delBtn.textContent='Deleting…';
+    fetch('/api/data/items-delete',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ids:ids})
+    }).then(function(res){
+      return res.json().then(function(data){ return {ok:res.ok,data:data}; });
+    }).then(function(result){
+      overlay.remove();
+      if(!result.ok||!result.data||!result.data.success){
+        alert('Delete failed: '+((result.data&&result.data.error)||'unknown error'));
+        return;
+      }
+      items=items.filter(function(it){ return ids.indexOf(it.id)<0; });
+      safeSetLocal('pc_items', JSON.stringify(items));
+      if(typeof renderItemsTable==='function') renderItemsTable();
+      var statusEl=document.getElementById('qbStatus');
+      if(statusEl) statusEl.textContent=items.length+' item'+(items.length!==1?'s':'')+' on file';
+    }).catch(function(){
+      overlay.remove();
+      alert('Delete failed: could not reach the server.');
+    });
+  };
+}
 function saveItemFilterPrefs(){
   if(!currentUser) return;
   itemFilterPrefs[currentUser.id]={
@@ -13808,6 +13889,10 @@ function renderItemsView(){
         <button class="btn" onclick="checkServerMemory()" title="Show the server's actual current memory usage and data size — for tracking down the repeated crashes">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>
           Memory
+        </button>
+        <button class="btn" onclick="findOrphanedItems()" title="Checks every item against what the CURRENTLY connected QuickBooks company actually has — finds leftovers from a wrong/old QuickBooks connection that were never really deleted from here">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          Find orphaned items
         </button>
       </div>
     </div>

@@ -115,7 +115,15 @@ const DATA_DEFAULT = { storages: [], users: [], scaleLogs: [], labelAllowed: {},
   // QuickBooks Bills on demand and only cached separately (see
   // PURCHASE_CACHE_FILE) since they're derived data, not source-of-truth.
   purchaseConfig: { products: {}, vendorCols: {}, weeks: {} },
-  purchaseEstimates: {}
+  purchaseEstimates: {},
+  // Per-user UI preferences that should follow a person to any browser or
+  // device (not just this one) — keyed by user id. CONFIRMED live (Sep
+  // 2026): the Items page's filter dropdowns were only remembered via
+  // localStorage, which is why they "got wiped" after signing back in —
+  // localStorage is per-browser, so a different browser, an incognito
+  // window, or a cleared cache all naturally start empty. Small object,
+  // same push/pull merge as labelAllowed/customerAllowed above.
+  itemFilterPrefs: {}
 };
 
 // ===== PIN HASHING =====
@@ -1951,7 +1959,8 @@ const server = http.createServer(async (req, res) => {
       orders: data.orders,
       deletedOrderIds: data.deletedOrderIds,
       drivers: data.drivers,
-      deletedDrivers: data.deletedDrivers
+      deletedDrivers: data.deletedDrivers,
+      itemFilterPrefs: data.itemFilterPrefs
     }));
     return;
   }

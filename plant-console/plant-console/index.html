@@ -1826,9 +1826,11 @@ setInterval(ambientPushIfIdle,1500);
 // and items were split into their own file specifically because a full
 // items+transactions payload is heavy — polling that same weight every
 // 1.5s from every open tab would undo the whole reason for that split.
-// The server itself only re-pulls from QuickBooks every 30 minutes
-// anyway (same cadence as customers/vendors), so polling more often than
-// this wouldn't surface anything new sooner regardless.
+// The server itself checks for changed items every 5 minutes (its own
+// independent, incremental cycle — see runItemsBackgroundSync in
+// server.js, separate from the 30-min customers/vendors cycle), so
+// polling here much faster than that wouldn't surface anything sooner
+// regardless.
 var _itemsPollInFlight=false;
 function pollItemsFromServer(){
   if(_itemsPollInFlight) return;
@@ -13700,7 +13702,7 @@ function renderItemsView(){
     <div class="txn-toolbar">
       <span id="qbStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted)">${items.length} item${items.length!==1?'s':''} on file</span>
       <div style="display:flex;gap:8px;align-items:center">
-        <span id="qbAutoSyncNote" title="Items now sync automatically from QuickBooks — no manual sync needed. The server pulls fresh data every 30 minutes, and this page checks for updates every minute while it's open." style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;color:var(--muted);padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);cursor:help">
+        <span id="qbAutoSyncNote" title="Items now sync automatically from QuickBooks — no manual sync needed. The server checks for anything changed every 5 minutes, and this page checks for updates every minute while it's open." style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;color:var(--muted);padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);cursor:help">
           <span style="width:7px;height:7px;border-radius:50%;background:#3a9e5f;flex-shrink:0"></span>
           Auto-synced from QuickBooks
         </span>

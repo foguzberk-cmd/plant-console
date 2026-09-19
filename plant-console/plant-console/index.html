@@ -17222,13 +17222,22 @@ function renderTransactions(){
       <input type="text" id="txnSearch" placeholder="Search transaction #, product, customer/vendor..." oninput="renderTxnTable()" style="flex:1;min-width:240px;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
       <select id="txnTypeFilter" onchange="renderTxnTable()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none">
         <option value="">All types</option>
-        <option value="opening">Opening Count</option>
-        <option value="receive">Receive</option>
-        <option value="transfer">Transfer</option>
-        <option value="production">Production</option>
-        <option value="shipment">Shipment</option>
-        <option value="return">Return</option>
-        <option value="adjustment">Physical Count</option>
+        <optgroup label="Inventory movement">
+          <option value="opening">Opening Count</option>
+          <option value="receive">Receive</option>
+          <option value="transfer">Transfer</option>
+          <option value="production">Production</option>
+          <option value="shipment">Shipment</option>
+          <option value="return">Return</option>
+          <option value="adjustment">Physical Count</option>
+        </optgroup>
+        <optgroup label="QuickBooks document">
+          <option value="doc:Bill">Bill</option>
+          <option value="doc:Invoice">Invoice</option>
+          <option value="doc:SalesReceipt">Sales Receipt</option>
+          <option value="doc:CreditMemo">Credit Memo</option>
+          <option value="doc:VendorCredit">Vendor Credit</option>
+        </optgroup>
       </select>
       <input type="date" id="txnDateFrom" onchange="renderTxnTable()" title="From date" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
       <span style="color:var(--muted);font-size:12px">to</span>
@@ -17283,7 +17292,13 @@ function renderTxnTable(){
   var itemNameCache={};
   function itemName(id){ if(itemNameCache[id]!==undefined) return itemNameCache[id]; var it=items.find(function(x){return x.id===id;}); itemNameCache[id]=it?it.name.toLowerCase():''; return itemNameCache[id]; }
   var filtered=transactions.filter(function(t){
-    if(typeF&&t.type!==typeF) return false;
+    // "doc:X" values filter by the underlying QuickBooks document type
+    // (Bill/Invoice/SalesReceipt/CreditMemo/VendorCredit) rather than the
+    // inventory-movement type — e.g. "Bill" and "Receive" aren't the same
+    // axis (a single Bill becomes a "receive" movement), so this needed
+    // its own branch rather than reusing the t.type check below.
+    if(typeF.indexOf('doc:')===0){ if(t.qbDocType!==typeF.slice(4)) return false; }
+    else if(typeF&&t.type!==typeF) return false;
     if(dFrom&&(t.date||'')<dFrom) return false;
     if(dTo&&(t.date||'')>dTo) return false;
     if(q){

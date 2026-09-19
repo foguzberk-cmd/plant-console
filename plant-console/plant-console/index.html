@@ -2784,8 +2784,19 @@ async function attemptLogin(){
 document.getElementById('loginPin').addEventListener('keydown',e=>{if(e.key==='Enter')attemptLogin()});
 document.getElementById('loginEmail').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('loginPin').focus()});
 
-function logout(){
+async function logout(){
   stopChatPoll();
+  // Wait for any pending save to actually finish sending before tearing
+  // the session down — CONFIRMED live (Sep 2026): this is the real
+  // reason filter choices (and potentially other last-second edits) were
+  // getting silently dropped. pushToServer's underlying implementation
+  // aborts once currentUser is null (see the guard near the top of
+  // _pushToServerImpl), and logout used to null it out immediately with
+  // zero wait — so picking a filter and then logging out shortly after
+  // (a completely normal thing to do) could tear the session down while
+  // that save was still queued or in flight, losing it. Capped at 3s so
+  // a broken connection can't hang the logout button forever.
+  try{ await Promise.race([_pushChain, new Promise(function(r){ setTimeout(r,3000); })]); }catch(e){}
   fetch('/api/logout',{method:'POST'}).catch(function(){});
   currentUser=null;
   document.getElementById('appShell').classList.remove('visible');

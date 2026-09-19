@@ -654,6 +654,10 @@ const PERMISSIONS=[
   {id:'editTxns',     label:'Edit & delete transactions',desc:'Modify or remove existing transaction records',group:'Transactions'},
   // --- Scale Log ---
   {id:'viewScaleLog', label:'View Scale Log',            desc:'See the Scale Log tab and printed-label history',group:'Scale Log'},
+  // --- Orders ---
+  {id:'viewOrders',   label:'View Orders section',   desc:'See the Orders tab at all (turning this off hides everything below too)',group:'Orders'},
+  {id:'createOrders', label:'Create new orders',      desc:'Add a new customer order',group:'Orders'},
+  {id:'editOrders',   label:'Edit & match orders',    desc:'Edit an existing order, and run "Match with QuickBooks" to move received orders to Shipped',group:'Orders'},
   // --- Reports (tab-level access — each report tab can be shown/hidden independently) ---
   {id:'viewReports',           label:'View Reports section', desc:'See the Reports tab at all (turning this off hides every report below too)',group:'Reports'},
   {id:'viewReportsCollection', label:'— Customer Payments',  desc:'View the Customer Payments report',group:'Reports'},
@@ -684,7 +688,7 @@ const PERMISSIONS=[
 // shipped, since none of them have ever had these specific keys set
 // before. They only actually restrict someone once an admin explicitly
 // unchecks the box for them in the new Permissions Matrix.
-const VIEW_PERMS_DEFAULT_ALLOW=['viewItems','viewTxns','viewScaleLog','viewReports','viewReportsCollection','viewReportsCashflow','viewReportsChecks','viewReportsInventory','viewReportsAudit','viewReportsPurchasing','viewReportsSalesByCustomer','viewReportsSalesPlan','viewSettings','viewLegal'];
+const VIEW_PERMS_DEFAULT_ALLOW=['viewItems','viewTxns','viewScaleLog','viewOrders','viewReports','viewReportsCollection','viewReportsCashflow','viewReportsChecks','viewReportsInventory','viewReportsAudit','viewReportsPurchasing','viewReportsSalesByCustomer','viewReportsSalesPlan','viewSettings','viewLegal'];
 function hasViewPerm(permId){
   if(!currentUser) return false;
   if(currentUser.role==='admin') return true;
@@ -2701,7 +2705,7 @@ const nav=document.getElementById('nav');
 const view=document.getElementById('view');
 const crumb=document.getElementById('crumb');
 
-const SECTION_VIEW_PERM={items:'viewItems',transactions:'viewTxns',scalelog:'viewScaleLog',reports:'viewReports',settings:'viewSettings',legal:'viewLegal'};
+const SECTION_VIEW_PERM={items:'viewItems',transactions:'viewTxns',scalelog:'viewScaleLog',orders:'viewOrders',reports:'viewReports',settings:'viewSettings',legal:'viewLegal'};
 function buildNav(){
   nav.innerHTML='<div class="nav-kicker">Menu</div>';
   SECTIONS.forEach(s=>{
@@ -3189,8 +3193,8 @@ function renderOrdersPage(){
   var s=SECTIONS.find(function(x){return x.id==='orders';});
   view.innerHTML='<div class="eyebrow">'+s.kicker+'</div><h2>'+s.title+'</h2><p class="lede">'+s.lede+'</p>'
     +'<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">'
-      +'<button class="btn btn-primary btn-sm" onclick="showNewOrderForm()">+ New Order</button>'
-      +'<button id="matchQbBtn" class="btn btn-sm" onclick="matchOrdersWithQuickBooks()" title="Checks each not-yet-shipped order for a matching QuickBooks Invoice (same customer, invoiced on or after the order date) and moves it to Shipped Orders. Also rescans for any 0-count line that hasn\'t been rescheduled to the next day yet.">Match with QuickBooks</button>'
+      +(hasPerm('createOrders')?'<button class="btn btn-primary btn-sm" onclick="showNewOrderForm()">+ New Order</button>':'')
+      +(hasPerm('editOrders')?'<button id="matchQbBtn" class="btn btn-sm" onclick="matchOrdersWithQuickBooks()" title="Checks each not-yet-shipped order for a matching QuickBooks Invoice (same customer, invoiced on or after the order date) and moves it to Shipped Orders. Also rescans for any 0-count line that hasn\'t been rescheduled to the next day yet.">Match with QuickBooks</button>':'')
       +'<button class="btn btn-sm" onclick="printProcessingSheet(orders.filter(function(o){return !o.shipped;}).map(function(o){return o.id;}),\'Processing — All Drivers\')" title="Prints every product across all Received Orders (any driver) that\'s checked as needing processing">🏭 Print processing sheet</button>'
       +'<button class="btn btn-sm" onclick="showManageDriversModal()" title="Add, rename, or remove drivers — renaming merges duplicates (e.g. two case variants of the same name) into one">🚚 Manage drivers</button>'
       +'<input id="ordersSearch" type="text" placeholder="Search customer, product, description, driver…" value="'+esc(_ordersSearchQuery)+'" oninput="_ordersSearchQuery=this.value;_renderOrdersWeekSummary();_renderShippedOrdersSummary()" style="flex:1;min-width:220px;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--panel);color:var(--ink)"/>'

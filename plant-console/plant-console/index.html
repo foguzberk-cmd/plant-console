@@ -13725,6 +13725,7 @@ function diagnoseLocationsOLD(){
 
 function renderItemsView(){
   var _savedActiveFilter=localStorage.getItem('pc_item_active_filter')||''; // remembered across sessions — see the select's onchange below
+  var _savedKindFilter=localStorage.getItem('pc_item_kind_filter')||''; // same idea, for Products vs Services
   view.innerHTML=`
     <div class="eyebrow">Inventory</div>
     <h2>Items</h2>
@@ -13775,6 +13776,11 @@ function renderItemsView(){
         <option value="" ${_savedActiveFilter===''?'selected':''}>All items (active + inactive)</option>
         <option value="active" ${_savedActiveFilter==='active'?'selected':''}>Active only</option>
         <option value="inactive" ${_savedActiveFilter==='inactive'?'selected':''}>Inactive (deleted) only</option>
+      </select>
+      <select id="itemKindFilter" onchange="renderItemsTable();safeSetLocal('pc_item_kind_filter',this.value)" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);outline:none">
+        <option value="" ${_savedKindFilter===''?'selected':''}>Products + services</option>
+        <option value="product" ${_savedKindFilter==='product'?'selected':''}>Products only</option>
+        <option value="service" ${_savedKindFilter==='service'?'selected':''}>Services only</option>
       </select>
       <label style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--ink);cursor:pointer;background:var(--panel);border:1.5px solid var(--line);border-radius:8px;padding:7px 14px">
         <input type="checkbox" id="groupByLoc" onchange="renderItemsTable()" style="width:14px;height:14px;accent-color:var(--cold)"/>
@@ -13831,6 +13837,7 @@ function renderItemsTable(){
   var hideZero=document.getElementById('hideZero')?.checked||false;
   var showZeroOnly=document.getElementById('showZeroOnly')?.checked||false;
   var activeFilter=document.getElementById('itemActiveFilter')?.value||'';
+  var kindFilter=document.getElementById('itemKindFilter')?.value||'';
   var groupByLoc=document.getElementById('groupByLoc')?.checked||false;
   var groupByCategory=document.getElementById('groupByCategory')?.checked||false;
 
@@ -13860,6 +13867,14 @@ function renderItemsTable(){
     // re-picking every session, unlike the other filters on this page.
     if(activeFilter==='active'&&it.active===false) return false;
     if(activeFilter==='inactive'&&it.active!==false) return false;
+    // "Product" = QuickBooks' Inventory item type — the real, physical,
+    // stocked meat products this app is actually about. Everything else
+    // (Service, NonInventory, Other Charge — things like "Bad Debts",
+    // "Manufacturing Labor", "Returned Check Fee") counts as a service
+    // here, since none of those are real trackable inventory regardless
+    // of their exact QuickBooks sub-type.
+    if(kindFilter==='product'&&it.type!=='Inventory') return false;
+    if(kindFilter==='service'&&it.type==='Inventory') return false;
     if(locFilter==='__none__'&&qtyAtLoc(it,'__none__')===0) return false;
     if(locFilter&&locFilter!=='__none__'&&qtyAtLoc(it,locFilter)===0) return false;
     if(search&&!(it.name.toLowerCase().includes(search)||(it.sku||'').toLowerCase().includes(search))) return false;

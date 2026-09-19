@@ -1152,6 +1152,15 @@ var _recentlySavedPurchaseEstimateWeeks={}; // { [weekId]: purchaseEstimates[wee
 var _recentlySavedLabelAllowed={};
 // Same idea, for per-department customer allow-lists.
 var _recentlySavedCustomerAllowed={};
+// Same idea, for a user's Items-page filter preferences — CONFIRMED live
+// (Sep 2026): checkbox picks (Hide zero quantity, Group by location,
+// Group by category) weren't sticking even though the dropdown picks
+// right next to them were, which pointed at exactly this class of race —
+// the periodic background pull landing in the gap between a checkbox's
+// onchange saving the new value locally and that save's own push
+// actually reaching the server, overwriting the just-made change with
+// the older server copy before the push got a chance to send it.
+var _recentlySavedItemFilterPrefs={};
 // Same idea, for the customers list itself (name, active, salesRep, etc.) —
 // keyed by customer id -> the just-saved record. Without this, a pull
 // already in flight before a save (e.g. a bulk Sales Rep CSV import) has no
@@ -1420,6 +1429,9 @@ async function pullFromServer(){
     }
     if(data.itemFilterPrefs && typeof data.itemFilterPrefs==='object' && !Array.isArray(data.itemFilterPrefs) && Object.keys(data.itemFilterPrefs).length){
       itemFilterPrefs=data.itemFilterPrefs;
+      Object.keys(_recentlySavedItemFilterPrefs).forEach(function(uid){
+        itemFilterPrefs[uid]=_recentlySavedItemFilterPrefs[uid];
+      });
       safeSetLocal('pc_itemfilterprefs',JSON.stringify(itemFilterPrefs));
     }
     if(data.labelTemplates && typeof data.labelTemplates==='object' && Object.keys(data.labelTemplates).length){
@@ -1889,6 +1901,11 @@ function saveItemFilterPrefs(){
     groupByLoc: document.getElementById('groupByLoc')?.checked||false,
     groupByCategory: document.getElementById('groupByCategory')?.checked||false
   };
+  // Grace window — see _recentlySavedItemFilterPrefs above for why this
+  // is what actually makes the save stick instead of racing with the
+  // next background pull.
+  _recentlySavedItemFilterPrefs[currentUser.id]=itemFilterPrefs[currentUser.id];
+  setTimeout(function(){ delete _recentlySavedItemFilterPrefs[currentUser.id]; },8000);
   safeSetLocal('pc_itemfilterprefs',JSON.stringify(itemFilterPrefs));
   pushToServer();
 }

@@ -645,6 +645,8 @@ const TYPE_ICON={
   ambient:'<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>'
 };
 const PERMISSIONS=[
+  // --- Dashboard ---
+  {id:'viewDashboard', label:'View Dashboard',       desc:'See the Dashboard overview tab',group:'Dashboard'},
   // --- Items ---
   {id:'viewItems',    label:'View items',               desc:'See the full items / inventory list',group:'Items'},
   {id:'editItems',    label:'Edit items',                desc:'Create, update, and delete inventory items',group:'Items'},
@@ -688,7 +690,7 @@ const PERMISSIONS=[
 // shipped, since none of them have ever had these specific keys set
 // before. They only actually restrict someone once an admin explicitly
 // unchecks the box for them in the new Permissions Matrix.
-const VIEW_PERMS_DEFAULT_ALLOW=['viewItems','viewTxns','viewScaleLog','viewOrders','viewReports','viewReportsCollection','viewReportsCashflow','viewReportsChecks','viewReportsInventory','viewReportsAudit','viewReportsPurchasing','viewReportsSalesByCustomer','viewReportsSalesPlan','viewSettings','viewLegal'];
+const VIEW_PERMS_DEFAULT_ALLOW=['viewDashboard','viewItems','viewTxns','viewScaleLog','viewOrders','viewReports','viewReportsCollection','viewReportsCashflow','viewReportsChecks','viewReportsInventory','viewReportsAudit','viewReportsPurchasing','viewReportsSalesByCustomer','viewReportsSalesPlan','viewSettings','viewLegal'];
 function hasViewPerm(permId){
   if(!currentUser) return false;
   if(currentUser.role==='admin') return true;
@@ -2705,7 +2707,7 @@ const nav=document.getElementById('nav');
 const view=document.getElementById('view');
 const crumb=document.getElementById('crumb');
 
-const SECTION_VIEW_PERM={items:'viewItems',transactions:'viewTxns',scalelog:'viewScaleLog',orders:'viewOrders',reports:'viewReports',settings:'viewSettings',legal:'viewLegal'};
+const SECTION_VIEW_PERM={dashboard:'viewDashboard',items:'viewItems',transactions:'viewTxns',scalelog:'viewScaleLog',orders:'viewOrders',reports:'viewReports',settings:'viewSettings',legal:'viewLegal'};
 function buildNav(){
   nav.innerHTML='<div class="nav-kicker">Menu</div>';
   SECTIONS.forEach(s=>{
@@ -2724,7 +2726,18 @@ function buildNav(){
 var currentSectionId=null;
 function select(id){
   var vp=SECTION_VIEW_PERM[id];
-  if(vp && !hasViewPerm(vp)){ id='dashboard'; } // no nav item ever existed for this, but guard direct calls too
+  if(vp && !hasViewPerm(vp)){
+    id='dashboard';
+    // Dashboard itself is now permission-gated too (viewDashboard) — if
+    // THIS user can't see dashboard either, redirecting a denied section
+    // there would just loop back on itself. Fall through to the first
+    // section this user actually has access to instead.
+    var dashVp=SECTION_VIEW_PERM['dashboard'];
+    if(dashVp && !hasViewPerm(dashVp)){
+      var firstAllowed=SECTIONS.find(function(s){ var v=SECTION_VIEW_PERM[s.id]; return !v||hasViewPerm(v); });
+      id=firstAllowed?firstAllowed.id:'dashboard';
+    }
+  }
   currentSectionId=id;
   const s=SECTIONS.find(x=>x.id===id);
   document.querySelectorAll('.nav-item').forEach(n=>{

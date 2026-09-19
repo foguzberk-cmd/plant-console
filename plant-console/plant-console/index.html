@@ -13724,6 +13724,7 @@ function diagnoseLocationsOLD(){
 }
 
 function renderItemsView(){
+  var _savedActiveFilter=localStorage.getItem('pc_item_active_filter')||''; // remembered across sessions — see the select's onchange below
   view.innerHTML=`
     <div class="eyebrow">Inventory</div>
     <h2>Items</h2>
@@ -13770,14 +13771,11 @@ function renderItemsView(){
         <input type="checkbox" id="showZeroOnly" onchange="renderItemsTable()" style="width:14px;height:14px;accent-color:var(--cold)"/>
         Zero qty only
       </label>
-      <label style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--ink);cursor:pointer;background:var(--panel);border:1.5px solid var(--line);border-radius:8px;padding:7px 14px">
-        <input type="checkbox" id="hideDeleted" onchange="renderItemsTable()" style="width:14px;height:14px;accent-color:var(--cold)"/>
-        Hide deleted
-      </label>
-      <label style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--cold);cursor:pointer;background:var(--cold-soft);border:1.5px solid var(--cold);border-radius:8px;padding:7px 14px">
-        <input type="checkbox" id="showDeletedOnly" onchange="renderItemsTable()" style="width:14px;height:14px;accent-color:var(--cold)"/>
-        Deleted only
-      </label>
+      <select id="itemActiveFilter" onchange="renderItemsTable();safeSetLocal('pc_item_active_filter',this.value)" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);outline:none">
+        <option value="" ${_savedActiveFilter===''?'selected':''}>All items (active + inactive)</option>
+        <option value="active" ${_savedActiveFilter==='active'?'selected':''}>Active only</option>
+        <option value="inactive" ${_savedActiveFilter==='inactive'?'selected':''}>Inactive (deleted) only</option>
+      </select>
       <label style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--ink);cursor:pointer;background:var(--panel);border:1.5px solid var(--line);border-radius:8px;padding:7px 14px">
         <input type="checkbox" id="groupByLoc" onchange="renderItemsTable()" style="width:14px;height:14px;accent-color:var(--cold)"/>
         Group by location
@@ -13832,8 +13830,7 @@ function renderItemsTable(){
   var locFilter=document.getElementById('itemLocFilter')?.value||'';
   var hideZero=document.getElementById('hideZero')?.checked||false;
   var showZeroOnly=document.getElementById('showZeroOnly')?.checked||false;
-  var hideDeleted=document.getElementById('hideDeleted')?.checked||false;
-  var showDeletedOnly=document.getElementById('showDeletedOnly')?.checked||false;
+  var activeFilter=document.getElementById('itemActiveFilter')?.value||'';
   var groupByLoc=document.getElementById('groupByLoc')?.checked||false;
   var groupByCategory=document.getElementById('groupByCategory')?.checked||false;
 
@@ -13842,11 +13839,6 @@ function renderItemsTable(){
     var last=event&&event.target?event.target.id:'';
     if(last==='hideZero') document.getElementById('showZeroOnly').checked=false, showZeroOnly=false;
     else document.getElementById('hideZero').checked=false, hideZero=false;
-  }
-  if(hideDeleted&&showDeletedOnly){
-    var lastDel=event&&event.target?event.target.id:'';
-    if(lastDel==='hideDeleted') document.getElementById('showDeletedOnly').checked=false, showDeletedOnly=false;
-    else document.getElementById('hideDeleted').checked=false, hideDeleted=false;
   }
   if(groupByLoc&&groupByCategory){
     var lastGrp=event&&event.target?event.target.id:'';
@@ -13858,13 +13850,16 @@ function renderItemsTable(){
     var qty=Number(it.qty||0);
     if(hideZero&&qty===0) return false;
     if(showZeroOnly&&qty!==0) return false;
-    // "Deleted" here means QuickBooks' own Active flag, not a string
-    // match on the item name — QuickBooks appends "(deleted)" to a
-    // merged/deactivated item's name itself, but active is the actual
-    // field to filter on (name text could theoretically vary or be
-    // renamed later; active is the real status QuickBooks tracks).
-    if(hideDeleted&&it.active===false) return false;
-    if(showDeletedOnly&&it.active!==false) return false;
+    // "Deleted"/inactive here means QuickBooks' own Active flag, not a
+    // string match on the item name — QuickBooks appends "(deleted)" to
+    // a merged/deactivated item's name itself, but active is the real
+    // field to filter on. Remembered across sessions via
+    // pc_item_active_filter (see the select's onchange above and where
+    // its value gets read back in renderItemsView) — CONFIRMED live
+    // (Sep 2026) this was asked for specifically so it doesn't need
+    // re-picking every session, unlike the other filters on this page.
+    if(activeFilter==='active'&&it.active===false) return false;
+    if(activeFilter==='inactive'&&it.active!==false) return false;
     if(locFilter==='__none__'&&qtyAtLoc(it,'__none__')===0) return false;
     if(locFilter&&locFilter!=='__none__'&&qtyAtLoc(it,locFilter)===0) return false;
     if(search&&!(it.name.toLowerCase().includes(search)||(it.sku||'').toLowerCase().includes(search))) return false;

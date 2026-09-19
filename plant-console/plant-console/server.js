@@ -794,7 +794,7 @@ async function ensureFreshToken() {
   }
 }
 
-async function fetchQBItemsPage(startPosition, retry, skipActiveFilter) {
+async function fetchQBItemsPage(startPosition, retry, skipActiveFilter, sinceIso) {
   // QuickBooks Online silently defaults to Active=true when a query has no
   // WHERE clause on Active at all — any item that's since been deactivated
   // or merged in QuickBooks never comes back from a plain "SELECT * FROM
@@ -813,9 +813,17 @@ async function fetchQBItemsPage(startPosition, retry, skipActiveFilter) {
   // won't be fetched under this fallback, so some old line items may go
   // back to showing "item not matched" until the real cause is found) —
   // better than nothing syncing at all.
-  const query = skipActiveFilter
-    ? `SELECT * FROM Item STARTPOSITION ${startPosition} MAXRESULTS 100`
-    : `SELECT * FROM Item WHERE Active IN (true, false) STARTPOSITION ${startPosition} MAXRESULTS 100`;
+  // sinceIso: when set, adds "AND MetaData.LastUpdatedTime >= X" so a
+  // background sync only fetches items that actually changed instead of
+  // the whole catalog every time — see backgroundSyncItems below for why
+  // this matters (it's what lets the sync run every few minutes instead
+  // of every 30, without hammering QuickBooks for the full item list each
+  // time).
+  const activeClause = skipActiveFilter ? '' : 'Active IN (true, false)';
+  const sinceClause = sinceIso ? `MetaData.LastUpdatedTime >= '${sinceIso}'` : '';
+  const whereParts = [activeClause, sinceClause].filter(Boolean);
+  const whereClause = whereParts.length ? ('WHERE ' + whereParts.join(' AND ') + ' ') : '';
+  const query = `SELECT * FROM Item ${whereClause}STARTPOSITION ${startPosition} MAXRESULTS 100`;
   const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
   const res = await httpsRequest({
     hostname: 'quickbooks.api.intuit.com',
@@ -827,7 +835,7 @@ async function fetchQBItemsPage(startPosition, retry, skipActiveFilter) {
     }
   });
   if (res.status === 400 && !skipActiveFilter) {
-    return fetchQBItemsPage(startPosition, retry, true);
+    return fetchQBItemsPage(startPosition, retry, true, sinceIso);
   }
   // Any 401 here means "this session isn't authorized right now" — whether
   // that's because the access token was simply stale (the refresh+retry
@@ -844,7 +852,7 @@ async function fetchQBItemsPage(startPosition, retry, skipActiveFilter) {
   if (res.status === 401) {
     if (!retry) {
       const ok = await refreshAccessToken();
-      if (ok) return fetchQBItemsPage(startPosition, true);
+      if (ok) return fetchQBItemsPage(startPosition, true, skipActiveFilter, sinceIso);
     }
     throw new Error('NEEDS_RECONNECT');
   }
@@ -1162,6 +1170,10 @@ async function applyWebhookEntityChange(entityName, id) {
 // and incremental-sync complexity that deserves its own careful pass
 // later, not a rushed inclusion here.
 const BACKGROUND_SYNC_INTERVAL_MS = 30 * 60 * 1000; // every 30 minutes
+// Items get their own, faster cadence — see backgroundSyncItems for why
+// this is safe to run more often than the customers/vendors cycle above
+// (incremental after the first run, not a full catalog pull every time).
+const ITEMS_SYNC_INTERVAL_MS = 5 * 60 * 1000; // every 5 minutes
 let _backgroundSyncInFlight = false;
 let _lastBackgroundSyncAt = 0;
 let _lastBackgroundSyncResult = null; // { at, customers: {ok,count,error}, vendors: {ok,count,error} }
@@ -1481,25 +1493,32 @@ async function backgroundSyncCustomers() {
   return qbCustomers.length;
 }
 
-// Pulls the full Item list from QuickBooks and merges it into the
-// server's own items store (readItemsTxnData/writeItemsTxnData) — same
-// idea as backgroundSyncCustomers/backgroundSyncVendors above, so Items
-// updates automatically on the same 30-minute cycle instead of requiring
-// someone to click "Quick sync"/"Full sync" (CONFIRMED live Sep 2026,
-// removed those buttons in favor of this). Deliberately reuses the
-// EXISTING 30-min interval rather than adding a new, more frequent one —
-// a full Item pull (paginated, hundreds+ of records) is real work, and
-// there's an active, unresolved investigation into repeated server OOM
-// crashes (see the memcheck logging at startup) — adding a heavier or
-// more frequent recurring job right now is exactly the kind of change
-// that could make that worse, so this deliberately stays on the same
-// cadence already proven safe for customers/vendors rather than syncing
-// items more aggressively.
+// Pulls the Item list from QuickBooks and merges it into the server's own
+// items store (readItemsTxnData/writeItemsTxnData) — this is what lets
+// Items update on their own instead of requiring someone to click "Quick
+// sync"/"Full sync" (CONFIRMED live Sep 2026, removed those buttons in
+// favor of this). Runs on its OWN independent, more frequent interval —
+// see ITEMS_SYNC_INTERVAL_MS below — separate from the 30-min
+// customers/vendors cycle, since items specifically needed a shorter
+// cadence.
+// Incremental after the first run: _lastItemSyncAt (set below) tracks
+// when the last successful sync STARTED, and every run after the first
+// only asks QuickBooks for items with MetaData.LastUpdatedTime at or
+// after that point — a handful of records instead of the whole catalog
+// every time. This (not just a shorter interval) is what makes running
+// this every few minutes cheap enough to be safe alongside the ongoing,
+// unresolved server-OOM investigation (see the memcheck logging at
+// startup): a full catalog pull is real work; an incremental one asking
+// "what changed in the last few minutes" almost always comes back empty
+// or tiny.
+let _lastItemSyncAt = null; // ISO string, or null until the first successful run
 async function backgroundSyncItems() {
+  const syncStartedAt = new Date().toISOString();
+  const sinceIso = _lastItemSyncAt; // capture before this run, so a slow run doesn't miss anything that changes mid-sync
   const qbItems = [];
   let startPosition = 1;
   for (;;) {
-    const page = await fetchQBItemsPage(startPosition);
+    const page = await fetchQBItemsPage(startPosition, false, false, sinceIso);
     const batch = (page.QueryResponse && page.QueryResponse.Item) || [];
     qbItems.push(...batch);
     if (batch.length < 100) break;
@@ -1542,7 +1561,26 @@ async function backgroundSyncItems() {
     if (existing >= 0) items[existing] = mapped; else items.push(mapped);
   });
   await writeItemsTxnData({ items, transactions: itemsTxn.transactions || [] });
+  _lastItemSyncAt = syncStartedAt;
   return qbItems.length;
+}
+
+let _itemsSyncInFlight = false;
+let _lastItemsSyncRunAt = 0;
+let _lastItemsSyncResult = null;
+async function runItemsBackgroundSync() {
+  if (_itemsSyncInFlight) return;
+  if (!accessToken && !refreshToken) return; // QuickBooks isn't connected yet
+  _itemsSyncInFlight = true;
+  try {
+    const count = await backgroundSyncItems();
+    _lastItemsSyncResult = { ok: true, count, incremental: !!_lastItemSyncAt, at: new Date().toISOString() };
+  } catch (e) {
+    _lastItemsSyncResult = { ok: false, error: e.message, at: new Date().toISOString() };
+    console.error('Background item sync failed:', e.message);
+  }
+  _lastItemsSyncRunAt = Date.now();
+  _itemsSyncInFlight = false;
 }
 
 async function backgroundSyncVendors() {
@@ -1580,7 +1618,10 @@ async function runBackgroundSync() {
   if (_backgroundSyncInFlight) return; // never overlap two runs
   if (!accessToken && !refreshToken) return; // QuickBooks isn't connected yet — nothing to sync
   _backgroundSyncInFlight = true;
-  const result = { at: new Date().toISOString(), customers: null, vendors: null, items: null };
+  // Items are no longer synced here — they have their own faster,
+  // independent cycle now (see runItemsBackgroundSync/ITEMS_SYNC_INTERVAL_MS)
+  // since customers/vendors and items ended up needing different cadences.
+  const result = { at: new Date().toISOString(), customers: null, vendors: null };
   try {
     const count = await backgroundSyncCustomers();
     result.customers = { ok: true, count };
@@ -1594,13 +1635,6 @@ async function runBackgroundSync() {
   } catch (e) {
     result.vendors = { ok: false, error: e.message };
     console.error('Background vendor sync failed:', e.message);
-  }
-  try {
-    const count = await backgroundSyncItems();
-    result.items = { ok: true, count };
-  } catch (e) {
-    result.items = { ok: false, error: e.message };
-    console.error('Background item sync failed:', e.message);
   }
   _lastBackgroundSyncAt = Date.now();
   _lastBackgroundSyncResult = result;
@@ -3533,7 +3567,13 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       inFlight: _backgroundSyncInFlight,
       lastSyncAt: _lastBackgroundSyncAt || null,
-      lastResult: _lastBackgroundSyncResult
+      lastResult: _lastBackgroundSyncResult,
+      items: {
+        inFlight: _itemsSyncInFlight,
+        lastSyncAt: _lastItemsSyncRunAt || null,
+        lastResult: _lastItemsSyncResult,
+        incrementalSinceAt: _lastItemSyncAt || null
+      }
     }));
     return;
   }
@@ -3898,5 +3938,17 @@ const server = http.createServer(async (req, res) => {
         .catch(e => console.error('Background sync error:', e.message));
     }, 15000);
     setInterval(() => { runBackgroundSync().catch(e => console.error('Background sync error:', e.message)); }, BACKGROUND_SYNC_INTERVAL_MS);
+    // Items: first run shortly after boot (staggered a bit later than the
+    // customers/vendors one above, so they don't both fire in the same
+    // instant), then every ITEMS_SYNC_INTERVAL_MS after that — the FIRST
+    // run is always a full catalog pull (no _lastItemSyncAt yet), every
+    // run after that is incremental (see backgroundSyncItems).
+    setTimeout(() => {
+      console.log('[memcheck] items sync starting, rss=' + Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB');
+      runItemsBackgroundSync()
+        .then(() => console.log('[memcheck] items sync finished, rss=' + Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB'))
+        .catch(e => console.error('Items background sync error:', e.message));
+    }, 20000);
+    setInterval(() => { runItemsBackgroundSync().catch(e => console.error('Items background sync error:', e.message)); }, ITEMS_SYNC_INTERVAL_MS);
   });
 })();

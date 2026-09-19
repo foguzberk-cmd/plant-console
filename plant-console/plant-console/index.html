@@ -783,6 +783,7 @@ if(Array.isArray(labelAllowed)){
 let customers=JSON.parse(localStorage.getItem('pc_customers')||'[]'); // full customer list synced from QuickBooks (like items), each {id, qbId, name}
 let vendors=JSON.parse(localStorage.getItem('pc_vendors')||'[]'); // full vendor list synced from QuickBooks, each {id, qbId, name} — used in Settings → Vendors to assign departments
 let customerAllowed=JSON.parse(localStorage.getItem('pc_customerallowed')||'{}'); // { [department]: [customer ids permitted to appear in that department's Scale Log picker] }
+let itemFilterPrefs=JSON.parse(localStorage.getItem('pc_itemfilterprefs')||'{}'); // { [userId]: {active, kind} } — Items page dropdown filters, follows the user to any browser/device via the server (localStorage here is just an instant-load cache, same pattern as labelAllowed above)
 if(Array.isArray(customerAllowed)){
   // Same migration reasoning as labelAllowed above: seed every department
   // with the previously-shared list so nothing configured is lost.
@@ -1417,6 +1418,10 @@ async function pullFromServer(){
         customerAllowed[d]=_recentlySavedCustomerAllowed[d];
       });
     }
+    if(data.itemFilterPrefs && typeof data.itemFilterPrefs==='object' && !Array.isArray(data.itemFilterPrefs) && Object.keys(data.itemFilterPrefs).length){
+      itemFilterPrefs=data.itemFilterPrefs;
+      safeSetLocal('pc_itemfilterprefs',JSON.stringify(itemFilterPrefs));
+    }
     if(data.labelTemplates && typeof data.labelTemplates==='object' && Object.keys(data.labelTemplates).length){
       labelTemplates=data.labelTemplates;
       // Guard against the same timing gap as scale logs: a pull that was
@@ -1636,6 +1641,10 @@ async function _pushToServerImpl(){
           var newCustomerAllowed=Object.assign({}, smallData.customerAllowed, customerAllowed);
           if(JSON.stringify(newCustomerAllowed)!==JSON.stringify(customerAllowed)){ customerAllowed=newCustomerAllowed; safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed)); }
         }
+        if(smallData.itemFilterPrefs && typeof smallData.itemFilterPrefs==='object' && !Array.isArray(smallData.itemFilterPrefs)){
+          var newItemFilterPrefs=Object.assign({}, smallData.itemFilterPrefs, itemFilterPrefs);
+          if(JSON.stringify(newItemFilterPrefs)!==JSON.stringify(itemFilterPrefs)){ itemFilterPrefs=newItemFilterPrefs; safeSetLocal('pc_itemfilterprefs',JSON.stringify(itemFilterPrefs)); }
+        }
         // customers (salesRep, etc.) had NO pre-push protection at all —
         // unlike everything else in this block, a stale local copy could
         // blindly overwrite a Sales Rep edit made moments earlier on
@@ -1689,7 +1698,7 @@ async function _pushToServerImpl(){
     // for why. this keeps an ordinary small edit (anything else in this
     // object) fast, instead of dragging the largest part of the whole
     // dataset along on every single push regardless of relevance.
-    var snapshotObj={storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,orders:orders,drivers:drivers,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates,vendors:vendors,vendorDepartments:_vendorDepartments,purchaseConfig:purchaseConfig,purchaseEstimates:purchaseEstimates};
+    var snapshotObj={storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,orders:orders,drivers:drivers,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates,vendors:vendors,vendorDepartments:_vendorDepartments,purchaseConfig:purchaseConfig,purchaseEstimates:purchaseEstimates,itemFilterPrefs:itemFilterPrefs};
     if(_itemsTransactionsDirty){ snapshotObj.items=items; snapshotObj.transactions=transactions; }
     var snapshot=JSON.stringify(snapshotObj);
     if(snapshot===_lastPushedSnapshot){ _lastPushFailureDetail=''; return true; } // this exact state was already confirmed sent
@@ -1865,6 +1874,21 @@ setInterval(pollItemsFromServer,60000);
 // cycle, just triggered on demand instead of waiting for the timer) and
 // waits for it to actually finish before updating the table, rather than
 // just kicking it off and hoping.
+// Saves the Items page's filter dropdowns to this user's account on the
+// server (itemFilterPrefs, keyed by user id) instead of just this one
+// browser's localStorage — CONFIRMED live (Sep 2026) that a
+// localStorage-only version "got wiped" the moment the person signed in
+// from a different browser/device/incognito window, since localStorage
+// never follows a person anywhere; this does.
+function saveItemFilterPrefs(){
+  if(!currentUser) return;
+  itemFilterPrefs[currentUser.id]={
+    active: document.getElementById('itemActiveFilter')?.value||'',
+    kind: document.getElementById('itemKindFilter')?.value||''
+  };
+  safeSetLocal('pc_itemfilterprefs',JSON.stringify(itemFilterPrefs));
+  pushToServer();
+}
 function syncItemsNow(){
   var btn=document.getElementById('itemsSyncNowBtn');
   var statusEl=document.getElementById('qbStatus');
@@ -13724,8 +13748,9 @@ function diagnoseLocationsOLD(){
 }
 
 function renderItemsView(){
-  var _savedActiveFilter=localStorage.getItem('pc_item_active_filter')||''; // remembered across sessions — see the select's onchange below
-  var _savedKindFilter=localStorage.getItem('pc_item_kind_filter')||''; // same idea, for Products vs Services
+  var _myFilterPrefs=(currentUser&&itemFilterPrefs[currentUser.id])||{};
+  var _savedActiveFilter=_myFilterPrefs.active||''; // remembered on the server, per-account — follows you to any browser/device (see saveItemFilterPrefs below)
+  var _savedKindFilter=_myFilterPrefs.kind||''; // same idea, for Products vs Services
   view.innerHTML=`
     <div class="eyebrow">Inventory</div>
     <h2>Items</h2>
@@ -13768,16 +13793,12 @@ function renderItemsView(){
         <input type="checkbox" id="hideZero" onchange="renderItemsTable()" style="width:14px;height:14px;accent-color:var(--cold)"/>
         Hide zero quantity
       </label>
-      <label style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--cold);cursor:pointer;background:var(--cold-soft);border:1.5px solid var(--cold);border-radius:8px;padding:7px 14px">
-        <input type="checkbox" id="showZeroOnly" onchange="renderItemsTable()" style="width:14px;height:14px;accent-color:var(--cold)"/>
-        Zero qty only
-      </label>
-      <select id="itemActiveFilter" onchange="renderItemsTable();safeSetLocal('pc_item_active_filter',this.value)" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);outline:none">
+      <select id="itemActiveFilter" onchange="renderItemsTable();saveItemFilterPrefs()" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);outline:none">
         <option value="" ${_savedActiveFilter===''?'selected':''}>All items (active + inactive)</option>
         <option value="active" ${_savedActiveFilter==='active'?'selected':''}>Active only</option>
         <option value="inactive" ${_savedActiveFilter==='inactive'?'selected':''}>Inactive (deleted) only</option>
       </select>
-      <select id="itemKindFilter" onchange="renderItemsTable();safeSetLocal('pc_item_kind_filter',this.value)" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);outline:none">
+      <select id="itemKindFilter" onchange="renderItemsTable();saveItemFilterPrefs()" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);outline:none">
         <option value="" ${_savedKindFilter===''?'selected':''}>Products + services</option>
         <option value="product" ${_savedKindFilter==='product'?'selected':''}>Products only</option>
         <option value="service" ${_savedKindFilter==='service'?'selected':''}>Services only</option>
@@ -13835,18 +13856,11 @@ function renderItemsTable(){
   var search=(document.getElementById('itemSearch')?.value||'').toLowerCase().trim();
   var locFilter=document.getElementById('itemLocFilter')?.value||'';
   var hideZero=document.getElementById('hideZero')?.checked||false;
-  var showZeroOnly=document.getElementById('showZeroOnly')?.checked||false;
   var activeFilter=document.getElementById('itemActiveFilter')?.value||'';
   var kindFilter=document.getElementById('itemKindFilter')?.value||'';
   var groupByLoc=document.getElementById('groupByLoc')?.checked||false;
   var groupByCategory=document.getElementById('groupByCategory')?.checked||false;
 
-  // sync checkboxes so they don't conflict
-  if(hideZero&&showZeroOnly){
-    var last=event&&event.target?event.target.id:'';
-    if(last==='hideZero') document.getElementById('showZeroOnly').checked=false, showZeroOnly=false;
-    else document.getElementById('hideZero').checked=false, hideZero=false;
-  }
   if(groupByLoc&&groupByCategory){
     var lastGrp=event&&event.target?event.target.id:'';
     if(lastGrp==='groupByLoc') document.getElementById('groupByCategory').checked=false, groupByCategory=false;
@@ -13856,15 +13870,15 @@ function renderItemsTable(){
   var filtered=items.filter(function(it){
     var qty=Number(it.qty||0);
     if(hideZero&&qty===0) return false;
-    if(showZeroOnly&&qty!==0) return false;
     // "Deleted"/inactive here means QuickBooks' own Active flag, not a
     // string match on the item name — QuickBooks appends "(deleted)" to
     // a merged/deactivated item's name itself, but active is the real
-    // field to filter on. Remembered across sessions via
-    // pc_item_active_filter (see the select's onchange above and where
-    // its value gets read back in renderItemsView) — CONFIRMED live
-    // (Sep 2026) this was asked for specifically so it doesn't need
-    // re-picking every session, unlike the other filters on this page.
+    // field to filter on. Remembered per-account on the server (see
+    // saveItemFilterPrefs and itemFilterPrefs above) — CONFIRMED live
+    // (Sep 2026) that a plain localStorage-only version of this "got
+    // wiped" for the person who asked for it, because localStorage is
+    // per-browser and doesn't follow a person across devices/browsers/
+    // incognito windows the way a server-saved preference does.
     if(activeFilter==='active'&&it.active===false) return false;
     if(activeFilter==='inactive'&&it.active!==false) return false;
     // "Product" = QuickBooks' Inventory item type — the real, physical,

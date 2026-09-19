@@ -1818,6 +1818,44 @@ setInterval(pullFromServer,1500);
 // Safety-net push in case some part of the app saves data without going
 // through saveStorages/saveTxns/saveUsers.
 setInterval(ambientPushIfIdle,1500);
+// Picks up whatever the server's own background QuickBooks sync has
+// found (see backgroundSyncItems in server.js) — items now update
+// automatically instead of needing a manual "Quick sync"/"Full sync"
+// click. Deliberately on a MUCH slower interval than pullFromServer
+// above: that 1.5s poll hits /api/data/small on purpose to stay light,
+// and items were split into their own file specifically because a full
+// items+transactions payload is heavy — polling that same weight every
+// 1.5s from every open tab would undo the whole reason for that split.
+// The server itself only re-pulls from QuickBooks every 30 minutes
+// anyway (same cadence as customers/vendors), so polling more often than
+// this wouldn't surface anything new sooner regardless.
+var _itemsPollInFlight=false;
+function pollItemsFromServer(){
+  if(_itemsPollInFlight) return;
+  if(currentSectionId!=='items') return; // only bother while the Items page is actually open
+  _itemsPollInFlight=true;
+  fetch('/api/data/items-only',{cache:'no-store'}).then(function(res){
+    return res.ok?res.json():null;
+  }).then(function(data){
+    _itemsPollInFlight=false;
+    if(!data||!Array.isArray(data.items)) return;
+    // Cheap way to tell "did anything actually change" without a deep
+    // compare: item count changed, or the newest qbSynced timestamp
+    // among them moved forward. Skip the re-render entirely otherwise —
+    // no point rebuilding the table every 60s if nothing's different.
+    var newest=data.items.reduce(function(m,it){ return (it.qbSynced&&it.qbSynced>m)?it.qbSynced:m; },'');
+    var newestOld=items.reduce(function(m,it){ return (it.qbSynced&&it.qbSynced>m)?it.qbSynced:m; },'');
+    if(data.items.length===items.length && newest===newestOld) return;
+    items=data.items;
+    safeSetLocal('pc_items', JSON.stringify(items));
+    if(typeof renderItemsTable==='function') renderItemsTable();
+    if(typeof renderItemsView==='function' && currentSectionId==='items'){
+      var statusEl=document.getElementById('qbStatus');
+      if(statusEl) statusEl.textContent=items.length+' item'+(items.length!==1?'s':'')+' on file';
+    }
+  }).catch(function(){ _itemsPollInFlight=false; });
+}
+setInterval(pollItemsFromServer,60000);
 // Mobile browsers throttle (or fully pause) background-tab timers, so a
 // phone that's been sitting in the background for a while can easily be
 // showing data that's several minutes (or longer) stale even though the
@@ -2748,7 +2786,7 @@ function select(id){
   crumb.textContent=s.title;
   if(id==='settings') renderSettings();
   else if(id==='transactions') renderTransactions();
-  else if(id==='items') renderItemsView();
+  else if(id==='items'){ renderItemsView(); pollItemsFromServer(); }
   else if(id==='scalelog') renderScaleLog();
   else if(id==='dashboard') renderDashboard();
   else if(id==='reports') renderReports();
@@ -13661,7 +13699,11 @@ function renderItemsView(){
     <p class="lede">Everything you stock — synced from QuickBooks and managed here.</p>
     <div class="txn-toolbar">
       <span id="qbStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted)">${items.length} item${items.length!==1?'s':''} on file</span>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="qbAutoSyncNote" title="Items now sync automatically from QuickBooks — no manual sync needed. The server pulls fresh data every 30 minutes, and this page checks for updates every minute while it's open." style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;color:var(--muted);padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);cursor:help">
+          <span style="width:7px;height:7px;border-radius:50%;background:#3a9e5f;flex-shrink:0"></span>
+          Auto-synced from QuickBooks
+        </span>
         <button class="btn" onclick="recalcQuantities()" title="Rebuild per-location quantities from transaction history">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/></svg>
           Recalculate
@@ -13673,14 +13715,6 @@ function renderItemsView(){
         <button class="btn" onclick="checkServerMemory()" title="Show the server's actual current memory usage and data size — for tracking down the repeated crashes">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>
           Memory
-        </button>
-        <button id="qbSyncIncBtn" class="btn btn-primary" onclick="syncIncremental()" title="Fast — pulls only documents changed since your last sync">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-          Quick sync
-        </button>
-        <button id="qbSyncBtn" class="btn" onclick="syncEverything()" title="Pulls all documents from scratch — use if something looks off">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-          Full sync
         </button>
       </div>
     </div>

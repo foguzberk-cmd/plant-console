@@ -1944,29 +1944,27 @@ const server = http.createServer(async (req, res) => {
   // removes one that stops showing up, so anything that only ever
   // existed under that other company is stuck here forever as a ghost
   // record with numbers that don't correspond to anything real anymore.
-  // Does a real, live, minimal-field (just Id) pull of every item id the
-  // CURRENT company actually has, and reports which local items' qbId
-  // isn't in that set — read-only, doesn't delete anything itself.
+  // CONFIRMED live (Sep 2026): this used to run its OWN separate,
+  // untested "SELECT Id FROM Item WHERE Active IN (true, false)" query
+  // instead of reusing fetchQBItemsPage — and that separate query missed
+  // genuinely-inactive-but-real items for this company, wrongly flagging
+  // them as orphaned when they were sitting right there in QuickBooks
+  // under Inactive status the whole time. Now reuses fetchQBItemsPage
+  // exactly (same function, same fallback-on-400 handling, same
+  // Active-filter behavior) as the regular sync, so "does this item
+  // exist" is answered the identical, already-proven way rather than by
+  // a second, subtly different query.
   if (url === '/api/data/items-find-orphans' && req.method === 'GET') {
     if (!requireAuth(req, res)) return;
     try {
       const liveIds = new Set();
       let startPosition = 1;
       for (;;) {
-        const query = `SELECT Id FROM Item WHERE Active IN (true, false) STARTPOSITION ${startPosition} MAXRESULTS 1000`;
-        const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
-        const res2 = await httpsRequest({
-          hostname: 'quickbooks.api.intuit.com',
-          path: reqPath,
-          method: 'GET',
-          headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/json' }
-        });
-        if (res2.status !== 200) throw new Error('QB API error ' + res2.status + ' checking item ids: ' + res2.body);
-        const data2 = JSON.parse(res2.body || '{}');
-        const batch = (data2.QueryResponse && data2.QueryResponse.Item) || [];
+        const page = await fetchQBItemsPage(startPosition);
+        const batch = (page.QueryResponse && page.QueryResponse.Item) || [];
         batch.forEach(it => liveIds.add(it.Id));
-        if (batch.length < 1000) break;
-        startPosition += 1000;
+        if (batch.length < 100) break;
+        startPosition += 100;
       }
       const itemsTxn = await readItemsTxnData();
       const orphans = (itemsTxn.items || []).filter(it => it && it.qbId && !liveIds.has(it.qbId));

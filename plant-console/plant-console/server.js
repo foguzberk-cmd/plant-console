@@ -1962,33 +1962,72 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   // Finds Plant Console items that no longer exist under the CURRENTLY
-  // connected QuickBooks company at all — not inactive, not deleted,
-  // genuinely absent — which is exactly what happens to an item that was
-  // only ever synced in while the app was accidentally connected to a
-  // DIFFERENT QuickBooks company (see the Legacy-company mixup, Sep
-  // 2026): the sync only ever adds/updates items by qbId, it never
-  // removes one that stops showing up, so anything that only ever
-  // existed under that other company is stuck here forever as a ghost
-  // record with numbers that don't correspond to anything real anymore.
-  // CONFIRMED live (Sep 2026): this used to run its OWN separate,
-  // untested "SELECT Id FROM Item WHERE Active IN (true, false)" query
-  // instead of reusing fetchQBItemsPage — and that separate query missed
-  // genuinely-inactive-but-real items for this company, wrongly flagging
-  // them as orphaned when they were sitting right there in QuickBooks
-  // under Inactive status the whole time. Now reuses fetchQBItemsPage
-  // exactly (same function, same fallback-on-400 handling, same
-  // Active-filter behavior) as the regular sync, so "does this item
-  // exist" is answered the identical, already-proven way rather than by
-  // a second, subtly different query.
+  // Reconciles Plant Console items against the CURRENTLY connected
+  // QuickBooks company two ways, not just one:
+  //  1) qbId matches a live item → already correct, leave it alone.
+  //  2) qbId does NOT match anything live, but the item's NAME matches a
+  //     live item exactly → this is the real fix for the Legacy-company
+  //     mixup (Sep 2026): the item was originally synced while connected
+  //     to a DIFFERENT QuickBooks company file, so its stored qbId is
+  //     THAT company's internal id for it — a real product can have the
+  //     exact same name in two separate company files with two
+  //     completely different numeric ids. CONFIRMED live: checking by id
+  //     alone (even with the Active-filter bug fixed) kept flagging these
+  //     as "not found" forever, because the ids were never going to
+  //     match — they're from a different file entirely. A name match
+  //     means the real record; auto-relink to it (updating qbId and
+  //     refreshing every QB-sourced field, including Active/inactive
+  //     status, to the current company's real data) rather than either
+  //     leaving it dangling or deleting real inventory history.
+  //  3) NEITHER id nor name matches anything live → genuinely orphaned;
+  //     these are the only ones offered up for deletion review.
   if (url === '/api/data/items-find-orphans' && req.method === 'GET') {
     if (!requireAuth(req, res)) return;
     try {
       const qbItems = await fetchAllQBItems();
       const liveIds = new Set(qbItems.map(it => it.Id));
+      const liveByName = new Map(qbItems.map(it => [String(it.Name || '').trim().toLowerCase(), it]));
       const itemsTxn = await readItemsTxnData();
-      const orphans = (itemsTxn.items || []).filter(it => it && it.qbId && !liveIds.has(it.qbId));
+      const items = (itemsTxn.items || []).slice();
+      const relinked = [];
+      const orphans = [];
+      let changed = false;
+      items.forEach((it, idx) => {
+        if (!it || !it.qbId) return;
+        if (liveIds.has(it.qbId)) return; // already correctly linked
+        const match = liveByName.get(String(it.name || '').trim().toLowerCase());
+        if (match) {
+          let groupName = '';
+          if (match.FullyQualifiedName && match.FullyQualifiedName.indexOf(':') >= 0) {
+            groupName = match.FullyQualifiedName.split(':')[0];
+          } else if (match.ParentRef && match.ParentRef.name) {
+            groupName = match.ParentRef.name;
+          }
+          items[idx] = Object.assign({}, it, {
+            qbId: match.Id,
+            name: match.Name || it.name,
+            type: match.Type || it.type,
+            description: match.Description || match.FullyQualifiedName || it.description,
+            sku: match.Sku || it.sku,
+            price: match.UnitPrice || 0,
+            cost: match.PurchaseCost || 0,
+            qty: match.QtyOnHand || 0,
+            qbQty: match.QtyOnHand || 0,
+            active: match.Active !== false,
+            groupName: groupName,
+            qbSynced: new Date().toISOString()
+          });
+          relinked.push({ name: it.name, wasQbId: it.qbId, nowQbId: match.Id, active: match.Active !== false });
+          changed = true;
+        } else {
+          orphans.push({ id: it.id, qbId: it.qbId, name: it.name, qty: it.qty, cost: it.cost });
+        }
+      });
+      if (changed) {
+        await writeItemsTxnData({ items, transactions: itemsTxn.transactions || [] });
+      }
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
-      res.end(JSON.stringify({ success: true, checkedAgainst: liveIds.size, orphans: orphans.map(o => ({ id: o.id, qbId: o.qbId, name: o.name, qty: o.qty, cost: o.cost })) }));
+      res.end(JSON.stringify({ success: true, checkedAgainst: liveIds.size, relinked, orphans }));
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: e.message }));

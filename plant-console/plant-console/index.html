@@ -2274,6 +2274,84 @@ function hideSyncProgress(){
   if(box) box.style.display='none';
 }
 
+// Transactions-only sync — split out from doSync above (CONFIRMED live Sep
+// 2026: removing the old combined "Quick sync"/"Full sync" buttons from
+// the Items page, in favor of Items' own automatic background sync,
+// accidentally cut off the ONLY way to sync Bills/Invoices/SalesReceipts/
+// CreditMemos/VendorCredits too, since doSync bundled both into one flow).
+// Skips step 1 (items) entirely — that's handled automatically now — and
+// just does the document fetch + recalculate steps, so re-syncing
+// transactions doesn't waste time re-pulling the whole item catalog too.
+async function doDocumentsSync(incremental){
+  var status=document.getElementById('txnSyncStatus');
+  var btn=document.getElementById('txnSyncIncBtn');
+  var btn2=document.getElementById('txnSyncFullBtn');
+  if(btn) btn.disabled=true;
+  if(btn2) btn2.disabled=true;
+  __syncBusy=true;
+  try{
+    var lastSync=localStorage.getItem('pc_lastSync')||'';
+    if(incremental && !lastSync){ incremental=false; }
+    window.__incrementalSync = incremental;
+    var since = incremental ? lastSync : '';
+    var syncStartedAt = new Date().toISOString();
+
+    showSyncProgress(10, incremental?'Starting quick transaction sync…':'Starting full transaction sync…');
+
+    var docLabels={Bill:'bills',Invoice:'invoices',SalesReceipt:'sales receipts',CreditMemo:'credit memos',VendorCredit:'vendor credits'};
+    var docsResult=await qbSyncDocumentsCore(function(typeName,idx,total,runningCount){
+      if(typeName==='__processing__'){
+        if(total>0 && runningCount!==null){
+          var pct=60+Math.round((idx/total)*30);
+          showSyncProgress(pct,'Processing documents ('+idx.toLocaleString()+' of '+total.toLocaleString()+')…');
+        } else {
+          showSyncProgress(60,'Processing documents — this can take a moment on large data…');
+        }
+        return;
+      }
+      var pct=10+Math.round((idx/total)*50);
+      var label='Fetching '+(docLabels[typeName]||typeName);
+      if(runningCount) label+=' ('+runningCount.toLocaleString()+')';
+      label+='…';
+      showSyncProgress(pct,label);
+    }, since);
+    if(!docsResult.ok){
+      hideSyncProgress();
+      if(docsResult.needsReconnect){
+        if(status)status.innerHTML='QuickBooks connection expired. <a href="/connect" style="color:var(--cold);font-weight:700">Click here to reconnect</a>';
+        showReconnectButton();
+      } else if(status){status.textContent='Sync error: '+docsResult.error;}
+      return;
+    }
+    showSyncProgress(95,'Documents synced — recalculating…');
+    recalcQuantities();
+    showSyncProgress(100,'Sync complete');
+    _ordItemLastPurchaseMap=null;
+    safeSetLocal('pc_lastSync', syncStartedAt);
+    if(status){
+      var dc=docsResult.docCounts||{};
+      var breakdown=' — '+(dc.Bill||0)+' bills, '+(dc.Invoice||0)+' invoices, '+(dc.SalesReceipt||0)+' sales receipts, '+(dc.CreditMemo||0)+' credit memos';
+      var mode=incremental?'Quick sync':'Full sync';
+      status.textContent=mode+' complete — '+docsResult.added+' movement'+(docsResult.added!==1?'s':'')+(incremental?' updated':' applied')+breakdown;
+    }
+    if(typeof renderTransactions==='function' && currentSectionId==='transactions') renderTransactions();
+    setTimeout(hideSyncProgress,1500);
+    _itemsTransactionsDirty=true;
+    await pushToServer();
+  }catch(err){
+    console.error('Transaction sync failed:', err);
+    hideSyncProgress();
+    if(status) status.textContent='Sync failed unexpectedly: '+(err&&err.message?err.message:err)+' — please try again.';
+  }finally{
+    if(btn) btn.disabled=false;
+    if(btn2) btn2.disabled=false;
+    window.__incrementalSync=false;
+    __syncBusy=false;
+  }
+}
+function syncTransactionsIncremental(){ return doDocumentsSync(true); }
+function syncTransactionsFull(){ return doDocumentsSync(false); }
+
 // Core item sync — returns {ok, count, error, needsReconnect}
 async function qbSyncItemsCore(){
   var base=window.location.origin;
@@ -17482,7 +17560,18 @@ function renderTransactions(){
   view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p>
     <div class="txn-toolbar">
       <span id="txnCount" style="font-family:var(--mono);font-size:11px;color:var(--muted)">${transactions.length} record${transactions.length!==1?'s':''} <span style="background:#0f6e40;color:#fff;padding:2px 8px;border-radius:6px;margin-left:8px;font-weight:700">v2 · search enabled</span></span>
-      <button class="btn btn-primary" onclick="openAddTxnModal()"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Create transaction</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="txnSyncStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted)"></span>
+        <button id="txnSyncIncBtn" class="btn" onclick="syncTransactionsIncremental()" title="Fast — pulls only bills/invoices/etc. changed since your last sync">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          Quick sync
+        </button>
+        <button id="txnSyncFullBtn" class="btn" onclick="syncTransactionsFull()" title="Rebuilds every transaction from scratch — use after a fix that changes how documents are processed, or if something looks off">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          Full sync
+        </button>
+        <button class="btn btn-primary" onclick="openAddTxnModal()"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Create transaction</button>
+      </div>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;align-items:center">
       <input type="text" id="txnSearch" placeholder="Search transaction #, product, customer/vendor..." oninput="renderTxnTable()" style="flex:1;min-width:240px;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>

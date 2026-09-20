@@ -1986,7 +1986,18 @@ const server = http.createServer(async (req, res) => {
     try {
       const qbItems = await fetchAllQBItems();
       const liveIds = new Set(qbItems.map(it => it.Id));
-      const liveByName = new Map(qbItems.map(it => [String(it.Name || '').trim().toLowerCase(), it]));
+      // Normalizes a name for matching by stripping QuickBooks' own
+      // "(deleted)" suffix (added automatically when an item gets merged/
+      // deactivated) along with surrounding whitespace/case differences.
+      // CONFIRMED live (Sep 2026): without this, an item synced BEFORE it
+      // was merged in QuickBooks (so Plant Console's copy still has the
+      // plain pre-merge name) could never match its own live record
+      // afterward — "BEEF RIB EYE B/S PUL" (stored) vs "BEEF RIB EYE B/S
+      // PUL (deleted)" (live) are different strings even though it's the
+      // exact same real item, wrongly landing it in the genuine-orphans
+      // list instead of getting relinked.
+      const normalizeName = s => String(s || '').trim().replace(/\s*\(deleted\)\s*$/i, '').trim().toLowerCase();
+      const liveByName = new Map(qbItems.map(it => [normalizeName(it.Name), it]));
       const itemsTxn = await readItemsTxnData();
       const items = (itemsTxn.items || []).slice();
       const relinked = [];
@@ -1995,7 +2006,7 @@ const server = http.createServer(async (req, res) => {
       items.forEach((it, idx) => {
         if (!it || !it.qbId) return;
         if (liveIds.has(it.qbId)) return; // already correctly linked
-        const match = liveByName.get(String(it.name || '').trim().toLowerCase());
+        const match = liveByName.get(normalizeName(it.name));
         if (match) {
           let groupName = '';
           if (match.FullyQualifiedName && match.FullyQualifiedName.indexOf(':') >= 0) {

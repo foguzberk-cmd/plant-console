@@ -1961,9 +1961,8 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
-  // Finds Plant Console items that no longer exist under the CURRENTLY
   // Reconciles Plant Console items against the CURRENTLY connected
-  // QuickBooks company two ways, not just one:
+  // QuickBooks company three ways:
   //  1) qbId matches a live item → already correct, leave it alone.
   //  2) qbId does NOT match anything live, but the item's NAME matches a
   //     live item exactly → this is the real fix for the Legacy-company
@@ -1980,7 +1979,16 @@ const server = http.createServer(async (req, res) => {
   //     status, to the current company's real data) rather than either
   //     leaving it dangling or deleting real inventory history.
   //  3) NEITHER id nor name matches anything live → genuinely orphaned;
-  //     these are the only ones offered up for deletion review.
+  //     offered up for deletion review.
+  // usedQbIds guards against a real bug this same relinking caused
+  // (CONFIRMED live Sep 2026): if TWO different local records both
+  // normalize to the same name (e.g. one still plain "BEEF TOP ROUND
+  // FAYMAN", another already renamed "BEEF TOP ROUND FAYMAN (deleted)"
+  // from an earlier partial sync), both would get relinked to the SAME
+  // live QuickBooks item, creating a genuine duplicate. Once a qbId has
+  // been claimed (whether it was already correct, or just relinked to in
+  // THIS pass), any further local record that would also match it is
+  // routed to duplicates instead of silently creating a second copy.
   if (url === '/api/data/items-find-orphans' && req.method === 'GET') {
     if (!requireAuth(req, res)) return;
     try {
@@ -2000,13 +2008,36 @@ const server = http.createServer(async (req, res) => {
       const liveByName = new Map(qbItems.map(it => [normalizeName(it.Name), it]));
       const itemsTxn = await readItemsTxnData();
       const items = (itemsTxn.items || []).slice();
+      // Tracks which qbIds already have exactly one local record claiming
+      // them (the one being kept) as the loop below proceeds — a SECOND
+      // (or later) local record that would also end up on the same qbId,
+      // whether it was already like that before this run or only becomes
+      // so via a name-match relink just now, gets flagged as a duplicate
+      // to delete rather than silently becoming a second holder of that
+      // id. Only ONE copy per qbId is ever kept automatically — the
+      // duplicates list below only ever contains the EXTRA copies, never
+      // the one being kept, so selecting all of them for deletion can
+      // never wipe an item out entirely.
+      const keptQbIds = new Set();
       const relinked = [];
       const orphans = [];
+      const duplicates = [];
       let changed = false;
       items.forEach((it, idx) => {
         if (!it || !it.qbId) return;
-        if (liveIds.has(it.qbId)) return; // already correctly linked
+        if (liveIds.has(it.qbId)) {
+          if (keptQbIds.has(it.qbId)) {
+            duplicates.push({ id: it.id, qbId: it.qbId, name: it.name, qty: it.qty, cost: it.cost });
+          } else {
+            keptQbIds.add(it.qbId);
+          }
+          return;
+        }
         const match = liveByName.get(normalizeName(it.name));
+        if (match && keptQbIds.has(match.Id)) {
+          duplicates.push({ id: it.id, qbId: it.qbId, name: it.name, qty: it.qty, cost: it.cost });
+          return;
+        }
         if (match) {
           let groupName = '';
           if (match.FullyQualifiedName && match.FullyQualifiedName.indexOf(':') >= 0) {
@@ -2028,6 +2059,7 @@ const server = http.createServer(async (req, res) => {
             groupName: groupName,
             qbSynced: new Date().toISOString()
           });
+          keptQbIds.add(match.Id);
           relinked.push({ name: it.name, wasQbId: it.qbId, nowQbId: match.Id, active: match.Active !== false });
           changed = true;
         } else {
@@ -2038,7 +2070,7 @@ const server = http.createServer(async (req, res) => {
         await writeItemsTxnData({ items, transactions: itemsTxn.transactions || [] });
       }
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
-      res.end(JSON.stringify({ success: true, checkedAgainst: liveIds.size, relinked, orphans }));
+      res.end(JSON.stringify({ success: true, checkedAgainst: liveIds.size, relinked, orphans, duplicates }));
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: e.message }));

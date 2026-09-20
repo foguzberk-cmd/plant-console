@@ -2652,6 +2652,7 @@ async function finishDocSync(data, onProgress){
             var aAccount=(doc.VendorRef&&doc.VendorRef.name)||'';
             transactions.push({
               id:'qb_'+cfg.key+'_'+doc.Id+'_acctline'+li,
+              docId:cfg.key+'_'+doc.Id,
               qbDoc:true, qbDocType:cfg.key,
               num:cfg.numPrefix+'-'+aDocNum,
               date:aDocDate, time:aTimeStr,
@@ -2727,6 +2728,7 @@ async function finishDocSync(data, onProgress){
       // that was showing up between QB and Plant Console sales figures.
       transactions.push({
         id:'qb_'+cfg.key+'_'+doc.Id+'_'+li,
+        docId:cfg.key+'_'+doc.Id,
         qbDoc:true,
         qbDocType:cfg.key,
         num:cfg.numPrefix+'-'+docNum,
@@ -2783,6 +2785,7 @@ async function finishDocSync(data, onProgress){
         var dAccount=(doc.CustomerRef&&doc.CustomerRef.name)||'';
         transactions.push({
           id:'qb_'+cfg.key+'_'+doc.Id+'_disc'+dli,
+          docId:cfg.key+'_'+doc.Id,
           qbDoc:true, qbDocType:cfg.key,
           num:cfg.numPrefix+'-'+dDocNum,
           date:docDate, time:timeStr,

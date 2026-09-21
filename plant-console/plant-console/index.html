@@ -2351,6 +2351,40 @@ async function doDocumentsSync(incremental){
 }
 function syncTransactionsIncremental(){ return doDocumentsSync(true); }
 function syncTransactionsFull(){ return doDocumentsSync(false); }
+// Server-side, no-QuickBooks-call fix for existing transactions missing
+// docId (the "every bill shows as separate lines instead of one grouped
+// row" bug) — see the matching /api/data/migrate-transaction-docids
+// endpoint for why this is safe where a real Full sync crashed the
+// browser tab with an Out of Memory error on a large transaction history.
+function fixTransactionGrouping(){
+  var btn=document.getElementById('txnFixGroupingBtn');
+  var status=document.getElementById('txnSyncStatus');
+  if(btn) btn.disabled=true;
+  if(status) status.textContent='Fixing grouping…';
+  fetch('/api/data/migrate-transaction-docids',{method:'POST'}).then(function(res){
+    return res.json().then(function(data){ return {ok:res.ok,data:data}; });
+  }).then(function(result){
+    if(btn) btn.disabled=false;
+    if(!result.ok||!result.data||!result.data.success){
+      if(status) status.textContent='Fix failed: '+((result.data&&result.data.error)||'unknown error');
+      return;
+    }
+    var d=result.data;
+    if(status) status.textContent='Grouping fixed — '+d.migrated+' record'+(d.migrated!==1?'s':'')+' patched ('+d.alreadyOk+' already OK'+(d.unmatched?', '+d.unmatched+' unrecognized':'')+')';
+    // Pull the corrected transactions down so this tab reflects the fix
+    // immediately instead of waiting for the next routine pull.
+    fetch('/api/data',{cache:'no-store'}).then(function(r){ return r.ok?r.json():null; }).then(function(d2){
+      if(d2&&Array.isArray(d2.transactions)){
+        transactions=d2.transactions;
+        safeSetLocal('pc_transactions', JSON.stringify(transactions));
+        if(typeof renderTxnTable==='function' && currentSectionId==='transactions') renderTxnTable();
+      }
+    });
+  }).catch(function(){
+    if(btn) btn.disabled=false;
+    if(status) status.textContent='Fix failed: could not reach the server.';
+  });
+}
 
 // Core item sync — returns {ok, count, error, needsReconnect}
 async function qbSyncItemsCore(){
@@ -17566,9 +17600,13 @@ function renderTransactions(){
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
           Quick sync
         </button>
-        <button id="txnSyncFullBtn" class="btn" onclick="syncTransactionsFull()" title="Rebuilds every transaction from scratch — use after a fix that changes how documents are processed, or if something looks off">
+        <button id="txnSyncFullBtn" class="btn" onclick="syncTransactionsFull()" title="Rebuilds every transaction from scratch, pulling fresh from QuickBooks — use if the numbers themselves look wrong, not just the grouping. On a large history this runs entirely in your browser and can use a lot of memory.">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           Full sync
+        </button>
+        <button id="txnFixGroupingBtn" class="btn" onclick="fixTransactionGrouping()" title="Fixes bills/invoices showing as separate rows per line instead of one grouped row — patches existing records directly on the server, no QuickBooks re-fetch, no browser memory risk. Use this instead of Full sync for that specific problem.">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          Fix grouping
         </button>
         <button class="btn btn-primary" onclick="openAddTxnModal()"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Create transaction</button>
       </div>

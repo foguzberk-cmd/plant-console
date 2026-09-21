@@ -2099,6 +2099,52 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
+  // One-time migration: patches docId onto every EXISTING synced
+  // transaction that's missing it — CONFIRMED live (Sep 2026), this fixes
+  // the "every bill/invoice line shows as its own separate row instead of
+  // grouping into one expandable row" bug for transactions that were
+  // already synced before that fix existed. Deliberately does NOT
+  // re-fetch anything from QuickBooks or re-run the client's document
+  // sync — a real "Full sync" attempt for this crashed the browser tab
+  // with an Out of Memory error on a ~45k-record transaction history,
+  // since that whole rebuild happens in the browser's own memory. The
+  // docId value needed is already fully recoverable from data already
+  // sitting on the server: every synced transaction's own id field is
+  // built as "qb_<DocType>_<QuickBooksDocId>_<suffix>" (see where
+  // transactions.push({id:...}) happens client-side for the exact
+  // format), so this just parses that apart server-side — zero QuickBooks
+  // API calls, zero browser memory pressure, one pass over data that's
+  // already local to the server.
+  if (url === '/api/data/migrate-transaction-docids' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const itemsTxn = await readItemsTxnData();
+      const transactions = (itemsTxn.transactions || []).slice();
+      const docTypes = ['Bill', 'Invoice', 'SalesReceipt', 'CreditMemo', 'VendorCredit'];
+      const idPattern = new RegExp('^qb_(' + docTypes.join('|') + ')_(.+)_(?:acctline\\d+|disc\\d+|\\d+)$');
+      let migrated = 0;
+      let alreadyOk = 0;
+      let unmatched = 0;
+      for (let i = 0; i < transactions.length; i++) {
+        const t = transactions[i];
+        if (!t || !t.qbDoc) continue;
+        if (t.docId) { alreadyOk++; continue; }
+        const m = typeof t.id === 'string' ? t.id.match(idPattern) : null;
+        if (!m) { unmatched++; continue; }
+        transactions[i] = Object.assign({}, t, { docId: m[1] + '_' + m[2] });
+        migrated++;
+      }
+      if (migrated > 0) {
+        await writeItemsTxnData({ items: itemsTxn.items || [], transactions });
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, migrated, alreadyOk, unmatched, total: transactions.length }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
   // Lightweight read of the SMALL shared collections only (users, scale logs,
   // label-allowed list, saved reports, customer-allowed list) — used by the
   // browser to check for anything added/edited on OTHER devices right before

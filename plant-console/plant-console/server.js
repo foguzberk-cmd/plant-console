@@ -2145,6 +2145,102 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
+  // Same idea as items-find-orphans above, for customers — CONFIRMED live
+  // (Sep 2026): the exact same Legacy-company mixup produced duplicate
+  // customer records too (e.g. "Amherst Halal Market" correctly linked to
+  // the current company, plus a leftover "AMHERST HALAL MARKET" from
+  // whichever company Plant Console was connected to before, with its own
+  // stale qbId that will never match anything in a fresh sync — a normal
+  // customer re-sync only ever adds/updates by qbId, it never removes a
+  // record that doesn't match, so re-importing alone can't fix this).
+  // Same three-way reconciliation as items: qbId match → already correct;
+  // no qbId match but name matches something not already claimed → auto-
+  // relink (refresh every QB-sourced field, keep Plant-Console-only ones
+  // like salesRep/dunsNumber); name matches something ALREADY claimed →
+  // duplicate, flagged for review; neither matches → genuinely orphaned,
+  // also flagged for review. Nothing is ever deleted here — see
+  // customers-delete below for that, only run after the person reviews
+  // the list this returns.
+  if (url === '/api/data/customers-find-orphans' && req.method === 'GET') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const qbData = await fetchQBCustomers(false);
+      const qbCustomers = (qbData.QueryResponse && qbData.QueryResponse.Customer) || [];
+      const liveIds = new Set(qbCustomers.map(c => c.Id));
+      const normalizeName = s => String(s || '').trim().toLowerCase();
+      const liveByName = new Map(qbCustomers.map(c => [normalizeName(c.DisplayName || c.FullyQualifiedName || c.CompanyName), c]));
+      let relinked = [];
+      let orphans = [];
+      let duplicates = [];
+      await updateSharedData(async (current) => {
+        const customers = (current.customers || []).slice();
+        const keptQbIds = new Set();
+        let changed = false;
+        customers.forEach((c, idx) => {
+          if (!c || !c.qbId) return;
+          if (liveIds.has(c.qbId)) {
+            if (keptQbIds.has(c.qbId)) {
+              duplicates.push({ id: c.id, qbId: c.qbId, name: c.name });
+            } else {
+              keptQbIds.add(c.qbId);
+            }
+            return;
+          }
+          const match = liveByName.get(normalizeName(c.name));
+          if (match && keptQbIds.has(match.Id)) {
+            duplicates.push({ id: c.id, qbId: c.qbId, name: c.name });
+            return;
+          }
+          if (match) {
+            customers[idx] = Object.assign({}, c, {
+              qbId: match.Id,
+              qbSyncToken: Number(match.SyncToken || 0),
+              name: match.DisplayName || match.FullyQualifiedName || match.CompanyName || c.name,
+              active: match.Active !== false
+            });
+            keptQbIds.add(match.Id);
+            relinked.push({ name: c.name, wasQbId: c.qbId, nowQbId: match.Id });
+            changed = true;
+          } else {
+            orphans.push({ id: c.id, qbId: c.qbId, name: c.name });
+          }
+        });
+        if (!changed) return { skipWrite: true };
+        return { data: Object.assign({}, current, { customers }) };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, checkedAgainst: liveIds.size, relinked, orphans, duplicates }));
+    } catch (e) {
+      const needsReconnect = e.message === 'NEEDS_RECONNECT';
+      res.writeHead(needsReconnect ? 401 : 500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message, needsReconnect }));
+    }
+    return;
+  }
+  // Deletes specific customer records by id — used only from the
+  // orphaned-customers finder above (the person reviews the list and
+  // picks which ones to actually remove). Admin-only, same reasoning as
+  // items-delete: a real, permanent deletion, not exposed to every role.
+  if (url === '/api/data/customers-delete' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const bodyStr = await readRequestBody(req);
+      const body = JSON.parse(bodyStr || '{}');
+      const idsToDelete = new Set((Array.isArray(body.ids) ? body.ids : []).filter(x => typeof x === 'string'));
+      let remaining = 0;
+      await updateSharedData(async (current) => {
+        const customers = (current.customers || []).filter(c => !c || !idsToDelete.has(c.id));
+        remaining = customers.length;
+        return { data: Object.assign({}, current, { customers }) };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, remaining }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
   // Lightweight read of the SMALL shared collections only (users, scale logs,
   // label-allowed list, saved reports, customer-allowed list) — used by the
   // browser to check for anything added/edited on OTHER devices right before

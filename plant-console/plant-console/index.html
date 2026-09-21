@@ -2356,6 +2356,112 @@ function syncTransactionsFull(){ return doDocumentsSync(false); }
 // row" bug) — see the matching /api/data/migrate-transaction-docids
 // endpoint for why this is safe where a real Full sync crashed the
 // browser tab with an Out of Memory error on a large transaction history.
+// Same idea as findOrphanedItems, for customers — see the matching
+// /api/data/customers-find-orphans endpoint for the full reasoning
+// (Legacy-company mixup producing duplicate customer records, same as
+// items).
+function findOrphanedCustomers(){
+  var btn=document.getElementById('custOrphanBtn');
+  var status=document.getElementById('custSyncStatus');
+  if(btn) btn.disabled=true;
+  if(status) status.textContent='Checking against QuickBooks…';
+  fetch('/api/data/customers-find-orphans').then(function(res){
+    return res.json().then(function(data){ return {ok:res.ok,data:data}; });
+  }).then(function(result){
+    if(btn) btn.disabled=false;
+    if(!result.ok||!result.data||!result.data.success){
+      if(result.data&&result.data.needsReconnect){
+        if(status)status.innerHTML='QuickBooks connection expired. <a href="/connect" style="color:var(--cold);font-weight:700">Click here to reconnect</a>';
+        return;
+      }
+      if(status) status.textContent='Could not check: '+((result.data&&result.data.error)||'unknown error');
+      return;
+    }
+    var relinked=result.data.relinked||[];
+    var orphans=result.data.orphans||[];
+    var duplicates=result.data.duplicates||[];
+    if(relinked.length||duplicates.length){
+      // Relinking is applied automatically server-side — refresh the local
+      // customer list so any corrected records show up right away.
+      fetch('/api/customers',{cache:'no-store'}).then(function(r){ return r.ok?r.json():null; }).then(function(d){
+        if(d&&Array.isArray(d.customers)){
+          customers=d.customers;
+          safeSetLocal('pc_customers', JSON.stringify(customers));
+          if(typeof renderCustomersList==='function') renderCustomersList();
+        }
+      });
+    }
+    var combined=orphans.map(function(o){ return Object.assign({},o,{reason:'orphan'}); })
+      .concat(duplicates.map(function(d){ return Object.assign({},d,{reason:'duplicate'}); }));
+    if(status) status.textContent=(relinked.length?relinked.length+' relinked. ':'')+(combined.length?combined.length+' flagged for review.':'All clear — no duplicates or leftovers found ('+result.data.checkedAgainst+' checked against).');
+    if(combined.length) _showOrphanedCustomersModal(combined);
+  }).catch(function(){
+    if(btn) btn.disabled=false;
+    if(status) status.textContent='Could not reach the server to check.';
+  });
+}
+function _showOrphanedCustomersModal(orphans){
+  var overlay=document.createElement('div');
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  var dupCount=orphans.filter(function(o){ return o.reason==='duplicate'; }).length;
+  var orphanCount=orphans.length-dupCount;
+  var rows=orphans.map(function(o){
+    var tag=o.reason==='duplicate'
+      ?'<span style="font-size:10px;font-weight:700;color:#9b6b00;background:#fff3cd;border:1px solid #e0c56b;border-radius:4px;padding:1px 6px;flex-shrink:0">DUPLICATE</span>'
+      :'<span style="font-size:10px;font-weight:700;color:#a3231b;background:#fbe4e2;border:1px solid #e3a29c;border-radius:4px;padding:1px 6px;flex-shrink:0">NOT FOUND</span>';
+    return '<label style="display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid var(--line);cursor:pointer">'
+      +'<input type="checkbox" class="custOrphanChk" data-id="'+esc(o.id)+'" checked style="width:15px;height:15px;flex-shrink:0"/>'
+      +tag
+      +'<span style="flex:1;font-size:13px">'+esc(o.name)+'</span>'
+    +'</label>';
+  }).join('');
+  overlay.innerHTML='<div style="background:var(--panel);border-radius:12px;max-width:560px;width:100%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3)">'
+    +'<div style="padding:18px 20px;border-bottom:1px solid var(--line)">'
+      +'<div style="font-weight:700;font-size:15px">'+orphans.length+' customer'+(orphans.length!==1?'s':'')+' flagged for review</div>'
+      +'<div style="font-size:12.5px;color:var(--muted);margin-top:6px">'
+        +(orphanCount?orphanCount+' <b style="color:#a3231b">NOT FOUND</b> — matched neither by id nor by name against anything in QuickBooks. ':'')
+        +(dupCount?dupCount+' <b style="color:#9b6b00">DUPLICATE</b> — an extra copy of a customer already correctly linked elsewhere; the other copy is kept automatically. ':'')
+        +'Uncheck any you want to keep.'
+      +'</div>'
+    +'</div>'
+    +'<div style="overflow-y:auto;padding:8px 20px;flex:1">'+rows+'</div>'
+    +'<div style="padding:14px 20px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px">'
+      +'<button class="btn" id="custOrphanCancelBtn">Cancel</button>'
+      +'<button class="btn btn-primary" id="custOrphanDeleteBtn" style="background:#a3231b;border-color:#a3231b">Delete selected</button>'
+    +'</div>'
+  +'</div>';
+  document.body.appendChild(overlay);
+  overlay.querySelector('#custOrphanCancelBtn').onclick=function(){ overlay.remove(); };
+  overlay.onclick=function(e){ if(e.target===overlay) overlay.remove(); };
+  overlay.querySelector('#custOrphanDeleteBtn').onclick=function(){
+    var ids=Array.prototype.slice.call(overlay.querySelectorAll('.custOrphanChk:checked')).map(function(c){ return c.getAttribute('data-id'); });
+    if(!ids.length){ overlay.remove(); return; }
+    if(!confirm('Permanently delete '+ids.length+' customer'+(ids.length!==1?'s':'')+' from Plant Console? This cannot be undone.')) return;
+    var delBtn=overlay.querySelector('#custOrphanDeleteBtn');
+    delBtn.disabled=true; delBtn.textContent='Deleting…';
+    fetch('/api/data/customers-delete',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ids:ids})
+    }).then(function(res){
+      return res.json().then(function(data){ return {ok:res.ok,data:data}; });
+    }).then(function(result){
+      overlay.remove();
+      if(!result.ok||!result.data||!result.data.success){
+        alert('Delete failed: '+((result.data&&result.data.error)||'unknown error'));
+        return;
+      }
+      customers=customers.filter(function(c){ return ids.indexOf(c.id)<0; });
+      safeSetLocal('pc_customers', JSON.stringify(customers));
+      if(typeof renderCustomersList==='function') renderCustomersList();
+      var status=document.getElementById('custSyncStatus');
+      if(status) status.textContent=result.data.remaining+' customers on file';
+    }).catch(function(){
+      overlay.remove();
+      alert('Delete failed: could not reach the server.');
+    });
+  };
+}
 function fixTransactionGrouping(){
   var btn=document.getElementById('txnFixGroupingBtn');
   var status=document.getElementById('txnSyncStatus');
@@ -14844,6 +14950,9 @@ function _renderCustomersPanelBody(panel){
       <button class="btn btn-sm" onclick="customerSelectAll(false)">Clear all</button>
       <button class="btn btn-sm" id="custSyncBtn" onclick="qbSyncCustomers()" title="Pull the latest customer list from QuickBooks">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+      </button>
+      <button class="btn btn-sm" id="custOrphanBtn" onclick="findOrphanedCustomers()" title="Checks every customer against what the CURRENTLY connected QuickBooks company actually has — finds duplicates and leftovers from a wrong/old QuickBooks connection (like the ALL-CAPS 'AMHERST HALAL MARKET' next to the real 'Amherst Halal Market')">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
       </button>
       <span id="cust-count" style="font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap"></span>
     </div>

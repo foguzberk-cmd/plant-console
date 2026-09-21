@@ -2183,7 +2183,17 @@ const server = http.createServer(async (req, res) => {
       const liveByName = new Map();
       function registerAlias(key, cust) {
         if (!key) return;
-        if (liveByName.has(key) && liveByName.get(key).Id !== cust.Id) { liveByName.set(key, null); return; } // ambiguous — two different live customers share this alias, don't guess
+        if (liveByName.has(key)) {
+          const existing = liveByName.get(key);
+          // existing can already be null here (a THIRD customer sharing
+          // an alias that a prior pair already marked ambiguous) —
+          // CONFIRMED live (Sep 2026): reading existing.Id without this
+          // null check crashed the whole check with "Cannot read
+          // properties of null (reading 'Id')". Null stays null either
+          // way — still ambiguous, still correctly refuses to guess.
+          if (existing === null || existing.Id !== cust.Id) { liveByName.set(key, null); }
+          return;
+        }
         liveByName.set(key, cust);
       }
       qbCustomers.forEach(c => {
@@ -2194,6 +2204,7 @@ const server = http.createServer(async (req, res) => {
         }
         if (c.CompanyName) registerAlias(normalizeName(c.CompanyName), c);
       });
+      const liveById = new Map(qbCustomers.map(c => [c.Id, c]));
       let relinked = [];
       let orphans = [];
       let duplicates = [];
@@ -2203,16 +2214,27 @@ const server = http.createServer(async (req, res) => {
         let changed = false;
         customers.forEach((c, idx) => {
           if (!c) return;
-          // CONFIRMED live (Sep 2026): this used to be `if (!c || !c.qbId)
-          // return` — completely skipping any customer with NO
-          // QuickBooks id at all, which meant a duplicate that was never
-          // actually linked in the first place (a bare leftover record —
-          // e.g. "Zirve Turkish Grill" appearing twice, identically,
-          // with one copy never having a qbId) was never even evaluated,
-          // let alone flagged. Missing qbId is now treated the same as
-          // "qbId doesn't match anything live" — it just skips straight
-          // to the name-match check below instead of returning early.
-          if (c.qbId && liveIds.has(c.qbId)) {
+          // CONFIRMED live (Sep 2026): a plain "does this qbId exist
+          // somewhere live" check isn't actually enough — two separate
+          // QuickBooks company files can independently assign the SAME
+          // numeric id to two completely different, unrelated customers
+          // (plausible especially for low/early ids). A stale qbId from
+          // whichever company Plant Console was connected to before can
+          // coincidentally also be a valid id in the CURRENT company —
+          // just for someone else entirely — which made a real duplicate
+          // ("Zirve Turkish Grill" showing twice) look "already correctly
+          // linked" and get silently skipped every time, even after
+          // fixing the earlier no-qbId-at-all bug. Now the id is only
+          // trusted if the name it's SUPPOSED to belong to also matches
+          // what's actually live at that id (via the same alias system
+          // used for name-matching below) — an id that exists but points
+          // to a differently-named customer is treated as untrustworthy,
+          // same as having no id at all, and falls through to a proper
+          // name-based lookup instead.
+          const match = liveByName.get(normalizeName(c.name));
+          const liveAtId = c.qbId ? liveById.get(c.qbId) : null;
+          const idIsTrustworthy = liveAtId && match && match.Id === liveAtId.Id;
+          if (idIsTrustworthy) {
             if (keptQbIds.has(c.qbId)) {
               duplicates.push({ id: c.id, qbId: c.qbId, name: c.name });
             } else {
@@ -2220,7 +2242,6 @@ const server = http.createServer(async (req, res) => {
             }
             return;
           }
-          const match = liveByName.get(normalizeName(c.name));
           if (match && keptQbIds.has(match.Id)) {
             duplicates.push({ id: c.id, qbId: c.qbId, name: c.name });
             return;

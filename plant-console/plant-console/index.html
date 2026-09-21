@@ -2370,16 +2370,15 @@ function fixTransactionGrouping(){
       return;
     }
     var d=result.data;
-    if(status) status.textContent='Grouping fixed — '+d.migrated+' record'+(d.migrated!==1?'s':'')+' patched ('+d.alreadyOk+' already OK'+(d.unmatched?', '+d.unmatched+' unrecognized':'')+')';
-    // Pull the corrected transactions down so this tab reflects the fix
-    // immediately instead of waiting for the next routine pull.
-    fetch('/api/data',{cache:'no-store'}).then(function(r){ return r.ok?r.json():null; }).then(function(d2){
-      if(d2&&Array.isArray(d2.transactions)){
-        transactions=d2.transactions;
-        safeSetLocal('pc_transactions', JSON.stringify(transactions));
-        if(typeof renderTxnTable==='function' && currentSectionId==='transactions') renderTxnTable();
-      }
-    });
+    // Deliberately NOT auto-refreshing the transaction list here anymore
+    // (CONFIRMED live Sep 2026 — an earlier version pulled the full,
+    // ~45k-record transaction list back down and re-rendered it
+    // immediately in the same tab; on a long session that already had a
+    // lot of memory built up from today's other large operations, that
+    // was enough to crash the tab). The fix itself already fully applied
+    // server-side regardless of what this tab does next — a plain page
+    // reload (or just reopening Plant Console fresh) picks it up safely.
+    if(status) status.textContent='Grouping fixed — '+d.migrated+' record'+(d.migrated!==1?'s':'')+' patched ('+d.alreadyOk+' already OK'+(d.unmatched?', '+d.unmatched+' unrecognized':'')+'). Reload the page to see it.';
   }).catch(function(){
     if(btn) btn.disabled=false;
     if(status) status.textContent='Fix failed: could not reach the server.';

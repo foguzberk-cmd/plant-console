@@ -1218,6 +1218,30 @@ const BACKGROUND_SYNC_INTERVAL_MS = 30 * 60 * 1000; // every 30 minutes
 const ITEMS_SYNC_INTERVAL_MS = 5 * 60 * 1000; // every 5 minutes
 let _backgroundSyncInFlight = false;
 let _lastBackgroundSyncAt = 0;
+// Server-side tombstone for explicitly-deleted customers (see
+// /api/data/customers-delete and the merge logic in the main /api/data
+// POST handler below) — CONFIRMED live (Sep 2026): the app pushes a full
+// customers snapshot every ~1.5s in the background; if one of those
+// routine pushes was already in flight (built from the browser's memory
+// BEFORE a delete) and its request lands on the server AFTER the delete
+// succeeds, the union-by-id merge below had no way to know that customer
+// was just deleted — it just saw the id present in the incoming push and
+// added it right back in. A client-side-only fix (an in-browser grace
+// window) can't close this, since the stale push is a SEPARATE request,
+// possibly from the same tab's own earlier-queued ambient sync. This set
+// is checked by the merge regardless of what any incoming push still
+// contains.
+const _recentlyDeletedCustomerIds = new Map(); // id -> expiry timestamp (ms)
+function markCustomerIdsDeleted(ids) {
+  const expiresAt = Date.now() + 30000; // 30s — comfortably longer than any realistic in-flight request
+  ids.forEach(id => _recentlyDeletedCustomerIds.set(id, expiresAt));
+}
+function isRecentlyDeletedCustomerId(id) {
+  const exp = _recentlyDeletedCustomerIds.get(id);
+  if (exp === undefined) return false;
+  if (Date.now() > exp) { _recentlyDeletedCustomerIds.delete(id); return false; }
+  return true;
+}
 let _lastBackgroundSyncResult = null; // { at, customers: {ok,count,error}, vendors: {ok,count,error} }
 
 // Builds one printable/geocodable address line out of a QuickBooks address
@@ -2288,6 +2312,7 @@ const server = http.createServer(async (req, res) => {
       const bodyStr = await readRequestBody(req);
       const body = JSON.parse(bodyStr || '{}');
       const idsToDelete = new Set((Array.isArray(body.ids) ? body.ids : []).filter(x => typeof x === 'string'));
+      markCustomerIdsDeleted(Array.from(idsToDelete)); // tombstone FIRST — closes the race window against any push already in flight
       let remaining = 0;
       await updateSharedData(async (current) => {
         const customers = (current.customers || []).filter(c => !c || !idsToDelete.has(c.id));
@@ -3043,8 +3068,10 @@ const server = http.createServer(async (req, res) => {
           const merged = new Map((current.customers || []).map(c => [c && c.id, c]));
           for (const c of incoming.customers) {
             if (!c) continue;
+            if (isRecentlyDeletedCustomerId(c.id)) continue; // just deleted — a stale in-flight push can't resurrect it
             merged.set(c.id, Object.assign({}, merged.get(c.id) || {}, c));
           }
+          for (const id of _recentlyDeletedCustomerIds.keys()) { merged.delete(id); }
           incoming.customers = Array.from(merged.values());
         }
         // labelAllowed is likewise now a per-department object (each
@@ -4347,6 +4374,14 @@ const server = http.createServer(async (req, res) => {
         .catch(e => console.error('Background sync error:', e.message));
     }, 15000);
     setInterval(() => { runBackgroundSync().catch(e => console.error('Background sync error:', e.message)); }, BACKGROUND_SYNC_INTERVAL_MS);
+    // Proactive sweep for _recentlyDeletedCustomerIds — isRecentlyDeletedCustomerId
+    // already expires entries lazily when checked, but an id that's never
+    // referenced again after its 30s window would otherwise sit in memory
+    // forever. Cheap, infrequent sweep instead.
+    setInterval(() => {
+      const now = Date.now();
+      for (const [id, exp] of _recentlyDeletedCustomerIds) { if (now > exp) _recentlyDeletedCustomerIds.delete(id); }
+    }, 5 * 60 * 1000);
     // Items: first run shortly after boot (staggered a bit later than the
     // customers/vendors one above, so they don't both fire in the same
     // instant), then every ITEMS_SYNC_INTERVAL_MS after that — the FIRST

@@ -1202,6 +1202,26 @@ function _cfMarkDeleted(billId){
     body:JSON.stringify({billId:billId})
   }).catch(function(e){ console.error('Cash Flow delete-schedule sync failed:',e); });
 }
+// Mirror-image guard for DELETING a customer entirely (see
+// findOrphanedCustomers) — CONFIRMED live (Sep 2026): deleting a
+// duplicate/orphaned customer, then clicking any OTHER save shortly after
+// (e.g. "Save changes for Resale Box"), was resurrecting the just-deleted
+// customer right back. Cause: _recentlySavedCustomers' 8-second grace
+// window (meant to protect a genuinely recent EDIT from being clobbered
+// by a pull/merge that hasn't caught up yet) has no way to know the
+// customer was subsequently deleted — it just reapplies whatever it last
+// snapshotted, regardless. Marking an id here tells both the pull-side
+// and push-side reapply logic (see pullFromServer and
+// _pushToServerImpl) to skip it even if it's still sitting in
+// _recentlySavedCustomers.
+var _recentlyDeletedCustomerIds={};
+function _markCustomersDeleted(ids){
+  ids.forEach(function(id){
+    _recentlyDeletedCustomerIds[id]=true;
+    delete _recentlySavedCustomers[id];
+  });
+  setTimeout(function(){ ids.forEach(function(id){ delete _recentlyDeletedCustomerIds[id]; }); },10000);
+}
 // ----- Temporary sync diagnostics (see the "Sync debug log" panel on the
 // Scale Log page) — logs exactly what pull/push events happen and when,
 // including scale log counts and whether a specific ID was involved, so the
@@ -1416,6 +1436,7 @@ async function pullFromServer(){
       // otherwise silently revert those customers right back, on the very
       // device that just imported them.
       Object.keys(_recentlySavedCustomers).forEach(function(id){
+        if(_recentlyDeletedCustomerIds[id]) return; // just deleted — don't let a stale grace-window snapshot resurrect it
         var i=customers.findIndex(function(c){return c.id===id;});
         if(i>=0) customers[i]=_recentlySavedCustomers[id];
         else customers.push(_recentlySavedCustomers[id]);
@@ -1674,8 +1695,9 @@ async function _pushToServerImpl(){
           var mergedCustomers=smallData.customers.slice();
           var _serverCustIds={};
           mergedCustomers.forEach(function(c){ if(c) _serverCustIds[c.id]=true; });
-          customers.forEach(function(c){ if(c && !_serverCustIds[c.id]) mergedCustomers.push(c); });
+          customers.forEach(function(c){ if(c && !_serverCustIds[c.id] && !_recentlyDeletedCustomerIds[c.id]) mergedCustomers.push(c); });
           Object.keys(_recentlySavedCustomers).forEach(function(id){
+            if(_recentlyDeletedCustomerIds[id]) return; // just deleted — don't resurrect via the grace-window snapshot
             var i=mergedCustomers.findIndex(function(c){return c.id===id;});
             if(i>=0) mergedCustomers[i]=_recentlySavedCustomers[id];
             else mergedCustomers.push(_recentlySavedCustomers[id]);
@@ -2452,6 +2474,7 @@ function _showOrphanedCustomersModal(orphans){
         return;
       }
       customers=customers.filter(function(c){ return ids.indexOf(c.id)<0; });
+      _markCustomersDeleted(ids);
       safeSetLocal('pc_customers', JSON.stringify(customers));
       if(typeof renderCustomersList==='function') renderCustomersList();
       var status=document.getElementById('custSyncStatus');

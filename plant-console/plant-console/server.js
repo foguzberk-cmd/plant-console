@@ -2168,7 +2168,32 @@ const server = http.createServer(async (req, res) => {
       const qbCustomers = (qbData.QueryResponse && qbData.QueryResponse.Customer) || [];
       const liveIds = new Set(qbCustomers.map(c => c.Id));
       const normalizeName = s => String(s || '').trim().toLowerCase();
-      const liveByName = new Map(qbCustomers.map(c => [normalizeName(c.DisplayName || c.FullyQualifiedName || c.CompanyName), c]));
+      // A live customer can be found under SEVERAL name variants, not just
+      // its exact DisplayName — CONFIRMED live (Sep 2026): "Wildberry
+      // Cake" (a Legacy-company leftover, plain name only) didn't match
+      // "Wildberry Cake | A & I Cake Corporation" (the real, current
+      // record) under exact-string matching, even though it's the same
+      // real customer — QuickBooks's own "Contact | Company" DisplayName
+      // format isn't a name difference, it's just a different rendering
+      // of the same record. Every alias below points at the SAME live
+      // customer object; an alias is skipped (not registered) if it would
+      // collide with a DIFFERENT live customer, so this never creates an
+      // ambiguous/wrong match — it only adds recognizable variants of a
+      // name that's otherwise unique.
+      const liveByName = new Map();
+      function registerAlias(key, cust) {
+        if (!key) return;
+        if (liveByName.has(key) && liveByName.get(key).Id !== cust.Id) { liveByName.set(key, null); return; } // ambiguous — two different live customers share this alias, don't guess
+        liveByName.set(key, cust);
+      }
+      qbCustomers.forEach(c => {
+        const display = c.DisplayName || c.FullyQualifiedName || c.CompanyName || '';
+        registerAlias(normalizeName(display), c);
+        if (display.indexOf('|') >= 0) {
+          display.split('|').forEach(part => registerAlias(normalizeName(part), c));
+        }
+        if (c.CompanyName) registerAlias(normalizeName(c.CompanyName), c);
+      });
       let relinked = [];
       let orphans = [];
       let duplicates = [];
@@ -2177,8 +2202,17 @@ const server = http.createServer(async (req, res) => {
         const keptQbIds = new Set();
         let changed = false;
         customers.forEach((c, idx) => {
-          if (!c || !c.qbId) return;
-          if (liveIds.has(c.qbId)) {
+          if (!c) return;
+          // CONFIRMED live (Sep 2026): this used to be `if (!c || !c.qbId)
+          // return` — completely skipping any customer with NO
+          // QuickBooks id at all, which meant a duplicate that was never
+          // actually linked in the first place (a bare leftover record —
+          // e.g. "Zirve Turkish Grill" appearing twice, identically,
+          // with one copy never having a qbId) was never even evaluated,
+          // let alone flagged. Missing qbId is now treated the same as
+          // "qbId doesn't match anything live" — it just skips straight
+          // to the name-match check below instead of returning early.
+          if (c.qbId && liveIds.has(c.qbId)) {
             if (keptQbIds.has(c.qbId)) {
               duplicates.push({ id: c.id, qbId: c.qbId, name: c.name });
             } else {
@@ -2201,9 +2235,15 @@ const server = http.createServer(async (req, res) => {
             keptQbIds.add(match.Id);
             relinked.push({ name: c.name, wasQbId: c.qbId, nowQbId: match.Id });
             changed = true;
-          } else {
+          } else if (c.qbId) {
             orphans.push({ id: c.id, qbId: c.qbId, name: c.name });
           }
+          // A customer with NEITHER a qbId NOR a name match is left alone
+          // entirely rather than flagged — it's likely a genuine
+          // Plant-Console-only customer that was simply never synced to
+          // QuickBooks (not every customer necessarily needs to be),
+          // which is a different situation from a confirmed-orphaned
+          // record that already claims a stale QuickBooks link.
         });
         if (!changed) return { skipWrite: true };
         return { data: Object.assign({}, current, { customers }) };

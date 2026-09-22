@@ -14251,7 +14251,7 @@ function diagnoseLocations(){
   if(!d){
     msg+='  No sync run this session. Click "Sync from QuickBooks", then Check again.\n';
   } else {
-    msg+='  Returned: '+d.docCounts.Bill+' bills, '+d.docCounts.Invoice+' invoices, '+d.docCounts.SalesReceipt+' sales receipts, '+d.docCounts.CreditMemo+' credit memos, '+(d.docCounts.VendorCredit||0)+' vendor credits\n';
+    msg+='  Returned: '+d.docCounts.Bill+' bills, '+d.docCounts.Invoice+' invoices, '+d.docCounts.SalesReceipt+' sales receipts, '+d.docCounts.CreditMemo+' credit memos, '+(d.docCounts.VendorCredit||0)+' vendor credits, '+(d.docCounts.InventoryAdjustment||0)+' inventory adjustments\n';
     msg+='  Item lines seen: '+d.lineItemsSeen+'\n';
     msg+='  Movements added: '+d.added+'\n';
     msg+='  Skipped (item not matched): '+d.skippedNoItem+'\n';
@@ -14310,7 +14310,7 @@ function diagnoseLocationsOLD(){
   if(!d){
     msg+='  No document sync run yet this session. Click "Sync from QuickBooks".\n';
   } else {
-    msg+='  Documents pulled: '+d.docCounts.Bill+' bills, '+d.docCounts.Invoice+' invoices, '+d.docCounts.SalesReceipt+' sales receipts, '+d.docCounts.CreditMemo+' credit memos, '+(d.docCounts.VendorCredit||0)+' vendor credits\n';
+    msg+='  Documents pulled: '+d.docCounts.Bill+' bills, '+d.docCounts.Invoice+' invoices, '+d.docCounts.SalesReceipt+' sales receipts, '+d.docCounts.CreditMemo+' credit memos, '+(d.docCounts.VendorCredit||0)+' vendor credits, '+(d.docCounts.InventoryAdjustment||0)+' inventory adjustments\n';
     msg+='  Item lines seen: '+d.lineItemsSeen+'\n';
     msg+='  Movements added: '+d.added+'\n';
     msg+='  Skipped (item not matched): '+d.skippedNoItem+'\n';

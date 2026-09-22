@@ -18082,7 +18082,28 @@ function renderTxnTable(){
           var nm=it?it.name:(t.itemId||'—');
           var q=Number(t.qty||0);
           var price=(t.unitPrice!==undefined&&t.unitPrice!=='')?Number(t.unitPrice):(it?Number(it.cost||it.price||0):0);
-          var lv=q*price;
+          // Same lineAmount fix as txnValue()/lineValue() elsewhere in the
+          // app, applied here too — this expanded per-line view computes its
+          // own price/value inline and was never touched by that fix, which
+          // is why account-coded lines (like __acct_bill_... synthetic
+          // lines: qty=1, unitPrice=0, no matching item) kept showing
+          // $0.00 · $0.00 even after lineAmount started being read
+          // correctly elsewhere. Prefer QuickBooks' actual recorded line
+          // amount when this is a qbDoc line and it's present (checked for
+          // undefined specifically, not just truthiness, so a genuine
+          // $0.00 QB line still shows as $0.00 rather than being
+          // recomputed). If no real per-unit price was ever stored (again,
+          // the account-coded case), derive one for display from lv/q so
+          // the two numbers shown don't contradict each other — e.g.
+          // "$0.00 · $531.34" — which happened because price and lv were
+          // computed completely independently.
+          var lv;
+          if(t.qbDoc && t.lineAmount!==undefined && t.lineAmount!==null && t.lineAmount!==''){
+            lv=Number(t.lineAmount);
+          } else {
+            lv=q*price;
+          }
+          if(!price && q && lv) price=lv/q;
           return '<tr style="background:var(--bg)">'
             +'<td></td>'
             +'<td style="padding-left:24px;font-size:12.5px">'+esc(nm)+(it&&it.sku?' <span style="font-family:var(--mono);font-size:10px;color:var(--cold)">'+esc(it.sku)+'</span>':'')+'</td>'

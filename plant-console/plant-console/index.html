@@ -1329,7 +1329,16 @@ function rerenderCurrentSection(){
     // the tab and came back. Only refresh the row list itself (not the
     // whole panel), so this doesn't reset whatever's typed into the
     // search box or which department is selected mid-use.
-    if(document.getElementById('customersList')){
+    // CONFIRMED live (Sep 2026): this rebuild running WHILE someone is
+    // actively using a row — typing in a field, or with the Sales Rep
+    // suggestion dropdown open — recreates that row's input as a new DOM
+    // node, silently detaching whatever the dropdown (or focus) was still
+    // referencing. Skip the ambient rebuild entirely while either is true;
+    // it'll simply run on the next 1.5s tick once the person is done.
+    var custListEl=document.getElementById('customersList');
+    var custDropdownOpen=(function(){ var dd=document.getElementById('custRepSuggestDropdown'); return dd&&dd.style.display==='block'; })();
+    var custHasFocusedInput=custListEl && document.activeElement && custListEl.contains(document.activeElement);
+    if(custListEl && !custDropdownOpen && !custHasFocusedInput){
       try{ renderCustomersList(); }catch(e){}
     }
   }
@@ -15177,6 +15186,16 @@ async function updateCustomerSalesRep(id,value){
       window._custRepOptions.push(salesRep);
       window._custRepOptions.sort();
     }
+    // Force a fresh re-render of the row list — CONFIRMED live (Sep
+    // 2026): the dropdown's own reference to "which input to update" can
+    // go stale if the ambient 1.5s refresh rebuilt this list's DOM WHILE
+    // the dropdown was still open (very possible, given how often that
+    // runs) — the save above still succeeds either way, but writing
+    // .value onto a now-detached old input node has no visible effect.
+    // Re-rendering from the just-updated customers array guarantees the
+    // CURRENTLY-DISPLAYED input reflects it, regardless of whether the
+    // dropdown's own reference was still valid.
+    if(document.getElementById('customersList')){ try{ renderCustomersList(); }catch(e){} }
     if(statusEl){ statusEl.textContent='Sales Rep saved.'; statusEl.style.color='#0f6e40'; setTimeout(function(){ if(statusEl.textContent==='Sales Rep saved.') statusEl.textContent=''; },3000); }
   }catch(e){
     if(statusEl){ statusEl.textContent='Could not save Sales Rep — check your connection and try again.'; statusEl.style.color='#c0392b'; }
@@ -15205,6 +15224,10 @@ async function updateCustomerDunsNumber(id,value){
     // way to know a customer's Dun# just changed underneath it — same
     // reasoning as the sync/backfill paths before this.
     _collGroupsCache=null;
+    // Same staleness guard as updateCustomerSalesRep above — this fires on
+    // blur (the field's onchange), so the person has already moved away
+    // from it and a fresh render here is safe rather than disruptive.
+    if(document.getElementById('customersList')){ try{ renderCustomersList(); }catch(e){} }
     if(statusEl){ statusEl.textContent='Dun# saved.'; statusEl.style.color='#0f6e40'; setTimeout(function(){ if(statusEl.textContent==='Dun# saved.') statusEl.textContent=''; },3000); }
   }catch(e){
     if(statusEl){ statusEl.textContent='Could not save Dun# — check your connection and try again.'; statusEl.style.color='#c0392b'; }

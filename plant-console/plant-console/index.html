@@ -14155,8 +14155,34 @@ function recalcQuantities(){
       return;
     }
     it.locQtys=map[it.id];
-    // total across all locations
-    it.qty=Object.keys(it.locQtys).reduce(function(s,k){return s+Number(it.locQtys[k]||0);},0);
+    // Total across all locations, from the transaction replay.
+    var computedTotal=Object.keys(it.locQtys).reduce(function(s,k){return s+Number(it.locQtys[k]||0);},0);
+    // ANCHOR THE TOTAL TO QUICKBOOKS' OWN NUMBER, not the transaction replay.
+    // QuickBooks maintains QtyOnHand (captured here as qbQty) as its own
+    // continuously-reconciled running total, refreshed on every items sync
+    // (every 5 minutes) — it already accounts for every transaction type
+    // QuickBooks knows about, including ones this app doesn't (yet) fetch.
+    // The transaction replay above is only reliable for SPLITTING that total
+    // across locations (something QuickBooks itself doesn't track); trusting
+    // it for the GRAND TOTAL means one missed entity type, one unhandled
+    // edge case, or simply less sync history than QuickBooks has, silently
+    // drifts the total further every day — exactly what produced quantities
+    // in the tens of thousands for the Gyro line even after fixing the
+    // Inventory Adjustment gap. Any gap between QuickBooks' total and this
+    // replay's total is absorbed into the Unassigned bucket, so the
+    // per-location breakdown still sums to the trusted total exactly, and
+    // the size of that gap is itself useful: a large Unassigned number is a
+    // visible signal that this item's transaction history is incomplete.
+    if(it.qbQty!==undefined){
+      var qbTotal=Number(it.qbQty)||0;
+      var reconcile=qbTotal-computedTotal;
+      if(reconcile){
+        it.locQtys[UNASSIGNED]=Number(it.locQtys[UNASSIGNED]||0)+reconcile;
+      }
+      it.qty=qbTotal;
+    } else {
+      it.qty=computedTotal;
+    }
     // primary location = the one holding the most (for the single-location filter & label default)
     var best=null,bestQ=-Infinity;
     Object.keys(it.locQtys).forEach(function(k){

@@ -2793,17 +2793,76 @@ const server = http.createServer(async (req, res) => {
       // big payload can never make some other, unrelated request (an
       // order save, chat message polling, anything using the main store)
       // sit around waiting on it.
+      // CONFIRMED live (Sep 2026): this used to be a BLIND OVERWRITE —
+      // "items: incoming.items, transactions: incoming.transactions" —
+      // with zero merge protection at all, unlike every other shared
+      // collection in this app. A tab pushing its own possibly-stale
+      // in-memory copy (very plausible: multiple tabs open, or an
+      // automatic background sync racing a manual one) could silently
+      // wipe out transactions another tab/process had just added,
+      // producing exactly the kind of wildly-wrong inventory quantities
+      // this was caught from. Fixed with a proper merge:
+      //  - items: merge by id (add/update, never remove here — removal is
+      //    a deliberate action via the orphaned-items tool, not a side
+      //    effect of an ordinary sync push).
+      //  - transactions: scope-aware. transactionSyncScope tells us
+      //    exactly which documents THIS push is authoritative for —
+      //    '__ALL__' for a full rebuild, or a list of docIds for an
+      //    incremental one (see finishDocSync/window.__txnSyncScope on
+      //    the client for where this comes from). Only transactions
+      //    belonging to a document IN that scope are ever replaced/
+      //    removed; anything else already on the server (added by another
+      //    tab or process since this one's snapshot was taken) is left
+      //    completely alone. Without a scope (older client, or a manual
+      //    transaction add/edit that isn't a QB sync at all), falls back
+      //    to a safe add/update-by-id merge that never removes anything.
       if (Array.isArray(incoming.items) || Array.isArray(incoming.transactions)) {
-        // Only overwrite whichever of the two was actually sent — same
-        // "merge: only overwrite the keys actually sent" principle as the
-        // main store, so pushing just one of them never wipes the other.
-        const existing = (!Array.isArray(incoming.items) || !Array.isArray(incoming.transactions)) ? await readItemsTxnData() : null;
-        await writeItemsTxnData({
-          items: Array.isArray(incoming.items) ? incoming.items : existing.items,
-          transactions: Array.isArray(incoming.transactions) ? incoming.transactions : existing.transactions
-        });
+        const existing = await readItemsTxnData();
+        let mergedItems = existing.items || [];
+        if (Array.isArray(incoming.items)) {
+          const itemMap = new Map(mergedItems.filter(it => it).map(it => [it.id, it]));
+          for (const it of incoming.items) { if (it) itemMap.set(it.id, it); }
+          mergedItems = Array.from(itemMap.values());
+        }
+        let mergedTransactions = existing.transactions || [];
+        if (Array.isArray(incoming.transactions)) {
+          const scope = incoming.transactionSyncScope;
+          const incomingIds = new Set(incoming.transactions.filter(t => t).map(t => t.id));
+          let base;
+          if (scope === '__ALL__') {
+            // Full rebuild: drop every existing qbDoc transaction (the
+            // incoming array is the complete, authoritative replacement
+            // for all of them), keep any non-qbDoc (manually-entered)
+            // transaction untouched regardless.
+            base = mergedTransactions.filter(t => t && !t.qbDoc);
+          } else if (Array.isArray(scope) && scope.length) {
+            const scopeSet = new Set(scope);
+            // Incremental: drop existing transactions belonging to a
+            // document THIS push is updating, unless a line with that
+            // exact id is still present in the incoming set (in which
+            // case the loop below will just update it in place) — keep
+            // absolutely everything else (other documents, manual
+            // entries, anything another tab added since this snapshot).
+            base = mergedTransactions.filter(t => {
+              if (!t || !t.qbDoc) return true;
+              const m = typeof t.id === 'string' ? t.id.match(/^qb_([A-Za-z]+)_(.+?)_(?:acctline\d+|disc\d+|\d+)$/) : null;
+              const docKey = m ? (m[1] + '_' + m[2]) : null;
+              return !(docKey && scopeSet.has(docKey)) || incomingIds.has(t.id);
+            });
+          } else {
+            // No scope provided at all (older client, or a plain manual
+            // transaction edit) — safest fallback is add/update only,
+            // never remove anything.
+            base = mergedTransactions;
+          }
+          const txnMap = new Map(base.filter(t => t).map(t => [t.id, t]));
+          for (const t of incoming.transactions) { if (t) txnMap.set(t.id, t); }
+          mergedTransactions = Array.from(txnMap.values());
+        }
+        await writeItemsTxnData({ items: mergedItems, transactions: mergedTransactions });
         delete incoming.items;
         delete incoming.transactions;
+        delete incoming.transactionSyncScope;
       }
       await updateSharedData(async (current) => {
         // If the incoming users array is missing pin/pinHash for a user (because

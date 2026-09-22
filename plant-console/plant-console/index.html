@@ -14175,6 +14175,18 @@ function recalcQuantities(){
   renderItemsTable();
   var status=document.getElementById('qbStatus');
   if(status) status.textContent='Recalculated '+changed+' item quantities across locations';
+  // CONFIRMED live (Sep 2026): this recalculation used to be entirely
+  // local — it updated localStorage and in-memory `items`/`transactions`
+  // but never told the server. The routine 1.5-second poll (pullFromServer)
+  // does a plain, unconditional `items=data.items` overwrite with none of
+  // the "keep my own recent edit" grace-window protection that users/
+  // customers/labelAllowed all have — so the very next poll tick silently
+  // replaced these freshly-corrected quantities with the server's still-
+  // stale copy. That's exactly what looked like "the right numbers for a
+  // second, then it reverts": nothing was wrong with the recalculation
+  // itself, it just never left this browser. Pushing here is what actually
+  // makes a Recalculate stick.
+  pushToServer();
 }
 
 // Quantity of an item at a specific location (UNASSIGNED key = '__none__')

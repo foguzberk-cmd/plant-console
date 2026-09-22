@@ -4028,6 +4028,41 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Diagnostic: look up ANY document type by its DocNumber and return the
+  // raw QuickBooks JSON, unprocessed — visit directly in the browser, e.g.
+  // /api/qb/inspect?entity=Bill&docNumber=2026-1013 . Built specifically to
+  // let a non-technical person pull the exact raw line-item structure for
+  // one troublesome document (rather than needing Intuit's own API
+  // Explorer), when a dollar amount looks wrong in Plant Console and it's
+  // not obvious why from the processed/transformed data alone.
+  if (url.startsWith('/api/qb/inspect') && req.method === 'GET') {
+    if (!requireAuth(req, res)) return;
+    try {
+      const q = new URLSearchParams(url.split('?')[1] || '');
+      const entity = q.get('entity') || 'Bill';
+      const docNumber = q.get('docNumber');
+      if (!docNumber) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Pass ?docNumber=X (and optionally &entity=Bill|Invoice|SalesReceipt|CreditMemo|VendorCredit)' })); return; }
+      await ensureFreshToken();
+      const query = `SELECT * FROM ${entity} WHERE DocNumber = '${docNumber.replace(/'/g, "\\'")}'`;
+      const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
+      const qres = await httpsRequest({
+        hostname: 'quickbooks.api.intuit.com',
+        path: reqPath,
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/json' }
+      });
+      if (qres.status !== 200) { res.writeHead(qres.status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'QB API error ' + qres.status, body: qres.body })); return; }
+      const parsed = JSON.parse(qres.body);
+      const rows = (parsed.QueryResponse && parsed.QueryResponse[entity]) || [];
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ found: rows.length, results: rows }, null, 2));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
   // QuickBooks documents endpoint — bills, invoices, sales receipts, credit memos
   // ?entity=Invoice                  -> fetch ALL pages of that type (may be slow)
   // ?entity=Invoice&startposition=1  -> fetch ONE page (100 rows) starting at N

@@ -2988,15 +2988,15 @@ async function finishDocSync(data, onProgress){
       // Bill/Invoice line logic below (which expects Qty, not QtyDiff, and
       // would otherwise see qty=0 and silently skip every line here).
       //
-      // NOTE — the exact field names below (ItemBasedExpenseLineDetail /
-      // QtyDiff) are based on QuickBooks Online's documented API shape, not
-      // a raw sample confirmed from this company's actual data yet. Before
-      // relying on this, hit /api/qb/inspect?entity=InventoryAdjustment&docNumber=1057
-      // (already-existing debug endpoint, no code change needed) and check
-      // the raw JSON matches this shape — if QtyDiff comes back
-      // undefined/wrong, that's the field name to correct here.
+      // NOTE — CONFIRMED live (Sep 2026) via /api/qb/inspect against a real
+      // record (docNumber 1057): line detail type is ItemAdjustmentLineDetail,
+      // with ItemRef and QtyDiff exactly as used below. (An earlier version
+      // of this guessed ItemBasedExpenseLineDetail instead, based on general
+      // QBO API docs rather than a confirmed sample — that wrong field name
+      // meant iaDetail was always undefined and every single line silently
+      // matched nothing, no error, nothing added, since this was first written.)
       if(cfg.key==='InventoryAdjustment'){
-        var iaDetail=line.ItemBasedExpenseLineDetail;
+        var iaDetail=line.ItemAdjustmentLineDetail;
         if(iaDetail && iaDetail.ItemRef){
           var iaQbId=iaDetail.ItemRef.value;
           var iaLocal=byQbId[iaQbId];

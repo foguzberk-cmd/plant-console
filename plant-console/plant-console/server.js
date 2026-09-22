@@ -4097,9 +4097,8 @@ const server = http.createServer(async (req, res) => {
   if (url.startsWith('/api/qb/inspect') && req.method === 'GET') {
     if (!requireAuth(req, res)) return;
     try {
-      const q = new URLSearchParams(url.split('?')[1] || '');
-      const entity = q.get('entity') || 'Bill';
-      const docNumber = q.get('docNumber');
+      const entity = queryParams.entity || 'Bill';
+      const docNumber = queryParams.docNumber;
       if (!docNumber) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Pass ?docNumber=X (and optionally &entity=Bill|Invoice|SalesReceipt|CreditMemo|VendorCredit)' })); return; }
       await ensureFreshToken();
       const query = `SELECT * FROM ${entity} WHERE DocNumber = '${docNumber.replace(/'/g, "\\'")}'`;

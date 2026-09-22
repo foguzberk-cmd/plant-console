@@ -2227,7 +2227,7 @@ async function doSync(incremental){
   // 2. Sync documents (incremental fetches only changed since last sync)
   if(status)status.textContent='Step 2/3 — syncing bills, invoices & credit memos…';
   showSyncProgress(50,'Step 2 of 3 — fetching documents…');
-  var docLabels={Bill:'bills',Invoice:'invoices',SalesReceipt:'sales receipts',CreditMemo:'credit memos',VendorCredit:'vendor credits'};
+  var docLabels={Bill:'bills',Invoice:'invoices',SalesReceipt:'sales receipts',CreditMemo:'credit memos',VendorCredit:'vendor credits',InventoryAdjustment:'inventory adjustments'};
   var docsResult=await qbSyncDocumentsCore(function(typeName,idx,total,runningCount){
     if(typeName==='__processing__'){
       if(total>0 && runningCount!==null){
@@ -2277,7 +2277,7 @@ async function doSync(incremental){
   var pushOk2=await pushToServer(); // wait for this to actually land before the background pull timer can resume
   if(status){
     var dc=docsResult.docCounts||{};
-    var breakdown=' — QB docs: '+(dc.Bill||0)+' bills, '+(dc.Invoice||0)+' invoices, '+(dc.SalesReceipt||0)+' sales receipts, '+(dc.CreditMemo||0)+' credit memos';
+    var breakdown=' — QB docs: '+(dc.Bill||0)+' bills, '+(dc.Invoice||0)+' invoices, '+(dc.SalesReceipt||0)+' sales receipts, '+(dc.CreditMemo||0)+' credit memos, '+(dc.InventoryAdjustment||0)+' inventory adjustments';
     var mode=incremental?'Quick sync':'Full sync';
     if(pushOk2){
       status.textContent=mode+' complete — '+itemsResult.count+' items, '+docsResult.added+' movement'+(docsResult.added!==1?'s':'')+(incremental?' updated':' applied')+breakdown;
@@ -2404,7 +2404,7 @@ async function doDocumentsSync(incremental){
 
     showSyncProgress(10, incremental?'Starting quick transaction sync…':'Starting full transaction sync…');
 
-    var docLabels={Bill:'bills',Invoice:'invoices',SalesReceipt:'sales receipts',CreditMemo:'credit memos',VendorCredit:'vendor credits'};
+    var docLabels={Bill:'bills',Invoice:'invoices',SalesReceipt:'sales receipts',CreditMemo:'credit memos',VendorCredit:'vendor credits',InventoryAdjustment:'inventory adjustments'};
     var docsResult=await qbSyncDocumentsCore(function(typeName,idx,total,runningCount){
       if(typeName==='__processing__'){
         if(total>0 && runningCount!==null){
@@ -2447,7 +2447,7 @@ async function doDocumentsSync(incremental){
     var pushOk=await pushToServer();
     if(status){
       var dc=docsResult.docCounts||{};
-      var breakdown=' — '+(dc.Bill||0)+' bills, '+(dc.Invoice||0)+' invoices, '+(dc.SalesReceipt||0)+' sales receipts, '+(dc.CreditMemo||0)+' credit memos';
+      var breakdown=' — '+(dc.Bill||0)+' bills, '+(dc.Invoice||0)+' invoices, '+(dc.SalesReceipt||0)+' sales receipts, '+(dc.CreditMemo||0)+' credit memos, '+(dc.InventoryAdjustment||0)+' inventory adjustments';
       var mode=incremental?'Quick sync':'Full sync';
       if(pushOk){
         status.textContent=mode+' complete — '+docsResult.added+' movement'+(docsResult.added!==1?'s':'')+(incremental?' updated':' applied')+breakdown;
@@ -2843,8 +2843,8 @@ function earliestOpeningDate(){
 async function qbSyncDocumentsCore(onProgress, since){
   var base=window.location.origin;
   var sinceParam = since ? ('&since='+encodeURIComponent(since)) : '';
-  var types=['Bill','Invoice','SalesReceipt','CreditMemo','VendorCredit'];
-  var data={Bill:[],Invoice:[],SalesReceipt:[],CreditMemo:[],VendorCredit:[],errors:{}};
+  var types=['Bill','Invoice','SalesReceipt','CreditMemo','VendorCredit','InventoryAdjustment'];
+  var data={Bill:[],Invoice:[],SalesReceipt:[],CreditMemo:[],VendorCredit:[],InventoryAdjustment:[],errors:{}};
 
   for(var ti=0;ti<types.length;ti++){
     var t=types[ti];
@@ -2908,7 +2908,22 @@ async function finishDocSync(data, onProgress){
     {key:'Invoice', txnType:'shipment', sign:-1, numPrefix:'INV'},
     {key:'SalesReceipt', txnType:'shipment', sign:-1, numPrefix:'SR'},
     {key:'CreditMemo', txnType:'return', sign:1, numPrefix:'CM'},
-    {key:'VendorCredit', txnType:'vendor_credit', sign:-1, numPrefix:'VC'}
+    {key:'VendorCredit', txnType:'vendor_credit', sign:-1, numPrefix:'VC'},
+    // InventoryAdjustment — QuickBooks' own "Inventory Adjust" transaction
+    // type, used to directly increase/decrease an item's quantity on hand
+    // (e.g. production, shrinkage, corrections) outside of any Bill/Invoice.
+    // CONFIRMED live (Sep 2026): this entity type was never fetched at all,
+    // for this app's entire history — the sync only ever asked QuickBooks
+    // for Bill/Invoice/SalesReceipt/CreditMemo/VendorCredit. Any business
+    // that records inventory increases via QuickBooks Inventory Adjustments
+    // (rather than Bills) had those increases permanently invisible to
+    // Plant Console — every item only ever saw its outgoing (shipment) side,
+    // producing exactly the deep, item-proportional negative quantities
+    // this was chased down from. Unlike the other types, direction is
+    // per-LINE here (QBO's QtyDiff is already signed), not a fixed cfg.sign
+    // — handled as its own case below rather than through the generic
+    // Qty/UnitPrice path the sales/purchase doc types share.
+    {key:'InventoryAdjustment', txnType:'adjustment', sign:1, numPrefix:'ADJ'}
   ];
 
   // Remove previously-synced QB docs so re-syncing doesn't double-count.
@@ -2929,7 +2944,7 @@ async function finishDocSync(data, onProgress){
   // possibly-stale copy of it.
   if(window.__incrementalSync){
     var incomingDocIds={};
-    ['Bill','Invoice','SalesReceipt','CreditMemo','VendorCredit'].forEach(function(k){
+    ['Bill','Invoice','SalesReceipt','CreditMemo','VendorCredit','InventoryAdjustment'].forEach(function(k){
       (data[k]||[]).forEach(function(doc){ incomingDocIds[k+'_'+doc.Id]=true; });
     });
     transactions=transactions.filter(function(t){
@@ -2966,6 +2981,68 @@ async function finishDocSync(data, onProgress){
     var lines=doc.Line||[];
     for(var li=0; li<lines.length; li++){
       var line=lines[li];
+      // InventoryAdjustment lines use a fundamentally different shape than
+      // Bill/Invoice/SalesReceipt/CreditMemo/VendorCredit lines — quantity is
+      // a signed QtyDiff (increase or decrease), not a Qty+UnitPrice pair, so
+      // this is handled as its own case entirely, before the generic
+      // Bill/Invoice line logic below (which expects Qty, not QtyDiff, and
+      // would otherwise see qty=0 and silently skip every line here).
+      //
+      // NOTE — the exact field names below (ItemBasedExpenseLineDetail /
+      // QtyDiff) are based on QuickBooks Online's documented API shape, not
+      // a raw sample confirmed from this company's actual data yet. Before
+      // relying on this, hit /api/qb/inspect?entity=InventoryAdjustment&docNumber=1057
+      // (already-existing debug endpoint, no code change needed) and check
+      // the raw JSON matches this shape — if QtyDiff comes back
+      // undefined/wrong, that's the field name to correct here.
+      if(cfg.key==='InventoryAdjustment'){
+        var iaDetail=line.ItemBasedExpenseLineDetail;
+        if(iaDetail && iaDetail.ItemRef){
+          var iaQbId=iaDetail.ItemRef.value;
+          var iaLocal=byQbId[iaQbId];
+          if(!iaLocal){
+            skippedNoItem++;
+            unmatchedIds[iaQbId]=(unmatchedIds[iaQbId]||0)+1;
+            continue;
+          }
+          var iaQty=Number(iaDetail.QtyDiff);
+          if(!iaQty){ skippedNoQty++; continue; }
+          var iaDocDate=doc.TxnDate||'';
+          var iaCreateTime=(doc.MetaData&&doc.MetaData.CreateTime)||'';
+          var iaTimeStr='', iaCreateSort='';
+          if(iaCreateTime){
+            var iaCt=new Date(iaCreateTime);
+            if(!isNaN(iaCt.getTime())){
+              iaTimeStr=String(iaCt.getHours()).padStart(2,'0')+':'+String(iaCt.getMinutes()).padStart(2,'0');
+              iaCreateSort=iaCreateTime;
+            }
+          }
+          var iaDocNum=doc.DocNumber||doc.Id;
+          transactions.push({
+            id:'qb_'+cfg.key+'_'+doc.Id+'_'+li,
+            docId:cfg.key+'_'+doc.Id,
+            qbDoc:true, qbDocType:cfg.key,
+            num:cfg.numPrefix+'-'+iaDocNum,
+            date:iaDocDate, time:iaTimeStr,
+            createTime:iaCreateSort,
+            type:'adjustment',
+            itemId:iaLocal.id,
+            qty:iaQty, unit:'',
+            unitPrice:0,
+            lineAmount:Number(line.Amount||0),
+            // recalcQuantities' legacy signed-delta 'adjustment' branch always
+            // applies at locIn regardless of sign ("adds (can be negative) at
+            // locIn") — unlike shipment/receive, there's no separate locOut
+            // side to this type, so locIn must be set for both increases and
+            // decreases, not just increases.
+            locOut:'',
+            locIn: iaLocal.locationId||'',
+            desc:'Inventory Adjust '+iaDocNum
+          });
+          added++;
+        }
+        continue;
+      }
       // Item-based lines carry inventory movement. QB uses different detail
       // objects: SalesItemLineDetail (invoice/salesreceipt/creditmemo),
       // ItemBasedExpenseLineDetail (bill). Some bills use AccountBasedExpenseLineDetail (skip).
@@ -3226,7 +3303,8 @@ async function finishDocSync(data, onProgress){
     Invoice:(data.Invoice||[]).length,
     SalesReceipt:(data.SalesReceipt||[]).length,
     CreditMemo:(data.CreditMemo||[]).length,
-    VendorCredit:(data.VendorCredit||[]).length
+    VendorCredit:(data.VendorCredit||[]).length,
+    InventoryAdjustment:(data.InventoryAdjustment||[]).length
   };
   // Stash a diagnostic snapshot for the Check button
   window.__lastDocSync={

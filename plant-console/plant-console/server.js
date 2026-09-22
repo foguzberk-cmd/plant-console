@@ -3139,6 +3139,22 @@ const server = http.createServer(async (req, res) => {
         if (incoming.labelAllowed && typeof incoming.labelAllowed === 'object' && !Array.isArray(incoming.labelAllowed)) {
           incoming.labelAllowed = Object.assign({}, (current.labelAllowed && typeof current.labelAllowed === 'object' && !Array.isArray(current.labelAllowed)) ? current.labelAllowed : {}, incoming.labelAllowed);
         }
+        // customerAllowed (per-department customer allow-lists for the Scale
+        // Log picker) and itemFilterPrefs (per-user Items page filter prefs)
+        // had the exact same gap labelAllowed used to have: both are sent as
+        // full top-level objects on every routine snapshot push (see
+        // snapshotObj in index.html), but neither was merged here — they fell
+        // straight through to the blind Object.assign(current, incoming) at
+        // the end of this handler. A stale device pushing for any unrelated
+        // reason could silently erase another device's more recent edit to a
+        // department's allow-list, or another user's saved filter prefs. Same
+        // shallow per-key merge fix as labelAllowed, just above.
+        if (incoming.customerAllowed && typeof incoming.customerAllowed === 'object' && !Array.isArray(incoming.customerAllowed)) {
+          incoming.customerAllowed = Object.assign({}, (current.customerAllowed && typeof current.customerAllowed === 'object' && !Array.isArray(current.customerAllowed)) ? current.customerAllowed : {}, incoming.customerAllowed);
+        }
+        if (incoming.itemFilterPrefs && typeof incoming.itemFilterPrefs === 'object' && !Array.isArray(incoming.itemFilterPrefs)) {
+          incoming.itemFilterPrefs = Object.assign({}, (current.itemFilterPrefs && typeof current.itemFilterPrefs === 'object' && !Array.isArray(current.itemFilterPrefs)) ? current.itemFilterPrefs : {}, incoming.itemFilterPrefs);
+        }
         // cfScheduledDates (Cash Flow's scheduled/approved payment plan) is
         // keyed by bill id — merged (not blindly replaced) so one device's
         // stale push can't erase another device's schedule/approval change

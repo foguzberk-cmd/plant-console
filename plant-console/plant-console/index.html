@@ -2268,16 +2268,24 @@ async function doSync(incremental){
   // Record the sync time so the next incremental knows where to resume
   safeSetLocal('pc_lastSync', syncStartedAt);
 
+  renderItemsTable();
+  setTimeout(hideSyncProgress,1500);
+  _itemsTransactionsDirty=true; // document sync just added/updated transactions — this final push needs to carry them
+  // CONFIRMED live (Sep 2026): the status message used to be set BEFORE
+  // this push ran, based only on local processing — see the matching fix
+  // in doDocumentsSync for the full reasoning. Checked here now too.
+  var pushOk2=await pushToServer(); // wait for this to actually land before the background pull timer can resume
   if(status){
     var dc=docsResult.docCounts||{};
     var breakdown=' — QB docs: '+(dc.Bill||0)+' bills, '+(dc.Invoice||0)+' invoices, '+(dc.SalesReceipt||0)+' sales receipts, '+(dc.CreditMemo||0)+' credit memos';
     var mode=incremental?'Quick sync':'Full sync';
-    status.textContent=mode+' complete — '+itemsResult.count+' items, '+docsResult.added+' movement'+(docsResult.added!==1?'s':'')+(incremental?' updated':' applied')+breakdown;
+    if(pushOk2){
+      status.textContent=mode+' complete — '+itemsResult.count+' items, '+docsResult.added+' movement'+(docsResult.added!==1?'s':'')+(incremental?' updated':' applied')+breakdown;
+    } else {
+      status.textContent=mode+' processed locally but FAILED TO SAVE to the server'+(typeof _lastPushFailureDetail!=='undefined'&&_lastPushFailureDetail?(': '+_lastPushFailureDetail):'')+' — please try again.';
+      status.style.color='#c0392b';
+    }
   }
-  renderItemsTable();
-  setTimeout(hideSyncProgress,1500);
-  _itemsTransactionsDirty=true; // document sync just added/updated transactions — this final push needs to carry them
-  await pushToServer(); // wait for this to actually land before the background pull timer can resume
 
   }catch(err){
     // A sync must NEVER fail silently and leave the progress bar frozen —
@@ -2426,16 +2434,28 @@ async function doDocumentsSync(incremental){
     showSyncProgress(100,'Sync complete');
     _ordItemLastPurchaseMap=null;
     safeSetLocal('pc_lastSync', syncStartedAt);
+    if(typeof renderTransactions==='function' && currentSectionId==='transactions') renderTransactions();
+    setTimeout(hideSyncProgress,1500);
+    _itemsTransactionsDirty=true;
+    // CONFIRMED live (Sep 2026): the status message used to be set BEFORE
+    // this push even ran, based only on local processing succeeding — so
+    // "Full sync complete" could show even when the actual save to the
+    // server silently failed afterward (a real, large payload timing out
+    // is exactly the kind of failure this masked). Now the message
+    // reflects whether the data actually made it to the server, not just
+    // whether this browser finished computing it.
+    var pushOk=await pushToServer();
     if(status){
       var dc=docsResult.docCounts||{};
       var breakdown=' — '+(dc.Bill||0)+' bills, '+(dc.Invoice||0)+' invoices, '+(dc.SalesReceipt||0)+' sales receipts, '+(dc.CreditMemo||0)+' credit memos';
       var mode=incremental?'Quick sync':'Full sync';
-      status.textContent=mode+' complete — '+docsResult.added+' movement'+(docsResult.added!==1?'s':'')+(incremental?' updated':' applied')+breakdown;
+      if(pushOk){
+        status.textContent=mode+' complete — '+docsResult.added+' movement'+(docsResult.added!==1?'s':'')+(incremental?' updated':' applied')+breakdown;
+      } else {
+        status.textContent=mode+' processed locally but FAILED TO SAVE to the server'+(typeof _lastPushFailureDetail!=='undefined'&&_lastPushFailureDetail?(': '+_lastPushFailureDetail):'')+' — please try again.';
+        status.style.color='#c0392b';
+      }
     }
-    if(typeof renderTransactions==='function' && currentSectionId==='transactions') renderTransactions();
-    setTimeout(hideSyncProgress,1500);
-    _itemsTransactionsDirty=true;
-    await pushToServer();
   }catch(err){
     console.error('Transaction sync failed:', err);
     hideSyncProgress();

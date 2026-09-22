@@ -17972,6 +17972,19 @@ function txnSortTime(t){
 }
 
 function txnValue(t){
+  // Account-coded QuickBooks lines (Bill/CreditMemo lines with no matching
+  // inventory item — see the __acct_<doctype>_... synthetic transactions
+  // built during sync) carry no real itemId and no unitPrice; the actual
+  // dollar amount lives in lineAmount instead. The qty*price fallback below
+  // always evaluated to $0 for these (qty=1, price=0, itemId doesn't match
+  // any real item), silently showing $0.00 for real, non-zero QuickBooks
+  // amounts. Same fix already applied to lineValue() elsewhere in the app
+  // for the Purchasing/Cash Flow reports — checked for undefined
+  // specifically (not just truthiness) so a genuine $0.00 QB line is still
+  // shown as $0.00, not treated as "missing" and recomputed from qty*price.
+  if(t.qbDoc && t.lineAmount!==undefined && t.lineAmount!==null && t.lineAmount!==''){
+    return Number(t.lineAmount);
+  }
   var qty=t.qty!==undefined&&t.qty!==''?Number(t.qty):0;
   var price=0;
   if(t.unitPrice!==undefined&&t.unitPrice!=='') price=Number(t.unitPrice);

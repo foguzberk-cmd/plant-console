@@ -1742,7 +1742,15 @@ async function _pushToServerImpl(){
     // object) fast, instead of dragging the largest part of the whole
     // dataset along on every single push regardless of relevance.
     var snapshotObj={storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,orders:orders,drivers:drivers,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates,vendors:vendors,vendorDepartments:_vendorDepartments,purchaseConfig:purchaseConfig,purchaseEstimates:purchaseEstimates,itemFilterPrefs:itemFilterPrefs};
-    if(_itemsTransactionsDirty){ snapshotObj.items=items; snapshotObj.transactions=transactions; }
+    if(_itemsTransactionsDirty){
+      snapshotObj.items=items;
+      snapshotObj.transactions=transactions;
+      // Tells the server exactly which documents this push is
+      // authoritative for, so it can merge safely instead of blindly
+      // replacing the whole array — see the long comment where this gets
+      // set, in finishDocSync above, for why this matters.
+      snapshotObj.transactionSyncScope=window.__txnSyncScope||null;
+    }
     var snapshot=JSON.stringify(snapshotObj);
     if(snapshot===_lastPushedSnapshot){ _lastPushFailureDetail=''; return true; } // this exact state was already confirmed sent
     // 60s (not the 10s default) — every push sends the FULL app state,
@@ -1911,22 +1919,25 @@ function pollItemsFromServer(){
   }).catch(function(){ _itemsPollInFlight=false; });
 }
 setInterval(pollItemsFromServer,60000);
-// Automatic, quiet transaction sync — same idea as Items' background
-// sync, but running client-side (incremental transaction processing was
-// never moved to the server — see the long comment on
-// syncEverythingNow below for why that's a deliberate choice, not an
-// oversight). Only ever runs the INCREMENTAL path (doDocumentsSync(true))
-// — that's the one that only fetches/processes documents changed since
-// the last sync, which is fast even on a large history; it's the FULL
-// rebuild (Full sync) that's heavy, and this timer never triggers that.
-// Skips entirely if a sync is already running (manual or this timer) or
-// if QuickBooks isn't connected.
-var _autoTxnSyncIntervalMs=10*60*1000; // 10 minutes
-setInterval(function(){
-  if(typeof __syncBusy!=='undefined' && __syncBusy) return;
-  if(typeof currentUser==='undefined' || !currentUser) return;
-  doDocumentsSync(true).catch(function(){});
-}, _autoTxnSyncIntervalMs);
+// DISABLED (Sep 2026): this automatic timer turned out to make a
+// pre-existing, serious server-side bug far more likely to actually
+// trigger — the generic push endpoint does a blind, unmerged overwrite of
+// the ENTIRE transactions array (no per-record merge protection at all,
+// unlike customers/users elsewhere in this app). With multiple tabs (or
+// just this timer firing while a manual sync was also in flight) each
+// pushing their own possibly-stale view of transactions, one push could
+// silently wipe out data another had just added — this is very likely
+// what caused inventory quantities to come back wildly wrong. Left
+// disabled until the server-side merge is properly fixed AND verified;
+// re-enabling this before that fix is solid would just reintroduce the
+// same risk on a recurring timer instead of only when someone manually
+// syncs.
+// var _autoTxnSyncIntervalMs=10*60*1000; // 10 minutes
+// setInterval(function(){
+//   if(typeof __syncBusy!=='undefined' && __syncBusy) return;
+//   if(typeof currentUser==='undefined' || !currentUser) return;
+//   doDocumentsSync(true).catch(function(){});
+// }, _autoTxnSyncIntervalMs);
 // ONE combined sync for "give me everything current, right now" — fires
 // the Items sync (server-side, always fast/safe regardless of history
 // size) and an INCREMENTAL transaction sync (client-side, fast because
@@ -2884,6 +2895,18 @@ async function finishDocSync(data, onProgress){
   // Full sync: drop ALL qbDoc transactions and rebuild.
   // Incremental: only drop qbDoc transactions belonging to documents present
   // in THIS batch (changed docs), so unchanged history is preserved.
+  // window.__txnSyncScope is exposed here so the push mechanism (see
+  // _pushToServerImpl) can tell the SERVER exactly which documents this
+  // sync is authoritative for — '__ALL__' for a full rebuild, or an array
+  // of docIds for an incremental one. CONFIRMED live (Sep 2026): without
+  // this, the server had no way to merge a transactions push safely — it
+  // could only either replace the WHOLE array (silently wiping out
+  // anything another tab/process had added) or never remove anything at
+  // all (leaving stale duplicate line items behind forever). This scope
+  // is what lets the server do the same "drop only these docs, keep
+  // everything else" logic being done here locally, but safely, against
+  // whatever the server's actual current state is — not just this tab's
+  // possibly-stale copy of it.
   if(window.__incrementalSync){
     var incomingDocIds={};
     ['Bill','Invoice','SalesReceipt','CreditMemo','VendorCredit'].forEach(function(k){
@@ -2894,8 +2917,10 @@ async function finishDocSync(data, onProgress){
       var key=(t.qbDocType||'')+'_'+(t.id||'').split('_')[2];
       return !incomingDocIds[key]; // drop only the changed docs; keep the rest
     });
+    window.__txnSyncScope=Object.keys(incomingDocIds);
   } else {
     transactions=transactions.filter(function(t){ return !t.qbDoc; });
+    window.__txnSyncScope='__ALL__';
   }
 
   var added=0;

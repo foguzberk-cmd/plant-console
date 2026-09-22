@@ -2407,7 +2407,14 @@ function findOrphanedCustomers(){
       // customer list so any corrected records show up right away.
       fetch('/api/customers',{cache:'no-store'}).then(function(r){ return r.ok?r.json():null; }).then(function(d){
         if(d&&Array.isArray(d.customers)){
-          customers=d.customers;
+          // Reapply any Sales Rep/Dun# edit saved in the last few seconds
+          // (see _recentlySavedCustomerFields) on top of this fresh pull —
+          // otherwise a fast-following edit whose own save request hadn't
+          // finished yet gets silently overwritten by this refresh.
+          customers=d.customers.map(function(c){
+            var recent=c&&_recentlySavedCustomerFields[c.id];
+            return recent?Object.assign({},c,recent):c;
+          });
           safeSetLocal('pc_customers', JSON.stringify(customers));
           if(typeof renderCustomersList==='function') renderCustomersList();
         }
@@ -15066,8 +15073,18 @@ function showRepSuggestions(inputEl,custId){
   dd.dataset.forInput=custId; // lets the document-level outside-click listener recognize this popup's own current field
   if(!opts.length){ dd.style.display='none'; return; }
   var rect=inputEl.getBoundingClientRect();
+  // Opens upward instead of down when there isn't enough room below —
+  // CONFIRMED live (Sep 2026): always dropping down regardless of
+  // position meant a row near the bottom of a scrolled list could open a
+  // dropdown tall enough to cover the row(s) below it entirely, blocking
+  // clicks there (see the outside-click fix above for the other half of
+  // this same bug).
+  var estHeight=Math.min(opts.length*36+4,220);
+  var spaceBelow=window.innerHeight-rect.bottom-4;
+  var openUpward=spaceBelow<estHeight && rect.top>estHeight;
   dd.style.left=Math.round(rect.left)+'px';
-  dd.style.top=Math.round(rect.bottom+4)+'px';
+  if(openUpward){ dd.style.top=Math.round(rect.top-estHeight-4)+'px'; }
+  else { dd.style.top=Math.round(rect.bottom+4)+'px'; }
   dd.style.width=Math.max(Math.round(rect.width),150)+'px';
   dd.innerHTML='';
   opts.forEach(function(o){
@@ -15097,7 +15114,21 @@ if(!window._repSuggestOutsideClickBound){
     var dd=document.getElementById('custRepSuggestDropdown');
     if(!dd||dd.style.display==='none') return;
     if(dd.contains(e.target)) return; // a row's own onclick already handled selection above
-    if(e.target&&e.target.matches&&e.target.matches('[data-repinput]')) return; // clicking the field itself shouldn't close what it just opened
+    // CONFIRMED live (Sep 2026): only skip auto-closing for the SAME
+    // field that's driving this dropdown (avoids a focus/type flicker on
+    // that one field) — clicking a DIFFERENT customer's Sales Rep field
+    // now correctly closes the stale dropdown instead of leaving it open.
+    // Before this, ANY [data-repinput] click was exempted, so an open
+    // dropdown tall enough to visually cover the row(s) below it (a
+    // common case near the bottom of a scrolled list) would sit there
+    // absorbing every click aimed at that other field — the field
+    // underneath never even received the click, so it looked like it
+    // couldn't be clicked at all. This doesn't make the very first click
+    // both close the old dropdown AND focus the new field (browsers
+    // don't re-target a click after an element hides mid-event) — but it
+    // means that first click now closes the blocker, and the very next
+    // click reaches the real field, instead of being stuck indefinitely.
+    if(e.target&&e.target.matches&&e.target.matches('[data-repinput="'+dd.dataset.forInput+'"]')) return;
     dd.style.display='none';
   });
 }
@@ -15110,6 +15141,19 @@ if(!window._repSuggestOutsideClickBound){
 // using its own possibly-stale copy of the full list, could silently
 // overwrite a Sales Rep edit made moments earlier elsewhere, with no
 // error and no warning.
+// Grace window for the two single-field customer writes below
+// (salesRep, dunsNumber) — CONFIRMED live (Sep 2026): these are
+// fire-and-forget requests (the onchange handler doesn't wait for them),
+// so a fast-following action that refetches the WHOLE customer list (like
+// findOrphanedCustomers' post-relink refresh) can land with a server
+// snapshot taken before this edit's own request finished, and blindly
+// overwriting the local list with it wipes the just-made edit right back
+// out. Same fix pattern used elsewhere in this app for exactly this race.
+var _recentlySavedCustomerFields={};
+function _markCustomerFieldSaved(id,fields){
+  _recentlySavedCustomerFields[id]=Object.assign({},_recentlySavedCustomerFields[id],fields);
+  setTimeout(function(){ delete _recentlySavedCustomerFields[id]; },8000);
+}
 async function updateCustomerSalesRep(id,value){
   var salesRep=(value||'').trim();
   var input=document.querySelector('input[onchange*="'+id+'"]');
@@ -15127,6 +15171,7 @@ async function updateCustomerSalesRep(id,value){
     // matters, this is just keeping the local display in sync with it.
     var c=customers.find(function(x){return x.id===id;});
     if(c) c.salesRep=salesRep;
+    _markCustomerFieldSaved(id,{salesRep:salesRep});
     safeSetLocal('pc_customers',JSON.stringify(customers));
     if(salesRep && window._custRepOptions && window._custRepOptions.indexOf(salesRep)<0){
       window._custRepOptions.push(salesRep);
@@ -15154,6 +15199,7 @@ async function updateCustomerDunsNumber(id,value){
     if(!res.ok) throw new Error('Server responded with '+res.status);
     var c=customers.find(function(x){return x.id===id;});
     if(c) c.dunsNumber=dunsNumber;
+    _markCustomerFieldSaved(id,{dunsNumber:dunsNumber});
     safeSetLocal('pc_customers',JSON.stringify(customers));
     // The Customer Payments report caches its computed groups and has no
     // way to know a customer's Dun# just changed underneath it — same

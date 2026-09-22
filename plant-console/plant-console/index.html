@@ -1911,6 +1911,62 @@ function pollItemsFromServer(){
   }).catch(function(){ _itemsPollInFlight=false; });
 }
 setInterval(pollItemsFromServer,60000);
+// Automatic, quiet transaction sync — same idea as Items' background
+// sync, but running client-side (incremental transaction processing was
+// never moved to the server — see the long comment on
+// syncEverythingNow below for why that's a deliberate choice, not an
+// oversight). Only ever runs the INCREMENTAL path (doDocumentsSync(true))
+// — that's the one that only fetches/processes documents changed since
+// the last sync, which is fast even on a large history; it's the FULL
+// rebuild (Full sync) that's heavy, and this timer never triggers that.
+// Skips entirely if a sync is already running (manual or this timer) or
+// if QuickBooks isn't connected.
+var _autoTxnSyncIntervalMs=10*60*1000; // 10 minutes
+setInterval(function(){
+  if(typeof __syncBusy!=='undefined' && __syncBusy) return;
+  if(typeof currentUser==='undefined' || !currentUser) return;
+  doDocumentsSync(true).catch(function(){});
+}, _autoTxnSyncIntervalMs);
+// ONE combined sync for "give me everything current, right now" — fires
+// the Items sync (server-side, always fast/safe regardless of history
+// size) and an INCREMENTAL transaction sync (client-side, fast because
+// it only processes what's actually changed) together, reporting one
+// combined status. CONFIRMED live (Sep 2026): transactions were NOT
+// moved fully server-side like items were, on purpose — that would mean
+// re-implementing ~300+ lines of intricate, business-critical
+// transformation logic (item matching, discount lines, account-based
+// expense lines, non-inventory filtering) a second time in a separate
+// codebase, untestable against real data before shipping — too risky to
+// rush for a real business's books. The INCREMENTAL sync path already
+// existing here is what's actually fast/safe; this just exposes it
+// alongside Items under one button instead of two.
+async function syncEverythingNow(){
+  var btns=[document.getElementById('itemsSyncNowBtn'),document.getElementById('txnSyncNowBtn')].filter(Boolean);
+  btns.forEach(function(b){ b.disabled=true; });
+  var itemsStatusEl=document.getElementById('qbStatus');
+  var txnStatusEl=document.getElementById('txnSyncStatus');
+  if(itemsStatusEl) itemsStatusEl.textContent='Syncing items…';
+  if(txnStatusEl) txnStatusEl.textContent='Syncing transactions…';
+  var itemsResult=null, itemsErr=null;
+  try{
+    var res=await fetch('/api/data/items-sync-now',{method:'POST'});
+    var data=await res.json();
+    if(!res.ok||!data.success) itemsErr=(data&&data.error)||'unknown error';
+    else{
+      items=data.items||[];
+      safeSetLocal('pc_items', JSON.stringify(items));
+      if(typeof renderItemsTable==='function') renderItemsTable();
+      itemsResult=items.length+' item'+(items.length!==1?'s':'')+' synced';
+    }
+  }catch(e){ itemsErr='could not reach the server'; }
+  if(itemsStatusEl) itemsStatusEl.textContent=itemsErr?('Items sync failed: '+itemsErr):(itemsResult+' — just synced');
+  try{
+    await doDocumentsSync(true);
+  }catch(e){
+    if(txnStatusEl) txnStatusEl.textContent='Transactions sync failed: '+(e&&e.message?e.message:e);
+  }
+  btns.forEach(function(b){ b.disabled=false; });
+}
 // Manual escape hatch for "I need the real number right now, not in up
 // to 5 minutes" — calls the server's items-sync-now endpoint, which runs
 // a real sync immediately (same incremental logic as the automatic
@@ -14165,9 +14221,9 @@ function renderItemsView(){
           <span style="width:7px;height:7px;border-radius:50%;background:#3a9e5f;flex-shrink:0"></span>
           Auto-synced from QuickBooks
         </span>
-        <button id="itemsSyncNowBtn" class="btn btn-primary" onclick="syncItemsNow()" title="Pull the real, current numbers from QuickBooks right now — doesn't wait for the automatic 5-minute check">
+        <button id="itemsSyncNowBtn" class="btn btn-primary" onclick="syncEverythingNow()" title="Syncs items AND transactions (bills/invoices/etc.) together, right now — items always sync fast regardless of history size; transactions only process what's changed since the last sync, not your whole history">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-          Sync now
+          Sync now (items + transactions)
         </button>
         <button class="btn" onclick="recalcQuantities()" title="Rebuild per-location quantities from transaction history">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/></svg>
@@ -17794,21 +17850,32 @@ function renderTransactions(){
   view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p>
     <div class="txn-toolbar">
       <span id="txnCount" style="font-family:var(--mono);font-size:11px;color:var(--muted)">${transactions.length} record${transactions.length!==1?'s':''} <span style="background:#0f6e40;color:#fff;padding:2px 8px;border-radius:6px;margin-left:8px;font-weight:700">v2 · search enabled</span></span>
-      <div style="display:flex;gap:8px;align-items:center">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <span id="txnSyncStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted)"></span>
-        <button id="txnSyncIncBtn" class="btn" onclick="syncTransactionsIncremental()" title="Fast — pulls only bills/invoices/etc. changed since your last sync">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-          Quick sync
-        </button>
-        <button id="txnSyncFullBtn" class="btn" onclick="syncTransactionsFull()" title="Rebuilds every transaction from scratch, pulling fresh from QuickBooks — use if the numbers themselves look wrong, not just the grouping. On a large history this runs entirely in your browser and can use a lot of memory.">
+        <span title="Transactions check for changes automatically every 10 minutes while this tab is open. Click 'Sync now' below for the real, right-now numbers instead of waiting." style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;color:var(--muted);padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);cursor:help">
+          <span style="width:7px;height:7px;border-radius:50%;background:#3a9e5f;flex-shrink:0"></span>
+          Auto-synced from QuickBooks
+        </span>
+        <button id="txnSyncNowBtn" class="btn btn-primary" onclick="syncEverythingNow()" title="Syncs items AND transactions together, right now — items always sync fast regardless of history size; transactions only process what's changed since the last sync, not your whole history">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-          Full sync
+          Sync now (items + transactions)
         </button>
-        <button id="txnFixGroupingBtn" class="btn" onclick="fixTransactionGrouping()" title="Fixes bills/invoices showing as separate rows per line instead of one grouped row — patches existing records directly on the server, no QuickBooks re-fetch, no browser memory risk. Use this instead of Full sync for that specific problem.">
+        <button id="txnFixGroupingBtn" class="btn" onclick="fixTransactionGrouping()" title="Fixes bills/invoices showing as separate rows per line instead of one grouped row — patches existing records directly on the server, no QuickBooks re-fetch, no browser memory risk.">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
           Fix grouping
         </button>
         <button class="btn btn-primary" onclick="openAddTxnModal()"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Create transaction</button>
+        <details style="margin-left:4px">
+          <summary style="cursor:pointer;font-size:11px;color:var(--muted);font-family:var(--mono);list-style:none">Advanced ▾</summary>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button id="txnSyncIncBtn" class="btn btn-sm" onclick="syncTransactionsIncremental()" title="Same as the combined Sync now button, but transactions only — skips re-syncing items">
+              Quick sync (transactions only)
+            </button>
+            <button id="txnSyncFullBtn" class="btn btn-sm" onclick="syncTransactionsFull()" title="Rebuilds every transaction from scratch, pulling fresh from QuickBooks — use if the numbers themselves look wrong, not just the grouping. On a large history this runs entirely in your browser and can use a lot of memory; only use this if Quick sync genuinely isn't enough.">
+              Full sync (rebuilds everything — heavy)
+            </button>
+          </div>
+        </details>
       </div>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;align-items:center">

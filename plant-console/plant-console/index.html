@@ -13966,21 +13966,6 @@ function recalcQuantities(){
   var UNASSIGNED='__none__';
   function loc(v){ return (!v||v==='external')?UNASSIGNED:v; }
 
-  // Determine each item's start point = its LATEST opening count, as a full
-  // timestamp (date + creation time). Movements at or before this exact moment
-  // are pre-baseline; movements after it (even same day) adjust the balance.
-  var startByItem={};   // itemId -> opening timestamp (epoch ms)
-  var startDateByItem={}; // itemId -> opening date (YYYY-MM-DD) for reference
-  allTxns.forEach(function(t){
-    if(t.type==='opening'&&t.itemId&&t.date){
-      var ts=txnSortTime(t);
-      if(startByItem[t.itemId]===undefined || ts>startByItem[t.itemId]){
-        startByItem[t.itemId]=ts;
-        startDateByItem[t.itemId]=t.date;
-      }
-    }
-  });
-
   // Build per-item, per-location map
   var map={}; // itemId -> { locId: qty }
   var touched={}; // itemId -> true if any txn affected it
@@ -13992,13 +13977,23 @@ function recalcQuantities(){
   }
 
   // Second, UNFILTERED balance tracker used only to snapshot "on record" values
-  // for physical counts. The main `map` above deliberately skips movements that
-  // occurred before an item's latest opening reset (so current stock reflects
-  // only post-reset activity). But an OLD count taken before that later reset
-  // still needs its true historical "on record" value — the balance as it
-  // actually stood at that moment in real chronological order, unaffected by a
-  // reset that happened afterward. histMap replays every transaction with no
-  // skipping at all, purely so old bills keep an accurate snapshot.
+  // for physical counts. histMap replays every transaction with no skipping at
+  // all, purely so old bills keep an accurate snapshot.
+  //
+  // CANCELLED (per explicit instruction): `map` used to deliberately skip any
+  // movement dated at or before an item's latest Opening Count, on the theory
+  // that the opening count was a deliberate "start fresh from here" reset. In
+  // practice this meant any item that never had an opening count entered (or
+  // had a wrong/incomplete one) summed its FULL QuickBooks history unfiltered
+  // anyway — which is exactly what produced wildly-wrong quantities for items
+  // like the Gyro line: years of Invoice history netted against a much
+  // shorter production-logging window, with no way to tell from the Items
+  // page which items were even affected. Rather than leave that
+  // inconsistency in place (some items reset at their opening count, others
+  // silently summing everything), `map` now behaves exactly like `histMap`
+  // always did: an unconditional full-history replay for every item, opening
+  // count or not. An 'opening' transaction is no longer a baseline reset — it
+  // is just one more additive entry in the sum, same as a receive.
   var histMap={};
   function addHist(itemId,locId,amt){
     if(!histMap[itemId]) histMap[itemId]={};
@@ -14041,11 +14036,8 @@ function recalcQuantities(){
       default: break;
     }
 
-    // Respect the opening-count start point using the full TIMESTAMP: skip a
-    // non-opening movement only if it occurred at or before the opening count's
-    // moment. A same-day receive entered AFTER the opening count still counts.
-    var start=startByItem[t.itemId];
-    if(start!==undefined && t.type!=='opening' && txnSortTime(t) <= start){ return; }
+    // No baseline skip anymore — see the removed startByItem gate above.
+    // Every movement counts, unconditionally, for every item.
     switch(t.type){
       case 'opening':   add(t.itemId, li, q); break; // opening lines SUM together as the baseline
       case 'receive':   add(t.itemId, li, q); break;

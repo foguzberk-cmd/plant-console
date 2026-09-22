@@ -3007,6 +3007,13 @@ async function finishDocSync(data, onProgress){
             }
             var aDocNum=doc.DocNumber||doc.Id;
             var aAccount=(doc.VendorRef&&doc.VendorRef.name)||'';
+            // QuickBooks' own per-line description (e.g. "343 lbs x 1.55
+            // ground gyro production") — this is what actually identifies
+            // what the line was FOR, as opposed to acctName which is just
+            // the account it was coded to ("Manufacturing Services"). Never
+            // captured before now, so the only thing available to show for
+            // this line was the synthetic itemId placeholder.
+            var aLineDesc=(line.Description&&line.Description.trim())||'';
             transactions.push({
               id:'qb_'+cfg.key+'_'+doc.Id+'_acctline'+li,
               docId:cfg.key+'_'+doc.Id,
@@ -3019,6 +3026,7 @@ async function finishDocSync(data, onProgress){
               qty:1, unit:'',
               unitPrice:0,
               lineAmount:acctAmt,
+              lineDesc:aLineDesc||acctName,
               account:aAccount,
               locOut:'', locIn:'',
               desc:cfg.key+' '+aDocNum+' ('+acctName+')'+(aAccount?' · '+aAccount:'')
@@ -18079,7 +18087,14 @@ function renderTxnTable(){
       if(expanded){
         var lineRows=g.lines.map(function(t){
           var it=items.find(function(x){return x.id===t.itemId;});
-          var nm=it?it.name:(t.itemId||'—');
+          // Falling back straight to t.itemId here is what showed the raw
+          // "__acct_bill_40277_2__" placeholder — that string was only ever
+          // meant as an internal map key, never something to display. Prefer
+          // the QuickBooks line's own description (lineDesc, captured above)
+          // or the transaction's general desc before ever falling back to
+          // the itemId itself. Same fallback also fixes the __discount__
+          // synthetic lines, which had the identical problem.
+          var nm=it?it.name:(t.lineDesc||t.desc||t.itemId||'—');
           var q=Number(t.qty||0);
           var price=(t.unitPrice!==undefined&&t.unitPrice!=='')?Number(t.unitPrice):(it?Number(it.cost||it.price||0):0);
           // Same lineAmount fix as txnValue()/lineValue() elsewhere in the

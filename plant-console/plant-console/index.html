@@ -18551,7 +18551,17 @@ function viewItemHistory(itemId){
       +'<td style="font-family:var(--mono);font-size:12px;text-align:right;color:var(--cold)">'+(val>0?'$'+val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'—')+'</td>'
       +'<td style="font-size:11px;color:var(--muted)">'+loc+'</td>'
       +'</tr>';
-  }).join('');
+  })
+  // Displayed newest-first, per request — but the Balance column above was
+  // computed walking `hist` OLDEST-first (each row adds its effect onto a
+  // running total that starts from the opening baseline), so that math has
+  // to stay in chronological order to mean anything. Reversing only the
+  // already-built row STRINGS here — after the running-balance loop above
+  // has already finished — flips the visual order without touching that
+  // calculation: each row still shows its own correct historical balance
+  // as of that date, just listed newest-on-top instead of oldest-on-top.
+  .reverse()
+  .join('');
 
   var totalVal=hist.reduce(function(s,t){
     var q=Number(t.qty||0);

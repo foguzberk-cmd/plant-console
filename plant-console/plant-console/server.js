@@ -2924,6 +2924,30 @@ const server = http.createServer(async (req, res) => {
             if (!actingUserCanManageUsers) {
               out.role = existing ? existing.role : 'staff';
               out.perms = existing ? (existing.perms || {}) : {};
+            } else if (existing && existing.permsUpdatedAt && (!u.permsUpdatedAt || u.permsUpdatedAt < existing.permsUpdatedAt)) {
+              // STALE-PUSH GUARD: getting past the check above (this session
+              // CAN manage users) is not the same as this specific incoming
+              // record being the thing that was actually just edited. Every
+              // routine push carries this browser tab's ENTIRE in-memory
+              // `users` array, including every user NOBODY touched in this
+              // tab — if that copy is even a little stale, a completely
+              // unrelated save (a different user's permission toggle, or
+              // any other action anywhere in the app that happens to push)
+              // would otherwise carry the stale copy's role/perms forward
+              // and silently stomp a newer change made on another device,
+              // with no error and no visible cause — reported as
+              // "permissions wiped out by themselves for no reason". A
+              // plain union-merge doesn't catch this: it only protects
+              // against a KEY being missing, not a key being PRESENT with a
+              // stale value, which is exactly what a full stale snapshot
+              // provides. permsUpdatedAt (stamped client-side at the moment
+              // of an actual edit — see togglePermMatrixCell,
+              // togglePermTreeGroupAll, saveUser) is what actually
+              // distinguishes "just edited, right now" from "just sitting
+              // in memory" — if the server's copy is already newer, keep it.
+              out.role = existing.role;
+              out.perms = existing.perms || {};
+              out.permsUpdatedAt = existing.permsUpdatedAt;
             }
             return out;
           });

@@ -16855,6 +16855,7 @@ function togglePermTreeGroupAll(userId,g,checked){
   if(!u||u.role==='admin') return;
   if(!u.perms) u.perms={};
   PERMISSIONS.filter(function(p){return p.group===g;}).forEach(function(p){ u.perms[p.id]=checked; });
+  u.permsUpdatedAt=new Date().toISOString(); // see togglePermMatrixCell for why
   saveUsers();
   renderUserList();
   renderPermissionsMatrix();
@@ -16931,12 +16932,22 @@ function renderPermissionsMatrix(){
     if(el) el.indeterminate=true;
   });
 }
-async function togglePermMatrixCell(userId,permId,checked){
+function togglePermMatrixCell(userId,permId,checked){
   var u=users.find(function(x){return x.id===userId;});
   if(!u||u.role==='admin') return;
   if(!u.perms) u.perms={};
   u.perms[permId]=checked;
-  await saveUsers();
+  // Stamped so the server can tell "this is the record that was just
+  // intentionally edited, right now" apart from "this is just whatever
+  // this browser tab happened to still have in memory for this user" —
+  // see the matching check server-side. Without this, any OTHER tab
+  // pushing for a completely unrelated reason (even just its own routine
+  // save) could carry forward its own stale copy of THIS user's perms and
+  // silently overwrite a newer grant/revoke made elsewhere, since a plain
+  // union-merge only protects against a key being missing, not against a
+  // key being present with a stale value.
+  u.permsUpdatedAt=new Date().toISOString();
+  saveUsers();
   renderUserList(); // keep the permission chips under each name in sync too
 }
 window.togglePermMatrixCell=togglePermMatrixCell;
@@ -16988,7 +16999,7 @@ async function saveUser(){
       return;
     }
   }
-  const data={id:editingUserId||('user_'+Date.now()),name,email,role,pin,perms};
+  const data={id:editingUserId||('user_'+Date.now()),name,email,role,pin,perms,permsUpdatedAt:new Date().toISOString()};
   if(editingUserId){const i=users.findIndex(x=>x.id===editingUserId);users[i]=data;if(currentUser?.id===editingUserId)currentUser=data;}else users.push(data);
   await saveUsers();closeUserModal();renderUserList();renderPermissionsMatrix();
  }catch(err){

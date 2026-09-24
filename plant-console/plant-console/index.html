@@ -1343,6 +1343,104 @@ function rerenderCurrentSection(){
     }
   }
 }
+// Lightweight, high-frequency poll for the small, fast-changing collections
+// only (users/permissions, scale logs, orders, drivers, labelAllowed,
+// customers, customerAllowed, itemFilterPrefs, savedReports,
+// cfScheduledDates) — hits /api/data/small, which deliberately excludes
+// items and transactions (the multi-MB, 45,000+-line collections). Reuses
+// the exact same per-field merge/grace-window logic as pullFromServer below
+// for the fields they share, just without the cost of the huge arrays.
+async function pullSmallFromServer(){
+  if(!currentUser) return false;
+  if(__syncBusy){ return false; }
+  if(_writeInFlight){ return false; }
+  try{
+    var res=await fetchWithTimeout('/api/data/small?_ts='+Date.now(),{cache:'no-store',headers:{'Cache-Control':'no-cache, no-store, must-revalidate','Pragma':'no-cache'}});
+    if(res.status===401){ forceLogout(); return false; }
+    if(!res.ok) return false;
+    var data=await res.json();
+    if(!data||typeof data!=='object') return false;
+    if(Array.isArray(data.users)&&data.users.length){
+      var pulledUsers=dedupeUsersByEmail(data.users);
+      Object.keys(_recentlySavedUsers).forEach(function(uid){
+        var i=pulledUsers.findIndex(function(u){ return u.id===uid; });
+        if(i>=0) pulledUsers[i]=_recentlySavedUsers[uid];
+        else pulledUsers.push(_recentlySavedUsers[uid]);
+      });
+      users=pulledUsers;
+    }
+    if(Array.isArray(data.savedReports)&&data.savedReports.length) savedReports=data.savedReports;
+    if(Array.isArray(data.scaleLogs)&&data.scaleLogs.length){
+      var mergedPulledLogs=data.scaleLogs.filter(function(l){ return !_deletedScaleLogIds[l.id]; });
+      Object.keys(_recentlyAddedScaleLogs).forEach(function(rid){
+        if(!mergedPulledLogs.some(function(l){ return l.id===rid; })){
+          mergedPulledLogs.push(_recentlyAddedScaleLogs[rid]);
+        }
+      });
+      scaleLogs=mergedPulledLogs;
+    }
+    if(Array.isArray(data.orders)&&data.orders.length){
+      var mergedPulledOrders=data.orders.filter(function(o){ return !_deletedOrderIds[o.id]; });
+      Object.keys(_recentlyAddedOrders).forEach(function(rid){
+        if(!mergedPulledOrders.some(function(o){ return o.id===rid; })){
+          mergedPulledOrders.push(_recentlyAddedOrders[rid]);
+        }
+      });
+      orders=mergedPulledOrders;
+    }
+    if(Array.isArray(data.drivers)&&data.drivers.length){
+      drivers=data.drivers.filter(function(d){ return !_deletedDrivers[d]; });
+    }
+    if(data.labelAllowed && typeof data.labelAllowed==='object' && !Array.isArray(data.labelAllowed) && Object.keys(data.labelAllowed).length){
+      labelAllowed=data.labelAllowed;
+      Object.keys(_recentlySavedLabelAllowed).forEach(function(d){
+        labelAllowed[d]=_recentlySavedLabelAllowed[d];
+      });
+    }
+    if(Array.isArray(data.customers)&&data.customers.length){
+      customers=data.customers;
+      Object.keys(_recentlySavedCustomers).forEach(function(id){
+        if(_recentlyDeletedCustomerIds[id]) return;
+        var i=customers.findIndex(function(c){return c.id===id;});
+        if(i>=0) customers[i]=_recentlySavedCustomers[id];
+        else customers.push(_recentlySavedCustomers[id]);
+      });
+    }
+    if(data.customerAllowed && typeof data.customerAllowed==='object' && !Array.isArray(data.customerAllowed) && Object.keys(data.customerAllowed).length){
+      customerAllowed=data.customerAllowed;
+      Object.keys(_recentlySavedCustomerAllowed).forEach(function(d){
+        customerAllowed[d]=_recentlySavedCustomerAllowed[d];
+      });
+    }
+    if(data.itemFilterPrefs && typeof data.itemFilterPrefs==='object' && !Array.isArray(data.itemFilterPrefs) && Object.keys(data.itemFilterPrefs).length){
+      itemFilterPrefs=data.itemFilterPrefs;
+      Object.keys(_recentlySavedItemFilterPrefs).forEach(function(uid){
+        itemFilterPrefs[uid]=_recentlySavedItemFilterPrefs[uid];
+      });
+      safeSetLocal('pc_itemfilterprefs',JSON.stringify(itemFilterPrefs));
+    }
+    if(data.cfScheduledDates && typeof data.cfScheduledDates==='object' && !Array.isArray(data.cfScheduledDates) && Object.keys(data.cfScheduledDates).length){
+      _cfScheduledDates=data.cfScheduledDates;
+      Object.keys(_recentlySavedCfScheduledDates).forEach(function(id){
+        _cfScheduledDates[id]=_recentlySavedCfScheduledDates[id];
+      });
+      Object.keys(_recentlyDeletedCfBillIds).forEach(function(id){
+        delete _cfScheduledDates[id];
+      });
+    }
+    safeSetLocal('pc_scalelogs',JSON.stringify(scaleLogs));
+    safeSetLocal('pc_labelallowed',JSON.stringify(labelAllowed));
+    safeSetLocal('pc_users',JSON.stringify(usersForLocalCache(users)));
+    safeSetLocal('pc_savedreports',JSON.stringify(savedReports));
+    safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed));
+    safeSetLocal('pc_customers',JSON.stringify(customers));
+    safeSetLocal('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates));
+    rerenderCurrentSection();
+    return true;
+  }catch(e){
+    return false;
+  }
+}
 async function pullFromServer(){
   if(!currentUser) return false;
   // Never pull while a sync is in progress — the shared server copy is stale
@@ -1875,7 +1973,27 @@ function ambientPushIfIdle(){
   if(_writeInFlight){ logSync('Ambient push skipped (write in flight, count='+_writeInFlight+')'); return; }
   pushToServer().catch(function(){});
 }
-setInterval(pullFromServer,1500);
+// CONFIRMED live (Sep 2026): pullFromServer() alone, every 1.5s, forever,
+// was almost certainly the actual cause of "the app crashes itself if left
+// on for a while" — every tick fetched, parsed, AND JSON.stringify'd back
+// to localStorage the ENTIRE dataset, including the full items array and
+// the 45,000+-line transactions array, regardless of whether either had
+// changed. Over hours of a tab/device staying open (exactly the plant-floor
+// tablet use case this app is built for), that's tens of thousands of
+// full-payload parse+serialize cycles — the kind of sustained churn that
+// crashes a tab, especially on iOS Safari's tighter per-tab memory limits.
+// The small/fast-changing collections (permissions, scale logs, orders —
+// things people notice immediately) still need near-real-time propagation,
+// so they stay on the fast 1.5s cadence via pullSmallFromServer() above,
+// which hits /api/data/small and never touches items/transactions at all.
+// The full pull (items, transactions, storages, vendors, and everything
+// else) now runs on a much slower cadence — those aren't collaboratively
+// time-sensitive the way scale logs/orders are: changes to them come from
+// explicit sync actions, which already update the syncing device's own
+// local state directly, so other devices just need eventual consistency,
+// not sub-2-second latency on a multi-MB payload.
+setInterval(pullSmallFromServer,1500);
+setInterval(pullFromServer,20000);
 // Safety-net push in case some part of the app saves data without going
 // through saveStorages/saveTxns/saveUsers.
 setInterval(ambientPushIfIdle,1500);

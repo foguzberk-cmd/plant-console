@@ -18486,7 +18486,33 @@ function viewItemHistory(itemId){
   var histStartTs=null;
   hist.forEach(function(t){ if(t.type==='opening'){ var ts=txnSortTime(t); if(histStartTs===null||ts>histStartTs) histStartTs=ts; } });
 
-  var running=0;
+  // The running Balance column below used to start at 0 and simply add up
+  // this item's own local transaction history — which is exactly the
+  // now-abandoned approach recalcQuantities() itself moved away from (see
+  // that function's own comment on anchoring totals to QuickBooks' own
+  // QtyOnHand instead of a hand-rebuilt sum). "On hand now" above already
+  // reflects that anchored, QuickBooks-true total (it.qty) — but this
+  // table's Balance column never got updated to match, so it kept showing
+  // its own, much-more-negative unanchored total (e.g. -76,555 instead of
+  // the real 2,050) even on the very same screen. Pre-computing the total
+  // effect of every counted transaction in this item's history, then
+  // starting the running balance at (it.qty - totalEffect) instead of 0,
+  // means the walk below still adds up in the exact same order as always —
+  // it just lands exactly on it.qty by the time it reaches the most recent
+  // transaction, so the newest row's Balance always matches "On hand now",
+  // and every earlier row's Balance is correctly relative to that same
+  // true anchor rather than an independent, incomplete local sum.
+  var totalEffect=0;
+  hist.forEach(function(t){
+    var q=Number(t.qty||0);
+    var effect;
+    if(t.type==='shipment') effect=-Math.abs(q);
+    else if(t.type==='adjustment') effect=(t.countedDiff!==undefined?Number(t.countedDiff):q);
+    else effect=q;
+    var counts=!(histStartTs!==null && t.type!=='opening' && txnSortTime(t)<=histStartTs);
+    if(counts) totalEffect+=effect;
+  });
+  var running=Number(it.qty||0)-totalEffect;
   var rows=hist.map(function(t){
     var q=Number(t.qty||0);
     // effect = signed quantity change. Shipment subtracts; physical count uses

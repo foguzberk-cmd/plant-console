@@ -1262,6 +1262,7 @@ function formatQBAddress(addr) {
 // means the next route estimate after that re-geocodes once; well within
 // the free 3,000 credits/day either way.
 var _geoapifyGeocodeCache = {}; // address string -> {lat, lon}
+var _geoapifyGeocodeCacheKeys = []; // insertion order, so the cap below evicts oldest-first
 async function geoapifyGeocode(address, biasCoords) {
   if (_geoapifyGeocodeCache[address]) return _geoapifyGeocodeCache[address];
   // Biasing toward Leader Meat's own location (when we have it) is what
@@ -1278,7 +1279,20 @@ async function geoapifyGeocode(address, biasCoords) {
   const first = data.results && data.results[0];
   if (!first) throw new Error('Could not find coordinates for address: ' + address);
   const coords = { lat: first.lat, lon: first.lon };
+  // GENUINELY UNBOUNDED before this: one entry per unique address, forever,
+  // for the entire life of the process (only cleared by a restart) — flagged
+  // and capped while chasing the separate, already-known server-OOM issue
+  // (see the [memcheck] logging elsewhere). Each entry is small, so on its
+  // own this is unlikely to be THE crash cause, but it's a real, confirmed
+  // unbounded structure and worth capping regardless: oldest-in-first-out
+  // once the cache passes a few thousand addresses, well beyond what this
+  // business's actual customer/address count would ever need to keep hot.
   _geoapifyGeocodeCache[address] = coords;
+  _geoapifyGeocodeCacheKeys.push(address);
+  if (_geoapifyGeocodeCacheKeys.length > 3000) {
+    const oldest = _geoapifyGeocodeCacheKeys.shift();
+    delete _geoapifyGeocodeCache[oldest];
+  }
   return coords;
 }
 // Straight-line (great-circle) distance in miles — used only as a sanity

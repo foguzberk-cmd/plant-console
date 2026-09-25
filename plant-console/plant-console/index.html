@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Plant Console</title><!-- BUILD-1604 -->
+<title>Plant Console</title><!-- BUILD-1607 -->
 <!-- Home screen app support (iOS Safari "Add to Home Screen"). No App
      Store, no code signing, no Apple Developer account needed -- Safari
      reads these tags directly and treats the site as an installable app. -->
@@ -626,7 +626,7 @@
   </div>
 
 <script>
-var APP_BUILD='BUILD-1605';
+var APP_BUILD='BUILD-1607';
 console.log("Plant Console "+APP_BUILD+" — cache-busted sync fetches + visible sync diagnostics");
 
 const ICON={
@@ -7923,6 +7923,32 @@ window.sbcShiftPeriod=sbcShiftPeriod;
 // live combined total across ALL in-flight fetches instead of only
 // whichever stream's own message happened to land last.
 var _sbcDocCache=JSON.parse(localStorage.getItem('pc_sbc_doc_cache')||'{}'); // cacheKey -> {lastSync, byId:{id:doc}}
+// CONFIRMED live (Sep 2026) as a real, standalone cause of browser tab
+// out-of-memory crashes, independent of the pullFromServer polling fix
+// elsewhere in this file: this cache was never pruned. Every distinct
+// period this report has ever been viewed for (each month, quarter, year,
+// and offset — 'Invoice|2026-01-01|2026-01-31', 'Invoice|2026-01-01|
+// 2026-12-31', etc.) added its own permanent entry, each holding every
+// full QuickBooks document (complete Line arrays and all) for that entire
+// period. None of that was ever removed — the whole accumulated object,
+// growing across the entire lifetime of this browser's localStorage (not
+// just the current session), got JSON.stringify'd and rewritten in full
+// on every single fetch. The more this report gets used over time, across
+// more periods, the larger and slower this becomes, with no upper bound.
+// _sbcTouchCache moves a key to the end (most-recently-used) and evicts
+// the oldest entries once the cap is exceeded, so at most a small,
+// bounded number of periods are ever held at once — plenty for the
+// current+prior periods this report actually needs concurrently, without
+// the unbounded growth.
+var SBC_CACHE_MAX_PERIODS=6;
+function _sbcTouchCache(cacheKey,value){
+  delete _sbcDocCache[cacheKey];
+  _sbcDocCache[cacheKey]=value;
+  var keys=Object.keys(_sbcDocCache);
+  while(keys.length>SBC_CACHE_MAX_PERIODS){
+    delete _sbcDocCache[keys.shift()];
+  }
+}
 async function _sbcFetchEntity(entName,from,to,statusEl,progress,progressKey){
   var base=window.location.origin;
   var pageSize=100;
@@ -7971,7 +7997,7 @@ async function _sbcFetchEntity(entName,from,to,statusEl,progress,progressKey){
   // this is accepted here the same way it already is for Open Invoices
   // elsewhere in the app, rather than adding a separate delete-detection
   // pass for a case that's unlikely to matter for a trend report.
-  _sbcDocCache[cacheKey]={lastSync:syncStartedAt,byId:byId};
+  _sbcTouchCache(cacheKey,{lastSync:syncStartedAt,byId:byId});
   try{ localStorage.setItem('pc_sbc_doc_cache',JSON.stringify(_sbcDocCache)); }catch(e){ /* storage full or unavailable — cache just won't persist across reloads this time, not fatal */ }
   return Object.values(byId);
 }
@@ -14909,7 +14935,7 @@ function renderSettings(){
   view.innerHTML=`
     <div class="eyebrow">Configuration</div>
     <h2>Settings</h2>
-    <p class="lede">Storage locations, users, and system configuration for the entire console.</p>
+    <p class="lede">Storage locations, users, and system configuration for the entire console. <span style="color:var(--muted);font-family:var(--mono);font-size:11px">${APP_BUILD}</span></p>
     <div class="settings-layout">
 
       <div class="settings-tabbar" style="display:flex;gap:4px;overflow-x:auto;border-bottom:1.5px solid var(--line);margin-bottom:18px;padding-bottom:0">

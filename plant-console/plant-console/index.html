@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Plant Console</title><!-- BUILD-1607 -->
+<title>Plant Console</title><!-- BUILD-1608 -->
 <!-- Home screen app support (iOS Safari "Add to Home Screen"). No App
      Store, no code signing, no Apple Developer account needed -- Safari
      reads these tags directly and treats the site as an installable app. -->
@@ -626,7 +626,7 @@
   </div>
 
 <script>
-var APP_BUILD='BUILD-1607';
+var APP_BUILD='BUILD-1608';
 console.log("Plant Console "+APP_BUILD+" — cache-busted sync fetches + visible sync diagnostics");
 
 const ICON={
@@ -6110,7 +6110,7 @@ function renderReports(){
     +'</div>'
     +'<div id="rpt-tabs-bar" style="display:flex;gap:8px;margin:6px 0 18px;border-bottom:1px solid var(--line);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none">'
       +(hasViewPerm('viewReportsCollection')?'<button id="rpt-tab-collection" class="btn" onclick="switchReportTab(\'collection\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:#fff;font-weight:700;color:var(--brand);border-top:3px solid var(--brand);border-left:1.5px solid var(--line);border-right:1.5px solid var(--line)">Customer Payments</button>':'')
-      +(hasViewPerm('viewReportsSalesByCustomer')?'<button id="rpt-tab-salesbycustomer" class="btn" onclick="switchReportTab(\'salesbycustomer\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Sales by Customer</button>':'')
+      +(hasViewPerm('viewReportsSalesByCustomer')?'<button id="rpt-tab-salesbycustomer" class="btn" onclick="switchReportTab(\'salesbycustomer\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Sales Reports</button>':'')
       +(hasViewPerm('viewReportsSalesPlan')?'<button id="rpt-tab-salesplan" class="btn" onclick="switchReportTab(\'salesplan\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Sales Rep Plan</button>':'')
       +(hasViewPerm('viewReportsCashflow')?'<button id="rpt-tab-cashflow" class="btn" onclick="switchReportTab(\'cashflow\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Scheduled Payments</button>':'')
       +(hasViewPerm('viewReportsPurchasing')?'<button id="rpt-tab-purchasing" class="btn" onclick="switchReportTab(\'purchasing\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Purchasing</button>':'')
@@ -6170,6 +6170,10 @@ function renderReports(){
     +'</div>'
     +'<div id="rpt-panel-salesbycustomer" style="display:none">'
       +'<div id="sbc-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
+        +'<div style="display:flex;gap:6px;margin-bottom:16px;border-bottom:1.5px solid var(--line)">'
+          +'<button id="sbc-subtab-customer" class="btn" onclick="switchSalesReportsSubTab(\'customer\')" style="flex-shrink:0;white-space:nowrap;border-radius:7px 7px 0 0;border-bottom:none;background:#fff;font-weight:700;font-size:12.5px;color:var(--brand);border-top:2.5px solid var(--brand);border-left:1.5px solid var(--line);border-right:1.5px solid var(--line)">Sales by Customer</button>'
+          +'<button id="sbc-subtab-products" class="btn" onclick="switchSalesReportsSubTab(\'products\')" style="flex-shrink:0;white-space:nowrap;border-radius:7px 7px 0 0;border-bottom:none;background:var(--bg);font-weight:400;font-size:12.5px;color:var(--muted);border-top:2.5px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Sales by Products</button>'
+        +'</div>'
         +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:6px 0 22px">'
           +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Compare by</label>'
           +'<select id="sbc-granularity" onchange="onSbcGranularityChange()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)">'
@@ -6184,15 +6188,16 @@ function renderReports(){
             +'<button class="btn btn-sm" id="sbc-period-next" onclick="sbcShiftPeriod(1)" title="Go forward one period" style="padding:8px 12px">›</button>'
           +'</div>'
           +'<button class="btn btn-primary" onclick="runSalesByCustomerReport()">Pull from QuickBooks</button>'
-          +'<button class="btn" onclick="printSalesByCustomerReport()">Print</button>'
-          +'<button class="btn" onclick="exportSalesByCustomerCSV()">Download CSV</button>'
+          +'<button class="btn" onclick="printActiveSalesReport()">Print</button>'
+          +'<button class="btn" onclick="exportActiveSalesReportCSV()">Download CSV</button>'
         +'</div>'
         +'<div style="position:relative;margin-bottom:14px;max-width:320px">'
-          +'<input type="text" id="sbc-search" placeholder="Search customer..." oninput="renderSalesByCustomerReport()" style="width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
+          +'<input type="text" id="sbc-search" placeholder="Search customer..." oninput="renderActiveSalesReport()" style="width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
         +'</div>'
         +'<div id="sbc-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'</div>'
       +'<div id="sbc-body"></div>'
+      +'<div id="sbp-body" style="display:none"></div>'
     +'</div>'
     +'<div id="rpt-panel-cashflow" style="display:none">'
       +'<div id="cf-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
@@ -8039,7 +8044,7 @@ async function runSalesByCustomerReport(){
   _sbcSalesDocs=curDocs;
   _sbcPriorDocs=priorDocs;
   if(statusEl){ statusEl.textContent='Comparing '+p.priorLabel+' against '+p.curLabel+'.'; statusEl.style.color='#1a7a3c'; }
-  renderSalesByCustomerReport();
+  renderActiveSalesReport();
 }
 window.runSalesByCustomerReport=runSalesByCustomerReport;
 function _sbcTotalsByCustomer(docs){
@@ -8266,6 +8271,195 @@ function exportSalesByCustomerCSV(){
   _downloadCSVRows(rows,'sales-by-customer-'+suffix+'.csv');
 }
 window.exportSalesByCustomerCSV=exportSalesByCustomerCSV;
+
+// ===== Sales Reports: sub-tab wiring (Sales by Customer / Sales by Products) =====
+// Both sub-reports read the exact same already-fetched _sbcSalesDocs/
+// _sbcPriorDocs — "Pull from QuickBooks" only ever fetches once, for
+// whichever period/granularity is selected in the shared toolbar above;
+// switching sub-tabs just changes which aggregation is displayed under it,
+// with nothing extra to fetch.
+var _sbcActiveSubTab='customer'; // 'customer' | 'products'
+function switchSalesReportsSubTab(sub){
+  _sbcActiveSubTab=sub;
+  var custBody=document.getElementById('sbc-body');
+  var prodBody=document.getElementById('sbp-body');
+  var custTab=document.getElementById('sbc-subtab-customer');
+  var prodTab=document.getElementById('sbc-subtab-products');
+  if(!custBody||!prodBody||!custTab||!prodTab) return;
+  custBody.style.display=(sub==='customer')?'block':'none';
+  prodBody.style.display=(sub==='products')?'block':'none';
+  [[custTab,'customer'],[prodTab,'products']].forEach(function(pair){
+    var active=(sub===pair[1]);
+    pair[0].style.background=active?'#fff':'var(--bg)';
+    pair[0].style.fontWeight=active?'700':'400';
+    pair[0].style.color=active?'var(--brand)':'var(--muted)';
+    pair[0].style.borderTop=active?'2.5px solid var(--brand)':'2.5px solid transparent';
+    pair[0].style.borderLeft=active?'1.5px solid var(--line)':'1.5px solid transparent';
+    pair[0].style.borderRight=active?'1.5px solid var(--line)':'1.5px solid transparent';
+  });
+  var searchEl=document.getElementById('sbc-search');
+  if(searchEl) searchEl.placeholder=(sub==='products')?'Search product...':'Search customer...';
+  renderActiveSalesReport();
+}
+window.switchSalesReportsSubTab=switchSalesReportsSubTab;
+function renderActiveSalesReport(){
+  if(_sbcActiveSubTab==='products') renderSalesByProductsReport(); else renderSalesByCustomerReport();
+}
+window.renderActiveSalesReport=renderActiveSalesReport;
+function printActiveSalesReport(){
+  if(_sbcActiveSubTab==='products') printSalesByProductsReport(); else printSalesByCustomerReport();
+}
+window.printActiveSalesReport=printActiveSalesReport;
+function exportActiveSalesReportCSV(){
+  if(_sbcActiveSubTab==='products') exportSalesByProductsCSV(); else exportSalesByCustomerCSV();
+}
+window.exportActiveSalesReportCSV=exportActiveSalesReportCSV;
+
+// Per-product net totals across ALL customers — same per-line detail
+// _sbcProductBreakdownForCustomer already reads for one customer at a time,
+// just not filtered down to a single customer key. Quantity is summed too
+// (unlike the customer view, a physical quantity is meaningful per product).
+function _sbcTotalsByProduct(docs){
+  var byProd={}; // itemId -> {name, total, qty}
+  docs.forEach(function(d){
+    var sign=d._pcDocType==='CreditMemo'?-1:1;
+    (d.Line||[]).forEach(function(ln){
+      if(ln.DetailType!=='SalesItemLineDetail'||!ln.SalesItemLineDetail||!ln.SalesItemLineDetail.ItemRef) return;
+      var itemId=ln.SalesItemLineDetail.ItemRef.value;
+      var itemName=ln.SalesItemLineDetail.ItemRef.name||'(unnamed item)';
+      if(!byProd[itemId]) byProd[itemId]={name:itemName,total:0,qty:0};
+      byProd[itemId].total+=sign*Number(ln.Amount||0);
+      byProd[itemId].qty+=sign*Number(ln.SalesItemLineDetail.Qty||0);
+    });
+  });
+  return byProd;
+}
+function renderSalesByProductsReport(){
+  var body=document.getElementById('sbp-body');
+  if(!body) return;
+  function money(n){ return (n<0?'-$':'$')+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  function qtyStr(n){ return Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  var searchEl=document.getElementById('sbc-search');
+  var q=(searchEl&&searchEl.value||'').trim().toLowerCase();
+  if(!_sbcSalesDocs.length){
+    body.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No data yet — pick a date range and click "Pull from QuickBooks."</div>';
+    return;
+  }
+
+  if(!_sbcPriorDocs){
+    // Single-period mode — plain table, same shape as Sales by Customer's own single-period mode.
+    var byProd=_sbcTotalsByProduct(_sbcSalesDocs);
+    var rows=Object.values(byProd);
+    if(q) rows=rows.filter(function(r){ return r.name.toLowerCase().indexOf(q)>=0; });
+    rows.sort(function(a,b){ return b.total-a.total; });
+    var grandTotal=rows.reduce(function(s,r){ return s+r.total; },0);
+    var grandQty=rows.reduce(function(s,r){ return s+r.qty; },0);
+    if(!rows.length){
+      body.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No products match "'+esc(q)+'".</div>';
+      return;
+    }
+    var html='<div id="sbp-print"><table style="width:100%;border-collapse:collapse;font-size:13px">'
+      +'<thead><tr>'
+        +'<th style="text-align:left;padding:8px 12px;border-bottom:2px solid var(--line)">Product</th>'
+        +'<th style="text-align:right;padding:8px 12px;border-bottom:2px solid var(--line)">Quantity</th>'
+        +'<th style="text-align:right;padding:8px 12px;border-bottom:2px solid var(--line)">Net Sales</th>'
+      +'</tr></thead><tbody>'
+      +rows.map(function(r){
+        return '<tr>'
+          +'<td style="padding:7px 12px;border-bottom:1px solid var(--line);font-weight:600">'+esc(r.name)+'</td>'
+          +'<td style="padding:7px 12px;border-bottom:1px solid var(--line);text-align:right;font-family:var(--mono);color:var(--muted)">'+qtyStr(r.qty)+'</td>'
+          +'<td style="padding:7px 12px;border-bottom:1px solid var(--line);text-align:right;font-family:var(--mono);font-weight:600">'+money(r.total)+'</td>'
+        +'</tr>';
+      }).join('')
+      +'<tr style="background:var(--panel)"><td style="padding:8px 12px;font-weight:700">TOTAL ('+rows.length+' product'+(rows.length!==1?'s':'')+')</td>'
+        +'<td style="padding:8px 12px;text-align:right;font-family:var(--mono);font-weight:700">'+qtyStr(grandQty)+'</td>'
+        +'<td style="padding:8px 12px;text-align:right;font-family:var(--mono);font-weight:700">'+money(grandTotal)+'</td></tr>'
+      +'</tbody></table></div>';
+    body.innerHTML=html;
+    return;
+  }
+
+  // Compare mode — union both periods, same principle as Sales by Customer.
+  var curByProd=_sbcTotalsByProduct(_sbcSalesDocs);
+  var priorByProd=_sbcTotalsByProduct(_sbcPriorDocs);
+  var allIds=Array.from(new Set(Object.keys(curByProd).concat(Object.keys(priorByProd))));
+  var rows2=allIds.map(function(id){
+    var cur=curByProd[id]||{name:(priorByProd[id]&&priorByProd[id].name)||id,total:0,qty:0};
+    var prior=priorByProd[id]||{total:0,qty:0};
+    return {id:id,name:cur.name,curTotal:cur.total,priorTotal:prior.total,change:cur.total-prior.total,curQty:cur.qty,priorQty:prior.qty};
+  });
+  if(q) rows2=rows2.filter(function(r){ return r.name.toLowerCase().indexOf(q)>=0; });
+  rows2.sort(function(a,b){ return a.change-b.change; }); // biggest decline first
+  if(!rows2.length){
+    body.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No products match "'+esc(q)+'".</div>';
+    return;
+  }
+  var maxAbs=Math.max(1,Math.max.apply(null,rows2.map(function(r){ return Math.max(Math.abs(r.curTotal),Math.abs(r.priorTotal)); })));
+  var totalCur=rows2.reduce(function(s,r){ return s+r.curTotal; },0);
+  var totalPrior=rows2.reduce(function(s,r){ return s+r.priorTotal; },0);
+  var decliningCount=rows2.filter(function(r){ return r.change<-0.004; }).length;
+  var html='<div id="sbp-print">'
+    +'<div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:18px;font-size:13px">'
+      +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Prior period</div><div style="font-weight:700;font-size:16px">'+money(totalPrior)+'</div></div>'
+      +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Current period</div><div style="font-weight:700;font-size:16px">'+money(totalCur)+'</div></div>'
+      +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Overall change</div><div style="font-weight:700;font-size:16px;color:'+((totalCur-totalPrior)<0?'#c0392b':'#1a7a3c')+'">'+money(totalCur-totalPrior)+'</div></div>'
+      +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Products selling less</div><div style="font-weight:700;font-size:16px;color:#c0392b">'+decliningCount+' of '+rows2.length+'</div></div>'
+    +'</div>'
+    +rows2.map(function(r){
+      var pctStr=r.priorTotal>0.004?(Math.round((r.change/r.priorTotal)*1000)/10)+'%':(r.curTotal>0.004?'new':'—');
+      var barColor=r.change<-0.004?'#c0392b':(r.change>0.004?'#1a7a3c':'var(--muted)');
+      var priorPct=Math.round((Math.abs(r.priorTotal)/maxAbs)*100);
+      var curPct=Math.round((Math.abs(r.curTotal)/maxAbs)*100);
+      return '<div style="border-bottom:1px solid var(--line);padding:10px 12px">'
+        +'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;gap:10px">'
+          +'<span style="font-weight:600;font-size:13.5px">'+esc(r.name)+'</span>'
+          +'<span style="font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:nowrap">'+qtyStr(r.priorQty)+' → '+qtyStr(r.curQty)+' units</span>'
+          +'<span style="font-family:var(--mono);font-size:12.5px;white-space:nowrap;color:'+barColor+';font-weight:700">'+money(r.change)+' ('+pctStr+')</span>'
+        +'</div>'
+        +'<div style="display:flex;flex-direction:column;gap:3px">'
+          +'<div style="display:flex;align-items:center;gap:8px"><span style="width:38px;font-family:var(--mono);font-size:10px;color:var(--muted)">prior</span><div style="flex:1;background:var(--panel);border-radius:3px;height:10px;overflow:hidden"><div style="width:'+priorPct+'%;height:100%;background:var(--muted)"></div></div><span style="width:90px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--muted)">'+money(r.priorTotal)+'</span></div>'
+          +'<div style="display:flex;align-items:center;gap:8px"><span style="width:38px;font-family:var(--mono);font-size:10px;color:var(--muted)">now</span><div style="flex:1;background:var(--panel);border-radius:3px;height:10px;overflow:hidden"><div style="width:'+curPct+'%;height:100%;background:'+barColor+'"></div></div><span style="width:90px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:600">'+money(r.curTotal)+'</span></div>'
+        +'</div>'
+      +'</div>';
+    }).join('')
+  +'</div>';
+  body.innerHTML=html;
+}
+window.renderSalesByProductsReport=renderSalesByProductsReport;
+function printSalesByProductsReport(){
+  var el=document.getElementById('sbp-print');
+  if(!el) return;
+  var periodLabel=document.getElementById('sbc-period-label');
+  var w=window.open('','_blank');
+  w.document.write('<html><head><title>Sales by Products</title>'
+    +'<style>body{font-family:Arial,sans-serif;padding:40px;color:#222}table{width:100%}</style></head><body>'
+    +'<h2>Sales by Products'+(periodLabel?' — '+esc(periodLabel.textContent):'')+'</h2>'+el.outerHTML+'</body></html>');
+  w.document.close();
+  w.focus();
+  setTimeout(function(){w.print();},250);
+}
+window.printSalesByProductsReport=printSalesByProductsReport;
+function exportSalesByProductsCSV(){
+  if(!_sbcSalesDocs.length){ alert('Pull the report first, then export.'); return; }
+  var periodLabel=document.getElementById('sbc-period-label');
+  var curByProd=_sbcTotalsByProduct(_sbcSalesDocs);
+  var priorByProd=_sbcPriorDocs?_sbcTotalsByProduct(_sbcPriorDocs):{};
+  var allIds=Array.from(new Set(Object.keys(curByProd).concat(Object.keys(priorByProd))));
+  var prodRows=allIds.map(function(id){
+    var cur=curByProd[id]||{name:(priorByProd[id]&&priorByProd[id].name)||id,total:0,qty:0};
+    var prior=priorByProd[id]||{total:0,qty:0};
+    return {name:cur.name,priorQty:prior.qty,curQty:cur.qty,priorTotal:prior.total,curTotal:cur.total,change:cur.total-prior.total};
+  });
+  prodRows.sort(function(a,b){ return a.change-b.change; });
+  var rows=[['Product','Prior Qty','Current Qty','Prior Period','Current Period','Change','Change %']];
+  prodRows.forEach(function(p){
+    var pct=p.priorTotal>0.004?(Math.round((p.change/p.priorTotal)*1000)/10)+'%':(p.curTotal>0.004?'new':'');
+    rows.push([p.name,p.priorQty.toFixed(2),p.curQty.toFixed(2),p.priorTotal.toFixed(2),p.curTotal.toFixed(2),p.change.toFixed(2),pct]);
+  });
+  var suffix=periodLabel?periodLabel.textContent.replace(/[^a-z0-9]+/gi,'-'):new Date().toISOString().slice(0,10);
+  _downloadCSVRows(rows,'sales-by-products-'+suffix+'.csv');
+}
+window.exportSalesByProductsCSV=exportSalesByProductsCSV;
 
 /* ===== SALES REP PLAN (Reports → Sales Rep Plan) =====
    A what-if calculator for a sales-rep benefit/commission plan, driven by
@@ -12063,7 +12257,7 @@ function switchReportTab(tab){
     // straight from memory (never re-fetches on its own) — an actual
     // refresh still always requires clicking "Pull from QuickBooks."
     if(_sbcSalesDocs.length){
-      renderSalesByCustomerReport();
+      renderActiveSalesReport();
       var sbcStatusEl=document.getElementById('sbc-status');
       if(sbcStatusEl){ sbcStatusEl.textContent='Showing results from your last pull this session — click "Pull from QuickBooks" to refresh.'; sbcStatusEl.style.color='var(--muted)'; }
     }

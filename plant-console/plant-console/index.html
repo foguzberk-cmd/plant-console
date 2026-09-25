@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Plant Console</title><!-- BUILD-1610 -->
+<title>Plant Console</title><!-- BUILD-1611 -->
 <!-- Home screen app support (iOS Safari "Add to Home Screen"). No App
      Store, no code signing, no Apple Developer account needed -- Safari
      reads these tags directly and treats the site as an installable app. -->
@@ -626,7 +626,7 @@
   </div>
 
 <script>
-var APP_BUILD='BUILD-1610';
+var APP_BUILD='BUILD-1611';
 console.log("Plant Console "+APP_BUILD+" — cache-busted sync fetches + visible sync diagnostics");
 
 const ICON={
@@ -14853,17 +14853,38 @@ function populateLocFilter(){
   sel.innerHTML=base+opts;
 }
 
-function itemRow(it){
+// Average units shipped per day over the trailing 28 days, per item — for
+// the Items table's own "Days of Supply" column. Unlike the Sales by
+// Products version, this reads straight from the transactions this app has
+// ALREADY synced (no separate QuickBooks fetch needed here — the Items
+// page already has this in memory). One pass over all transactions, not
+// one pass per item, since this app can have tens of thousands of lines.
+function _itemsAvgDailyQtySoldTrailing28(){
+  var cutoff=Date.now()-27*86400000;
+  var totals={}; // itemId -> summed qty shipped in the window
+  transactions.forEach(function(t){
+    if(t.type!=='shipment'||!t.itemId) return;
+    if(txnSortTime(t)<cutoff) return;
+    totals[t.itemId]=(totals[t.itemId]||0)+Math.abs(Number(t.qty||0));
+  });
+  Object.keys(totals).forEach(function(id){ totals[id]=totals[id]/28; });
+  return totals;
+}
+function itemRow(it,avgDailyQtyById){
   var qtyColor=Number(it.qty||0)===0?'color:#c23b33':'color:var(--ink)';
   var conflictDepts=itemSpanningDepts(it);
   var conflictBadge=conflictDepts.length>1
     ? '<span title="This item currently has stock in more than one department (\''+conflictDepts.join('\', \'')+'\'). QuickBooks sales don\'t say which location they came from, so syncs guess based on whichever location has the most stock — that guess can land in the wrong department. Double-check this item\'s transactions after each sync." style="display:inline-flex;align-items:center;gap:3px;margin-left:7px;padding:2px 7px;border-radius:5px;background:rgba(194,59,51,.12);color:#c23b33;font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;cursor:help;vertical-align:middle"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;stroke:#c23b33"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Split dept</span>'
     : '';
+  var avgDaily=(avgDailyQtyById&&avgDailyQtyById[it.id])||0;
+  var onHand=Number(it.qty||0);
+  var days=avgDaily>0?(onHand/avgDaily):(onHand>0?Infinity:0);
   return '<tr>'
     +'<td style="font-family:var(--mono);font-size:12px;color:var(--cold)">'+esc(it.sku||'—')+'</td>'
     +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+conflictBadge+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
-    +'<td style="font-family:var(--mono);font-size:13px;text-align:right;'+qtyColor+'">'+Number(it.qty||0).toFixed(2)+'</td>'
+    +'<td style="font-family:var(--mono);font-size:13px;text-align:right;'+qtyColor+'">'+onHand.toFixed(2)+'</td>'
     +'<td style="font-family:var(--mono);font-size:13px;text-align:right">$'+Number(it.cost||it.price||0).toFixed(2)+'</td>'
+    +'<td style="font-family:var(--mono);font-size:12px;text-align:right;border-left:1.5px solid var(--line)" title="Current on-hand ÷ average daily units shipped over the trailing 28 days">'+_sbcDaysOfSupplyStr(days)+'</td>'
     +'<td style="text-align:right;position:relative;width:40px">'
     +'<button class="dots-btn" onclick="toggleItemMenu(event,this.dataset.id)" data-id="'+it.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;stroke:var(--muted)"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>'
     +'</td>'
@@ -14872,7 +14893,8 @@ function itemRow(it){
 
 function itemsTable(list){
   if(!list.length) return '<div style="padding:28px 24px;text-align:center;color:var(--muted);font-size:13px">No items match the current filters.</div>';
-  return '<table class="txn-table"><thead><tr><th>SKU</th><th>Product Name</th><th style="text-align:right">Quantity</th><th style="text-align:right">Cost</th><th></th></tr></thead><tbody>'+list.map(itemRow).join('')+'</tbody></table>';
+  var avgDailyQtyById=_itemsAvgDailyQtySoldTrailing28();
+  return '<table class="txn-table"><thead><tr><th>SKU</th><th>Product Name</th><th style="text-align:right">Quantity</th><th style="text-align:right">Cost</th><th style="text-align:right;border-left:1.5px solid var(--line)" title="Current on-hand ÷ average daily units shipped over the trailing 28 days">Days of Supply</th><th></th></tr></thead><tbody>'+list.map(function(it){ return itemRow(it,avgDailyQtyById); }).join('')+'</tbody></table>';
 }
 
 function renderItemsTable(){

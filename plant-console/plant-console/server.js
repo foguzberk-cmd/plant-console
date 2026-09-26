@@ -340,6 +340,14 @@ function withItemsTxnLock(fn) {
 // every open tab — caching it means that only costs a disk read once, not
 // continuously.
 let _itemsTxnCache = null;
+// Cached STRINGIFIED /api/data response body — see the GET handler below.
+// Separate from _sharedDataCache/_itemsTxnCache above (those cache the
+// parsed objects); this caches the expensive JSON.stringify of the merged
+// payload itself, since that response is what's actually rebuilt on every
+// single poll from every open tab. null means "not built yet, or the refs
+// below no longer match the current caches" and forces exactly one fresh
+// stringify.
+let _apiDataJsonCache = null; // { sharedRef, itemsTxnRef, json }
 async function _readItemsTxnUnlocked() {
   if (_itemsTxnCache) return Object.assign({}, _itemsTxnCache);
   try {
@@ -478,11 +486,25 @@ const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
 // Best-effort — a failure here means sessions won't survive a restart
 // (the old behavior), not that login itself breaks.
+// Atomic write-then-rename, same as DATA_FILE/ITEMS_TXN_FILE above and for
+// the same reason: a plain writeFile() truncates the file before the new
+// bytes land, so a crash/OOM-kill mid-write (exactly what this app has seen
+// — see the OOM investigation elsewhere in this file) can leave a
+// truncated/corrupt sessions.json. loadSessionsFromDisk() would then fail
+// to parse it on the next boot and silently fall back to an EMPTY session
+// table — logging out every currently-logged-in user, which is the most
+// direct way a memory crash turns into "kicked out". rename() on the same
+// filesystem is atomic: the file on disk is always either the old complete
+// version or the new complete version, never a partial one.
 function persistSessions() {
   const obj = {};
   for (const [token, s] of SESSIONS.entries()) obj[token] = s;
-  fs.writeFile(SESSIONS_FILE, JSON.stringify(obj), (err) => {
-    if (err) console.error('Failed to persist sessions:', err.message);
+  const tmpFile = SESSIONS_FILE + '.tmp-' + process.pid + '-' + Date.now();
+  fs.writeFile(tmpFile, JSON.stringify(obj), (err) => {
+    if (err) { console.error('Failed to persist sessions:', err.message); return; }
+    fs.rename(tmpFile, SESSIONS_FILE, (err2) => {
+      if (err2) console.error('Failed to persist sessions (rename):', err2.message);
+    });
   });
 }
 async function loadSessionsFromDisk() {
@@ -1261,9 +1283,10 @@ function formatQBAddress(addr) {
 // address over and over. Cleared on a server restart/redeploy, which just
 // means the next route estimate after that re-geocodes once; well within
 // the free 3,000 credits/day either way.
-var _geoapifyGeocodeCache = {}; // address string -> {lat, lon}
+var _geoapifyGeocodeCache = new Map(); // address string -> {lat, lon}, insertion-ordered for FIFO eviction below
+var GEOCODE_CACHE_MAX = 2000; // generous cap so this can't grow unbounded for the life of the process
 async function geoapifyGeocode(address, biasCoords) {
-  if (_geoapifyGeocodeCache[address]) return _geoapifyGeocodeCache[address];
+  if (_geoapifyGeocodeCache.has(address)) return _geoapifyGeocodeCache.get(address);
   // Biasing toward Leader Meat's own location (when we have it) is what
   // keeps an ambiguous/incomplete address in QuickBooks — missing a city
   // or state, say — from silently matching a same-named street somewhere
@@ -1278,7 +1301,10 @@ async function geoapifyGeocode(address, biasCoords) {
   const first = data.results && data.results[0];
   if (!first) throw new Error('Could not find coordinates for address: ' + address);
   const coords = { lat: first.lat, lon: first.lon };
-  _geoapifyGeocodeCache[address] = coords;
+  if (_geoapifyGeocodeCache.size >= GEOCODE_CACHE_MAX) {
+    _geoapifyGeocodeCache.delete(_geoapifyGeocodeCache.keys().next().value); // evict oldest (Map preserves insertion order)
+  }
+  _geoapifyGeocodeCache.set(address, coords);
   return coords;
 }
 // Straight-line (great-circle) distance in miles — used only as a sanity
@@ -1942,12 +1968,45 @@ const server = http.createServer(async (req, res) => {
   // items/transactions/storages/users instead of each keeping its own local copy =====
   if (url === '/api/data' && req.method === 'GET') {
     if (!requireAuth(req, res)) return;
-    const [data, itemsTxn] = await Promise.all([readSharedData(), readItemsTxnData()]);
+    // Every open tab polls this endpoint every 1.5s (see index.html's
+    // pullFromServer/setInterval), and the response includes the full
+    // items+transactions dataset — "years of synced Bills/Invoices",
+    // BY FAR the largest, slowest-to-serialize part of the shared data
+    // (see the comment on ITEMS_TXN_FILE above). Re-running JSON.stringify
+    // over that whole multi-MB payload on every single poll, from every
+    // open tab, regardless of whether anything actually changed, is
+    // exactly the kind of continuous, ever-growing (the dataset only ever
+    // gets bigger — nothing prunes old transactions) allocation churn that
+    // matches the OOM investigation elsewhere in this file: not a fixed
+    // one-time cost, but something that scales with open tabs * dataset
+    // size * polls/sec. Caching the STRINGIFIED body (not just the parsed
+    // object — _sharedDataCache/_itemsTxnCache already do that) means a
+    // burst of identical polls between writes costs one stringify, not one
+    // per poll. Keyed on reference identity of the two underlying caches:
+    // both get reassigned to a brand-new object on every write (see
+    // _writeSharedDataRawUnlocked/_writeItemsTxnUnlocked), so `===` here
+    // is exactly "has anything changed since the last time we stringified".
+    await Promise.all([readSharedData(), readItemsTxnData()]); // cheap: populates/refreshes _sharedDataCache & _itemsTxnCache if needed, no disk I/O once cached
+    if (_apiDataJsonCache && _apiDataJsonCache.sharedRef === _sharedDataCache && _apiDataJsonCache.itemsTxnRef === _itemsTxnCache) {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(_apiDataJsonCache.json);
+      return;
+    }
+    // Read the caches directly rather than through readSharedData()/
+    // readItemsTxnData() (which shallow-clone defensively for callers that
+    // might mutate what they get back) — we only ever read from these here
+    // before immediately handing them to Object.assign/JSON.stringify,
+    // never mutate them in place, so the clone would just be wasted work
+    // on the exact hot path this cache exists to lighten.
+    const data = _sharedDataCache;
+    const itemsTxn = _itemsTxnCache;
     const safe = Object.assign({}, data, itemsTxn, {
       users: data.users.map(u => { const c = Object.assign({}, u); delete c.pin; delete c.pinHash; return c; })
     });
+    const json = JSON.stringify(safe);
+    _apiDataJsonCache = { sharedRef: _sharedDataCache, itemsTxnRef: _itemsTxnCache, json };
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
-    res.end(JSON.stringify(safe));
+    res.end(json);
     return;
   }
   // Lightweight read of JUST the items list (no transactions, no other

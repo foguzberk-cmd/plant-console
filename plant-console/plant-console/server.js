@@ -594,6 +594,57 @@ function requireAdmin(req, res) {
   return session;
 }
 
+// ===== LOGIN RATE LIMITING =====
+// In-memory only (deliberately not persisted — a restart clearing everyone's
+// attempt history is an acceptable trade for staying simple, same reasoning
+// as _recentlyDeletedCustomerIds elsewhere in this file). Keyed by the
+// normalized email from the request body, not by IP: this app can be
+// reached over the open internet (Render), so an attacker with multiple
+// IPs would trivially defeat a per-IP limit, while a genuine user only
+// ever needs a handful of attempts even after a mistyped PIN.
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_WINDOW_MS = 10 * 60 * 1000; // failed attempts older than this don't count toward the limit
+const LOGIN_LOCKOUT_MS = 10 * 60 * 1000;
+const _loginAttempts = new Map(); // email -> { count, windowStart, lockedUntil }
+function checkLoginRateLimit(email) {
+  const rec = _loginAttempts.get(email);
+  if (!rec) return { locked: false };
+  const now = Date.now();
+  if (rec.lockedUntil && now < rec.lockedUntil) {
+    return { locked: true, retryAfterSeconds: Math.ceil((rec.lockedUntil - now) / 1000) };
+  }
+  return { locked: false };
+}
+function recordFailedLogin(email) {
+  if (!email) return;
+  const now = Date.now();
+  const rec = _loginAttempts.get(email);
+  if (!rec || now - rec.windowStart > LOGIN_WINDOW_MS) {
+    _loginAttempts.set(email, { count: 1, windowStart: now, lockedUntil: 0 });
+    return;
+  }
+  rec.count++;
+  if (rec.count >= LOGIN_MAX_ATTEMPTS) {
+    rec.lockedUntil = now + LOGIN_LOCKOUT_MS;
+    rec.count = 0;
+    rec.windowStart = now;
+  }
+}
+function clearLoginRateLimit(email) {
+  _loginAttempts.delete(email);
+}
+// Proactive sweep, same reasoning/cadence as the _recentlyDeletedCustomerIds
+// sweep below — an entry that's never touched again after its window
+// expires would otherwise sit in memory forever.
+setInterval(() => {
+  const now = Date.now();
+  for (const [email, rec] of _loginAttempts.entries()) {
+    if ((!rec.lockedUntil || now > rec.lockedUntil) && now - rec.windowStart > LOGIN_WINDOW_MS) {
+      _loginAttempts.delete(email);
+    }
+  }
+}, 5 * 60 * 1000);
+
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -989,6 +1040,20 @@ async function fetchQBCustomers(retry) {
   return { QueryResponse: { Customer: allCustomers, maxResults: allCustomers.length } };
 }
 
+// since/from/to are meant to always be machine-generated date/datetime
+// strings (from new Date().toISOString() or a plain YYYY-MM-DD), but they
+// reach fetchQBEntityPage straight from this app's own request query
+// params (/api/qb/documents ?since=&from=&to=) with zero validation before
+// being concatenated into the QBO query string below. Any authenticated
+// user (any role — /api/qb/documents only calls requireAuth, not
+// requireAdmin) could pass e.g. ?since=' OR TRUE OR '1'='1 and inject
+// arbitrary QBO query syntax. Strict allow-list validation (only digits,
+// dashes, colons, dots, T/Z, and a +/- offset — never a literal quote)
+// closes that off without needing per-caller escaping.
+const QB_DATE_PARAM_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+function isValidQbDateParam(s) {
+  return typeof s === 'string' && QB_DATE_PARAM_RE.test(s);
+}
 // Generic paginated query for any QB entity (Bill, Invoice, SalesReceipt, CreditMemo)
 // `since`: only records changed at/after this timestamp (incremental).
 // `from`:  only records with TxnDate on/after this date (inventory start floor).
@@ -999,6 +1064,9 @@ async function fetchQBCustomers(retry) {
 //          never pass it are unaffected.
 async function fetchQBEntityPage(entity, startPosition, retry, since, from, to) {
   if (!retry) await ensureFreshToken(); // keep token alive during long paged syncs
+  if (since && !isValidQbDateParam(since)) throw new Error('Invalid since parameter');
+  if (from && !isValidQbDateParam(from)) throw new Error('Invalid from parameter');
+  if (to && !isValidQbDateParam(to)) throw new Error('Invalid to parameter');
   const clauses = [];
   if (since) clauses.push(`MetaData.LastUpdatedTime >= '${since}'`);
   if (from)  clauses.push(`TxnDate >= '${from}'`);
@@ -1395,9 +1463,11 @@ function _twoOptImprove(origin, order) {
 }
 // Calls Geoapify's truck-mode Routing API for one driver's whole day:
 // origin AND destination are both Leader Meat (a real round trip), with
-// every stop as a waypoint in between. optimize_stops:true lets it reorder
-// the stops for the shortest total route — this is meant as a planning
-// ESTIMATE of total miles/time for the day, not a turn-by-turn assignment
+// every stop as a waypoint in between. Stop order is decided ourselves
+// (see _nearestNeighborOrder/_twoOptImprove and the waypointsRaw comment
+// further down for why — NOT via Geoapify's own optimize_stops, despite
+// what an earlier version of this comment said); this is meant as a
+// planning ESTIMATE of total miles/time for the day, not a turn-by-turn assignment
 // of stop order. mode=medium_truck (see below) routes using real truck
 // road-restriction data (including roads legally closed to trucks, like NJ
 // parkways) sized for an actual box truck, rather than Google's
@@ -1910,6 +1980,19 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse(bodyStr || '{}');
       const email = String(body.email || '').trim().toLowerCase();
       const pin = String(body.pin || '').trim();
+      // PINs are short (4 digits by default — 10,000 combinations) with no
+      // other login factor, so unthrottled attempts make a working PIN
+      // guessable in a realistic number of requests. Locked per-email
+      // rather than per-IP: this app can be reached over the open internet
+      // (Render), and per-IP alone is trivially defeated by anyone with
+      // more than one address, while a real user only ever needs a handful
+      // of attempts even after mistyping.
+      const lockCheck = checkLoginRateLimit(email);
+      if (lockCheck.locked) {
+        res.writeHead(429, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+        res.end(JSON.stringify({ error: 'Too many failed attempts. Try again in ' + lockCheck.retryAfterSeconds + ' seconds.' }));
+        return;
+      }
       const { user, ok } = await updateSharedData(async (data) => {
         const u = data.users.find(x => String(x.email || '').trim().toLowerCase() === email);
         let matched = false;
@@ -1926,10 +2009,12 @@ const server = http.createServer(async (req, res) => {
         return { data, user: u, ok: matched, skipWrite: !needsMigration };
       });
       if (!ok) {
+        recordFailedLogin(email);
         res.writeHead(401, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
         res.end(JSON.stringify({ error: 'Incorrect email or PIN.' }));
         return;
       }
+      clearLoginRateLimit(email);
       const token = createSession(user);
       res.writeHead(200, {
         'Content-Type': 'application/json',
@@ -3240,6 +3325,27 @@ const server = http.createServer(async (req, res) => {
         if (incoming.customerAllowed && typeof incoming.customerAllowed === 'object' && !Array.isArray(incoming.customerAllowed)) {
           incoming.customerAllowed = Object.assign({}, (current.customerAllowed && typeof current.customerAllowed === 'object' && !Array.isArray(current.customerAllowed)) ? current.customerAllowed : {}, incoming.customerAllowed);
         }
+        // vendorDepartments ({vendorKey: dept}) — same shape, same routine
+        // full-snapshot push (see snapshotObj in index.html), same missing
+        // merge as customerAllowed above until now: a stale device's push
+        // would silently overwrite every OTHER vendor's department
+        // assignment along with its own. The dedicated single/bulk
+        // endpoints above already read-modify-write safely on their own;
+        // this is specifically about the generic ambient push path.
+        if (incoming.vendorDepartments && typeof incoming.vendorDepartments === 'object' && !Array.isArray(incoming.vendorDepartments)) {
+          incoming.vendorDepartments = Object.assign({}, (current.vendorDepartments && typeof current.vendorDepartments === 'object' && !Array.isArray(current.vendorDepartments)) ? current.vendorDepartments : {}, incoming.vendorDepartments);
+        }
+        // itemFilterPrefs ({userId: {active,kind}}) — same shape, same
+        // routine full-snapshot push, same missing merge. The comment where
+        // this field is defined (see DATA_DEFAULT above) already claimed
+        // this got "the same push/pull merge as labelAllowed/customerAllowed
+        // above" — it didn't; this closes that gap for real. Without it, a
+        // stale device would silently reset every OTHER user's saved Items
+        // page filter back to whatever this device happened to have (or
+        // nothing, for a user it had never seen), not just its own.
+        if (incoming.itemFilterPrefs && typeof incoming.itemFilterPrefs === 'object' && !Array.isArray(incoming.itemFilterPrefs)) {
+          incoming.itemFilterPrefs = Object.assign({}, (current.itemFilterPrefs && typeof current.itemFilterPrefs === 'object' && !Array.isArray(current.itemFilterPrefs)) ? current.itemFilterPrefs : {}, incoming.itemFilterPrefs);
+        }
         // cfScheduledDates (Cash Flow's scheduled/approved payment plan) is
         // keyed by bill id — merged (not blindly replaced) so one device's
         // stale push can't erase another device's schedule/approval change
@@ -4201,8 +4307,26 @@ const server = http.createServer(async (req, res) => {
       const entity = queryParams.entity || 'Bill';
       const docNumber = queryParams.docNumber;
       if (!docNumber) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Pass ?docNumber=X (and optionally &entity=Bill|Invoice|SalesReceipt|CreditMemo|VendorCredit)' })); return; }
+      // Same fixed allow-list as /api/qb/documents — entity was previously
+      // concatenated straight into `FROM ${entity}` with no validation at
+      // all, unlike its sibling endpoint. A GET request from any
+      // authenticated user (any role) could set entity to arbitrary QBO
+      // query syntax.
+      const QB_INSPECT_ENTITIES = ['Bill', 'Invoice', 'SalesReceipt', 'CreditMemo', 'VendorCredit', 'Payment', 'Vendor', 'JournalEntry', 'Account', 'Deposit'];
+      if (QB_INSPECT_ENTITIES.indexOf(entity) < 0) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unsupported entity. Use one of: ' + QB_INSPECT_ENTITIES.join(', ') }));
+        return;
+      }
       await ensureFreshToken();
-      const query = `SELECT * FROM ${entity} WHERE DocNumber = '${docNumber.replace(/'/g, "\\'")}'`;
+      // QBO's query grammar escapes a literal single quote inside a string
+      // literal by DOUBLING it (standard SQL-92 string escaping), not by
+      // backslash-escaping — the previous `.replace(/'/g, "\\'")` left a
+      // literal backslash followed by an UNESCAPED quote, which still
+      // terminates the string literal early in QBO's parser. Doubling is
+      // the actual fix, not just cosmetic: a docNumber containing a quote
+      // could otherwise inject arbitrary query syntax.
+      const query = `SELECT * FROM ${entity} WHERE DocNumber = '${docNumber.replace(/'/g, "''")}'`;
       const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
       const qres = await httpsRequest({
         hostname: 'quickbooks.api.intuit.com',

@@ -1262,7 +1262,6 @@ function formatQBAddress(addr) {
 // means the next route estimate after that re-geocodes once; well within
 // the free 3,000 credits/day either way.
 var _geoapifyGeocodeCache = {}; // address string -> {lat, lon}
-var _geoapifyGeocodeCacheKeys = []; // insertion order, so the cap below evicts oldest-first
 async function geoapifyGeocode(address, biasCoords) {
   if (_geoapifyGeocodeCache[address]) return _geoapifyGeocodeCache[address];
   // Biasing toward Leader Meat's own location (when we have it) is what
@@ -1279,20 +1278,7 @@ async function geoapifyGeocode(address, biasCoords) {
   const first = data.results && data.results[0];
   if (!first) throw new Error('Could not find coordinates for address: ' + address);
   const coords = { lat: first.lat, lon: first.lon };
-  // GENUINELY UNBOUNDED before this: one entry per unique address, forever,
-  // for the entire life of the process (only cleared by a restart) — flagged
-  // and capped while chasing the separate, already-known server-OOM issue
-  // (see the [memcheck] logging elsewhere). Each entry is small, so on its
-  // own this is unlikely to be THE crash cause, but it's a real, confirmed
-  // unbounded structure and worth capping regardless: oldest-in-first-out
-  // once the cache passes a few thousand addresses, well beyond what this
-  // business's actual customer/address count would ever need to keep hot.
   _geoapifyGeocodeCache[address] = coords;
-  _geoapifyGeocodeCacheKeys.push(address);
-  if (_geoapifyGeocodeCacheKeys.length > 3000) {
-    const oldest = _geoapifyGeocodeCacheKeys.shift();
-    delete _geoapifyGeocodeCache[oldest];
-  }
   return coords;
 }
 // Straight-line (great-circle) distance in miles — used only as a sanity
@@ -2938,30 +2924,6 @@ const server = http.createServer(async (req, res) => {
             if (!actingUserCanManageUsers) {
               out.role = existing ? existing.role : 'staff';
               out.perms = existing ? (existing.perms || {}) : {};
-            } else if (existing && existing.permsUpdatedAt && (!u.permsUpdatedAt || u.permsUpdatedAt < existing.permsUpdatedAt)) {
-              // STALE-PUSH GUARD: getting past the check above (this session
-              // CAN manage users) is not the same as this specific incoming
-              // record being the thing that was actually just edited. Every
-              // routine push carries this browser tab's ENTIRE in-memory
-              // `users` array, including every user NOBODY touched in this
-              // tab — if that copy is even a little stale, a completely
-              // unrelated save (a different user's permission toggle, or
-              // any other action anywhere in the app that happens to push)
-              // would otherwise carry the stale copy's role/perms forward
-              // and silently stomp a newer change made on another device,
-              // with no error and no visible cause — reported as
-              // "permissions wiped out by themselves for no reason". A
-              // plain union-merge doesn't catch this: it only protects
-              // against a KEY being missing, not a key being PRESENT with a
-              // stale value, which is exactly what a full stale snapshot
-              // provides. permsUpdatedAt (stamped client-side at the moment
-              // of an actual edit — see togglePermMatrixCell,
-              // togglePermTreeGroupAll, saveUser) is what actually
-              // distinguishes "just edited, right now" from "just sitting
-              // in memory" — if the server's copy is already newer, keep it.
-              out.role = existing.role;
-              out.perms = existing.perms || {};
-              out.permsUpdatedAt = existing.permsUpdatedAt;
             }
             return out;
           });
@@ -2983,7 +2945,26 @@ const server = http.createServer(async (req, res) => {
           const mergedUsers = new Map((current.users || []).map(u => [u && u.id, u]));
           for (const u of incoming.users) {
             if (!u) continue;
-            mergedUsers.set(u.id, Object.assign({}, mergedUsers.get(u.id) || {}, u));
+            const existingUser = mergedUsers.get(u.id) || {};
+            const merged = Object.assign({}, existingUser, u);
+            // Deep-merge perms specifically, rather than letting the
+            // shallow Object.assign above treat the whole perms object as
+            // one opaque value. CONFIRMED live (Sep 2026): without this,
+            // a permission checkbox change would get silently reverted
+            // whenever ANY other session — even one that changed a
+            // completely different permission, or wasn't editing
+            // permissions at all — next pushed its own (by-then-stale)
+            // copy of that user's full perms object. That push could
+            // land minutes or hours later, well past the 8s same-tab
+            // grace window elsewhere in this app, which is why this
+            // looked like it "wiped itself out for no reason" rather than
+            // an obvious immediate race. Merging key-by-key means each
+            // individual permission is only ever overwritten by a push
+            // that actually mentions that specific key.
+            if (existingUser.perms || u.perms) {
+              merged.perms = Object.assign({}, existingUser.perms || {}, u.perms || {});
+            }
+            mergedUsers.set(u.id, merged);
           }
           incoming.users = Array.from(mergedUsers.values());
         }
@@ -3176,22 +3157,6 @@ const server = http.createServer(async (req, res) => {
         // merge-not-replace reasoning as labelTemplates directly above.
         if (incoming.labelAllowed && typeof incoming.labelAllowed === 'object' && !Array.isArray(incoming.labelAllowed)) {
           incoming.labelAllowed = Object.assign({}, (current.labelAllowed && typeof current.labelAllowed === 'object' && !Array.isArray(current.labelAllowed)) ? current.labelAllowed : {}, incoming.labelAllowed);
-        }
-        // customerAllowed (per-department customer allow-lists for the Scale
-        // Log picker) and itemFilterPrefs (per-user Items page filter prefs)
-        // had the exact same gap labelAllowed used to have: both are sent as
-        // full top-level objects on every routine snapshot push (see
-        // snapshotObj in index.html), but neither was merged here — they fell
-        // straight through to the blind Object.assign(current, incoming) at
-        // the end of this handler. A stale device pushing for any unrelated
-        // reason could silently erase another device's more recent edit to a
-        // department's allow-list, or another user's saved filter prefs. Same
-        // shallow per-key merge fix as labelAllowed, just above.
-        if (incoming.customerAllowed && typeof incoming.customerAllowed === 'object' && !Array.isArray(incoming.customerAllowed)) {
-          incoming.customerAllowed = Object.assign({}, (current.customerAllowed && typeof current.customerAllowed === 'object' && !Array.isArray(current.customerAllowed)) ? current.customerAllowed : {}, incoming.customerAllowed);
-        }
-        if (incoming.itemFilterPrefs && typeof incoming.itemFilterPrefs === 'object' && !Array.isArray(incoming.itemFilterPrefs)) {
-          incoming.itemFilterPrefs = Object.assign({}, (current.itemFilterPrefs && typeof current.itemFilterPrefs === 'object' && !Array.isArray(current.itemFilterPrefs)) ? current.itemFilterPrefs : {}, incoming.itemFilterPrefs);
         }
         // cfScheduledDates (Cash Flow's scheduled/approved payment plan) is
         // keyed by bill id — merged (not blindly replaced) so one device's
@@ -4190,7 +4155,7 @@ const server = http.createServer(async (req, res) => {
       const from = queryParams.from || null;
       const to = queryParams.to || null;
       const startPos = queryParams.startposition ? parseInt(queryParams.startposition, 10) : null;
-      if (ent && ['Bill','Invoice','SalesReceipt','CreditMemo','VendorCredit','InventoryAdjustment','Payment','Vendor','JournalEntry','Account','Deposit'].indexOf(ent) >= 0) {
+      if (ent && ['Bill','Invoice','SalesReceipt','CreditMemo','VendorCredit','Payment','Vendor','JournalEntry','Account','Deposit'].indexOf(ent) >= 0) {
         if (!accessToken) await refreshAccessToken();
         // Single-page mode: return just one page so each HTTP request is fast.
         if (startPos !== null && !isNaN(startPos)) {

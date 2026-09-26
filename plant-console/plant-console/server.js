@@ -105,7 +105,7 @@ const PURCHASE_CACHE_FILE = path.join(DATA_DIR, 'purchase-report-cache.json');
 // disk (same DATA_DIR the rest of the shared data already lives on) means a
 // restart is invisible to whoever's already logged in.
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
-const DATA_DEFAULT = { storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: [], labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [], deletedCfSplitIds: [], chatMessages: [], orders: [], deletedOrderIds: [], drivers: [], deletedDrivers: [],
+const DATA_DEFAULT = { storages: [], users: [], scaleLogs: [], labelAllowed: {}, savedReports: [], customers: [], customerAllowed: {}, labelTemplates: {}, deletedScaleLogIds: [], cfScheduledDates: {}, deletedCfBillIds: [], deletedCfSplitIds: [], chatMessages: [], orders: [], deletedOrderIds: [], drivers: [], deletedDrivers: [],
   // Weekly Purchase Report (Reports → Purchasing): purchaseConfig holds the
   // admin-configured row/column definitions (which products, which vendor
   // columns, which weeks exist) — small, rarely-changed, keyed by id so it
@@ -219,6 +219,13 @@ async function _readSharedDataUnlocked() {
     // copy on load and will push the correct per-department shape on their
     // next save, so it's safe to just reset this to empty in the meantime.
     if (Array.isArray(data.labelAllowed)) data.labelAllowed = {};
+    // Same migration reasoning as labelAllowed just above — customerAllowed
+    // is likewise a per-department object; DATA_DEFAULT itself used to
+    // declare this as [] (fixed above, but old data files on disk can
+    // still have it as an array from before that fix), so guard it the
+    // same way rather than let a stale array shape flow into the merge
+    // logic downstream, which assumes an object.
+    if (Array.isArray(data.customerAllowed)) data.customerAllowed = {};
     // Defensive: never let the app get into a state where no user can log in.
     if (!Array.isArray(data.users) || data.users.length === 0) {
       data.users = [defaultAdmin()];
@@ -3216,6 +3223,22 @@ const server = http.createServer(async (req, res) => {
         // merge-not-replace reasoning as labelTemplates directly above.
         if (incoming.labelAllowed && typeof incoming.labelAllowed === 'object' && !Array.isArray(incoming.labelAllowed)) {
           incoming.labelAllowed = Object.assign({}, (current.labelAllowed && typeof current.labelAllowed === 'object' && !Array.isArray(current.labelAllowed)) ? current.labelAllowed : {}, incoming.labelAllowed);
+        }
+        // customerAllowed is likewise a per-department object (each
+        // department has its own customer allow-list for the Scale Log
+        // picker) — same shape, same race as labelAllowed directly above,
+        // but this one was missing the equivalent merge-not-replace fix.
+        // CONFIRMED: every routine full-snapshot push (see snapshotObj in
+        // pushToServer, index.html) includes the pushing device's ENTIRE
+        // customerAllowed object, and without this merge it fell straight
+        // through to the blind `Object.assign({}, current, incoming)`
+        // further down — so a stale device (e.g. a tab that's been open
+        // since before another admin last edited a DIFFERENT department's
+        // allow-list) would silently wipe out every other department's
+        // list on its very next routine save, not just its own. This is
+        // what was actually behind the permission matrix getting wiped.
+        if (incoming.customerAllowed && typeof incoming.customerAllowed === 'object' && !Array.isArray(incoming.customerAllowed)) {
+          incoming.customerAllowed = Object.assign({}, (current.customerAllowed && typeof current.customerAllowed === 'object' && !Array.isArray(current.customerAllowed)) ? current.customerAllowed : {}, incoming.customerAllowed);
         }
         // cfScheduledDates (Cash Flow's scheduled/approved payment plan) is
         // keyed by bill id — merged (not blindly replaced) so one device's

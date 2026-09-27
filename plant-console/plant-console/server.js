@@ -998,8 +998,15 @@ async function fetchQBItems(retry) {
   return { QueryResponse: { Item: allItems, maxResults: allItems.length } };
 }
 
-async function fetchQBCustomersPage(startPosition, retry) {
-  const query = `SELECT * FROM Customer STARTPOSITION ${startPosition} MAXRESULTS 100`;
+// sinceIso: same idea as fetchQBItemsPage's sinceIso — when set, adds
+// "AND MetaData.LastUpdatedTime >= X" so the background sync only fetches
+// customers that actually changed instead of the whole list every time.
+// Server-generated only (never taken from a request query param), so it
+// doesn't need the same allow-list validation as the user-facing
+// since/from/to on /api/qb/documents.
+async function fetchQBCustomersPage(startPosition, retry, sinceIso) {
+  const whereClause = sinceIso ? ` WHERE MetaData.LastUpdatedTime >= '${sinceIso}'` : '';
+  const query = `SELECT * FROM Customer${whereClause} STARTPOSITION ${startPosition} MAXRESULTS 100`;
   const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
   const res = await httpsRequest({
     hostname: 'quickbooks.api.intuit.com',
@@ -1016,7 +1023,7 @@ async function fetchQBCustomersPage(startPosition, retry) {
   if (res.status === 401) {
     if (!retry) {
       const ok = await refreshAccessToken();
-      if (ok) return fetchQBCustomersPage(startPosition, true);
+      if (ok) return fetchQBCustomersPage(startPosition, true, sinceIso);
     }
     throw new Error('NEEDS_RECONNECT');
   }
@@ -1024,13 +1031,13 @@ async function fetchQBCustomersPage(startPosition, retry) {
   return JSON.parse(res.body);
 }
 
-async function fetchQBCustomers(retry) {
+async function fetchQBCustomers(retry, sinceIso) {
   // Paginate through all customers using STARTPOSITION (QB is 1-indexed)
   let allCustomers = [];
   let start = 1;
   const pageSize = 100;
   while (true) {
-    const data = await fetchQBCustomersPage(start, retry);
+    const data = await fetchQBCustomersPage(start, retry, sinceIso);
     const custs = (data.QueryResponse && data.QueryResponse.Customer) || [];
     allCustomers = allCustomers.concat(custs);
     if (custs.length < pageSize) break; // last page
@@ -1619,8 +1626,18 @@ async function fetchGoogleDrivingRouteMiles(stopAddresses) {
     minutes: Math.round(totalSeconds / 60)
   };
 }
+// Incremental after the first run — same pattern as backgroundSyncItems:
+// _lastCustomerSyncAt tracks when the last successful sync STARTED, and
+// every run after the first only asks QuickBooks for customers with
+// MetaData.LastUpdatedTime at or after that point, instead of the whole
+// list every time. This is what makes it safe to run on the SAME
+// frequent cadence as items (see runCustomersBackgroundSync below) rather
+// than the slower 30-min cycle vendors are still on.
+let _lastCustomerSyncAt = null; // ISO string, or null until the first successful run
 async function backgroundSyncCustomers() {
-  const data = await fetchQBCustomers(false);
+  const syncStartedAt = new Date().toISOString();
+  const sinceIso = _lastCustomerSyncAt; // capture before this run, so a slow run doesn't miss anything that changes mid-sync
+  const data = await fetchQBCustomers(false, sinceIso);
   const qbCustomers = (data.QueryResponse && data.QueryResponse.Customer) || [];
   await updateSharedData(async (current) => {
     const customers = Array.isArray(current.customers) ? current.customers.slice() : [];
@@ -1653,13 +1670,40 @@ async function backgroundSyncCustomers() {
         // rather than wiping it out — same reasoning as salesRep/dunsNumber
         // above, both of which use this same existing-value fallback.
         address: formatQBAddress(qc.ShipAddr) || formatQBAddress(qc.BillAddr) || (existing >= 0 ? (customers[existing].address || '') : ''),
-        balance: Number(qc.Balance || 0)
+        balance: Number(qc.Balance || 0),
+        // Same purpose as items' qbSynced — lets the client's lightweight
+        // poll (pollCustomersFromServer) tell "did anything actually
+        // change" from just the newest timestamp, without a deep compare.
+        qbSynced: new Date().toISOString()
       };
       if (existing >= 0) customers[existing] = mapped; else customers.push(mapped);
     });
     return { data: Object.assign({}, current, { customers }) };
   });
+  _lastCustomerSyncAt = syncStartedAt;
   return qbCustomers.length;
+}
+
+let _lastCustomersSyncRunAt = 0;
+let _lastCustomersSyncResult = null;
+// Same promise-lock pattern as _itemsSyncPromise above, same reason: a
+// "Sync now" click landing at the exact moment the timer fires awaits
+// that SAME in-progress sync rather than no-op'ing or double-running.
+let _customersSyncPromise = null;
+function runCustomersBackgroundSync() {
+  if (_customersSyncPromise) return _customersSyncPromise;
+  if (!accessToken && !refreshToken) return Promise.resolve(); // QuickBooks isn't connected yet
+  _customersSyncPromise = (async () => {
+    try {
+      const count = await backgroundSyncCustomers();
+      _lastCustomersSyncResult = { ok: true, count, incremental: !!_lastCustomerSyncAt, at: new Date().toISOString() };
+    } catch (e) {
+      _lastCustomersSyncResult = { ok: false, error: e.message, at: new Date().toISOString() };
+      console.error('Background customer sync failed:', e.message);
+    }
+    _lastCustomersSyncRunAt = Date.now();
+  })();
+  return _customersSyncPromise.finally(() => { _customersSyncPromise = null; });
 }
 
 // Pulls the Item list from QuickBooks and merges it into the server's own
@@ -1788,17 +1832,13 @@ async function runBackgroundSync() {
   if (_backgroundSyncInFlight) return; // never overlap two runs
   if (!accessToken && !refreshToken) return; // QuickBooks isn't connected yet — nothing to sync
   _backgroundSyncInFlight = true;
-  // Items are no longer synced here — they have their own faster,
-  // independent cycle now (see runItemsBackgroundSync/ITEMS_SYNC_INTERVAL_MS)
-  // since customers/vendors and items ended up needing different cadences.
-  const result = { at: new Date().toISOString(), customers: null, vendors: null };
-  try {
-    const count = await backgroundSyncCustomers();
-    result.customers = { ok: true, count };
-  } catch (e) {
-    result.customers = { ok: false, error: e.message };
-    console.error('Background customer sync failed:', e.message);
-  }
+  // Items and customers are no longer synced here — they each have their
+  // own faster, independent, incremental cycle now (see
+  // runItemsBackgroundSync/runCustomersBackgroundSync and
+  // ITEMS_SYNC_INTERVAL_MS) since they ended up needing a shorter cadence
+  // than vendors, which stays on this slower 30-min cycle (vendors have no
+  // incremental/since-based sync — every run here is a full pull).
+  const result = { at: new Date().toISOString(), vendors: null };
   try {
     const count = await backgroundSyncVendors();
     result.vendors = { ok: true, count };
@@ -2130,6 +2170,32 @@ const server = http.createServer(async (req, res) => {
       const itemsTxn = await readItemsTxnData();
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ success: true, items: itemsTxn.items || [], result: _lastItemsSyncResult }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  // Lightweight read of JUST the customers list — same idea as
+  // /api/data/items-only, used to poll for background-synced customer
+  // changes without paying the cost of the full /api/data payload.
+  if (url === '/api/data/customers-only' && req.method === 'GET') {
+    if (!requireAuth(req, res)) return;
+    const data = await readSharedData();
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+    res.end(JSON.stringify({ customers: data.customers || [] }));
+    return;
+  }
+  // Forces a customer sync to run RIGHT NOW instead of waiting for the
+  // next tick — same reasoning and same reused-in-flight-promise behavior
+  // as /api/data/items-sync-now above.
+  if (url === '/api/data/customers-sync-now' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    try {
+      await runCustomersBackgroundSync();
+      const data = await readSharedData();
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, customers: data.customers || [], result: _lastCustomersSyncResult }));
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: e.message }));
@@ -4275,6 +4341,12 @@ const server = http.createServer(async (req, res) => {
         lastSyncAt: _lastItemsSyncRunAt || null,
         lastResult: _lastItemsSyncResult,
         incrementalSinceAt: _lastItemSyncAt || null
+      },
+      customers: {
+        inFlight: !!_customersSyncPromise,
+        lastSyncAt: _lastCustomersSyncRunAt || null,
+        lastResult: _lastCustomersSyncResult,
+        incrementalSinceAt: _lastCustomerSyncAt || null
       }
     }));
     return;
@@ -4682,9 +4754,11 @@ const server = http.createServer(async (req, res) => {
       var mem = process.memoryUsage();
       console.log('[memcheck] uptime=' + Math.round(process.uptime()) + 's rss=' + Math.round(mem.rss / 1024 / 1024) + 'MB heapUsed=' + Math.round(mem.heapUsed / 1024 / 1024) + 'MB external=' + Math.round(mem.external / 1024 / 1024) + 'MB');
     }, 60000);
-    // First background Customers/Vendors sync shortly after boot (not
-    // immediately — give the server a moment to finish settling first),
-    // then on the regular interval after that.
+    // First background Vendors sync shortly after boot (not immediately —
+    // give the server a moment to finish settling first), then on the
+    // regular (slower) interval after that. Customers used to share this
+    // cycle too — see runCustomersBackgroundSync below for why it moved to
+    // its own faster, incremental one.
     setTimeout(() => {
       console.log('[memcheck] background sync starting, rss=' + Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB');
       runBackgroundSync()
@@ -4712,5 +4786,18 @@ const server = http.createServer(async (req, res) => {
         .catch(e => console.error('Items background sync error:', e.message));
     }, 20000);
     setInterval(() => { runItemsBackgroundSync().catch(e => console.error('Items background sync error:', e.message)); }, ITEMS_SYNC_INTERVAL_MS);
+    // Customers: same treatment as Items just above (own independent,
+    // incremental cycle on the same ITEMS_SYNC_INTERVAL_MS cadence) —
+    // staggered a bit later still so the three startup syncs (vendors,
+    // items, customers) don't all fire in the same instant. The FIRST run
+    // is always a full catalog pull (no _lastCustomerSyncAt yet), every
+    // run after that is incremental (see backgroundSyncCustomers).
+    setTimeout(() => {
+      console.log('[memcheck] customers sync starting, rss=' + Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB');
+      runCustomersBackgroundSync()
+        .then(() => console.log('[memcheck] customers sync finished, rss=' + Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB'))
+        .catch(e => console.error('Customers background sync error:', e.message));
+    }, 25000);
+    setInterval(() => { runCustomersBackgroundSync().catch(e => console.error('Customers background sync error:', e.message)); }, ITEMS_SYNC_INTERVAL_MS);
   });
 })();

@@ -4275,7 +4275,7 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
               +'<span style="width:'+ROUTE_MILES_TRAILING_ZONE_WIDTH_SHIPPED+'px;display:flex;align-items:center;justify-content:flex-end;gap:3px;flex-shrink:0">'
                 +_routeMilesRefreshBtnHtml(driverOrders,dName,dk)
                 +'<span style="display:flex;align-items:center;background:#fff;border:1px solid var(--line);border-radius:8px;padding:2px;flex-shrink:0">'
-                  +'<button title="Print this driver\'s route form only (deliveries/payments + returns — no product sheets, since these already shipped)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\',\''+esc(dk)+'\',true)" style="border:0;background:transparent;cursor:pointer;padding:3px 5px;color:var(--cold);font-size:17px;line-height:1;border-radius:5px">🖨</button>'
+                  +'<button title="Print this driver\'s route form only (deliveries/payments + returns — no product sheets, since these already shipped)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+esc(_jsStrEsc(dName))+'\',\''+esc(dk)+'\',true)" style="border:0;background:transparent;cursor:pointer;padding:3px 5px;color:var(--cold);font-size:17px;line-height:1;border-radius:5px">🖨</button>'
                 +'</span>'
               +'</span>'
             +'</div>'
@@ -4732,7 +4732,7 @@ function _renderManageDriversModal(){
             +'<input type="text" value="'+esc(d)+'" data-orig="'+esc(d)+'" class="driver-edit-input" style="flex:1;padding:6px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px;background:var(--panel);color:var(--ink)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.nextElementSibling.nextElementSibling.click();}"/>'
             +'<span style="color:var(--muted);font-size:11px;white-space:nowrap;min-width:56px;text-align:right">'+count+' order'+(count!==1?'s':'')+'</span>'
             +'<button class="btn btn-sm" title="Save rename" onclick="saveDriverRename(this)">💾</button>'
-            +'<button class="btn btn-sm" style="color:#b8460b" title="Delete driver" onclick="deleteDriverFromModal(\''+esc(d)+'\','+count+')">🗑</button>'
+            +'<button class="btn btn-sm" style="color:#b8460b" title="Delete driver" onclick="deleteDriverFromModal(\''+esc(_jsStrEsc(d))+'\','+count+')">🗑</button>'
           +'</div>';
         }).join('')
         +'</div>'
@@ -5136,8 +5136,8 @@ function _renderOrdersWeekSummary(){
               +'<span style="width:'+ROUTE_MILES_TRAILING_ZONE_WIDTH_RECEIVED+'px;display:flex;align-items:center;justify-content:flex-end;gap:3px;flex-shrink:0">'
                 +_routeMilesRefreshBtnHtml(driverOrders,dName,dk)
                 +'<span style="display:flex;align-items:center;gap:2px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:2px;flex-shrink:0">'
-                  +'<button title="Print this driver\'s route (form + orders)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName)+'\',\''+esc(dk)+'\')" style="border:0;background:transparent;cursor:pointer;padding:3px 5px;color:var(--cold);font-size:17px;line-height:1;border-radius:5px">🖨</button>'
-                  +'<button title="Print processing sheet for this driver only" onclick="event.stopPropagation();printProcessingSheet(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+_jsStrEsc(dName+' — Processing')+'\')" style="border:0;background:transparent;cursor:pointer;padding:3px 5px;color:#8a6d1a;font-size:17px;line-height:1;border-radius:5px">🏭</button>'
+                  +'<button title="Print this driver\'s route (form + orders)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+esc(_jsStrEsc(dName))+'\',\''+esc(dk)+'\')" style="border:0;background:transparent;cursor:pointer;padding:3px 5px;color:var(--cold);font-size:17px;line-height:1;border-radius:5px">🖨</button>'
+                  +'<button title="Print processing sheet for this driver only" onclick="event.stopPropagation();printProcessingSheet(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+esc(_jsStrEsc(dName+' — Processing'))+'\')" style="border:0;background:transparent;cursor:pointer;padding:3px 5px;color:#8a6d1a;font-size:17px;line-height:1;border-radius:5px">🏭</button>'
                 +'</span>'
               +'</span>'
             +'</div>'
@@ -8693,7 +8693,14 @@ function _srpComputeRows(){
     var outstanding=curInv.reduce(function(s,d){ return s+Number(d.Balance||0); },0);
     var collected=Math.max(0,sales-outstanding);
     var collectionRate=sales>0.004?(collected/sales):null;
-    var quota=(_srpConfig.repQuotas&&_srpConfig.repQuotas[rep])||_srpConfig.defaultQuota||1;
+    // `||` here would silently ignore an explicit 0 quota override (a
+    // manager zeroing out a rep's quota — e.g. on leave — falls back to
+    // defaultQuota instead, with no indication the override was dropped).
+    // hasOwnProperty makes an explicit 0 win while an unset rep still falls
+    // through to the default, same as srpSetRepQuota's own delete-on-blank
+    // semantics intend.
+    var _repQuotas=_srpConfig.repQuotas||{};
+    var quota=Object.prototype.hasOwnProperty.call(_repQuotas,rep)?_repQuotas[rep]:(_srpConfig.defaultQuota||1);
     var attainment=quota>0?(sales/quota):0;
     var salesRate=_srpTierRate(_srpConfig.salesTiers,attainment);
     var salesCommission=sales*salesRate;

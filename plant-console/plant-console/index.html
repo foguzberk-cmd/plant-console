@@ -2041,6 +2041,33 @@ function pollItemsFromServer(){
   }).catch(function(){ _itemsPollInFlight=false; });
 }
 setInterval(pollItemsFromServer,60000);
+// Same idea as pollItemsFromServer just above, for customers — see
+// runCustomersBackgroundSync in server.js, which now syncs customers on
+// the exact same independent, incremental, 5-minute cycle items use
+// (instead of the old client-triggered-only, always-full-pull sync).
+// Polling here much faster than that server cycle wouldn't surface
+// anything sooner regardless.
+var _customersPollInFlight=false;
+function pollCustomersFromServer(){
+  if(_customersPollInFlight) return;
+  if(currentSectionId!=='customers') return; // only bother while the Customers page is actually open
+  _customersPollInFlight=true;
+  fetch('/api/data/customers-only',{cache:'no-store'}).then(function(res){
+    return res.ok?res.json():null;
+  }).then(function(data){
+    _customersPollInFlight=false;
+    if(!data||!Array.isArray(data.customers)) return;
+    // Same cheap "did anything actually change" check as items: count
+    // changed, or the newest qbSynced timestamp among them moved forward.
+    var newest=data.customers.reduce(function(m,c){ return (c.qbSynced&&c.qbSynced>m)?c.qbSynced:m; },'');
+    var newestOld=customers.reduce(function(m,c){ return (c.qbSynced&&c.qbSynced>m)?c.qbSynced:m; },'');
+    if(data.customers.length===customers.length && newest===newestOld) return;
+    customers=data.customers;
+    safeSetLocal('pc_customers', JSON.stringify(customers));
+    if(typeof renderCustomersList==='function' && currentSectionId==='customers') renderCustomersList();
+  }).catch(function(){ _customersPollInFlight=false; });
+}
+setInterval(pollCustomersFromServer,60000);
 // DISABLED (Sep 2026): this automatic timer turned out to make a
 // pre-existing, serious server-side bug far more likely to actually
 // trigger — the generic push endpoint does a blind, unmerged overwrite of
@@ -2794,58 +2821,7 @@ async function qbSyncItemsCore(){
   return {ok:true, count:qbItems.length};
 }
 
-// Syncs the customer master list from QuickBooks — same shape/merge pattern
-// as qbSyncItemsCore, just for Customer records. This is a separate, manual
-// action (button in Customers), not part of the automatic
-// background item/document sync, since customers change far less often.
-//
-// Sales Rep is NOT pulled from QuickBooks — confirmed it isn't exposed via
-// the API at all (neither the bulk query nor a direct per-customer fetch
-// returns it, despite being visibly set in QuickBooks's own UI). It's
-// managed locally instead (see Customers), so this sync
-// preserves whatever salesRep is already stored per customer.
-//
-// Dun# is the same story — confirmed live (Aug 2026) that QuickBooks's
-// API never returns Customer CustomField data at all (bulk query OR
-// direct per-record fetch both come back empty, even for a customer
-// visibly showing Dun# set in QuickBooks's own UI). It's managed locally
-// instead (Customers, same as Sales Rep) — see
-// updateCustomerDunsNumber. This sync just carries forward whatever's
-// already stored, never touching it.
-async function qbSyncCustomersCore(){
-  var base=window.location.origin;
-  var resp;
-  try { resp=await fetch(base+'/api/qb/customers'); }
-  catch(e){ return {ok:false,error:'network error'}; }
-  var data;
-  try { data=await resp.json(); } catch(e){ data={}; }
-  if(!resp.ok || data.error){
-    return {ok:false, error:(data.error||resp.status), needsReconnect:(data.needsReconnect||resp.status===401)};
-  }
-  var qbCustomers=(data.QueryResponse&&data.QueryResponse.Customer)||[];
-  qbCustomers.forEach(function(qc){
-    var existing=customers.findIndex(function(x){return x.qbId===qc.Id});
-    var mapped={
-      id: existing>=0 ? customers[existing].id : 'cust_'+Date.now()+'_'+Math.random().toString(36).slice(2),
-      qbId: qc.Id,
-      // Kept in step with the server's own background sync and webhook
-      // handler (see server.js) — all three write paths need to agree on
-      // this or the webhook's staleness check goes wrong the next time
-      // ANY of them runs.
-      qbSyncToken: Number(qc.SyncToken||0),
-      name: qc.DisplayName||qc.FullyQualifiedName||qc.CompanyName||'',
-      active: qc.Active!==false,
-      salesRep: existing>=0 ? (customers[existing].salesRep||'') : '',
-      dunsNumber: existing>=0 ? (customers[existing].dunsNumber||'') : '',
-      balance: Number(qc.Balance||0)
-    };
-    if(existing>=0){ customers[existing]=mapped; } else { customers.push(mapped); }
-  });
-  saveCustomers();
-  return {ok:true, count:qbCustomers.length};
-}
-
-// Vendors — same idea as customer sync, but there's no dedicated
+// Vendors — same idea as customer sync used to be, but there's no dedicated
 // /api/qb/vendors endpoint, so this pages through the generic documents
 // endpoint instead (Vendor has no TxnDate, so omitting &from= just fetches
 // everything, which is what we want for a full name-list sync).
@@ -2891,7 +2867,7 @@ async function qbSyncVendorsCore(){
     var mapped={
       id: existing>=0 ? vendors[existing].id : 'vend_'+Date.now()+'_'+Math.random().toString(36).slice(2),
       qbId: qv.Id,
-      qbSyncToken: Number(qv.SyncToken||0), // see the matching comment in qbSyncCustomersCore
+      qbSyncToken: Number(qv.SyncToken||0), // see the matching comment in backgroundSyncCustomers (server.js)
       name: qv.DisplayName||qv.CompanyName||'',
       active: qv.Active!==false,
       purchRep: finalPurchRep
@@ -3557,7 +3533,7 @@ function select(id){
   else if(id==='scalelog') renderScaleLog();
   else if(id==='dashboard') renderDashboard();
   else if(id==='reports') renderReports();
-  else if(id==='customers') renderCustomersPage();
+  else if(id==='customers'){ renderCustomersPage(); pollCustomersFromServer(); }
   else if(id==='orders') renderOrdersPage();
   else view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p><div class="empty"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICON[id]}</svg></div><div><h3>${s.empty[0]}</h3><p>${s.empty[1]}</p></div></div>`;
   view.focus({preventScroll:true});
@@ -6324,7 +6300,7 @@ function renderReports(){
 // Customer Payments Report — pulls QuickBooks Payment records for a date
 // range and groups them either by customer or by Sales Person (a custom
 // field read from each customer's QuickBooks record — see
-// qbSyncCustomersCore for how that's captured, since QuickBooks's bulk
+// backgroundSyncCustomers in server.js for how that's captured, since QuickBooks's bulk
 // query doesn't reliably return it). Uses the same page-at-a-time fetch
 // pattern as the document sync above, so it stays fast and reliable even
 // with thousands of payments.
@@ -7441,7 +7417,7 @@ function _computeCollectionGroupsUncached(){
   }
   // Dun# is a plain customer attribute (like the name), not something
   // computed from transaction data — pulled straight from the locally
-  // synced customer record (see qbSyncCustomersCore), same lookup pattern
+  // synced customer record (see backgroundSyncCustomers in server.js), same lookup pattern
   // as Sales Person just above.
   function dunOfCust(qbCustId){
     if(!qbCustId) return '';
@@ -8674,7 +8650,7 @@ function _srpComputeRows(){
   // Keyed by qbId (the actual QuickBooks Customer.Id, which is what an
   // Invoice's CustomerRef.value contains), NOT the local `id` field —
   // `id` is a client-generated "cust_<timestamp>_<random>" string used
-  // only to key this app's own records (see qbSyncCustomersCore), and
+  // only to key this app's own records (see backgroundSyncCustomers in server.js), and
   // never matches anything QuickBooks returns.
   customers.forEach(function(c){
     var rep=(c&&c.salesRep||'').trim();
@@ -15622,42 +15598,52 @@ async function renderCustomersPanel(){
   _renderCustomersPanelBody(panel);
   _renderBackgroundSyncStatusInto('cust-bgsync-status');
 }
+// Same toolbar-then-filters-then-list layout as Items (renderItemsView) —
+// filters and actions live at the top, always rendered regardless of
+// whether any customers exist yet, with the empty state handled inside
+// the list area itself (renderCustomersList) instead of replacing the
+// whole panel — matching how renderItemsTable handles zero items.
 function _renderCustomersPanelBody(panel){
-  if(!customers.length){
-    panel.innerHTML='<div class="txn-empty" style="margin:0"><p>No customers synced yet.</p></div>'
-      +'<button class="btn btn-primary btn-sm" id="custSyncBtn" onclick="qbSyncCustomers()" style="margin-top:12px">'
-      +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>'
-      +'Sync from QuickBooks</button>'
-      +'<div id="custSyncStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>';
-    return;
-  }
   if(!_custPanelDept || DEPARTMENTS.indexOf(_custPanelDept)<0) _custPanelDept=DEPARTMENTS[0];
   _custDraft=(customerAllowed[_custPanelDept]||[]).slice();
   panel.innerHTML=`
-    <div id="cust-bgsync-status" style="font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-bottom:10px">Checking automatic sync status…</div>
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
-      <label style="font-size:12px;color:var(--muted);white-space:nowrap">Department:</label>
-      <select id="cust-dept" onchange="onCustomerDeptChange()" style="padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink)">
+    <div class="txn-toolbar">
+      <span id="custStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted)">${customers.length} customer${customers.length!==1?'s':''} on file</span>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="custAutoSyncNote" title="Customers now sync automatically from QuickBooks — no manual sync needed. The server checks for anything changed every 5 minutes, and this page checks for updates every minute while it's open. Click 'Sync now' for the real, right-now numbers instead of waiting." style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;color:var(--muted);padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);cursor:help">
+          <span style="width:7px;height:7px;border-radius:50%;background:#3a9e5f;flex-shrink:0"></span>
+          Auto-synced from QuickBooks
+        </span>
+        <button class="btn btn-primary" id="custSyncBtn" onclick="qbSyncCustomers()" title="Forces the automatic background sync to run right now instead of waiting for the next cycle">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          Sync now
+        </button>
+        <button class="btn" id="custOrphanBtn" onclick="findOrphanedCustomers()" title="Checks every customer against what the CURRENTLY connected QuickBooks company actually has — finds duplicates and leftovers from a wrong/old QuickBooks connection (like the ALL-CAPS 'AMHERST HALAL MARKET' next to the real 'Amherst Halal Market')">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          Find orphaned customers
+        </button>
+      </div>
+    </div>
+    <div id="cust-bgsync-status" style="font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-bottom:14px">Checking automatic sync status…</div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;align-items:center">
+      <div style="display:flex;align-items:center;gap:8px;background:var(--panel);border:1.5px solid var(--line);border-radius:8px;padding:7px 14px">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;stroke:var(--muted)"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="cust-filter" type="text" placeholder="Search customers or Sales Rep…" oninput="renderCustomersList()" style="border:none;background:transparent;outline:none;font-family:var(--mono);font-size:12px;width:200px;color:var(--ink)"/>
+      </div>
+      <select id="cust-dept" onchange="onCustomerDeptChange()" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);outline:none">
         ${DEPARTMENTS.map(function(d){return '<option value="'+esc(d)+'" '+(d===_custPanelDept?'selected':'')+'>'+esc(d)+'</option>';}).join('')}
       </select>
-      <span style="font-size:11px;color:var(--muted);font-style:italic">Each department has its own customer list — this only affects who shows up when printing for "${esc(_custPanelDept)}".</span>
-    </div>
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
-      <input type="text" id="cust-filter" placeholder="Search customers or Sales Rep..." oninput="renderCustomersList()" style="flex:1;min-width:200px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
       <button class="btn btn-sm" onclick="customerSelectAll(true)">Select all</button>
       <button class="btn btn-sm" onclick="customerSelectAll(false)">Clear all</button>
-      <button class="btn btn-sm" id="custSyncBtn" onclick="qbSyncCustomers()" title="Pull the latest customer list from QuickBooks">
-        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-      </button>
-      <button class="btn btn-sm" id="custOrphanBtn" onclick="findOrphanedCustomers()" title="Checks every customer against what the CURRENTLY connected QuickBooks company actually has — finds duplicates and leftovers from a wrong/old QuickBooks connection (like the ALL-CAPS 'AMHERST HALAL MARKET' next to the real 'Amherst Halal Market')">
-        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-      </button>
-      <span id="cust-count" style="font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap"></span>
+      <span style="font-size:11px;color:var(--muted);font-style:italic">Each department has its own customer list — this only affects who shows up when printing for "${esc(_custPanelDept)}".</span>
     </div>
-    <div id="customersList" style="max-height:420px;overflow-y:auto;border:1px solid var(--line);border-radius:10px"></div>
-    <div style="display:flex;align-items:center;gap:12px;margin-top:12px">
+    <div id="customersTableWrap">
+      <div id="customersList" style="max-height:420px;overflow-y:auto;border:1px solid var(--line);border-radius:10px"></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px">
       <button class="btn btn-primary btn-sm" onclick="saveCustomerAllowedForDept()">Save changes for ${esc(_custPanelDept)}</button>
       <span id="cust-save-status" style="font-family:var(--mono);font-size:11px;color:var(--muted)"></span>
+      <span id="cust-count" style="font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap"></span>
     </div>
     <div id="custSyncStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px"></div>
     <div style="margin-top:24px;border:1px dashed var(--line);border-radius:12px;padding:14px">
@@ -15680,6 +15666,12 @@ function onCustomerDeptChange(){
 function renderCustomersList(){
   var listEl=document.getElementById('customersList');
   if(!listEl) return;
+  if(!customers.length){
+    listEl.innerHTML='<div class="txn-empty"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><p>No customers synced yet. Click <strong>Sync now</strong> above to import from QuickBooks.</p></div>';
+    var countElEmpty=document.getElementById('cust-count');
+    if(countElEmpty) countElEmpty.textContent='';
+    return;
+  }
   var q=(document.getElementById('cust-filter')&&document.getElementById('cust-filter').value||'').toLowerCase().trim();
   var shown=customers.filter(function(c){ return !q || (c.name||'').toLowerCase().includes(q) || (c.salesRep||'').toLowerCase().includes(q); });
   shown.sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
@@ -16088,17 +16080,32 @@ async function saveCustomerAllowedForDept(){
     }
   }
 }
+// Manual escape hatch — same reasoning as syncEverythingNow's items call:
+// customers now sync automatically in the background (server-side,
+// incremental, same cadence as items — see runCustomersBackgroundSync in
+// server.js), so this just forces that same sync to run right now instead
+// of waiting for the next tick, and waits for it to actually finish
+// before updating the list.
 async function qbSyncCustomers(){
   var btn=document.getElementById('custSyncBtn');
   var status=document.getElementById('custSyncStatus');
   if(btn) btn.disabled=true;
   if(status) status.textContent='Syncing customers from QuickBooks…';
-  var result=await qbSyncCustomersCore();
+  var result;
+  try{
+    var res=await fetch('/api/data/customers-sync-now',{method:'POST'});
+    var data=await res.json();
+    result=(res.ok&&data.success)
+      ? {ok:true, count:(data.customers||[]).length, customers:data.customers}
+      : {ok:false, error:(data&&data.error)||'unknown error'};
+  }catch(e){ result={ok:false, error:'could not reach the server'}; }
   if(btn) btn.disabled=false;
   if(!result.ok){
-    if(status) status.textContent='Sync failed: '+(result.needsReconnect?'QuickBooks connection expired — reconnect from the Items tab.':result.error);
+    if(status) status.textContent='Sync failed: '+result.error;
     return;
   }
+  customers=result.customers||[];
+  safeSetLocal('pc_customers', JSON.stringify(customers));
   // The Customer Payments report caches its computed groups, keyed only off
   // the payments data and group mode — it has no idea the customer list
   // itself just changed underneath it (Dun#, Sales Rep, etc.), so without
@@ -16106,7 +16113,7 @@ async function qbSyncCustomers(){
   // a sync that pulled brand new data. Clearing it forces a fresh compute
   // the next time that report renders.
   _collGroupsCache=null;
-  if(status) status.textContent=result.count+' customer'+(result.count!==1?'s':'')+' synced.';
+  if(status) status.textContent=result.count+' customer'+(result.count!==1?'s':'')+' on file — just synced.';
   renderCustomersPanel();
 }
 

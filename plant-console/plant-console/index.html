@@ -637,7 +637,8 @@ const ICON={
   reports:'<path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/>',
   settings:'<circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
   legal:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6M9 9h1"/>',
-  orders:'<rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h3.5a1 1 0 0 1 .9.55L22 12v4a1 1 0 0 1-1 1h-1"/><circle cx="6" cy="18.5" r="1.8"/><circle cx="17.5" cy="18.5" r="1.8"/>'
+  orders:'<rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h3.5a1 1 0 0 1 .9.55L22 12v4a1 1 0 0 1-1 1h-1"/><circle cx="6" cy="18.5" r="1.8"/><circle cx="17.5" cy="18.5" r="1.8"/>',
+  customers:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>'
 };
 const TYPE_ICON={
   cold:'<path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>',
@@ -661,6 +662,8 @@ const PERMISSIONS=[
   {id:'viewOrders',   label:'View Orders section',   desc:'See the Orders tab at all (turning this off hides everything below too)',group:'Orders'},
   {id:'createOrders', label:'Create new orders',      desc:'Add a new customer order',group:'Orders'},
   {id:'editOrders',   label:'Edit & match orders',    desc:'Edit an existing order, and run "Match with QuickBooks" to move received orders to Shipped',group:'Orders'},
+  // --- Customers (moved out of Settings to its own top-level section) ---
+  {id:'viewCustomers', label:'View Customers section', desc:'See the Customers tab at all (per-department allow-lists, Sales Rep/Dun# editing)',group:'Customers'},
   // --- Reports (tab-level access — each report tab can be shown/hidden independently) ---
   {id:'viewReports',           label:'View Reports section', desc:'See the Reports tab at all (turning this off hides every report below too)',group:'Reports'},
   {id:'viewReportsCollection', label:'— Customer Payments',  desc:'View the Customer Payments report',group:'Reports'},
@@ -691,7 +694,7 @@ const PERMISSIONS=[
 // shipped, since none of them have ever had these specific keys set
 // before. They only actually restrict someone once an admin explicitly
 // unchecks the box for them in the new Permissions Matrix.
-const VIEW_PERMS_DEFAULT_ALLOW=['viewDashboard','viewItems','viewTxns','viewScaleLog','viewOrders','viewReports','viewReportsCollection','viewReportsCashflow','viewReportsChecks','viewReportsInventory','viewReportsAudit','viewReportsPurchasing','viewReportsSalesByCustomer','viewReportsSalesPlan','viewSettings','viewLegal'];
+const VIEW_PERMS_DEFAULT_ALLOW=['viewDashboard','viewItems','viewTxns','viewScaleLog','viewOrders','viewCustomers','viewReports','viewReportsCollection','viewReportsCashflow','viewReportsChecks','viewReportsInventory','viewReportsAudit','viewReportsPurchasing','viewReportsSalesByCustomer','viewReportsSalesPlan','viewSettings','viewLegal'];
 function hasViewPerm(permId){
   if(!currentUser) return false;
   if(currentUser.role==='admin') return true;
@@ -714,6 +717,7 @@ const SECTIONS=[
   {id:'scalelog',label:'Scale Log',kicker:'Production',title:'Scale Log',lede:'Print product labels and log every package scaled — date, time, product, and weight captured the moment a label is printed.'},
   {id:'reports',label:'Reports',kicker:'Insight',title:'Reports',lede:'On-hand summaries, throughput, and traceability rolled up by source, product class, and storage location.',empty:['No reports built yet.','Once items and transactions exist, summaries and breakdowns will appear here.']},
   {id:'orders',label:'Orders',kicker:'Fulfillment',title:'Orders',lede:'Customer orders — what, how much, and who\'s driving it.'},
+  {id:'customers',label:'Customers',kicker:'Relationships',title:'Customers',lede:'Per-department customer allow-lists for the Scale Log\'s Customer dropdown, plus Sales Rep and Dun# assignment.'},
   {id:'settings',label:'Settings',kicker:'Configuration',title:'Settings',lede:'Storage locations, users, and system configuration for the entire console.'},
   {id:'legal',label:'Legal Documents',kicker:'Compliance',title:'Legal Documents',lede:'Certificates, inspection records, HACCP plans, and licenses — stored, dated, and tracked for renewal.',empty:['No documents on file.','Upload and tag compliance records here to keep them in one place.']}
 ];
@@ -2792,20 +2796,20 @@ async function qbSyncItemsCore(){
 
 // Syncs the customer master list from QuickBooks — same shape/merge pattern
 // as qbSyncItemsCore, just for Customer records. This is a separate, manual
-// action (button in Settings → Customers), not part of the automatic
+// action (button in Customers), not part of the automatic
 // background item/document sync, since customers change far less often.
 //
 // Sales Rep is NOT pulled from QuickBooks — confirmed it isn't exposed via
 // the API at all (neither the bulk query nor a direct per-customer fetch
 // returns it, despite being visibly set in QuickBooks's own UI). It's
-// managed locally instead (see Settings → Customers), so this sync
+// managed locally instead (see Customers), so this sync
 // preserves whatever salesRep is already stored per customer.
 //
 // Dun# is the same story — confirmed live (Aug 2026) that QuickBooks's
 // API never returns Customer CustomField data at all (bulk query OR
 // direct per-record fetch both come back empty, even for a customer
 // visibly showing Dun# set in QuickBooks's own UI). It's managed locally
-// instead (Settings → Customers, same as Sales Rep) — see
+// instead (Customers, same as Sales Rep) — see
 // updateCustomerDunsNumber. This sync just carries forward whatever's
 // already stored, never touching it.
 async function qbSyncCustomersCore(){
@@ -3508,7 +3512,7 @@ const nav=document.getElementById('nav');
 const view=document.getElementById('view');
 const crumb=document.getElementById('crumb');
 
-const SECTION_VIEW_PERM={dashboard:'viewDashboard',items:'viewItems',transactions:'viewTxns',scalelog:'viewScaleLog',orders:'viewOrders',reports:'viewReports',settings:'viewSettings',legal:'viewLegal'};
+const SECTION_VIEW_PERM={dashboard:'viewDashboard',items:'viewItems',transactions:'viewTxns',scalelog:'viewScaleLog',orders:'viewOrders',customers:'viewCustomers',reports:'viewReports',settings:'viewSettings',legal:'viewLegal'};
 function buildNav(){
   nav.innerHTML='<div class="nav-kicker">Menu</div>';
   SECTIONS.forEach(s=>{
@@ -3553,6 +3557,7 @@ function select(id){
   else if(id==='scalelog') renderScaleLog();
   else if(id==='dashboard') renderDashboard();
   else if(id==='reports') renderReports();
+  else if(id==='customers') renderCustomersPage();
   else if(id==='orders') renderOrdersPage();
   else view.innerHTML=`<div class="eyebrow">${s.kicker}</div><h2>${s.title}</h2><p class="lede">${s.lede}</p><div class="empty"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICON[id]}</svg></div><div><h3>${s.empty[0]}</h3><p>${s.empty[1]}</p></div></div>`;
   view.focus({preventScroll:true});
@@ -5718,7 +5723,7 @@ function showCreateInvoiceModal(orderId){
     +'<h3 style="margin:0 0 4px">Create QuickBooks Invoice</h3>'
     +'<p style="color:var(--muted);font-size:13px;margin:0 0 14px">'+esc(o.customer||'(no customer)')+' · '+esc(o.date||'')+'</p>'
     +(!_invoicePreviewData.customerMatch
-        ? '<div style="background:#fdecea;border:1px solid #f0b3ac;border-radius:8px;padding:10px 12px;font-size:12.5px;color:#a4302a;margin-bottom:14px">⚠ No matching QuickBooks customer found for "'+esc(o.customer||'')+'". Sync Customers in Settings, or check the name matches exactly, before this can be invoiced.</div>'
+        ? '<div style="background:#fdecea;border:1px solid #f0b3ac;border-radius:8px;padding:10px 12px;font-size:12.5px;color:#a4302a;margin-bottom:14px">⚠ No matching QuickBooks customer found for "'+esc(o.customer||'')+'". Sync Customers, or check the name matches exactly, before this can be invoiced.</div>'
         : '')
     +'<div id="invoicePreviewLines" style="border:1px solid var(--line);border-radius:9px;overflow:hidden;margin-bottom:10px"></div>'
     +'<div style="display:flex;justify-content:flex-end;font-size:14px;font-weight:700;margin-bottom:16px">Total: <span id="invoicePreviewTotal" style="margin-left:6px">$0.00</span></div>'
@@ -8537,7 +8542,7 @@ window.exportSalesByProductsCSV=exportSalesByProductsCSV;
    look like" view over a period you pick, with every rate/tier/bonus
    editable so it can be tuned to match a real plan once one is finalized.
    Rep assignment comes from the existing per-customer Sales Rep field
-   (Settings → Customers) — nothing new to configure there. */
+   (Customers) — nothing new to configure there. */
 var _srpConfig=(function(){
   var defaults={
     defaultQuota:50000,
@@ -8769,7 +8774,7 @@ function renderSalesRepPlanReport(){
   }
   var rows=_srpComputeRows();
   if(!rows.length){
-    html+='<div class="txn-empty"><p>No customers have a Sales Rep assigned yet — set it under Settings → Customers.</p></div>';
+    html+='<div class="txn-empty"><p>No customers have a Sales Rep assigned yet — set it under Customers.</p></div>';
     bodyEl.innerHTML=html;
     return;
   }
@@ -8960,7 +8965,7 @@ function renderCollectionReport(){
       };
       case 'dun': return {
         gridTemplate:'var(--cw-dun)',
-        header:function(){ return headerCell('Dun#','dun','dun',"D-U-N-S number — entered manually in Settings → Customers (QuickBooks's API doesn't expose this field, so it isn't pulled automatically)."); },
+        header:function(){ return headerCell('Dun#','dun','dun',"D-U-N-S number — entered manually in Customers (QuickBooks's API doesn't expose this field, so it isn't pulled automatically)."); },
         cell:function(e){ return '<span style="display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:center;font-family:var(--mono);font-size:13px;font-weight:600;color:'+(e.dun?'var(--ink)':'var(--line)')+'">'+esc(e.dun||'-')+'</span>'; }
       };
       case 'actions': return {
@@ -15229,7 +15234,7 @@ function renderSettings(){
     <div class="settings-layout">
 
       <div class="settings-tabbar" style="display:flex;gap:4px;overflow-x:auto;border-bottom:1.5px solid var(--line);margin-bottom:18px;padding-bottom:0">
-        ${[['account','My account'],['storage','Storage locations'],['backup','Backup & restore'],['users','Users & permissions'],['permMatrix','Permissions matrix'],['labeling','Labeling'],['customers','Customers'],['vendors','Vendors'],['labelTemplates','Label Templates']]
+        ${[['account','My account'],['storage','Storage locations'],['backup','Backup & restore'],['users','Users & permissions'],['permMatrix','Permissions matrix'],['labeling','Labeling'],['vendors','Vendors'],['labelTemplates','Label Templates']]
           .filter(function(t){ return t[0]!=='permMatrix' || (currentUser&&currentUser.role==='admin'); })
           .map(function(t){ return '<button id="stab-btn-'+t[0]+'" class="btn" onclick="switchSettingsTab(\''+t[0]+'\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">'+t[1]+'</button>'; }).join('')}
       </div>
@@ -15323,13 +15328,6 @@ function renderSettings(){
         <div id="labelingPanel"></div>
       </div>
 
-      <div class="settings-section" id="stab-customers">
-        <div class="settings-section-head">
-          <div><h3>Customers</h3><p>Maintain the list of customers available in the Scale Log's Customer dropdown when printing a label.</p></div>
-        </div>
-        <div id="customersPanel"></div>
-      </div>
-
       <div class="settings-section" id="stab-vendors">
         <div class="settings-section-head">
           <div><h3>Vendors</h3><p>Assign each vendor to a department, so Scheduled Payments' vendor bills table can group them the way your plant is organized.</p></div>
@@ -15350,7 +15348,6 @@ function renderSettings(){
   renderUserList();
   renderPermissionsMatrix();
   renderLabelingPanel();
-  renderCustomersPanel();
   renderVendorsPanel();
   renderLabelTemplatesPanel();
   renderBackupsPanel();
@@ -15361,7 +15358,7 @@ function renderSettings(){
 // so saving a change doesn't kick you back to "My account" every time.
 var _settingsActiveTab='account';
 function switchSettingsTab(tab){
-  var tabKeys=['account','storage','backup','users','permMatrix','labeling','customers','vendors','labelTemplates'];
+  var tabKeys=['account','storage','backup','users','permMatrix','labeling','vendors','labelTemplates'];
   if(tab==='permMatrix' && !(currentUser&&currentUser.role==='admin')) tab='account'; // that tab/button doesn't exist for non-admins
   _settingsActiveTab=tab;
   tabKeys.forEach(function(t){
@@ -15597,6 +15594,17 @@ async function _renderBackgroundSyncStatusInto(elId){
     if(r&&r.vendors) parts.push('Vendors '+(r.vendors.ok?('✓ '+r.vendors.count):'✗ failed'));
     el.textContent='Auto-synced '+_relativeTimeAgo(status.lastSyncAt)+(parts.length?' — '+parts.join(', '):'')+(status.inFlight?' (syncing now…)':'');
   }catch(e){ /* leave the placeholder text as-is on failure — not worth surfacing an error for a status line */ }
+}
+// Top-level Customers page (moved here from a Settings sub-tab) — same
+// header pattern as the other full-page sections (renderOrdersPage,
+// renderReports): pull kicker/title/lede from this section's SECTIONS
+// entry, then hand off to renderCustomersPanel() for the actual content,
+// unchanged from when it lived inside Settings.
+function renderCustomersPage(){
+  var s=SECTIONS.find(function(x){return x.id==='customers';});
+  view.innerHTML='<div class="eyebrow">'+s.kicker+'</div><h2>'+s.title+'</h2><p class="lede">'+s.lede+'</p>'
+    +'<div id="customersPanel"></div>';
+  renderCustomersPanel();
 }
 async function renderCustomersPanel(){
   var panel=document.getElementById('customersPanel');
@@ -17507,7 +17515,7 @@ function renderScaleLog(){
             <input type="text" id="sl-customer-search" class="item-search-input" placeholder="Search customer..." autocomplete="off" value="${esc(_slSeriesTotal>1?_slSeriesCustomer:'')}" oninput="filterScaleCustomers();updateLabelPreview()" onfocus="showScaleCustomerDropdown()" onblur="hideCustomerSugg()"/>
             <input type="hidden" id="sl-customer" value="${esc(_slSeriesTotal>1?_slSeriesCustomer:'')}"/>
           </div>
-          ${!customers.length?'<div style="font-size:11px;color:var(--muted);margin-top:5px">No customers synced yet — go to <strong>Settings → Customers</strong> and click Sync from QuickBooks.</div>':''}
+          ${!customers.length?'<div style="font-size:11px;color:var(--muted);margin-top:5px">No customers synced yet — go to <strong>Customers</strong> and click Sync from QuickBooks.</div>':''}
         </div>
         <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:6px" onclick="printScaleLabel()" title="Waits for the server to confirm the save before printing — every device sees the same record">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
@@ -17943,18 +17951,18 @@ function renderScaleCustomerSuggestions(q){
   sugg.style.width='auto';
   sugg.style.minWidth='0';
   if(!customers.length){
-    sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No customers synced yet — run Sync from QuickBooks in Settings → Customers.</div>';
+    sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No customers synced yet — run Sync from QuickBooks in Customers.</div>';
     wrap.appendChild(sugg);
     return;
   }
   // Only customers permitted to appear for the CURRENTLY SELECTED
-  // department (set per-department in Settings → Customers). If that
+  // department (set per-department in Customers). If that
   // department has no allow-list configured yet, fall back to all synced
   // customers — same fallback rule used for labelAllowed/products.
   var deptCustomerAllowed=customerAllowed[_slPrintDept]||[];
   var allowed=deptCustomerAllowed.length ? customers.filter(function(c){return deptCustomerAllowed.indexOf(c.id)>=0;}) : customers;
   if(deptCustomerAllowed.length && !allowed.length){
-    sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No customers are enabled for '+esc(_slPrintDept||'this department')+'. Set them in Settings → Customers.</div>';
+    sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No customers are enabled for '+esc(_slPrintDept||'this department')+'. Set them in Customers.</div>';
     wrap.appendChild(sugg);
     return;
   }

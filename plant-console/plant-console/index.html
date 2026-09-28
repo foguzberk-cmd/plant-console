@@ -930,7 +930,7 @@ function saveStorages(){safeSetLocal('pc_storages',JSON.stringify(storages));pus
 // (where callers should await it) and from older fire-and-forget call sites
 // (which still work fine — they just won't wait for confirmation).
 async function saveTxns(){
-  safeSetLocal('pc_transactions',JSON.stringify(transactions));
+  if(!_localQuotaFailed.pc_transactions) safeSetLocal('pc_transactions',JSON.stringify(transactions));
   _itemsTransactionsDirty=true; // a transaction was just added/edited/removed manually — this push needs to carry it
   _writeInFlight++;
   var ok=false;
@@ -1067,10 +1067,17 @@ function fmtDateObjUS(d){
 // progress (e.g. a sync). localStorage here is just a local cache/fallback —
 // the shared server-side store (see /api/data in server.js) is the real
 // source of truth — so a failure to write it locally should never be fatal.
+// Keys that already failed to fit in localStorage this session (Sep 2026,
+// browser out-of-memory fix). The full items/transactions arrays are far
+// bigger than the browser's local storage quota, so every attempt to cache
+// them turned a multi-MB JSON.stringify into wasted work that then failed
+// anyway. Callers check this before stringifying the big collections.
+var _localQuotaFailed={};
 function safeSetLocal(key,value){
   try{
     localStorage.setItem(key,value);
   }catch(e){
+    _localQuotaFailed[key]=true;
     console.warn('localStorage quota exceeded saving "'+key+'" ('+((value||'').length/1024).toFixed(0)+'KB) — data is still saved to the server, just not cached locally in this browser.',e);
   }
 }
@@ -1354,7 +1361,19 @@ function rerenderCurrentSection(){
 // items and transactions (the multi-MB, 45,000+-line collections). Reuses
 // the exact same per-field merge/grace-window logic as pullFromServer below
 // for the fields they share, just without the cost of the huge arrays.
+// In-flight tracking (Sep 2026, browser out-of-memory fix): none of the
+// background loops used to check whether their previous run had finished.
+// On a slow connection or a busy tablet a run could take longer than its
+// interval, so new runs started on top of old ones and several full copies
+// of the dataset sat in memory at once until the tab crashed. The timers
+// below now skip their turn while a previous run is still going.
+var _smallPullInFlight=0, _fullPullInFlight=0, _pushPending=0;
 async function pullSmallFromServer(){
+  _smallPullInFlight++;
+  try{ return await _pullSmallFromServerImpl(); }
+  finally{ _smallPullInFlight--; }
+}
+async function _pullSmallFromServerImpl(){
   if(!currentUser) return false;
   if(__syncBusy){ return false; }
   if(_writeInFlight){ return false; }
@@ -1445,7 +1464,18 @@ async function pullSmallFromServer(){
     return false;
   }
 }
-async function pullFromServer(){
+// Version tag of the last full dataset this tab received and processed.
+// The server answers "304 Not Modified" (no body) when nothing changed, so
+// the 20s full pull costs a few bytes instead of the whole dataset. Dropped
+// every 10 minutes so the tab still does a full re-sync periodically.
+var _fullPullEtag='', _fullPullEtagAt=0;
+var FULL_PULL_FORCE_REFRESH_MS=10*60*1000;
+async function pullFromServer(opts){
+  _fullPullInFlight++;
+  try{ return await _pullFromServerImpl(opts||{}); }
+  finally{ _fullPullInFlight--; }
+}
+async function _pullFromServerImpl(opts){
   if(!currentUser) return false;
   // Never pull while a sync is in progress — the shared server copy is stale
   // (or still empty, on a first-ever sync) compared to what's being built up
@@ -1455,9 +1485,14 @@ async function pullFromServer(){
   if(_writeInFlight){ logSync('PULL skipped (write in flight, count='+_writeInFlight+')'); return false; }
   logSync('PULL start (local scaleLogs='+scaleLogs.length+', guarded ids=['+Object.keys(_deletedScaleLogIds).join(',')+'])');
   try{
-    var res=await fetchWithTimeout(SYNC_URL+'?_ts='+Date.now(),{cache:'no-store',headers:{'Cache-Control':'no-cache, no-store, must-revalidate','Pragma':'no-cache'}});
+    var fullHeaders={'Cache-Control':'no-cache, no-store, must-revalidate','Pragma':'no-cache'};
+    var useEtag=_fullPullEtag && !opts.force && (Date.now()-_fullPullEtagAt)<FULL_PULL_FORCE_REFRESH_MS;
+    if(useEtag) fullHeaders['If-None-Match']=_fullPullEtag;
+    var res=await fetchWithTimeout(SYNC_URL+'?_ts='+Date.now(),{cache:'no-store',headers:fullHeaders});
     if(res.status===401){ forceLogout(); return false; }
+    if(res.status===304) return true; // this tab already has the current data
     if(!res.ok) return false;
+    var receivedEtag=res.headers.get('ETag')||'';
     var data=await res.json();
     if(!data||typeof data!=='object') return false;
     // IMPORTANT: an empty array from the server must never wipe out data we
@@ -1647,8 +1682,8 @@ async function pullFromServer(){
     safeSetLocal('pc_vendor_departments',JSON.stringify(_vendorDepartments));
     safeSetLocal('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates));
     safeSetLocal('pc_storages',JSON.stringify(storages));
-    safeSetLocal('pc_items',JSON.stringify(items));
-    safeSetLocal('pc_transactions',JSON.stringify(transactions));
+    if(!_localQuotaFailed.pc_items) safeSetLocal('pc_items',JSON.stringify(items));
+    if(!_localQuotaFailed.pc_transactions) safeSetLocal('pc_transactions',JSON.stringify(transactions));
     // The dashboard/transactions view may have already rendered from stale
     // (or empty, on first load) local data before this pull finished — make
     // sure whichever of those is currently on screen reflects what we just
@@ -1674,6 +1709,9 @@ async function pullFromServer(){
     if(serverIsMissingData){
       _lastPushedSnapshot=''; // force the next push through even if nothing local changed
       pushToServer();
+      _fullPullEtag=''; // server is about to change — don't trust this version
+    } else {
+      _fullPullEtag=receivedEtag; _fullPullEtagAt=Date.now();
     }
     return true;
   }catch(e){
@@ -1741,10 +1779,11 @@ var _pushChain=Promise.resolve();
 // literally everything else in the snapshot.
 var _itemsTransactionsDirty=false;
 function pushToServer(){
+  _pushPending++;
   _pushChain=_pushChain.then(_pushToServerImpl).catch(function(e){
     console.error('Push to server failed:', e);
     return false;
-  });
+  }).then(function(r){ _pushPending--; return r; });
   return _pushChain;
 }
 var _lastPushFailureDetail=''; // real diagnostic detail from the most recent failed push
@@ -1903,6 +1942,7 @@ async function _pushToServerImpl(){
 function forceLogout(){
   if(!currentUser) return;
   currentUser=null;
+  _fullPullEtag='';
   var appShell=document.getElementById('appShell');
   var loginScreen=document.getElementById('loginScreen');
   if(appShell) appShell.classList.remove('visible');
@@ -1974,6 +2014,7 @@ restoreSession();
 // "check what's new" step could still land in the exact instant a delete
 // is being confirmed and interfere with it.
 function ambientPushIfIdle(){
+  if(_pushPending>0) return; // previous push still running — don't stack another behind it
   if(_writeInFlight){ logSync('Ambient push skipped (write in flight, count='+_writeInFlight+')'); return; }
   pushToServer().catch(function(){});
 }
@@ -1996,11 +2037,14 @@ function ambientPushIfIdle(){
 // explicit sync actions, which already update the syncing device's own
 // local state directly, so other devices just need eventual consistency,
 // not sub-2-second latency on a multi-MB payload.
-setInterval(pullSmallFromServer,1500);
-setInterval(pullFromServer,20000);
+// Timers skip their turn while the tab is hidden (minimized, another tab
+// in front, screen off) and while their previous run is still going. The
+// visibilitychange handler below catches up immediately on return.
+setInterval(function(){ if(document.hidden||_smallPullInFlight) return; pullSmallFromServer(); },1500);
+setInterval(function(){ if(document.hidden||_fullPullInFlight) return; pullFromServer(); },20000);
 // Safety-net push in case some part of the app saves data without going
 // through saveStorages/saveTxns/saveUsers.
-setInterval(ambientPushIfIdle,1500);
+setInterval(function(){ if(document.hidden) return; ambientPushIfIdle(); },1500);
 // Picks up whatever the server's own background QuickBooks sync has
 // found (see backgroundSyncItems in server.js) — items now update
 // automatically instead of needing a manual "Quick sync"/"Full sync"
@@ -2307,7 +2351,13 @@ document.addEventListener('visibilitychange',function(){
     // until something else happens to trigger a push. Coming back into
     // view is exactly the moment to make sure anything pending goes out.
     ambientPushIfIdle();
-    pullFromServer();
+    if(!_smallPullInFlight) pullSmallFromServer();
+    if(!_fullPullInFlight) pullFromServer();
+    if(typeof _chatPollTimer!=='undefined' && _chatPollTimer) _chatFetch(false);
+  } else if(currentUser){
+    // Going hidden: send anything pending now, since the timers pause
+    // while the tab is hidden.
+    pushToServer().catch(function(){});
   }
 });
 // ===== END SHARED SYNC =====
@@ -3620,7 +3670,11 @@ function initRailChat(){
       +'<button onclick="sendChatMessage()" title="Send" style="flex:0 0 auto;border:0;border-radius:5px;background:#fff;color:var(--cold);padding:0 10px;cursor:pointer;font-size:13px;font-weight:700">➤</button>'
     +'</div>';
   _chatFetch(true);
-  _chatPollTimer=setInterval(function(){ _chatFetch(false); },2500);
+  _chatPollTimer=setInterval(function(){
+    if(document.hidden||_chatFetchInFlight) return;
+    _chatFetchInFlight=true;
+    _chatFetch(false).finally(function(){ _chatFetchInFlight=false; });
+  },2500);
 }
 function stopChatPoll(){
   if(_chatPollTimer){ clearInterval(_chatPollTimer); _chatPollTimer=null; }
@@ -3630,6 +3684,7 @@ function stopChatPoll(){
   var host=document.getElementById('railChat');
   if(host) host.innerHTML='';
 }
+var _chatFetchInFlight=false;
 async function _chatFetch(isInitial){
   var statusEl=document.getElementById('chatConnStatus');
   try{
@@ -18335,7 +18390,7 @@ async function confirmScaleLogDeletion(id){
   alert('Could not confirm this deletion with the server after several attempts (check your connection). '+
         'The entry has been removed on this device, but it may still exist on the server and reappear here or on other devices. '+
         'Once you have a stable connection, try deleting it again from the log below (it may need to reload first).');
-  pullFromServer(); // refresh this device's own view to reflect reality
+  pullFromServer({force:true}); // refresh this device's own view to reflect reality (bypass version check — local copy is known to differ)
 }
 
 // Exports exactly what's currently shown in the log table below — i.e. the

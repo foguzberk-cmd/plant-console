@@ -354,7 +354,23 @@ let _itemsTxnCache = null;
 // single poll from every open tab. null means "not built yet, or the refs
 // below no longer match the current caches" and forces exactly one fresh
 // stringify.
-let _apiDataJsonCache = null; // { sharedRef, itemsTxnRef, json }
+let _apiDataJsonCache = null; // { sharedRef, itemsTxnRef, json, etag }
+const _API_DATA_BOOT_ID = crypto.randomBytes(4).toString('hex');
+let _apiDataVersion = 0;
+// Rebuilds the cached /api/data response body from the current caches and
+// gives it a fresh version tag. Read the caches directly rather than through
+// readSharedData()/readItemsTxnData() (which shallow-clone defensively) — we
+// only read from them here before handing them to JSON.stringify.
+function _rebuildApiDataJsonCache() {
+  const data = _sharedDataCache;
+  const itemsTxn = _itemsTxnCache;
+  const safe = Object.assign({}, data, itemsTxn, {
+    users: data.users.map(u => { const c = Object.assign({}, u); delete c.pin; delete c.pinHash; return c; })
+  });
+  const json = JSON.stringify(safe);
+  _apiDataVersion++;
+  _apiDataJsonCache = { sharedRef: _sharedDataCache, itemsTxnRef: _itemsTxnCache, json, etag: '"' + _API_DATA_BOOT_ID + '-' + _apiDataVersion + '"' };
+}
 async function _readItemsTxnUnlocked() {
   if (_itemsTxnCache) return Object.assign({}, _itemsTxnCache);
   try {
@@ -2119,26 +2135,23 @@ const server = http.createServer(async (req, res) => {
     // _writeSharedDataRawUnlocked/_writeItemsTxnUnlocked), so `===` here
     // is exactly "has anything changed since the last time we stringified".
     await Promise.all([readSharedData(), readItemsTxnData()]); // cheap: populates/refreshes _sharedDataCache & _itemsTxnCache if needed, no disk I/O once cached
-    if (_apiDataJsonCache && _apiDataJsonCache.sharedRef === _sharedDataCache && _apiDataJsonCache.itemsTxnRef === _itemsTxnCache) {
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
-      res.end(_apiDataJsonCache.json);
+    if (!(_apiDataJsonCache && _apiDataJsonCache.sharedRef === _sharedDataCache && _apiDataJsonCache.itemsTxnRef === _itemsTxnCache)) {
+      _rebuildApiDataJsonCache();
+    }
+    // Version check (Sep 2026, browser out-of-memory fix): every open tab
+    // pulls this full payload on a timer. When the browser already has the
+    // current version (it sends back the ETag it got last time), answer
+    // "304 Not Modified" with an empty body instead of re-sending the whole
+    // multi-MB dataset for the browser to download, parse and re-cache.
+    // The ETag combines a per-boot random id with a counter bumped on every
+    // rebuild, so a server restart can never make an old tag look current.
+    if (req.headers['if-none-match'] === _apiDataJsonCache.etag) {
+      res.writeHead(304, { 'ETag': _apiDataJsonCache.etag, 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end();
       return;
     }
-    // Read the caches directly rather than through readSharedData()/
-    // readItemsTxnData() (which shallow-clone defensively for callers that
-    // might mutate what they get back) — we only ever read from these here
-    // before immediately handing them to Object.assign/JSON.stringify,
-    // never mutate them in place, so the clone would just be wasted work
-    // on the exact hot path this cache exists to lighten.
-    const data = _sharedDataCache;
-    const itemsTxn = _itemsTxnCache;
-    const safe = Object.assign({}, data, itemsTxn, {
-      users: data.users.map(u => { const c = Object.assign({}, u); delete c.pin; delete c.pinHash; return c; })
-    });
-    const json = JSON.stringify(safe);
-    _apiDataJsonCache = { sharedRef: _sharedDataCache, itemsTxnRef: _itemsTxnCache, json };
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
-    res.end(json);
+    res.writeHead(200, { 'Content-Type': 'application/json', 'ETag': _apiDataJsonCache.etag, 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+    res.end(_apiDataJsonCache.json);
     return;
   }
   // Lightweight read of JUST the items list (no transactions, no other

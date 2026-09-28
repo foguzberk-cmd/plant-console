@@ -1373,6 +1373,7 @@ async function pullSmallFromServer(){
   try{ return await _pullSmallFromServerImpl(); }
   finally{ _smallPullInFlight--; }
 }
+var _lastSmallPullText='', _lastSmallPullAt=0, SMALL_PULL_FORCE_MS=60*1000;
 async function _pullSmallFromServerImpl(){
   if(!currentUser) return false;
   if(__syncBusy){ return false; }
@@ -1381,7 +1382,16 @@ async function _pullSmallFromServerImpl(){
     var res=await fetchWithTimeout('/api/data/small?_ts='+Date.now(),{cache:'no-store',headers:{'Cache-Control':'no-cache, no-store, must-revalidate','Pragma':'no-cache'}});
     if(res.status===401){ forceLogout(); return false; }
     if(!res.ok) return false;
-    var data=await res.json();
+    // Unchanged-response skip (Sep 2026, browser out-of-memory fix): this
+    // runs every 1.5s and used to parse the response, rewrite a dozen
+    // localStorage keys and RE-RENDER THE WHOLE CURRENT PAGE every single
+    // time — ~2,400 full page rebuilds an hour, even when nothing changed
+    // (on the Transactions tab that means re-filtering and re-sorting all
+    // transactions each time). Now an identical response is skipped with a
+    // plain string compare. Still fully processed at least once a minute.
+    var text=await res.text();
+    if(text===_lastSmallPullText && (Date.now()-_lastSmallPullAt)<SMALL_PULL_FORCE_MS) return true;
+    var data=JSON.parse(text);
     if(!data||typeof data!=='object') return false;
     if(Array.isArray(data.users)&&data.users.length){
       var pulledUsers=dedupeUsersByEmail(data.users);
@@ -1458,6 +1468,7 @@ async function _pullSmallFromServerImpl(){
     safeSetLocal('pc_customerallowed',JSON.stringify(customerAllowed));
     safeSetLocal('pc_customers',JSON.stringify(customers));
     safeSetLocal('pc_cf_scheduled_dates',JSON.stringify(_cfScheduledDates));
+    _lastSmallPullText=text; _lastSmallPullAt=Date.now();
     rerenderCurrentSection();
     return true;
   }catch(e){
@@ -1787,8 +1798,18 @@ function pushToServer(){
   return _pushChain;
 }
 var _lastPushFailureDetail=''; // real diagnostic detail from the most recent failed push
+// The small shared collections this tab pushes (same object used for the
+// real push below and for the cheap "anything changed?" check).
+function _buildPushSnapshotObj(){
+  return {storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,orders:orders,drivers:drivers,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates,vendors:vendors,vendorDepartments:_vendorDepartments,purchaseConfig:purchaseConfig,purchaseEstimates:purchaseEstimates,itemFilterPrefs:itemFilterPrefs};
+}
 async function _pushToServerImpl(){
   if(!currentUser) return false;
+  // Early exit (Sep 2026, browser out-of-memory fix): the 1.5s background
+  // push used to download and merge /api/data/small every time before
+  // discovering nothing needed sending. If local state is byte-for-byte
+  // what was last confirmed on the server, there is nothing to send.
+  if(!_itemsTransactionsDirty && _lastPushedSnapshot && JSON.stringify(_buildPushSnapshotObj())===_lastPushedSnapshot){ _lastPushFailureDetail=''; return true; }
   try{
     // Before sending OUR copy of the small shared collections (users, scale
     // logs, label-allowed list, saved reports), quietly check whether the
@@ -1882,7 +1903,7 @@ async function _pushToServerImpl(){
     // for why. this keeps an ordinary small edit (anything else in this
     // object) fast, instead of dragging the largest part of the whole
     // dataset along on every single push regardless of relevance.
-    var snapshotObj={storages:storages,users:users,savedReports:savedReports,scaleLogs:scaleLogs,orders:orders,drivers:drivers,labelAllowed:labelAllowed,customers:customers,customerAllowed:customerAllowed,labelTemplates:labelTemplates,vendors:vendors,vendorDepartments:_vendorDepartments,purchaseConfig:purchaseConfig,purchaseEstimates:purchaseEstimates,itemFilterPrefs:itemFilterPrefs};
+    var snapshotObj=_buildPushSnapshotObj();
     if(_itemsTransactionsDirty){
       snapshotObj.items=items;
       snapshotObj.transactions=transactions;
@@ -1942,7 +1963,7 @@ async function _pushToServerImpl(){
 function forceLogout(){
   if(!currentUser) return;
   currentUser=null;
-  _fullPullEtag='';
+  _fullPullEtag=''; _lastSmallPullText='';
   var appShell=document.getElementById('appShell');
   var loginScreen=document.getElementById('loginScreen');
   if(appShell) appShell.classList.remove('visible');

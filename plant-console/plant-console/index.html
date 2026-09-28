@@ -19560,6 +19560,24 @@ function tick(){
   document.getElementById('date').textContent=d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
 }
 tick();setInterval(tick,1000);
+// Memory report (Sep 2026, out-of-memory investigation): once a minute,
+// send this tab's memory use to the server log so growth can be traced to
+// a specific page and user. Chrome-only (performance.memory); no-op elsewhere.
+var _tabmemId=Math.random().toString(36).slice(2,7), _tabmemStart=Date.now();
+setInterval(function(){
+  try{
+    if(!currentUser||document.hidden) return;
+    var m=performance&&performance.memory;
+    fetch('/api/tabmem',{method:'POST',headers:{'Content-Type':'application/json'},keepalive:true,body:JSON.stringify({
+      tab:_tabmemId, page:currentSectionId,
+      usedMB:m?m.usedJSHeapSize/1048576:null, limitMB:m?m.jsHeapSizeLimit/1048576:null,
+      openMin:(Date.now()-_tabmemStart)/60000, domNodes:document.getElementsByTagName('*').length,
+      txns:(typeof transactions!=='undefined'&&transactions)?transactions.length:null,
+      items:(typeof items!=='undefined'&&items)?items.length:null,
+      customers:(typeof customers!=='undefined'&&customers)?customers.length:null
+    })}).catch(function(){});
+  }catch(e){}
+},60000);
 </script>
 </body>
 </html>

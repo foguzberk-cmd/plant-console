@@ -2705,6 +2705,25 @@ const server = http.createServer(async (req, res) => {
   // "right now" information; it should reset to nothing on every server
   // restart, not carry stale "online" users forward from before a deploy.
   if (!global.__chatPresence) global.__chatPresence = new Map(); // name -> last-seen ms
+  // Browser memory report (Sep 2026, out-of-memory investigation): each open
+  // tab posts its own memory use once a minute so tab growth shows up in the
+  // Render logs as [tabmem] lines, tagged with user and page, instead of only
+  // being visible after Chrome has already crashed the tab.
+  if (url === '/api/tabmem' && req.method === 'POST') {
+    const session = requireAuth(req, res);
+    if (!session) return;
+    try {
+      const b = JSON.parse((await readRequestBody(req)) || '{}');
+      const n = v => (typeof v === 'number' && isFinite(v)) ? Math.round(v) : '?';
+      const str = v => String(v == null ? '?' : v).replace(/[^\w .:/-]/g, '').slice(0, 40);
+      console.log('[tabmem] user=' + str(session.name) + ' tab=' + str(b.tab) + ' page=' + str(b.page) +
+        ' usedMB=' + n(b.usedMB) + ' limitMB=' + n(b.limitMB) + ' openMin=' + n(b.openMin) +
+        ' domNodes=' + n(b.domNodes) + ' txns=' + n(b.txns) + ' items=' + n(b.items) + ' customers=' + n(b.customers));
+    } catch (e) {}
+    res.writeHead(204, { 'Cache-Control': 'no-cache, no-store, must-revalidate' });
+    res.end();
+    return;
+  }
   if (url === '/api/chat/messages' && req.method === 'GET') {
     const session = requireAuth(req, res);
     if (!session) return;

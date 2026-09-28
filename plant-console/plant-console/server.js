@@ -2716,7 +2716,7 @@ const server = http.createServer(async (req, res) => {
       const b = JSON.parse((await readRequestBody(req)) || '{}');
       const n = v => (typeof v === 'number' && isFinite(v)) ? Math.round(v) : '?';
       const str = v => String(v == null ? '?' : v).replace(/[^\w .:/-]/g, '').slice(0, 40);
-      console.log('[tabmem] user=' + str(session.name) + ' tab=' + str(b.tab) + ' page=' + str(b.page) +
+      console.log('[tabmem] user=' + str(session.name) + ' tab=' + str(b.tab) + ' ver=' + str(b.ver) + ' page=' + str(b.page) +
         ' usedMB=' + n(b.usedMB) + ' limitMB=' + n(b.limitMB) + ' openMin=' + n(b.openMin) +
         ' domNodes=' + n(b.domNodes) + ' txns=' + n(b.txns) + ' items=' + n(b.items) + ' customers=' + n(b.customers));
     } catch (e) {}
@@ -3035,6 +3035,15 @@ const server = http.createServer(async (req, res) => {
     try {
       const bodyStr = await readRequestBody(req);
       const incoming = JSON.parse(bodyStr || '{}');
+      // Save-loop investigation (Sep 2026): name who is saving, from which
+      // tab and code version, and which collections that tab says changed.
+      // A tab showing ver=OLD is running an old copy of the page.
+      try {
+        const clean = v => String(v == null ? '' : v).replace(/[^\w ,.:/-]/g, '').slice(0, 160);
+        console.log('[savelog] user=' + clean(_dataPostSession.name) + ' tab=' + (clean(incoming._tab) || '?') +
+          ' ver=' + (clean(incoming._ver) || 'OLD') + ' changed=' + (clean(incoming._changed) || '?') + ' bytes=' + bodyStr.length);
+      } catch (e) {}
+      delete incoming._tab; delete incoming._ver; delete incoming._changed;
       // items/transactions are BY FAR the largest, slowest-to-serialize
       // part of a routine full-snapshot push — pulled out and written
       // through their own separate lock/file (see ITEMS_TXN_FILE above)

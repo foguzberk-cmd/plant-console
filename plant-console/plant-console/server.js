@@ -4619,7 +4619,11 @@ const server = http.createServer(async (req, res) => {
       const from = queryParams.from || null;
       const to = queryParams.to || null;
       const startPos = queryParams.startposition ? parseInt(queryParams.startposition, 10) : null;
-      if (ent && ['Bill','Invoice','SalesReceipt','CreditMemo','VendorCredit','Payment','Vendor','JournalEntry','Account','Deposit'].indexOf(ent) >= 0) {
+      // InventoryAdjustment added Sep 2026: the transaction sync has always asked
+      // for it (and knows how to turn its lines into adjustment transactions),
+      // but it was missing from this allow-list, so every request was refused
+      // and QuickBooks "Inventory Adjust" entries never reached the app.
+      if (ent && ['Bill','Invoice','SalesReceipt','CreditMemo','VendorCredit','InventoryAdjustment','Payment','Vendor','JournalEntry','Account','Deposit'].indexOf(ent) >= 0) {
         if (!accessToken) await refreshAccessToken();
         // Single-page mode: return just one page so each HTTP request is fast.
         if (startPos !== null && !isNaN(startPos)) {

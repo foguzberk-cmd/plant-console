@@ -3048,7 +3048,13 @@ async function qbSyncDocumentsCore(onProgress, since){
       var timer=setTimeout(function(){ctrl.abort();},60000); // 1 min per PAGE
       var pageRows=null;
       try{
-        var r=await fetch(base+'/api/qb/documents?entity='+t+'&startposition='+startPos+sinceParam,{signal:ctrl.signal});
+        // Inventory adjustments are always fetched in full, even on a quick
+        // (incremental) sync: they were never fetched at all before Sep 2026
+        // (the server refused them), so older ones would otherwise never
+        // arrive, and there are few enough that a full fetch costs nothing.
+        // Re-fetched docs replace their earlier copies, so no duplicates.
+        var typeSince=(t==='InventoryAdjustment')?'':sinceParam;
+        var r=await fetch(base+'/api/qb/documents?entity='+t+'&startposition='+startPos+typeSince,{signal:ctrl.signal});
         clearTimeout(timer);
         if(r.status===401){ return {ok:false, error:'connection expired', needsReconnect:true}; }
         var jd=await r.json();

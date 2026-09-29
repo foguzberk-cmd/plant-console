@@ -661,17 +661,102 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
+// Collects the raw bytes and decodes them as UTF-8 ONCE at the end.
+// (Sep 2026 fix.) This used to do `body += chunk`, which decodes every
+// ~64KB network chunk separately — any multi-byte character (Turkish
+// ş ğ ı ö ü ç, accented letters, even the replacement character itself)
+// that happened to straddle a chunk boundary was split in half and turned
+// into two garbage "\uFFFD" characters. On large saves this corrupted a
+// few characters every time, the corruption compounded save after save
+// (two customer names grew past 2 MB), and because each save came out
+// slightly different, open tabs kept re-saving each other's copies in a
+// nonstop loop — the root cause of the browser out-of-memory crashes.
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
-    let body = '';
+    const parts = [];
+    let size = 0;
     req.on('data', chunk => {
-      body += chunk;
-      if (body.length > 50 * 1024 * 1024) { req.destroy(); reject(new Error('Payload too large')); }
+      parts.push(chunk);
+      size += chunk.length;
+      if (size > 50 * 1024 * 1024) { req.destroy(); reject(new Error('Payload too large')); }
     });
-    req.on('end', () => resolve(body));
+    req.on('end', () => resolve(Buffer.concat(parts).toString('utf8')));
     req.on('error', reject);
   });
 }
+// ----- Broken-character cleanup (Sep 2026) -----------------------------
+// Text damaged by the old chunk-decoding bug (see readRequestBody) holds
+// runs of U+FFFD "replacement characters". A run can't be decoded back to
+// what it was, but collapsing each run to ONE character stops it growing
+// and makes every copy identical, which is what ends the save loop.
+const BROKEN_CHAR = '\uFFFD';
+function _collapseBrokenRuns(str) {
+  return str.indexOf(BROKEN_CHAR) < 0 ? str : str.replace(/\uFFFD{2,}/g, BROKEN_CHAR);
+}
+// Walks any value in place, collapsing broken runs in every string.
+// Returns how many strings it changed.
+function _collapseBrokenDeep(v, depth) {
+  depth = depth || 0;
+  if (!v || typeof v !== 'object' || depth > 40) return 0;
+  let changed = 0;
+  const keys = Array.isArray(v) ? v.keys() : Object.keys(v);
+  for (const k of keys) {
+    const x = v[k];
+    if (typeof x === 'string') {
+      if (x.indexOf(BROKEN_CHAR) >= 0) { const y = _collapseBrokenRuns(x); if (y !== x) { v[k] = y; changed++; } }
+    } else if (x && typeof x === 'object') {
+      changed += _collapseBrokenDeep(x, depth + 1);
+    }
+  }
+  return changed;
+}
+// A customer name is "broken" if it holds replacement characters or is far
+// longer than any real name (QuickBooks caps display names well under this).
+function _isBrokenName(n) {
+  return typeof n === 'string' && (n.indexOf(BROKEN_CHAR) >= 0 || n.length > 300);
+}
+
+// One-time repair shortly after boot: collapse broken runs everywhere in
+// the shared data, and restore damaged customer names from QuickBooks
+// (their true source) wherever the customer has a QuickBooks id.
+async function repairBrokenSharedText() {
+  try {
+    // Pass 1: find damaged customer names (read only, no write).
+    let toFetch = [];
+    await updateSharedData(async (current) => {
+      toFetch = (current.customers || []).filter(c => c && _isBrokenName(c.name) && c.qbId).map(c => c.qbId);
+      return { skipWrite: true };
+    });
+    // Fetch their real names from QuickBooks outside the data lock.
+    const realNames = {};
+    for (const qbId of toFetch) {
+      try {
+        const rec = await fetchQBEntityById('Customer', qbId);
+        const nm = rec && (rec.DisplayName || rec.FullyQualifiedName || rec.CompanyName);
+        if (nm && !_isBrokenName(nm)) realNames[qbId] = nm;
+      } catch (e) { console.warn('[repair] could not fetch customer ' + qbId + ' from QuickBooks:', e.message); }
+    }
+    // Pass 2: apply.
+    const res = await updateSharedData(async (current) => {
+      let names = 0, cleaned = 0;
+      (current.customers || []).forEach(c => {
+        if (!c || !_isBrokenName(c.name)) return;
+        const before = c.name.length;
+        if (c.qbId && realNames[c.qbId]) c.name = realNames[c.qbId];
+        else c.name = c.name.replace(/\uFFFD+/g, '').trim().slice(0, 200) || '(unreadable name - rename in QuickBooks)';
+        console.log('[repair] customer ' + c.id + ' name ' + before + ' chars -> ' + c.name.length + ' chars' + (c.qbId && realNames[c.qbId] ? ' (restored from QuickBooks)' : ' (cleaned)'));
+        names++;
+      });
+      cleaned = _collapseBrokenDeep(current);
+      if (!names && !cleaned) return { skipWrite: true, names, cleaned };
+      return { data: current, names, cleaned };
+    });
+    console.log('[repair] done: ' + (res.names || 0) + ' customer name(s) repaired, ' + (res.cleaned || 0) + ' other text field(s) cleaned');
+  } catch (e) {
+    console.error('[repair] failed:', e.message);
+  }
+}
+setTimeout(repairBrokenSharedText, 20000);
 // ===== END SHARED DATA STORE =====
 
 // ===== QUICKBOOKS TOKEN PERSISTENCE =====
@@ -742,9 +827,13 @@ let tokenRefreshedAt = 0; // ms timestamp of last successful token refresh
 function httpsRequest(options, body) {
   return new Promise((resolve, reject) => {
     const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => resolve({ status: res.statusCode, body: data, headers: res.headers }));
+      // Same whole-body UTF-8 decoding as readRequestBody — see there.
+      // Every QuickBooks response comes through here, so large pulls
+      // (customer lists, invoices, bills) could garble Turkish/accented
+      // characters the same way.
+      const parts = [];
+      res.on('data', chunk => parts.push(chunk));
+      res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(parts).toString('utf8'), headers: res.headers }));
     });
     req.on('error', reject);
     if (body) req.write(body);
@@ -3044,6 +3133,12 @@ const server = http.createServer(async (req, res) => {
           ' ver=' + (clean(incoming._ver) || 'OLD') + ' changed=' + (clean(incoming._changed) || '?') + ' bytes=' + bodyStr.length);
       } catch (e) {}
       delete incoming._tab; delete incoming._ver; delete incoming._changed;
+      // A tab still holding a copy damaged by the old decoding bug must not
+      // be able to write it back: collapse broken runs in everything it sent.
+      if (bodyStr.indexOf(BROKEN_CHAR) >= 0) {
+        const n = _collapseBrokenDeep(incoming);
+        if (n) console.log('[repair] incoming save from ' + String(_dataPostSession.name || '?').slice(0, 40) + ': cleaned ' + n + ' damaged text field(s)');
+      }
       // Server-side growth check (Sep 2026): works for every tab, old or new
       // code. For each collection in this save, compare its size with what
       // the server currently holds and log the ones that differ, e.g.
@@ -3441,10 +3536,16 @@ const server = http.createServer(async (req, res) => {
         // another device) is preserved rather than dropped.
         if (Array.isArray(incoming.customers)) {
           const merged = new Map((current.customers || []).map(c => [c && c.id, c]));
-          for (const c of incoming.customers) {
+          for (let c of incoming.customers) {
             if (!c) continue;
             if (isRecentlyDeletedCustomerId(c.id)) continue; // just deleted — a stale in-flight push can't resurrect it
-            merged.set(c.id, Object.assign({}, merged.get(c.id) || {}, c));
+            // Never let a damaged name overwrite a good one already stored
+            // (e.g. one the repair just restored from QuickBooks).
+            const prev = merged.get(c.id);
+            if (prev && _isBrokenName(c.name) && typeof prev.name === 'string' && !_isBrokenName(prev.name)) {
+              c = Object.assign({}, c, { name: prev.name });
+            }
+            merged.set(c.id, Object.assign({}, prev || {}, c));
           }
           for (const id of _recentlyDeletedCustomerIds.keys()) { merged.delete(id); }
           incoming.customers = Array.from(merged.values());

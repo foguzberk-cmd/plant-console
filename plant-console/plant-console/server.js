@@ -717,41 +717,46 @@ function _isBrokenName(n) {
 }
 
 // One-time repair shortly after boot: collapse broken runs everywhere in
-// the shared data, and restore damaged customer names from QuickBooks
-// (their true source) wherever the customer has a QuickBooks id.
+// the shared data, and re-check EVERY customer name against QuickBooks
+// (their true source — this app never renames customers itself). That
+// restores names the old bug damaged, including ones an earlier cleanup
+// could only strip (leaving e.g. "zlütaş" instead of "Özlütaş"). Uses the
+// same list query as the regular customer sync; the single-record lookup
+// was rejected by QuickBooks with error 400.
 async function repairBrokenSharedText() {
   try {
-    // Pass 1: find damaged customer names (read only, no write).
-    let toFetch = [];
-    await updateSharedData(async (current) => {
-      toFetch = (current.customers || []).filter(c => c && _isBrokenName(c.name) && c.qbId).map(c => c.qbId);
-      return { skipWrite: true };
-    });
-    // Fetch their real names from QuickBooks outside the data lock.
     const realNames = {};
-    for (const qbId of toFetch) {
-      try {
-        const rec = await fetchQBEntityById('Customer', qbId);
+    try {
+      await ensureFreshToken();
+      const all = await fetchQBCustomers();
+      ((all && all.QueryResponse && all.QueryResponse.Customer) || []).forEach(rec => {
         const nm = rec && (rec.DisplayName || rec.FullyQualifiedName || rec.CompanyName);
-        if (nm && !_isBrokenName(nm)) realNames[qbId] = nm;
-      } catch (e) { console.warn('[repair] could not fetch customer ' + qbId + ' from QuickBooks:', e.message); }
-    }
-    // Pass 2: apply.
-    const res = await updateSharedData(async (current) => {
-      let names = 0, cleaned = 0;
-      (current.customers || []).forEach(c => {
-        if (!c || !_isBrokenName(c.name)) return;
-        const before = c.name.length;
-        if (c.qbId && realNames[c.qbId]) c.name = realNames[c.qbId];
-        else c.name = c.name.replace(/\uFFFD+/g, '').trim().slice(0, 200) || '(unreadable name - rename in QuickBooks)';
-        console.log('[repair] customer ' + c.id + ' name ' + before + ' chars -> ' + c.name.length + ' chars' + (c.qbId && realNames[c.qbId] ? ' (restored from QuickBooks)' : ' (cleaned)'));
-        names++;
+        if (rec && rec.Id && nm && !_isBrokenName(nm)) realNames[String(rec.Id)] = nm;
       });
-      cleaned = _collapseBrokenDeep(current);
-      if (!names && !cleaned) return { skipWrite: true, names, cleaned };
-      return { data: current, names, cleaned };
+      console.log('[repair] fetched ' + Object.keys(realNames).length + ' customer names from QuickBooks to check against');
+    } catch (e) {
+      console.warn('[repair] could not fetch customers from QuickBooks (' + e.message + ') — damaged names will be cleaned, not restored');
+    }
+    const res = await updateSharedData(async (current) => {
+      let restored = 0, cleaned = 0;
+      (current.customers || []).forEach(c => {
+        if (!c) return;
+        const qbName = c.qbId ? realNames[String(c.qbId)] : null;
+        if (qbName && c.name !== qbName) {
+          console.log('[repair] customer ' + c.id + ' name restored from QuickBooks (' + String(c.name || '').length + ' chars -> ' + qbName.length + ' chars)');
+          c.name = qbName; restored++;
+        } else if (_isBrokenName(c.name)) {
+          const before = c.name.length;
+          c.name = c.name.replace(/\uFFFD+/g, '').trim().slice(0, 200) || '(unreadable name - rename in QuickBooks)';
+          console.log('[repair] customer ' + c.id + ' name cleaned (' + before + ' chars -> ' + c.name.length + ' chars) — no QuickBooks match');
+          cleaned++;
+        }
+      });
+      const other = _collapseBrokenDeep(current);
+      if (!restored && !cleaned && !other) return { skipWrite: true, restored, cleaned, other };
+      return { data: current, restored, cleaned, other };
     });
-    console.log('[repair] done: ' + (res.names || 0) + ' customer name(s) repaired, ' + (res.cleaned || 0) + ' other text field(s) cleaned');
+    console.log('[repair] done: ' + (res.restored || 0) + ' name(s) restored from QuickBooks, ' + (res.cleaned || 0) + ' cleaned, ' + (res.other || 0) + ' other text field(s) cleaned');
   } catch (e) {
     console.error('[repair] failed:', e.message);
   }

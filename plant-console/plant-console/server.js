@@ -3058,7 +3058,28 @@ const server = http.createServer(async (req, res) => {
           if (a === b) return;
           const cnt = v => Array.isArray(v) ? v.length : (v && typeof v === 'object' ? Object.keys(v).length : 0);
           const dB = b.length - a.length, dN = cnt(incoming[k]) - cnt(cur[k]);
-          diffs.push(k + ':' + (dB >= 0 ? '+' : '') + dB + 'B(' + (dN >= 0 ? '+' : '') + dN + ')');
+          let detail = '';
+          // For lists of records, name up to 3 changed records' changed
+          // fields with their size before>after (sizes only, no values).
+          if (Array.isArray(incoming[k]) && Array.isArray(cur[k]) && k !== 'users') {
+            const byId = new Map(cur[k].map(r => [r && r.id, r]));
+            const parts = [];
+            for (const r of incoming[k]) {
+              if (parts.length >= 3) break;
+              if (!r || typeof r !== 'object') continue;
+              const old = byId.get(r.id);
+              if (!old) { parts.push('new#' + String(r.id).slice(0, 12)); continue; }
+              if (JSON.stringify(old) === JSON.stringify(r)) continue;
+              const f = [];
+              new Set([...Object.keys(old), ...Object.keys(r)]).forEach(fk => {
+                const x = JSON.stringify(old[fk]), y = JSON.stringify(r[fk]);
+                if (x !== y) f.push(fk + '=' + (x ? x.length : 0) + '>' + (y ? y.length : 0));
+              });
+              parts.push(String(r.id).slice(0, 12) + '{' + f.slice(0, 6).join(',') + '}');
+            }
+            if (parts.length) detail = '[' + parts.join(' ') + ']';
+          }
+          diffs.push(k + ':' + (dB >= 0 ? '+' : '') + dB + 'B(' + (dN >= 0 ? '+' : '') + dN + ')' + detail);
         });
         console.log('[savediff] user=' + String(_dataPostSession.name || '?').replace(/[^\w .-]/g, '').slice(0, 40) + ' ' + (diffs.join(' ') || 'no-change'));
       } catch (e) {}

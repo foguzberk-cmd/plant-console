@@ -3044,6 +3044,24 @@ const server = http.createServer(async (req, res) => {
           ' ver=' + (clean(incoming._ver) || 'OLD') + ' changed=' + (clean(incoming._changed) || '?') + ' bytes=' + bodyStr.length);
       } catch (e) {}
       delete incoming._tab; delete incoming._ver; delete incoming._changed;
+      // Server-side growth check (Sep 2026): works for every tab, old or new
+      // code. For each collection in this save, compare its size with what
+      // the server currently holds and log the ones that differ, e.g.
+      // [savediff] user=Hasan orders:+412B(+1) customers:-3B(0)
+      try {
+        const cur = _sharedDataCache || {};
+        const diffs = [];
+        Object.keys(incoming).forEach(k => {
+          if (k === 'items' || k === 'transactions' || k === 'transactionSyncScope') return;
+          const a = JSON.stringify(cur[k] === undefined ? null : cur[k]);
+          const b = JSON.stringify(incoming[k] === undefined ? null : incoming[k]);
+          if (a === b) return;
+          const cnt = v => Array.isArray(v) ? v.length : (v && typeof v === 'object' ? Object.keys(v).length : 0);
+          const dB = b.length - a.length, dN = cnt(incoming[k]) - cnt(cur[k]);
+          diffs.push(k + ':' + (dB >= 0 ? '+' : '') + dB + 'B(' + (dN >= 0 ? '+' : '') + dN + ')');
+        });
+        console.log('[savediff] user=' + String(_dataPostSession.name || '?').replace(/[^\w .-]/g, '').slice(0, 40) + ' ' + (diffs.join(' ') || 'no-change'));
+      } catch (e) {}
       // items/transactions are BY FAR the largest, slowest-to-serialize
       // part of a routine full-snapshot push — pulled out and written
       // through their own separate lock/file (see ITEMS_TXN_FILE above)

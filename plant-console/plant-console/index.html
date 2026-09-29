@@ -1805,6 +1805,7 @@ function pushToServer(){
   return _pushChain;
 }
 var _lastPushFailureDetail=''; // real diagnostic detail from the most recent failed push
+var PC_CODE_VERSION='2026-09-28d', _lastPushedParts=null, _tabmemId=Math.random().toString(36).slice(2,7);
 // The small shared collections this tab pushes (same object used for the
 // real push below and for the cheap "anything changed?" check).
 function _buildPushSnapshotObj(){
@@ -1930,7 +1931,15 @@ async function _pushToServerImpl(){
     // completely silently (no error shown anywhere) while leaving the
     // server holding stale data that a later ambient pull could then
     // re-fetch and overwrite fresh local data with.
-    var res=await fetchWithTimeout(SYNC_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:snapshot},60000);
+    // Save-loop investigation: tell the server which collections actually
+    // differ from what this tab last confirmed sending (shows in [savelog]).
+    var _changedKeys=[];
+    try{
+      var _parts={}; Object.keys(snapshotObj).forEach(function(k){ _parts[k]=JSON.stringify(snapshotObj[k]); });
+      Object.keys(_parts).forEach(function(k){ if(!_lastPushedParts||_lastPushedParts[k]!==_parts[k]) _changedKeys.push(k); });
+    }catch(e){}
+    var _postBody=snapshot.slice(0,-1)+(snapshot.length>2?',':'')+'"_tab":'+JSON.stringify(_tabmemId)+',"_ver":'+JSON.stringify(PC_CODE_VERSION)+',"_changed":'+JSON.stringify(_lastPushedParts?(_changedKeys.join(',')||'none'):'first')+'}';
+    var res=await fetchWithTimeout(SYNC_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:_postBody},60000);
     if(res.status===401){ _lastPushFailureDetail='session expired (401) — signed out'; forceLogout(); return false; }
     if(!res.ok){
       // Capture whatever the server actually said, instead of a vague
@@ -1948,6 +1957,7 @@ async function _pushToServerImpl(){
     // that same change, since the dedup check above would wrongly think it
     // had already gone through.
     _lastPushedSnapshot=snapshot;
+    try{ _lastPushedParts=_parts; }catch(e){}
     _lastPushFailureDetail='';
     // Only clear this once items/transactions actually made it to the
     // server successfully — if this particular push didn't carry them (an
@@ -8688,7 +8698,20 @@ async function _srpFetchInvoices(from,to){
   }
   return rows;
 }
+// Guard (Sep 2026): the pull takes a while (every invoice in the period,
+// 100 at a time, plus the prior period), and each extra click used to start
+// another complete copy of it running in parallel — the logs showed the same
+// invoice pages being fetched three times over. Extra clicks now wait.
+var _srpRunning=false;
 async function runSalesRepPlanReport(){
+  if(_srpRunning) return;
+  _srpRunning=true;
+  var _srpBtns=Array.prototype.slice.call(document.querySelectorAll('button[onclick="runSalesRepPlanReport()"]'));
+  _srpBtns.forEach(function(b){ b.disabled=true; b.style.opacity='.6'; });
+  try{ return await _runSalesRepPlanReportImpl(); }
+  finally{ _srpRunning=false; _srpBtns.forEach(function(b){ b.disabled=false; b.style.opacity=''; }); }
+}
+async function _runSalesRepPlanReportImpl(){
   var statusEl=document.getElementById('srp-status');
   var fromEl=document.getElementById('srp-from'), toEl=document.getElementById('srp-to');
   var from=fromEl?fromEl.value:'', to=toEl?toEl.value:'';
@@ -19570,13 +19593,13 @@ tick();setInterval(tick,1000);
 // Memory report (Sep 2026, out-of-memory investigation): once a minute,
 // send this tab's memory use to the server log so growth can be traced to
 // a specific page and user. Chrome-only (performance.memory); no-op elsewhere.
-var _tabmemId=Math.random().toString(36).slice(2,7), _tabmemStart=Date.now();
+var _tabmemStart=Date.now();
 setInterval(function(){
   try{
     if(!currentUser||document.hidden) return;
     var m=performance&&performance.memory;
     fetch('/api/tabmem',{method:'POST',headers:{'Content-Type':'application/json'},keepalive:true,body:JSON.stringify({
-      tab:_tabmemId, page:currentSectionId,
+      tab:_tabmemId, ver:PC_CODE_VERSION, page:currentSectionId,
       usedMB:m?m.usedJSHeapSize/1048576:null, limitMB:m?m.jsHeapSizeLimit/1048576:null,
       openMin:(Date.now()-_tabmemStart)/60000, domNodes:document.getElementsByTagName('*').length,
       txns:(typeof transactions!=='undefined'&&transactions)?transactions.length:null,

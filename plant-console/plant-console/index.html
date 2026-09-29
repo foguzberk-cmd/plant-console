@@ -4993,6 +4993,7 @@ var _orderSaveInProgress=false;
 // updateCustomerSalesRep and _cfSaveScheduled elsewhere: a small, targeted
 // write that completes almost immediately, rather than bundling this into
 // the whole-app snapshot push.
+var _orderSaveRev={}, _orderSaveChain={};
 async function saveOrder(orderFields){
   var isNew=!orderFields.id;
   // CRITICAL FIX (confirmed live, Aug 2026): this used to generate a
@@ -5035,7 +5036,17 @@ async function saveOrder(orderFields){
   // _writeInFlight is the same guard every other save function in this
   // file (saveTxns, etc.) already uses to hold off ambient pulls until a
   // write actually lands — see pullFromServer's own check for it.
+  // Per-order save ordering (Sep 2026 fix for checked lines "disappearing"):
+  // every click saves the whole order, and each reply used to replace the
+  // local copy. Clicking several lines quickly meant an OLDER reply (with
+  // fewer lines checked) could land after a newer click and undo it, and the
+  // next click then built on that undone copy, so the loss could stick on
+  // the server too. Now saves for one order go out one at a time in click
+  // order, and a reply is only applied if no newer click happened since.
+  var myRev=(_orderSaveRev[finalId]=(_orderSaveRev[finalId]||0)+1);
   _writeInFlight++;
+  var _prevSave=_orderSaveChain[finalId]||Promise.resolve();
+  var _thisSave=_prevSave.catch(function(){}).then(async function(){
   try{
     // Without a timeout, a server that's slow to respond (or mid-restart)
     // leaves this fetch hanging indefinitely — and since
@@ -5063,10 +5074,15 @@ async function saveOrder(orderFields){
     if(data.order){
       // Same id throughout — just refresh with the server's authoritative
       // copy (real createdBy/createdAt/etc), no id lookup-and-swap needed.
-      var idx2=orders.findIndex(function(o){return o.id===finalId;});
-      if(idx2>=0) orders[idx2]=data.order;
       clearTimeout(fallbackGuardTimeout);
-      _recentlyAddedOrders[finalId]=data.order;
+      // Only take the server's copy if nothing was clicked on this order
+      // since this save was sent — otherwise this reply is already out of
+      // date and would wipe out the newer clicks (see _orderSaveRev).
+      if(_orderSaveRev[finalId]===myRev){
+        var idx2=orders.findIndex(function(o){return o.id===finalId;});
+        if(idx2>=0) orders[idx2]=data.order;
+        _recentlyAddedOrders[finalId]=data.order;
+      }
       setTimeout(function(){ delete _recentlyAddedOrders[finalId]; },15000);
       safeSetLocalJSON('pc_orders',(orders));
       return data.order;
@@ -5075,8 +5091,13 @@ async function saveOrder(orderFields){
   }catch(e){
     console.error('Order save failed:',e&&e.name==='AbortError'?'timed out after 25s waiting for the server':e);
     return null;
-  }finally{
+  }
+  });
+  _orderSaveChain[finalId]=_thisSave;
+  try{ return await _thisSave; }
+  finally{
     _writeInFlight--;
+    if(_orderSaveChain[finalId]===_thisSave) delete _orderSaveChain[finalId];
   }
 }
 window.saveOrder=saveOrder;

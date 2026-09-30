@@ -2566,8 +2566,20 @@ const server = http.createServer(async (req, res) => {
       await updateSharedData(async (current) => {
         const customers = (current.customers || []).slice();
         const keptQbIds = new Set();
+        const keptBy = new Map(); // qbId -> name of the app record kept for it
+        const qbNameOf = id => { const q = liveById.get(id); return q ? (q.DisplayName || q.FullyQualifiedName || q.CompanyName || '') : ''; };
+        const dup = (c, qbId) => ({ id: c.id, qbId: qbId || c.qbId, name: c.name, qbName: qbNameOf(qbId || c.qbId), keptName: keptBy.get(qbId || c.qbId) || '' });
         let changed = false;
-        customers.forEach((c, idx) => {
+        // Order matters when two app records share one QuickBooks id: the first
+        // one seen is kept and later ones become "duplicate". Look at records
+        // whose id AND name both match QuickBooks first, so the copy that is
+        // already correct is the one kept (Sep 2026).
+        const exactFirst = customers.map((c, idx) => idx).sort((a, b) => {
+          const ex = c => !!(c && c.qbId && liveById.get(c.qbId) && liveByName.get(normalizeName(c.name)) && liveByName.get(normalizeName(c.name)).Id === c.qbId);
+          return (ex(customers[b]) ? 1 : 0) - (ex(customers[a]) ? 1 : 0) || a - b;
+        });
+        exactFirst.forEach(idx => {
+          const c = customers[idx];
           if (!c) return;
           // CONFIRMED live (Sep 2026): a plain "does this qbId exist
           // somewhere live" check isn't actually enough — two separate
@@ -2591,14 +2603,14 @@ const server = http.createServer(async (req, res) => {
           const idIsTrustworthy = liveAtId && match && match.Id === liveAtId.Id;
           if (idIsTrustworthy) {
             if (keptQbIds.has(c.qbId)) {
-              duplicates.push({ id: c.id, qbId: c.qbId, name: c.name });
+              duplicates.push(dup(c));
             } else {
-              keptQbIds.add(c.qbId);
+              keptQbIds.add(c.qbId); keptBy.set(c.qbId, c.name);
             }
             return;
           }
           if (match && keptQbIds.has(match.Id)) {
-            duplicates.push({ id: c.id, qbId: c.qbId, name: c.name });
+            duplicates.push(dup(c, match.Id));
             return;
           }
           if (match) {
@@ -2608,7 +2620,7 @@ const server = http.createServer(async (req, res) => {
               name: match.DisplayName || match.FullyQualifiedName || match.CompanyName || c.name,
               active: match.Active !== false
             });
-            keptQbIds.add(match.Id);
+            keptQbIds.add(match.Id); keptBy.set(match.Id, customers[idx].name);
             relinked.push({ name: c.name, wasQbId: c.qbId, nowQbId: match.Id });
             changed = true;
           } else if (liveAtId) {
@@ -2618,7 +2630,7 @@ const server = http.createServer(async (req, res) => {
             // and offered for deletion. It's the same customer: keep it and
             // take QuickBooks' current name.
             if (keptQbIds.has(c.qbId)) {
-              duplicates.push({ id: c.id, qbId: c.qbId, name: c.name });
+              duplicates.push(dup(c));
               return;
             }
             const qbName = liveAtId.DisplayName || liveAtId.FullyQualifiedName || liveAtId.CompanyName || c.name;
@@ -2627,7 +2639,7 @@ const server = http.createServer(async (req, res) => {
               name: qbName,
               active: liveAtId.Active !== false
             });
-            keptQbIds.add(c.qbId);
+            keptQbIds.add(c.qbId); keptBy.set(c.qbId, qbName);
             relinked.push({ name: c.name, wasQbId: c.qbId, nowQbId: c.qbId, renamedTo: qbName });
             changed = true;
           } else if (c.qbId) {

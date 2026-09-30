@@ -1114,8 +1114,12 @@ async function fetchQBItems(retry) {
 // Server-generated only (never taken from a request query param), so it
 // doesn't need the same allow-list validation as the user-facing
 // since/from/to on /api/qb/documents.
-async function fetchQBCustomersPage(startPosition, retry, sinceIso) {
-  const whereClause = sinceIso ? ` WHERE MetaData.LastUpdatedTime >= '${sinceIso}'` : '';
+async function fetchQBCustomersPage(startPosition, retry, sinceIso, includeInactive) {
+  // QuickBooks queries return ACTIVE customers only unless asked otherwise.
+  const conds = [];
+  if (sinceIso) conds.push(`MetaData.LastUpdatedTime >= '${sinceIso}'`);
+  if (includeInactive) conds.push('Active IN (true, false)');
+  const whereClause = conds.length ? (' WHERE ' + conds.join(' AND ')) : '';
   const query = `SELECT * FROM Customer${whereClause} STARTPOSITION ${startPosition} MAXRESULTS 100`;
   const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
   const res = await httpsRequest({
@@ -1133,7 +1137,7 @@ async function fetchQBCustomersPage(startPosition, retry, sinceIso) {
   if (res.status === 401) {
     if (!retry) {
       const ok = await refreshAccessToken();
-      if (ok) return fetchQBCustomersPage(startPosition, true, sinceIso);
+      if (ok) return fetchQBCustomersPage(startPosition, true, sinceIso, includeInactive);
     }
     throw new Error('NEEDS_RECONNECT');
   }
@@ -1141,13 +1145,13 @@ async function fetchQBCustomersPage(startPosition, retry, sinceIso) {
   return JSON.parse(res.body);
 }
 
-async function fetchQBCustomers(retry, sinceIso) {
+async function fetchQBCustomers(retry, sinceIso, includeInactive) {
   // Paginate through all customers using STARTPOSITION (QB is 1-indexed)
   let allCustomers = [];
   let start = 1;
   const pageSize = 100;
   while (true) {
-    const data = await fetchQBCustomersPage(start, retry, sinceIso);
+    const data = await fetchQBCustomersPage(start, retry, sinceIso, includeInactive);
     const custs = (data.QueryResponse && data.QueryResponse.Customer) || [];
     allCustomers = allCustomers.concat(custs);
     if (custs.length < pageSize) break; // last page
@@ -2512,7 +2516,10 @@ const server = http.createServer(async (req, res) => {
   if (url === '/api/data/customers-find-orphans' && req.method === 'GET') {
     if (!requireAuth(req, res)) return;
     try {
-      const qbData = await fetchQBCustomers(false);
+      // Include inactive QuickBooks customers (Sep 2026 fix): an inactive
+      // customer still exists in QuickBooks and must not be reported as
+      // "NOT FOUND" and offered for deletion.
+      const qbData = await fetchQBCustomers(false, null, true);
       const qbCustomers = (qbData.QueryResponse && qbData.QueryResponse.Customer) || [];
       const liveIds = new Set(qbCustomers.map(c => c.Id));
       const normalizeName = s => String(s || '').trim().toLowerCase();
@@ -2603,6 +2610,25 @@ const server = http.createServer(async (req, res) => {
             });
             keptQbIds.add(match.Id);
             relinked.push({ name: c.name, wasQbId: c.qbId, nowQbId: match.Id });
+            changed = true;
+          } else if (liveAtId) {
+            // Sep 2026 fix: the QuickBooks id still points at a real customer
+            // whose name was changed in QuickBooks (e.g. "Ayat Bay Ridge" ->
+            // "Ayat Bayridge Meast"). This used to be reported as NOT FOUND
+            // and offered for deletion. It's the same customer: keep it and
+            // take QuickBooks' current name.
+            if (keptQbIds.has(c.qbId)) {
+              duplicates.push({ id: c.id, qbId: c.qbId, name: c.name });
+              return;
+            }
+            const qbName = liveAtId.DisplayName || liveAtId.FullyQualifiedName || liveAtId.CompanyName || c.name;
+            customers[idx] = Object.assign({}, c, {
+              qbSyncToken: Number(liveAtId.SyncToken || 0),
+              name: qbName,
+              active: liveAtId.Active !== false
+            });
+            keptQbIds.add(c.qbId);
+            relinked.push({ name: c.name, wasQbId: c.qbId, nowQbId: c.qbId, renamedTo: qbName });
             changed = true;
           } else if (c.qbId) {
             orphans.push({ id: c.id, qbId: c.qbId, name: c.name });

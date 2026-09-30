@@ -5163,8 +5163,10 @@ function _renderOrdersWeekSummary(){
     // individual line already was in _renderOrderRow — so the counts at
     // every level (day, driver, customer) only reflect orders that
     // actually still need attention.
+    // (Sep 2026) Orders whose every line was out of stock and moved to the
+    // next day used to be hidden here. They now stay in the list so it's
+    // visible what was missing on that day's order.
     var lines=_orderLinesOf(o);
-    if(lines.length && lines.every(function(l){ return l.shortage && l.rescheduledOrderId; })) return false;
     if(!q) return true;
     if([o.customer,o.driver].some(function(f){ return (f||'').toLowerCase().indexOf(q)>=0; })) return true;
     return lines.some(function(l){ return [l.product,l.description].some(function(f){ return (f||'').toLowerCase().indexOf(q)>=0; }); });
@@ -5299,7 +5301,12 @@ function _renderOrderRow(o){
   // nobody needs to act on anymore, so it's skipped in THIS view only —
   // the underlying data stays put, and it still shows in the Order
   // Detail modal and on printed sheets for anyone who wants the history.
-  var visibleLines=lines.filter(function(l){ return !(l.shortage && l.rescheduledOrderId); });
+  // (Sep 2026, by request) Out-of-stock lines now STAY on the original
+  // order with their 0 count and an orange "moved to <date>" badge, so it's
+  // visible what was missing on that order. The product is still copied
+  // onto the next day's order exactly as before (red "Shortage reorder"
+  // badge there). The comment above describes the old hide-it behavior.
+  var visibleLines=lines;
   return '<div id="ordRow-'+esc(o.id)+'" style="display:flex;align-items:flex-start;gap:14px;padding:8px 16px 8px 30px;font-size:12.5px;border-bottom:1px dashed var(--line)">'
     +'<span onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;width:80px;flex-shrink:0;color:var(--muted);padding-top:5px">'+esc(o.date)+'</span>'
     +'<span style="flex:1;min-width:0">'
@@ -5308,7 +5315,6 @@ function _renderOrderRow(o){
         : !visibleLines.length
           ? '<span style="color:var(--muted);font-style:italic">All items here were out of stock and already rescheduled to the next day — click the date to see the details.</span>'
           : lines.map(function(l,li){
-            if(l.shortage && l.rescheduledOrderId) return ''; // hidden — see comment above; li is preserved for the ones still rendered
             var stripeBg=li%2===1?'background:rgba(0,0,0,.035);':'';
             // Shortage flags take priority over the plain "needs processing"
             // amber, since they explain something more urgent (a delivery
@@ -5322,7 +5328,7 @@ function _renderOrderRow(o){
             if(l.shortageReschedule){
               shortageBadge='<span title="Auto-added because this product came back as a 0 count (out of stock) on '+esc(l.rescheduledFromDate||'a previous day')+'" style="flex-shrink:0;font-size:10px;font-weight:700;color:#a3231b;background:#ffd0cc;padding:2px 6px;border-radius:10px;white-space:nowrap">⚠ Shortage reorder</span>';
             } else if(l.shortage){
-              shortageBadge='<span title="Rescheduled to '+esc(l.rescheduledToDate||'the next day')+'" style="flex-shrink:0;font-size:10px;font-weight:700;color:#8a4a12;background:#ffdcb0;padding:2px 6px;border-radius:10px;white-space:nowrap">⚠ Out — resched. '+esc(l.rescheduledToDate||'')+'</span>';
+              shortageBadge='<span title="Rescheduled to '+esc(l.rescheduledToDate||'the next day')+'" style="flex-shrink:0;font-size:10px;font-weight:700;color:#8a4a12;background:#ffdcb0;padding:2px 6px;border-radius:10px;white-space:nowrap">⚠ Out of stock — moved to '+esc(l.rescheduledToDate||'next day')+'</span>';
             }
             return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 8px;margin:0 -8px;border-radius:5px;'+procBg+'">'
               +'<span onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+(l.description?' — '+esc(l.description):'')+'</span>'

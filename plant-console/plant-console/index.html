@@ -6313,8 +6313,13 @@ function renderReports(){
           +'<button class="btn" onclick="printActiveSalesReport()">Print</button>'
           +'<button class="btn" onclick="exportActiveSalesReportCSV()">Download CSV</button>'
         +'</div>'
-        +'<div style="position:relative;margin-bottom:14px;max-width:320px">'
+        +'<div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:14px">'
+        +'<div id="sbc-cat-wrap" style="position:relative;order:2">'
+          +'<button class="btn" id="sbc-cat-btn" onclick="toggleSbcCategoryPanel(event)" style="padding:9px 14px">Categories: <b>All categories</b> ▾</button>'
+        +'</div>'
+        +'<div style="position:relative;max-width:320px;flex:1;min-width:220px;order:1">'
           +'<input type="text" id="sbc-search" placeholder="Search customer..." oninput="renderActiveSalesReport()" style="width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
+        +'</div>'
         +'</div>'
         +'<div id="sbc-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'</div>'
@@ -8184,14 +8189,122 @@ async function runSalesByCustomerReport(){
   renderActiveSalesReport();
 }
 window.runSalesByCustomerReport=runSalesByCustomerReport;
+// ----- Product category filter (Sep 2026) ------------------------------
+// QuickBooks item names carry their category before the first colon
+// ("BOXED MEATS:BEEF TOP ROUND", "GYRO:Gyro Leaf 25 LB"); items with no
+// colon (e.g. "MANUFACTURING LABOR") have no category. _sbcCatFilter is
+// null for "all categories", otherwise the set of categories to include.
+var SBC_NO_CATEGORY='(No category)';
+var _sbcCatFilter=null;
+try{ var _sbcSavedCats=localStorage.getItem('pc_sbc_cats'); if(_sbcSavedCats){ var _arr=JSON.parse(_sbcSavedCats); if(Array.isArray(_arr)) _sbcCatFilter={}, _arr.forEach(function(c){ _sbcCatFilter[c]=true; }); } }catch(e){}
+function _sbcCategoryOfName(name){
+  name=String(name||'');
+  var i=name.indexOf(':');
+  return i>0 ? name.slice(0,i).trim() : SBC_NO_CATEGORY;
+}
+function _sbcLineCategory(ln){
+  return _sbcCategoryOfName(ln&&ln.SalesItemLineDetail&&ln.SalesItemLineDetail.ItemRef&&ln.SalesItemLineDetail.ItemRef.name);
+}
+function _sbcLinePasses(ln){
+  return !_sbcCatFilter || !!_sbcCatFilter[_sbcLineCategory(ln)];
+}
+// Every category present in the pulled documents, with this period's net.
+function _sbcAllCategories(){
+  var out={};
+  [_sbcSalesDocs||[], _sbcPriorDocs||[]].forEach(function(docs,isPrior){
+    docs.forEach(function(d){
+      var sign=d._pcDocType==='CreditMemo'?-1:1;
+      (d.Line||[]).forEach(function(ln){
+        if(ln.DetailType!=='SalesItemLineDetail'||!ln.SalesItemLineDetail||!ln.SalesItemLineDetail.ItemRef) return;
+        var c=_sbcLineCategory(ln);
+        if(!out[c]) out[c]={name:c,cur:0};
+        if(!isPrior) out[c].cur+=sign*Number(ln.Amount||0);
+      });
+    });
+  });
+  return Object.values(out).sort(function(a,b){ return a.name===SBC_NO_CATEGORY?1:(b.name===SBC_NO_CATEGORY?-1:a.name.localeCompare(b.name)); });
+}
+function _sbcSaveCatFilter(){
+  try{ if(_sbcCatFilter) localStorage.setItem('pc_sbc_cats',JSON.stringify(Object.keys(_sbcCatFilter))); else localStorage.removeItem('pc_sbc_cats'); }catch(e){}
+}
+function _sbcCatFilterLabel(){
+  if(!_sbcCatFilter) return 'All categories';
+  var k=Object.keys(_sbcCatFilter);
+  if(!k.length) return 'No categories';
+  return k.length===1 ? k[0] : (k.length+' categories');
+}
+function _sbcRefreshCatButton(){
+  var b=document.getElementById('sbc-cat-btn');
+  if(b) b.innerHTML='Categories: <b>'+esc(_sbcCatFilterLabel())+'</b> ▾';
+  if(b) b.style.borderColor=_sbcCatFilter?'#1a7a3c':'';
+}
+function toggleSbcCategoryPanel(ev){
+  if(ev) ev.stopPropagation();
+  var old=document.getElementById('sbc-cat-panel');
+  if(old){ old.remove(); return; }
+  var cats=_sbcAllCategories();
+  var anchor=document.getElementById('sbc-cat-wrap');
+  if(!anchor) return;
+  function money(n){ return (n<0?'-$':'$')+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  var panel=document.createElement('div');
+  panel.id='sbc-cat-panel';
+  panel.style.cssText='position:absolute;top:100%;left:0;margin-top:6px;z-index:60;background:var(--panel);border:1.5px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:10px;min-width:320px;max-height:60vh;overflow-y:auto';
+  panel.onclick=function(e){ e.stopPropagation(); };
+  panel.innerHTML=!cats.length
+    ? '<div style="padding:8px;color:var(--muted);font-size:12.5px">Pull from QuickBooks first — categories come from the pulled sales.</div>'
+    : '<div style="display:flex;gap:6px;margin-bottom:8px">'
+        +'<button class="btn btn-sm" onclick="setSbcCategories(\'all\')">All</button>'
+        +'<button class="btn btn-sm" onclick="setSbcCategories(\'none\')">None</button>'
+      +'</div>'
+      +cats.map(function(c){
+        var on=!_sbcCatFilter||!!_sbcCatFilter[c.name];
+        return '<label class="zrow" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:12.5px">'
+          +'<input type="checkbox" '+(on?'checked':'')+' onchange="setSbcCategory(this.getAttribute(\'data-cat\'),this.checked)" data-cat="'+esc(c.name)+'" style="width:14px;height:14px"/>'
+          +'<span style="flex:1">'+esc(c.name)+'</span>'
+          +'<span style="font-family:var(--mono);font-size:11px;color:var(--muted)">'+money(c.cur)+'</span>'
+        +'</label>';
+      }).join('');
+  anchor.appendChild(panel);
+  setTimeout(function(){ document.addEventListener('click',function close(){ var p=document.getElementById('sbc-cat-panel'); if(p) p.remove(); document.removeEventListener('click',close); }); },0);
+}
+window.toggleSbcCategoryPanel=toggleSbcCategoryPanel;
+function setSbcCategory(cat,on){
+  if(!_sbcCatFilter){ _sbcCatFilter={}; _sbcAllCategories().forEach(function(c){ _sbcCatFilter[c.name]=true; }); }
+  if(on) _sbcCatFilter[cat]=true; else delete _sbcCatFilter[cat];
+  // every category ticked again = back to "all" (so new categories show too)
+  var all=_sbcAllCategories();
+  if(all.length && all.every(function(c){ return _sbcCatFilter[c.name]; })) _sbcCatFilter=null;
+  _sbcSaveCatFilter(); _sbcRefreshCatButton(); renderActiveSalesReport();
+}
+window.setSbcCategory=setSbcCategory;
+function setSbcCategories(mode){
+  _sbcCatFilter = mode==='all' ? null : {};
+  _sbcSaveCatFilter(); _sbcRefreshCatButton(); renderActiveSalesReport();
+  var p=document.getElementById('sbc-cat-panel'); if(p){ p.remove(); toggleSbcCategoryPanel(); }
+}
+window.setSbcCategories=setSbcCategories;
+
 function _sbcTotalsByCustomer(docs){
   var byCust={}; // key -> {name, total, docCount}
   docs.forEach(function(d){
     var name=(d.CustomerRef&&d.CustomerRef.name)||'No customer on file';
     var key=(d.CustomerRef&&d.CustomerRef.value)||name;
+    var sign=d._pcDocType==='CreditMemo'?-1:1;
+    var amt;
+    if(!_sbcCatFilter){
+      amt=Number(d.TotalAmt||0); // whole document, exactly as QuickBooks totals it
+    } else {
+      // Category filter on: only the product lines in the chosen categories
+      amt=0; var any=false;
+      (d.Line||[]).forEach(function(ln){
+        if(ln.DetailType!=='SalesItemLineDetail'||!ln.SalesItemLineDetail||!ln.SalesItemLineDetail.ItemRef) return;
+        if(!_sbcLinePasses(ln)) return;
+        amt+=Number(ln.Amount||0); any=true;
+      });
+      if(!any) return; // nothing from the chosen categories on this document
+    }
     if(!byCust[key]) byCust[key]={name:name,total:0,docCount:0};
-    var amt=Number(d.TotalAmt||0);
-    byCust[key].total+=(d._pcDocType==='CreditMemo'?-amt:amt);
+    byCust[key].total+=sign*amt;
     byCust[key].docCount++;
   });
   return byCust;
@@ -8216,6 +8329,7 @@ function _sbcProductBreakdownForCustomer(custKey){
       var sign=d._pcDocType==='CreditMemo'?-1:1;
       (d.Line||[]).forEach(function(ln){
         if(ln.DetailType!=='SalesItemLineDetail'||!ln.SalesItemLineDetail||!ln.SalesItemLineDetail.ItemRef) return;
+        if(!_sbcLinePasses(ln)) return;
         var itemId=ln.SalesItemLineDetail.ItemRef.value;
         var itemName=ln.SalesItemLineDetail.ItemRef.name||'(unnamed item)';
         if(!byProduct[itemId]) byProduct[itemId]={name:itemName,total:0};
@@ -8441,6 +8555,19 @@ function switchSalesReportsSubTab(sub){
 window.switchSalesReportsSubTab=switchSalesReportsSubTab;
 function renderActiveSalesReport(){
   if(_sbcActiveSubTab==='products') renderSalesByProductsReport(); else renderSalesByCustomerReport();
+  _sbcRefreshCatButton();
+  // When a category filter is on, say so at the top of the report (and on
+  // the printout), so a filtered total is never mistaken for all sales.
+  if(_sbcCatFilter){
+    var body=document.getElementById(_sbcActiveSubTab==='products'?'sbp-body':'sbc-body');
+    if(body){
+      var k=Object.keys(_sbcCatFilter);
+      var note=document.createElement('div');
+      note.style.cssText='margin:0 0 12px;padding:8px 12px;border-radius:8px;background:#e7f3ec;border:1px solid #b9dcc6;color:#1a5c33;font-size:12.5px';
+      note.innerHTML='<b>Filtered by category:</b> '+(k.length?k.map(esc).join(', '):'none selected')+' — totals include only these product lines. <a href="#" onclick="setSbcCategories(\'all\');return false" style="color:#1a7a3c;font-weight:700">Show all</a>';
+      body.insertBefore(note, body.firstChild);
+    }
+  }
 }
 window.renderActiveSalesReport=renderActiveSalesReport;
 function printActiveSalesReport(){
@@ -8462,6 +8589,7 @@ function _sbcTotalsByProduct(docs){
     var sign=d._pcDocType==='CreditMemo'?-1:1;
     (d.Line||[]).forEach(function(ln){
       if(ln.DetailType!=='SalesItemLineDetail'||!ln.SalesItemLineDetail||!ln.SalesItemLineDetail.ItemRef) return;
+      if(!_sbcLinePasses(ln)) return;
       var itemId=ln.SalesItemLineDetail.ItemRef.value;
       var itemName=ln.SalesItemLineDetail.ItemRef.name||'(unnamed item)';
       if(!byProd[itemId]) byProd[itemId]={name:itemName,total:0,qty:0};

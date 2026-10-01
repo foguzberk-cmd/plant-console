@@ -375,6 +375,13 @@
     background-color:#cfe0ff!important;
   }
 </style>
+<style>
+/* Sales report rows (Sep 2026): alternating shading + hover highlight so a
+   product/customer name is easy to follow across to its numbers. */
+.zrow{transition:background .12s}
+.zrow.zodd{background:rgba(0,0,0,.045)}
+.zrow:hover{background:rgba(26,122,60,.10)}
+</style>
 </head>
 <body>
 
@@ -8299,7 +8306,7 @@ function renderSalesByCustomerReport(){
       +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Overall change</div><div style="font-weight:700;font-size:16px;color:'+((totalCur-totalPrior)<0?'#c0392b':'#1a7a3c')+'">'+money(totalCur-totalPrior)+'</div></div>'
       +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Customers buying less</div><div style="font-weight:700;font-size:16px;color:#c0392b">'+decliningCount+' of '+rows2.length+'</div></div>'
     +'</div>'
-    +rows2.map(function(r){
+    +rows2.map(function(r,ri){
       var pctStr=r.priorTotal>0.004?(Math.round((r.change/r.priorTotal)*1000)/10)+'%':(r.curTotal>0.004?'new':'—');
       var barColor=r.change<-0.004?'#c0392b':(r.change>0.004?'#1a7a3c':'var(--muted)');
       var priorPct=Math.round((Math.abs(r.priorTotal)/maxAbs)*100);
@@ -8307,7 +8314,7 @@ function renderSalesByCustomerReport(){
       var expanded=!!_sbcExpandedCustomers[r.key];
       var productRows=expanded?_sbcProductBreakdownForCustomer(r.key):[];
       var productMax=expanded?Math.max(1,Math.max.apply(null,productRows.map(function(p){ return Math.max(Math.abs(p.curTotal),Math.abs(p.priorTotal)); }))):1;
-      return '<div style="border-bottom:1px solid var(--line)">'
+      return '<div class="zrow'+(ri%2?' zodd':'')+'" style="border-bottom:1px solid var(--line)">'
         +'<div onclick="toggleSbcCustomer(\''+esc(r.key).replace(/'/g,"\\'")+'\')" style="padding:10px 12px;cursor:pointer">'
         +'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;gap:10px">'
           +'<span style="font-weight:600;font-size:13.5px;display:inline-flex;align-items:center;gap:6px">'
@@ -8325,12 +8332,12 @@ function renderSalesByCustomerReport(){
           !productRows.length
             ? '<div style="padding:8px 12px 14px 34px;color:var(--muted);font-size:12px">No product-level detail on file for this customer\'s documents.</div>'
             : '<div style="padding:2px 12px 14px 34px;display:flex;flex-direction:column;gap:8px">'
-              +productRows.map(function(p){
+              +productRows.map(function(p,pi){
                 var pPctStr=p.priorTotal>0.004?(Math.round((p.change/p.priorTotal)*1000)/10)+'%':(p.curTotal>0.004?'new':'—');
                 var pColor=p.change<-0.004?'#c0392b':(p.change>0.004?'#1a7a3c':'var(--muted)');
                 var pPriorPct=Math.round((Math.abs(p.priorTotal)/productMax)*100);
                 var pCurPct=Math.round((Math.abs(p.curTotal)/productMax)*100);
-                return '<div>'
+                return '<div class="zrow'+(pi%2?' zodd':'')+'" style="padding:6px 10px;margin:0 -10px;border-radius:6px">'
                   +'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px;gap:10px">'
                     +'<span style="font-size:12.5px">'+esc(p.name)+'</span>'
                     +'<span style="font-family:var(--mono);font-size:11.5px;white-space:nowrap;color:'+pColor+'">'+money(p.change)+' ('+pPctStr+')</span>'
@@ -8577,13 +8584,13 @@ function renderSalesByProductsReport(){
       +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Overall change</div><div style="font-weight:700;font-size:16px;color:'+((totalCur-totalPrior)<0?'#c0392b':'#1a7a3c')+'">'+money(totalCur-totalPrior)+'</div></div>'
       +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Products selling less</div><div style="font-weight:700;font-size:16px;color:#c0392b">'+decliningCount+' of '+rows2.length+'</div></div>'
     +'</div>'
-    +rows2.map(function(r){
+    +rows2.map(function(r,ri){
       var pctStr=r.priorTotal>0.004?(Math.round((r.change/r.priorTotal)*1000)/10)+'%':(r.curTotal>0.004?'new':'—');
       var barColor=r.change<-0.004?'#c0392b':(r.change>0.004?'#1a7a3c':'var(--muted)');
       var priorPct=Math.round((Math.abs(r.priorTotal)/maxAbs)*100);
       var curPct=Math.round((Math.abs(r.curTotal)/maxAbs)*100);
       var days=_sbcDaysOfSupply(r.id,avgDailyQty2);
-      return '<div style="border-bottom:1px solid var(--line);padding:10px 12px;display:flex;gap:16px;align-items:center">'
+      return '<div class="zrow'+(ri%2?' zodd':'')+'" style="border-bottom:1px solid var(--line);padding:10px 12px;display:flex;gap:16px;align-items:center">'
         +'<div style="flex:1;min-width:0">'
           +'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;gap:10px">'
             +'<span style="font-weight:600;font-size:13.5px">'+esc(r.name)+'</span>'

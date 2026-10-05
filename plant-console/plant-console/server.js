@@ -1841,45 +1841,52 @@ function runCustomersBackgroundSync() {
 let _lastItemSyncAt = null; // ISO string, or null until the first successful run
 async function backgroundSyncItems() {
   const syncStartedAt = new Date().toISOString();
-  const sinceIso = _lastItemSyncAt; // capture before this run, so a slow run doesn't miss anything that changes mid-sync
-  const qbItems = await fetchAllQBItems(sinceIso);
-  const itemsTxn = await readItemsTxnData();
-  const items = Array.isArray(itemsTxn.items) ? itemsTxn.items.slice() : [];
-  qbItems.forEach(qi => {
-    const existing = items.findIndex(x => x && x.qbId === qi.Id);
-    // Same FullyQualifiedName-first grouping logic as the client's
-    // qbSyncItemsCore (kept identical so a background-synced item looks
-    // no different from one synced by hand).
-    let groupName = '';
-    if (qi.FullyQualifiedName && qi.FullyQualifiedName.indexOf(':') >= 0) {
-      groupName = qi.FullyQualifiedName.split(':')[0];
-    } else if (qi.ParentRef && qi.ParentRef.name) {
-      groupName = qi.ParentRef.name;
-    }
-    const mapped = {
-      id: existing >= 0 ? items[existing].id : 'item_' + Date.now() + '_' + Math.random().toString(36).slice(2),
-      qbId: qi.Id,
-      name: qi.Name || '',
-      type: qi.Type || '',
-      description: qi.Description || qi.FullyQualifiedName || '',
-      sku: qi.Sku || '',
-      price: qi.UnitPrice || 0,
-      cost: qi.PurchaseCost || 0,
-      qty: qi.QtyOnHand || 0,
-      qbQty: qi.QtyOnHand || 0,
-      active: qi.Active !== false,
-      groupName: groupName,
-      qbSynced: new Date().toISOString(),
-      // Plant-Console-only fields QuickBooks knows nothing about — always
-      // carried forward from whatever's already saved, same reasoning as
-      // salesRep/dunsNumber in backgroundSyncCustomers above.
-      locationId: existing >= 0 ? items[existing].locationId : undefined,
-      locQtys: existing >= 0 ? items[existing].locQtys : undefined,
-      openingDate: existing >= 0 ? items[existing].openingDate : undefined
-    };
-    if (existing >= 0) items[existing] = mapped; else items.push(mapped);
+  // ALWAYS a full item pull (Oct 2026 fix). This used to be incremental after
+  // the first run (only items whose MetaData.LastUpdatedTime moved), but in
+  // QuickBooks an item's QtyOnHand changing because of a bill, invoice or
+  // inventory adjustment does NOT bump the item's LastUpdatedTime — so stock
+  // changes never came through and on-hand went stale (e.g. Gyro Beef Ground
+  // 20 LB showing 0 while QuickBooks had 20). The item list is ~1,000 items,
+  // ~10 QuickBooks requests per run, so a full pull every 5 minutes is cheap.
+  const qbItems = await fetchAllQBItems();
+  // Read-merge-write in ONE locked step, AFTER the slow QuickBooks fetch, so a
+  // save that lands while QuickBooks is answering can't be overwritten by
+  // this run's older copy (it used to read first, fetch, then write back the
+  // whole stale items+transactions file).
+  await withItemsTxnLock(async () => {
+    const itemsTxn = await _readItemsTxnUnlocked();
+    const items = Array.isArray(itemsTxn.items) ? itemsTxn.items.slice() : [];
+    qbItems.forEach(qi => {
+      const existing = items.findIndex(x => x && x.qbId === qi.Id);
+      let groupName = '';
+      if (qi.FullyQualifiedName && qi.FullyQualifiedName.indexOf(':') >= 0) {
+        groupName = qi.FullyQualifiedName.split(':')[0];
+      } else if (qi.ParentRef && qi.ParentRef.name) {
+        groupName = qi.ParentRef.name;
+      }
+      const prev = existing >= 0 ? items[existing] : null;
+      const mapped = {
+        id: prev ? prev.id : 'item_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+        qbId: qi.Id,
+        name: qi.Name || '',
+        type: qi.Type || '',
+        description: qi.Description || qi.FullyQualifiedName || '',
+        sku: qi.Sku || '',
+        price: qi.UnitPrice || 0,
+        cost: qi.PurchaseCost || 0,
+        qty: qi.QtyOnHand || 0,
+        qbQty: qi.QtyOnHand || 0,
+        active: qi.Active !== false,
+        groupName: groupName,
+        qbSynced: new Date().toISOString(),
+        locationId: prev ? prev.locationId : undefined,
+        locQtys: prev ? prev.locQtys : undefined,
+        openingDate: prev ? prev.openingDate : undefined
+      };
+      if (existing >= 0) items[existing] = mapped; else items.push(mapped);
+    });
+    await _writeItemsTxnUnlocked({ items, transactions: itemsTxn.transactions || [] });
   });
-  await writeItemsTxnData({ items, transactions: itemsTxn.transactions || [] });
   _lastItemSyncAt = syncStartedAt;
   return qbItems.length;
 }
@@ -1901,7 +1908,7 @@ function runItemsBackgroundSync() {
   _itemsSyncPromise = (async () => {
     try {
       const count = await backgroundSyncItems();
-      _lastItemsSyncResult = { ok: true, count, incremental: !!_lastItemSyncAt, at: new Date().toISOString() };
+      _lastItemsSyncResult = { ok: true, count, incremental: false, at: new Date().toISOString() };
     } catch (e) {
       _lastItemsSyncResult = { ok: false, error: e.message, at: new Date().toISOString() };
       console.error('Background item sync failed:', e.message);
@@ -3252,7 +3259,10 @@ const server = http.createServer(async (req, res) => {
       //    transaction add/edit that isn't a QB sync at all), falls back
       //    to a safe add/update-by-id merge that never removes anything.
       if (Array.isArray(incoming.items) || Array.isArray(incoming.transactions)) {
-        const existing = await readItemsTxnData();
+       // Read-merge-write as ONE locked step (Oct 2026) so the background item
+       // sync, or another save, can't slip in between and be overwritten.
+       await withItemsTxnLock(async () => {
+        const existing = await _readItemsTxnUnlocked();
         let mergedItems = existing.items || [];
         if (Array.isArray(incoming.items)) {
           const itemMap = new Map(mergedItems.filter(it => it).map(it => [it.id, it]));
@@ -3294,7 +3304,8 @@ const server = http.createServer(async (req, res) => {
           for (const t of incoming.transactions) { if (t) txnMap.set(t.id, t); }
           mergedTransactions = Array.from(txnMap.values());
         }
-        await writeItemsTxnData({ items: mergedItems, transactions: mergedTransactions });
+        await _writeItemsTxnUnlocked({ items: mergedItems, transactions: mergedTransactions });
+       });
         delete incoming.items;
         delete incoming.transactions;
         delete incoming.transactionSyncScope;

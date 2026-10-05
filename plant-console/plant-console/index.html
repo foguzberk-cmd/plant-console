@@ -2218,8 +2218,9 @@ async function syncEverythingNow(){
 }
 // Manual escape hatch for "I need the real number right now, not in up
 // to 5 minutes" — calls the server's items-sync-now endpoint, which runs
-// a real sync immediately (same incremental logic as the automatic
-// cycle, just triggered on demand instead of waiting for the timer) and
+// a real sync immediately (the same FULL item pull as the automatic
+// cycle — incremental item pulls missed quantity changes, fixed Oct 2026 —
+// just triggered on demand instead of waiting for the timer) and
 // waits for it to actually finish before updating the table, rather than
 // just kicking it off and hoping.
 // Saves the Items page's filter dropdowns to this user's account on the
@@ -14821,12 +14822,30 @@ function recalcQuantities(){
   var changed=0;
   allItems.forEach(function(it){
     if(!touched[it.id]){
-      // nothing moved this item: keep QB qty as a single unassigned bucket if not already set
+      // Nothing in this app's transaction history moved this item.
       if(it.locQtys===undefined){
         var base=Number(it.qbQty!==undefined?it.qbQty:it.qty||0);
         it.locQtys = base ? (function(){var o={};o[UNASSIGNED]=base;return o;})() : {};
       }
-      it.qty=Object.keys(it.locQtys||{}).reduce(function(s,k){return s+Number(it.locQtys[k]||0);},0);
+      // Anchor to QuickBooks' own on-hand here too (Oct 2026 fix). This used
+      // to just re-add the item's OLD per-location buckets, so an item whose
+      // stock changed in QuickBooks without any movement in this app's
+      // history (e.g. Gyro Beef Ground 20 LB: 0 -> 20) showed the new number
+      // during a sync and fell back to the old 0 as soon as this recalc ran.
+      // Same rule as for moved items below: QuickBooks' total wins, and any
+      // difference lands in the Unassigned bucket.
+      if(it.qbQty!==undefined){
+        var qbT=Number(it.qbQty)||0;
+        var have=Object.keys(it.locQtys||{}).reduce(function(s,k){return s+Number(it.locQtys[k]||0);},0);
+        if(qbT!==have){
+          it.locQtys=Object.assign({},it.locQtys);
+          it.locQtys[UNASSIGNED]=Number(it.locQtys[UNASSIGNED]||0)+(qbT-have);
+          if(!it.locQtys[UNASSIGNED]) delete it.locQtys[UNASSIGNED];
+        }
+        it.qty=qbT;
+      } else {
+        it.qty=Object.keys(it.locQtys||{}).reduce(function(s,k){return s+Number(it.locQtys[k]||0);},0);
+      }
       return;
     }
     it.locQtys=map[it.id];

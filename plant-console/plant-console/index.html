@@ -311,6 +311,16 @@
   .confirm-modal .warn-icon svg{width:26px;height:26px;stroke:currentColor}
 
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+  /* (Oct 2026) iPhone/iPad consistency:
+     - stop iOS Safari from auto-enlarging text (it does so unevenly in
+       landscape, so the same page looked different on different devices);
+     - iOS zooms the whole page in when a box with text under 16px is tapped
+       and leaves it zoomed, so part of the page ends up off-screen. Boxes
+       use at least 16px on iOS only (-webkit-touch-callout is iOS-only). */
+  html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+  @supports (-webkit-touch-callout:none){
+    input:not([type=checkbox]):not([type=radio]),select,textarea{font-size:16px!important}
+  }
   @media (max-width:780px){
     /* iOS Safari quirk: nested flex-grow children (.main -> .view) need a
        DEFINITE parent height to correctly compute how much space to fill.
@@ -336,7 +346,18 @@
     .view h2{font-size:24px}
     .form-row{grid-template-columns:1fr}
     .modal{max-width:94vw;padding:22px 18px}
-    .txn-table th:nth-child(4),.txn-table td:nth-child(4){display:none}
+    /* (Oct 2026) Every column stays visible on phones — this used to hide
+       the 4th column of EVERY shared table (Cost on Items, Tag # on Scale
+       Log, Value on Transactions). Wide tables now scroll sideways instead,
+       so phone users see the same details as desktop users. */
+    .txn-table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
+    .txn-table th,.txn-table td{white-space:nowrap}
+    /* Text that desktop trims with "…" (product names, days of supply) is
+       shown in full on phones, wrapping onto a second line if needed. */
+    #view [style*="text-overflow:ellipsis"]{white-space:normal!important;overflow:visible!important;text-overflow:clip!important;overflow-wrap:anywhere}
+    /* Use the screen's real visible height on iPhone: 100vh includes the
+       area behind Safari's bottom toolbar, hiding the bottom of the page. */
+    @supports (height:100dvh){ #appShell{height:100dvh} body{height:100dvh} }
     .login-box{padding:30px 24px;margin:16px}
     /* Scale Log: stack form and preview vertically on mobile instead of
        the side-by-side grid that squeezes the form to an unreadable sliver */
@@ -18789,7 +18810,7 @@ function renderTransactions(){
         <button class="btn btn-primary" onclick="openAddTxnModal()"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Create transaction</button>
         <details style="margin-left:4px">
           <summary style="cursor:pointer;font-size:11px;color:var(--muted);font-family:var(--mono);list-style:none">Advanced ▾</summary>
-          <div style="display:flex;gap:8px;margin-top:8px">
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
             <button id="txnSyncIncBtn" class="btn btn-sm" onclick="syncTransactionsIncremental()" title="Same as the combined Sync now button, but transactions only — skips re-syncing items">
               Quick sync (transactions only)
             </button>

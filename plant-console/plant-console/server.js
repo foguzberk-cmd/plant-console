@@ -783,6 +783,43 @@ self.addEventListener('fetch', e => {
     { headers: { 'Content-Type': 'text/html' } })));
 });
 `;
+// ----- P.O. numbers (Oct 2026) ---------------------------------------------
+// Every order gets a permanent, unique P.O. number: PO-10001, PO-10002, ...
+// Assigned ONLY here on the server, from one counter stored with the shared
+// data (current.poCounter), so two devices creating orders at the same
+// moment can never get the same number. A number never changes once given.
+const PO_START = 10000;
+function _poNum(po) { const m = /^PO-(\d+)$/.exec(String(po || '')); return m ? Number(m[1]) : 0; }
+function _nextPoNumber(current) {
+  const highest = (current.orders || []).reduce((mx, o) => Math.max(mx, _poNum(o && o.poNumber)), 0);
+  const n = Math.max(Number(current.poCounter) || PO_START, highest) + 1;
+  current.poCounter = n;
+  return 'PO-' + n;
+}
+// Gives a number to every order that doesn't have one yet, oldest first
+// (by order date, then creation time). Returns how many were assigned.
+function _ensurePoNumbers(current) {
+  const missing = (current.orders || []).filter(o => o && !o.poNumber);
+  missing.sort((a, b) => String(a.date || '').localeCompare(String(b.date || ''))
+    || String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
+    || String(a.id || '').localeCompare(String(b.id || '')));
+  missing.forEach(o => { o.poNumber = _nextPoNumber(current); });
+  return missing.length;
+}
+// One-time numbering of existing orders shortly after the server starts.
+setTimeout(async () => {
+  try {
+    const res = await updateSharedData(async (current) => {
+      if (!Array.isArray(current.orders)) return { skipWrite: true, n: 0 };
+      const orders = current.orders.map(o => (o && typeof o === 'object') ? Object.assign({}, o) : o);
+      const tmp = Object.assign({}, current, { orders });
+      const n = _ensurePoNumbers(tmp);
+      if (!n) return { skipWrite: true, n: 0 };
+      return { data: tmp, n };
+    });
+    if (res && res.n) console.log('[po] assigned P.O. numbers to ' + res.n + ' existing order(s)');
+  } catch (e) { console.error('[po] numbering existing orders failed:', e.message); }
+}, 15000);
 // ===== END SHARED DATA STORE =====
 
 // ===== QUICKBOOKS TOKEN PERSISTENCE =====
@@ -3204,6 +3241,7 @@ const server = http.createServer(async (req, res) => {
           ' ver=' + (clean(incoming._ver) || 'OLD') + ' changed=' + (clean(incoming._changed) || '?') + ' bytes=' + bodyStr.length);
       } catch (e) {}
       delete incoming._tab; delete incoming._ver; delete incoming._changed;
+      delete incoming.poCounter; // only the server advances the P.O. counter
       // A tab still holding a copy damaged by the old decoding bug must not
       // be able to write it back: collapse broken runs in everything it sent.
       if (bodyStr.indexOf(BROKEN_CHAR) >= 0) {
@@ -3489,10 +3527,17 @@ const server = http.createServer(async (req, res) => {
             // snapshot had. Only let a timestamp-less incoming record win
             // when the existing one ALSO has no timestamp to compare against.
             if (existing && existing.at && (!o.at || existing.at > o.at)) continue;
-            mergedOrders.set(o.id, o);
+            // A device's copy may predate its P.O. number — never let that
+            // erase (or change) the number the server already gave it.
+            mergedOrders.set(o.id, (existing && existing.poNumber) ? Object.assign({}, o, { poNumber: existing.poNumber }) : o);
           }
           for (const id of orderTombstoned) mergedOrders.delete(id);
           incoming.orders = Array.from(mergedOrders.values());
+          // Number any order that arrived this way without one.
+          {
+            const tmp = { orders: incoming.orders.map(o => (o && !o.poNumber) ? Object.assign({}, o) : o), poCounter: current.poCounter };
+            if (_ensurePoNumbers(tmp)) { incoming.orders = tmp.orders; incoming.poCounter = tmp.poCounter; }
+          }
           // Same reasoning as deletedCfBillIds elsewhere in this file: never
           // let a client's own (possibly stale) copy of the tombstone list
           // overwrite the server's — only the dedicated delete-order
@@ -4083,6 +4128,9 @@ const server = http.createServer(async (req, res) => {
             saved.invoiceDocNumber = String(order.invoiceDocNumber || '').trim().slice(0, 100);
             saved.invoiceDate = String(order.invoiceDate || '').slice(0, 10);
           }
+          // P.O. number: permanent — carried over (this endpoint rebuilds
+          // the order from scratch, so any field not copied here is lost).
+          saved.poNumber = orders[idx].poNumber || '';
           orders[idx] = saved;
         } else {
           saved.createdBy = order.createdBy || '';
@@ -4097,7 +4145,9 @@ const server = http.createServer(async (req, res) => {
         // file: without this, re-adding an order within moments of deleting
         // a mistaken one for the same id would be silently dropped again.
         const tombstones = (Array.isArray(current.deletedOrderIds) ? current.deletedOrderIds : []).filter(tid => tid !== id);
-        return { data: Object.assign({}, current, { orders, deletedOrderIds: tombstones }) };
+        const next = Object.assign({}, current, { orders, deletedOrderIds: tombstones });
+        if (!saved.poNumber) saved.poNumber = _nextPoNumber(next); // new order (or one still unnumbered)
+        return { data: next };
       });
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ success: true, order: saved }));

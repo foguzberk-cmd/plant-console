@@ -3968,6 +3968,53 @@ function printOrders(orderIds,title){
   setTimeout(function(){ w.print(); },250);
 }
 window.printOrders=printOrders;
+// Shipped-order record print (Oct 2026). Unlike the picking sheet (blank
+// "Actual Weight"/"Notes" columns to fill in by hand), this prints what
+// actually went out: invoice number, ship date, driver, and the shipped
+// count already entered in the app. Orders print in the order given (the
+// callers pass them in route/stop order). Used by the print buttons on a
+// shipped order, a driver, and a whole day in Shipped Orders.
+function printShippedOrders(orderIds,title){
+  var byId={}; orders.forEach(function(o){ byId[o.id]=o; });
+  var toPrint=orderIds.map(function(id){ return byId[id]; }).filter(Boolean);
+  if(!toPrint.length) return;
+  function fmtDate(d){ try{ return new Date(d+'T00:00:00').toLocaleDateString('en-US',{weekday:'short',month:'2-digit',day:'2-digit',year:'numeric'}); }catch(e){ return d||''; } }
+  var body=toPrint.map(function(o){
+    var lines=_orderLinesOf(o);
+    var rows=lines.length ? lines.map(function(l){
+      var out=!!l.shortage;
+      var note=out ? '<b style="color:#a3231b">OUT OF STOCK'+(l.rescheduledToDate?' — moved to '+esc(l.rescheduledToDate):'')+'</b>'
+              : (l.shortageReschedule ? '<span style="color:#a3231b">Shortage reorder (was out '+esc(l.rescheduledFromDate||'')+')</span>' : '');
+      var shipped = out ? '0' : (l.finalCount!==undefined&&l.finalCount!==null&&l.finalCount!=='' ? l.finalCount : '');
+      return '<tr'+(out?' style="background:#fdeceb"':'')+'>'
+        +'<td class="prod">'+esc(l.product||'(no product)')+'</td>'
+        +'<td class="desc">'+esc(l.description||'')+(note?'<div>'+note+'</div>':'')+'</td>'
+        +'<td class="qty">'+esc(l.quantity||'')+'</td>'
+        +'<td class="qty">'+esc(shipped)+'</td>'
+      +'</tr>';
+    }).join('') : '<tr><td colspan="4" style="color:#888;font-style:italic">No products listed</td></tr>';
+    return '<div class="shipped-order">'
+      +'<div class="so-head"><div class="so-cust">'+esc(o.customer||'(no customer)')+'</div>'
+        +'<div class="so-inv">Invoice #'+esc(o.invoiceDocNumber||'—')+'</div></div>'
+      +'<div class="so-meta">Shipped '+esc(fmtDate(o.date))+' &nbsp;·&nbsp; Driver: '+esc(o.driver||'(none)')+' &nbsp;·&nbsp; '+lines.length+' product'+(lines.length!==1?'s':'')+'</div>'
+      +'<table class="ordtbl"><thead><tr><th class="prod">Product</th><th class="desc">Description</th><th class="qty">Ordered</th><th class="qty">Shipped</th></tr></thead>'
+      +'<tbody>'+rows+'</tbody></table>'
+    +'</div>';
+  }).join('');
+  var w=window.open('','_blank');
+  if(!w){ alert('Please allow pop-ups for this site to print.'); return; }
+  w.document.write('<html><head><title>'+esc(title)+'</title><style>'+_ORDERS_PRINT_STYLE
+    +'.shipped-order{margin-bottom:24px;page-break-inside:avoid}'
+    +'.so-head{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #222;padding-bottom:3px;margin-bottom:4px}'
+    +'.so-cust{font-size:15px;font-weight:700}.so-inv{font-family:monospace;font-size:13px;font-weight:700}'
+    +'.so-meta{font-size:11.5px;color:#555;margin-bottom:6px}'
+    +'</style></head><body>'
+    +'<h1>'+esc(title)+'</h1><div class="meta">Leader Meat Packing Corp — '+toPrint.length+' shipped order'+(toPrint.length!==1?'s':'')+' — printed '+esc(new Date().toLocaleString('en-US'))+'</div>'
+    +body+'</body></html>');
+  w.document.close(); w.focus();
+  setTimeout(function(){ w.print(); },250);
+}
+window.printShippedOrders=printShippedOrders;
 // Driver-specific print: the physical "Leader Meat Packing Corp" cold-chain
 // / deliveries-payments / returns-mispicks paper form, pre-filled with
 // today's date, the driver's name, and one row per customer on their
@@ -4399,7 +4446,9 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
       +'</span>'
       +'<span style="width:'+ROUTE_MILES_COL_WIDTH+'px;text-align:center;flex-shrink:0;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#1b5e2f;opacity:.65">Trucking route</span>'
       +'<span style="width:'+ROUTE_MILES_COL_WIDTH+'px;text-align:center;flex-shrink:0;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#1b5e2f;opacity:.65">Regular route</span>'
-      +'<span style="width:'+ROUTE_MILES_TRAILING_ZONE_WIDTH_SHIPPED+'px;flex-shrink:0"></span>'
+      +'<span style="width:'+ROUTE_MILES_TRAILING_ZONE_WIDTH_SHIPPED+'px;flex-shrink:0;display:flex;justify-content:flex-end">'
+        +'<button title="Print every order shipped this day" onclick="event.stopPropagation();printShippedOrders(['+byDay[dk].slice().sort(function(a,b){ var da=_driverGroupKey(a.driver), db=_driverGroupKey(b.driver); if(da!==db) return da<db?-1:1; return (a.customer||'')<(b.customer||'')?-1:1; }).map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+esc(_jsStrEsc('Shipped orders — '+fmtDayOrd(dk).replace(/<[^>]*>/g,'')))+'\')" style="border:1px solid #b9dfc0;background:#fff;border-radius:6px;cursor:pointer;padding:3px 9px;font-size:11.5px;font-weight:700;color:#1b5e2f;white-space:nowrap">🖨 Print all</button>'
+      +'</span>'
     +'</div>'
     +'<div id="'+rowId+'" style="display:'+(_ordersIsOpen(openKey,q)?'block':'none')+'">'
       +(function(){
@@ -4434,6 +4483,7 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
                 +_routeMilesRefreshBtnHtml(driverOrders,dName,dk)
                 +'<span style="display:flex;align-items:center;background:#fff;border:1px solid var(--line);border-radius:8px;padding:2px;flex-shrink:0">'
                   +'<button title="Print this driver\'s route form only (deliveries/payments + returns — no product sheets, since these already shipped)" onclick="event.stopPropagation();printDriverOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+esc(_jsStrEsc(dName))+'\',\''+esc(dk)+'\',true)" style="border:0;background:transparent;cursor:pointer;padding:3px 5px;color:var(--cold);font-size:17px;line-height:1;border-radius:5px">🖨</button>'
+                  +'<button title="Print all of this driver\'s shipped orders (with invoice numbers and shipped counts)" onclick="event.stopPropagation();printShippedOrders(['+driverOrders.map(function(o){return '\''+esc(o.id)+'\'';}).join(',')+'],\''+esc(_jsStrEsc('Shipped orders — '+dName+' — '+dk))+'\')" style="border:0;background:transparent;cursor:pointer;padding:3px 5px;color:var(--cold);font-size:17px;line-height:1;border-radius:5px">📄</button>'
                 +'</span>'
               +'</span>'
             +'</div>'
@@ -4453,6 +4503,7 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
             +'<span onclick="toggleOrdersRow(\''+orderRowId+'\',\''+_jsStrEsc(orderOpenKey)+'\')" style="cursor:pointer;width:170px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">'+esc(o.customer)+'</span>'
             +'<span onclick="toggleOrdersRow(\''+orderRowId+'\',\''+_jsStrEsc(orderOpenKey)+'\')" style="cursor:pointer;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">'+lines.length+' product'+(lines.length!==1?'s':'')+'</span>'
             +'<span style="flex-shrink:0;font-family:var(--mono);font-size:11px;color:#1b5e2f;background:#e3f3e6;padding:2px 8px;border-radius:10px">Inv #'+esc(o.invoiceDocNumber||'?')+'</span>'
+            +'<button title="Print this shipped order" onclick="event.stopPropagation();printShippedOrders([\''+esc(o.id)+'\'],\''+esc(_jsStrEsc((o.customer||'Order')+' — Inv #'+(o.invoiceDocNumber||'?')))+'\')" style="flex-shrink:0;border:1px solid #b9dfc0;background:#fff;border-radius:6px;cursor:pointer;padding:2px 7px;font-size:14px;line-height:1.3">🖨</button>'
             +'<button title="Move the WHOLE order back to Received Orders" onclick="event.stopPropagation();toggleOrderShippedManually(\''+esc(o.id)+'\',false)" style="flex-shrink:0;border:1px solid #b9dfc0;background:#fff;border-radius:6px;cursor:pointer;padding:3px 8px;font-size:11px;color:#1b5e2f">↩ Undo</button>'
           +'</div>'
           +'<div id="'+orderRowId+'" style="display:'+(_ordersRowOpen[orderOpenKey]?'block':'none')+'">'

@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const querystring = require('querystring');
 const crypto = require('crypto');
+const zlib = require('zlib');
 
 const PORT = process.env.PORT || 3000;
 const QB_REALM = process.env.QB_REALM || '';
@@ -146,6 +147,19 @@ function verifyPin(pin, pinHash) {
   }
 }
 
+const WEAK_PINS = new Set(['1234','12345','123456','0000','1111','2222','4321','1212','0123','9876','2580','1122','6969','1004','2000','2026','2025']);
+// Boot-time warning if the well-known default admin login still works.
+setTimeout(async () => {
+  try {
+    await updateSharedData(async (data) => {
+      const u = (data.users || []).find(x => x && String(x.email || '').toLowerCase() === 'admin@facility.com');
+      if (u && ((u.pinHash && verifyPin('1234', u.pinHash)) || u.pin === '1234')) {
+        console.warn('[security] WARNING: the default admin login (admin@facility.com / PIN 1234) still works. Change that PIN in Settings > Users.');
+      }
+      return { data, skipWrite: true };
+    });
+  } catch (e) {}
+}, 10000);
 function defaultAdmin() {
   return {
     id: 'user_default',
@@ -599,6 +613,21 @@ function requireAuth(req, res) {
 // Used for backup/restore routes, since a backup file contains everything —
 // including every user's pinHash — and a restore can overwrite all shared
 // data in one shot.
+// Logged in AND (admin OR the user currently has permission `permId`).
+// Permissions are read from the stored user record (not the session), so
+// unticking a permission in Settings takes effect immediately. (Oct 2026)
+function requirePerm(req, res, permId) {
+  const session = requireAuth(req, res);
+  if (!session) return null;
+  if (session.role === 'admin') return session;
+  const users = (_sharedDataCache && Array.isArray(_sharedDataCache.users)) ? _sharedDataCache.users : [];
+  const u = users.find(x => x && x.id === session.userId);
+  if (u && u.role === 'admin') return session;
+  if (u && u.perms && u.perms[permId] === true) return session;
+  res.writeHead(403, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+  res.end(JSON.stringify({ error: 'You do not have permission for this.' }));
+  return null;
+}
 function requireAdmin(req, res) {
   const session = requireAuth(req, res);
   if (!session) return null; // requireAuth already sent the 401
@@ -820,6 +849,33 @@ setTimeout(async () => {
     if (res && res.n) console.log('[po] assigned P.O. numbers to ' + res.n + ' existing order(s)');
   } catch (e) { console.error('[po] numbering existing orders failed:', e.message); }
 }, 15000);
+// ----- Sync response caching + compression (Oct 2026 audit) ----------------
+// Sends a cached JSON body: 304 "no change" when the browser already has this
+// version (If-None-Match), otherwise the body — gzip-compressed when the
+// browser accepts it. The gzip is made once per version (asynchronously, so
+// a big payload never freezes the server) and reused for every tab.
+function _gzipCached(entry) {
+  if (!entry.gzPromise) {
+    entry.gzPromise = new Promise((resolve) => {
+      zlib.gzip(Buffer.from(entry.json, 'utf8'), { level: 6 }, (err, buf) => resolve(err ? null : buf));
+    });
+  }
+  return entry.gzPromise;
+}
+async function _sendCachedJson(req, res, entry) {
+  const base = { 'Content-Type': 'application/json', 'ETag': entry.etag, 'Vary': 'Accept-Encoding', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' };
+  if (req.headers['if-none-match'] === entry.etag) { res.writeHead(304, base); res.end(); return; }
+  const accepts = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
+  if (accepts && entry.json.length > 2048) {
+    const gz = await _gzipCached(entry);
+    if (gz) { res.writeHead(200, Object.assign({}, base, { 'Content-Encoding': 'gzip', 'Content-Length': gz.length })); res.end(gz); return; }
+  }
+  res.writeHead(200, base);
+  res.end(entry.json);
+}
+let _indexGz = null; // { len, buf } compressed index.html
+let _smallJsonCache = null; // { ref, json, etag, gzPromise }
+let _smallJsonVersion = 0;
 // ===== END SHARED DATA STORE =====
 
 // ===== QUICKBOOKS TOKEN PERSISTENCE =====
@@ -2117,9 +2173,14 @@ process.on('unhandledRejection', (err) => {
 });
 
 const server = http.createServer(async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  // (Oct 2026 audit) Security headers on every response, and no more
+  // "Access-Control-Allow-Origin: *": the app only ever calls its own
+  // address, so other websites have no reason to be invited in.
+  res.setHeader('X-Content-Type-Options', 'nosniff');           // browsers must not guess file types
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');               // no embedding in other sites' frames (clickjacking)
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=(self)');
+  if (process.env.NODE_ENV === 'production') res.setHeader('Strict-Transport-Security', 'max-age=31536000'); // HTTPS only
 
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
@@ -2235,13 +2296,16 @@ const server = http.createServer(async (req, res) => {
       }
       clearLoginRateLimit(email);
       const token = createSession(user);
+      // (Oct 2026) Flag commonly guessed PINs so the app can ask the user to
+      // change it. The default admin account ships with 1234.
+      const weakPin = WEAK_PINS.has(pin) || /^(\d)\1+$/.test(pin);
       res.writeHead(200, {
         'Content-Type': 'application/json',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
         'Set-Cookie': sessionCookieHeader(token, SESSION_TTL_MS / 1000)
       });
-      res.end(JSON.stringify({ success: true, user: { id: user.id, name: user.name, email: user.email, role: user.role, perms: user.perms || {} } }));
+      res.end(JSON.stringify({ success: true, weakPin, user: { id: user.id, name: user.name, email: user.email, role: user.role, perms: user.perms || {} } }));
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: e.message }));
@@ -2308,13 +2372,7 @@ const server = http.createServer(async (req, res) => {
     // multi-MB dataset for the browser to download, parse and re-cache.
     // The ETag combines a per-boot random id with a counter bumped on every
     // rebuild, so a server restart can never make an old tag look current.
-    if (req.headers['if-none-match'] === _apiDataJsonCache.etag) {
-      res.writeHead(304, { 'ETag': _apiDataJsonCache.etag, 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
-      res.end();
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': 'application/json', 'ETag': _apiDataJsonCache.etag, 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
-    res.end(_apiDataJsonCache.json);
+    await _sendCachedJson(req, res, _apiDataJsonCache); // 304 when unchanged, gzip when accepted
     return;
   }
   // Lightweight read of JUST the items list (no transactions, no other
@@ -2764,10 +2822,16 @@ const server = http.createServer(async (req, res) => {
   // multiple-MB range and shouldn't be re-fetched on every single push.
   if (url === '/api/data/small' && req.method === 'GET') {
     if (!requireAuth(req, res)) return;
-    const data = await readSharedData();
+    // Built once per data version (the shared cache object is replaced on
+    // every write) and answered with 304 "no change" when the tab already
+    // has it — every open tab asks every 1.5s, and this payload is several
+    // MB with the live customer list, so re-sending it unchanged cost each
+    // tab gigabytes per hour (Oct 2026 audit).
+    await readSharedData(); // makes sure the cache is loaded
+    if (!_smallJsonCache || _smallJsonCache.ref !== _sharedDataCache) {
+    const data = _sharedDataCache;
     const users = data.users.map(u => { const c = Object.assign({}, u); delete c.pin; delete c.pinHash; return c; });
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
-    res.end(JSON.stringify({
+    _smallJsonCache = { ref: _sharedDataCache, etag: '"s' + _API_DATA_BOOT_ID + '-' + (++_smallJsonVersion) + '"', json: JSON.stringify({
       users: users,
       scaleLogs: data.scaleLogs,
       labelAllowed: data.labelAllowed,
@@ -2780,7 +2844,9 @@ const server = http.createServer(async (req, res) => {
       drivers: data.drivers,
       deletedDrivers: data.deletedDrivers,
       itemFilterPrefs: data.itemFilterPrefs
-    }));
+    }) };
+    }
+    await _sendCachedJson(req, res, _smallJsonCache);
     return;
   }
   // Targeted, single-field write — the first piece of a broader move
@@ -2913,7 +2979,7 @@ const server = http.createServer(async (req, res) => {
       const b = JSON.parse((await readRequestBody(req)) || '{}');
       const n = v => (typeof v === 'number' && isFinite(v)) ? Math.round(v) : '?';
       const str = v => String(v == null ? '?' : v).replace(/[^\w .:/-]/g, '').slice(0, 40);
-      console.log('[tabmem] user=' + str(session.name) + ' tab=' + str(b.tab) + ' ver=' + str(b.ver) + ' page=' + str(b.page) +
+      if (process.env.DEBUG_SYNC) console.log('[tabmem] user=' + str(session.name) + ' tab=' + str(b.tab) + ' ver=' + str(b.ver) + ' page=' + str(b.page) +
         ' usedMB=' + n(b.usedMB) + ' limitMB=' + n(b.limitMB) + ' openMin=' + n(b.openMin) +
         ' domNodes=' + n(b.domNodes) + ' txns=' + n(b.txns) + ' items=' + n(b.items) + ' customers=' + n(b.customers));
     } catch (e) {}
@@ -3252,7 +3318,9 @@ const server = http.createServer(async (req, res) => {
       // code. For each collection in this save, compare its size with what
       // the server currently holds and log the ones that differ, e.g.
       // [savediff] user=Hasan orders:+412B(+1) customers:-3B(0)
-      try {
+      // Off unless DEBUG_SYNC=1 is set in Render (Oct 2026 audit): it compares
+      // every collection on every save — only needed while hunting a sync bug.
+      if (process.env.DEBUG_SYNC) try {
         const cur = _sharedDataCache || {};
         const diffs = [];
         Object.keys(incoming).forEach(k => {
@@ -4495,7 +4563,19 @@ const server = http.createServer(async (req, res) => {
       // installs can keep serving a stale cached copy of the whole app
       // (old JS and all) indefinitely, so a device can look "stuck" even
       // after new code has been deployed and other devices already show it.
-      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      const headers = { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Vary': 'Accept-Encoding' };
+      // Compressed when the browser accepts it (Oct 2026 audit) — the page is
+      // mostly text and shrinks to a fraction for phones on mobile data. The
+      // compressed copy is reused until the file changes (i.e. a redeploy).
+      if (/\bgzip\b/.test(String(req.headers['accept-encoding'] || ''))) {
+        if (!_indexGz || _indexGz.len !== data.length) {
+          _indexGz = { len: data.length, buf: zlib.gzipSync(data, { level: 9 }) };
+        }
+        res.writeHead(200, Object.assign(headers, { 'Content-Encoding': 'gzip', 'Content-Length': _indexGz.buf.length }));
+        res.end(_indexGz.buf);
+        return;
+      }
+      res.writeHead(200, headers);
       res.end(data);
     });
     return;
@@ -4554,7 +4634,7 @@ const server = http.createServer(async (req, res) => {
   // the browser directly — this is why it has to be a server round-trip
   // rather than the client calling Plaid itself.
   if (url === '/api/plaid/create-link-token' && req.method === 'POST') {
-    const session = requireAuth(req, res);
+    const session = requireAdmin(req, res); // connecting the company bank: admins only
     if (!session) return;
     if (!PLAID_CLIENT_ID || !PLAID_SECRET) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -4588,7 +4668,7 @@ const server = http.createServer(async (req, res) => {
   // exchanges it server-side for a permanent access_token, which is what
   // actually gets stored and reused for every future balance check.
   if (url === '/api/plaid/exchange-token' && req.method === 'POST') {
-    if (!requireAuth(req, res)) return;
+    if (!requireAdmin(req, res)) return; // admins only
     try {
       const body = JSON.parse(await readRequestBody(req) || '{}');
       if (!body.public_token) {
@@ -4621,7 +4701,8 @@ const server = http.createServer(async (req, res) => {
   // than a background poll (balance checks count against Plaid's usage-
   // based billing, so this should only run when someone actually asks).
   if (url === '/api/plaid/balance' && req.method === 'GET') {
-    if (!requireAuth(req, res)) return;
+    // Live company bank balance: admins, or users given "View bank balance".
+    if (!requirePerm(req, res, 'viewBankBalance')) return;
     if (!plaidAccessToken) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'No bank account connected yet.' }));
@@ -4664,7 +4745,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url === '/api/plaid/disconnect' && req.method === 'POST') {
-    if (!requireAuth(req, res)) return;
+    if (!requireAdmin(req, res)) return; // admins only
     plaidAccessToken = '';
     plaidItemId = '';
     plaidInstitutionName = '';

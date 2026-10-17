@@ -75,3 +75,14 @@ services:
       # route" comparison number is disabled until it is.
       - key: GOOGLE_MAPS_API_KEY
         sync: false
+      # Off-site nightly backups to Google Drive (Settings -> Backup &
+      # restore -> Connect Google Drive). From a Google Cloud OAuth client of
+      # type "Web application" whose Authorized redirect URI is exactly
+      # https://plant-console-app-cu5c.onrender.com/gdrive/callback and whose
+      # consent screen is published "In production" (in "Testing", Google
+      # expires the sign-in every 7 days). Optional: everything else works
+      # without these; only the Drive backups stay off.
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_SECRET
+        sync: false

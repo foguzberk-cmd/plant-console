@@ -512,6 +512,257 @@ function maybeAutoBackup() {
   takeServerBackup('auto').catch(e => console.error('Auto-backup failed:', e.message));
 }
 
+// ===== OFF-SITE BACKUPS TO GOOGLE DRIVE (Oct 2026) =====
+// The server backups above all live on the SAME Render disk as the live
+// data — if that disk is lost, deleted, or the service is recreated, the
+// backups go with it. This copies one full snapshot a day (gzipped) into a
+// Google Drive folder, completely outside Render.
+//
+// How it connects: an admin clicks "Connect Google Drive" in Settings →
+// Backup & restore, signs in with the Google account that should OWN the
+// backups, and the app keeps that account's refresh token on the
+// persistent disk (same pattern as qb-tokens.json / plaid-tokens.json).
+// Scope is drive.file, the narrowest Drive scope there is: the app can
+// only see and touch the files and folder it created itself — never
+// anything else in that Drive.
+//
+// Needs two env vars from a Google Cloud OAuth client (type "Web
+// application"): GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET.
+// Its authorized redirect URI must be exactly <app URL>/gdrive/callback.
+// Everything else in the app works fine without them — only this feature
+// stays switched off until they're set.
+const GDRIVE_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID || '';
+const GDRIVE_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET || '';
+// Optional override; by default it's derived from QB_REDIRECT_URI's host,
+// which is already confirmed to be this service's real public URL.
+const GDRIVE_REDIRECT_URI = process.env.GDRIVE_REDIRECT_URI ||
+  (function () { try { return new URL(REDIRECT_URI).origin + '/gdrive/callback'; } catch (e) { return ''; } })();
+const GDRIVE_FOLDER_NAME = process.env.GDRIVE_FOLDER_NAME || 'Plant Console Backups';
+const GDRIVE_KEEP_DAILY = Math.max(3, parseInt(process.env.GDRIVE_KEEP_DAILY || '30', 10) || 30);     // newest N kept no matter what
+const GDRIVE_KEEP_MONTHLY = Math.max(0, parseInt(process.env.GDRIVE_KEEP_MONTHLY || '12', 10) || 12); // plus the first backup of each of the last N months
+const GDRIVE_BACKUP_HOUR_ET = Math.min(23, Math.max(0, parseInt(process.env.GDRIVE_BACKUP_HOUR_ET || '2', 10) || 2)); // 2am New York time — quiet hours
+const GDRIVE_STATE_FILE = path.join(DATA_DIR, 'gdrive-backup.json');
+const GDRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file openid email';
+
+let gdriveState = { refreshToken: '', email: '', folderId: '', connectedAt: 0,
+  lastSuccessAt: 0, lastFileName: '', lastFileSize: 0, lastAttemptAt: 0, lastError: '', lastErrorAt: 0 };
+let _gdriveAccessToken = '';
+let _gdriveAccessTokenExpires = 0;
+let _gdriveRunning = false;
+const _gdriveOAuthStates = new Map(); // state nonce -> { userId, expires }
+
+(function loadGDriveState() {
+  try {
+    if (fs.existsSync(GDRIVE_STATE_FILE)) {
+      gdriveState = Object.assign(gdriveState, JSON.parse(fs.readFileSync(GDRIVE_STATE_FILE, 'utf8') || '{}'));
+      if (gdriveState.refreshToken) console.log('Google Drive backups: connected as ' + (gdriveState.email || '(unknown account)'));
+    }
+  } catch (e) { console.error('Could not read Google Drive backup state:', e.message); }
+})();
+
+function saveGDriveState() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    const tmp = GDRIVE_STATE_FILE + '.tmp-' + process.pid;
+    fs.writeFileSync(tmp, JSON.stringify(gdriveState, null, 2));
+    fs.renameSync(tmp, GDRIVE_STATE_FILE);
+  } catch (e) { console.error('Could not save Google Drive backup state:', e.message); }
+}
+
+// Small JSON-over-HTTPS helper for Google's APIs (built on httpsRequest
+// below, so it shares the same whole-body UTF-8 decoding).
+async function gdriveFetch(method, fullUrl, opts) {
+  opts = opts || {};
+  const u = new URL(fullUrl);
+  const headers = Object.assign({}, opts.headers || {});
+  let body = opts.body;
+  if (body !== undefined && !Buffer.isBuffer(body) && typeof body !== 'string') {
+    body = JSON.stringify(body);
+    headers['Content-Type'] = headers['Content-Type'] || 'application/json; charset=UTF-8';
+  }
+  if (body !== undefined) headers['Content-Length'] = Buffer.byteLength(body);
+  if (opts.auth !== false) headers['Authorization'] = 'Bearer ' + (await gdriveAccessToken());
+  // Hard timeout so a stalled connection can never leave a backup "running"
+  // forever (which would block every future backup until a restart).
+  let timer;
+  const r = await Promise.race([
+    httpsRequest({ hostname: u.hostname, port: u.port || 443, path: u.pathname + u.search, method: method, headers: headers }, body),
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Google did not respond within 5 minutes.')), 5 * 60 * 1000); })
+  ]).finally(() => clearTimeout(timer));
+  let data = null;
+  try { data = r.body ? JSON.parse(r.body) : null; } catch (e) { data = null; }
+  return { status: r.status, data: data, headers: r.headers, raw: r.body };
+}
+
+async function gdriveAccessToken() {
+  if (_gdriveAccessToken && Date.now() < _gdriveAccessTokenExpires - 60000) return _gdriveAccessToken;
+  if (!gdriveState.refreshToken) throw new Error('Google Drive is not connected.');
+  const r = await gdriveFetch('POST', 'https://oauth2.googleapis.com/token', {
+    auth: false,
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: querystring.stringify({
+      client_id: GDRIVE_CLIENT_ID, client_secret: GDRIVE_CLIENT_SECRET,
+      refresh_token: gdriveState.refreshToken, grant_type: 'refresh_token'
+    })
+  });
+  if (r.status !== 200 || !r.data || !r.data.access_token) {
+    const reason = (r.data && (r.data.error_description || r.data.error)) || ('HTTP ' + r.status);
+    if (r.data && r.data.error === 'invalid_grant') {
+      throw new Error('Google refused the saved sign-in (' + reason + '). Click "Reconnect Google Drive". If this keeps happening every ~7 days, the Google Cloud OAuth app is still in "Testing" — publish it to "In production" (see setup notes).');
+    }
+    throw new Error('Could not refresh Google access token: ' + reason);
+  }
+  _gdriveAccessToken = r.data.access_token;
+  _gdriveAccessTokenExpires = Date.now() + (r.data.expires_in || 3600) * 1000;
+  return _gdriveAccessToken;
+}
+
+// Returns a folder id that's guaranteed to exist and not be in the trash —
+// recreates the folder if someone deleted it in Drive.
+async function gdriveEnsureFolder() {
+  if (gdriveState.folderId) {
+    const r = await gdriveFetch('GET', 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(gdriveState.folderId) + '?fields=id,trashed');
+    if (r.status === 200 && r.data && !r.data.trashed) return gdriveState.folderId;
+  }
+  const c = await gdriveFetch('POST', 'https://www.googleapis.com/drive/v3/files?fields=id', {
+    body: { name: GDRIVE_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder', appProperties: { plantConsoleBackupFolder: '1' } }
+  });
+  if (c.status !== 200 || !c.data || !c.data.id) throw new Error('Could not create the backup folder in Google Drive (HTTP ' + c.status + ').');
+  gdriveState.folderId = c.data.id;
+  saveGDriveState();
+  return gdriveState.folderId;
+}
+
+async function gdriveListBackups(folderId) {
+  const q = "'" + folderId + "' in parents and trashed = false and appProperties has { key='plantConsoleBackup' and value='1' }";
+  const files = [];
+  let pageToken = '';
+  do {
+    const params = { q: q, orderBy: 'createdTime desc', pageSize: 1000, fields: 'nextPageToken,files(id,name,size,createdTime,webViewLink)' };
+    if (pageToken) params.pageToken = pageToken;
+    const r = await gdriveFetch('GET', 'https://www.googleapis.com/drive/v3/files?' + querystring.stringify(params));
+    if (r.status !== 200 || !r.data) throw new Error('Could not list Google Drive backups (HTTP ' + r.status + ').');
+    files.push(...(r.data.files || []));
+    pageToken = r.data.nextPageToken || '';
+  } while (pageToken);
+  return files; // newest first
+}
+
+// Retention: keep the newest GDRIVE_KEEP_DAILY, plus the earliest backup of
+// each of the last GDRIVE_KEEP_MONTHLY calendar months. Everything else is
+// moved to Drive's trash (not hard-deleted), so a mistake here is still
+// recoverable for 30 days from Drive's own Trash.
+async function gdrivePrune(folderId) {
+  const files = await gdriveListBackups(folderId);
+  const keep = new Set(files.slice(0, GDRIVE_KEEP_DAILY).map(f => f.id));
+  const firstOfMonth = new Map(); // 'YYYY-MM' -> oldest file that month
+  for (const f of files) firstOfMonth.set(String(f.createdTime).slice(0, 7), f); // files are newest-first, so the last one set per month is the oldest
+  const months = Array.from(firstOfMonth.keys()).sort().reverse().slice(0, GDRIVE_KEEP_MONTHLY);
+  for (const m of months) keep.add(firstOfMonth.get(m).id);
+  let trashed = 0;
+  for (const f of files) {
+    if (keep.has(f.id)) continue;
+    const r = await gdriveFetch('PATCH', 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(f.id) + '?fields=id', { body: { trashed: true } });
+    if (r.status === 200) trashed++;
+  }
+  return trashed;
+}
+
+// Takes a fresh full server backup (same file format the Restore button
+// already understands), gzips it, and uploads it to the Drive folder.
+async function runGDriveBackup(reason) {
+  if (_gdriveRunning) throw new Error('A Google Drive backup is already running.');
+  if (!GDRIVE_CLIENT_ID || !GDRIVE_CLIENT_SECRET) throw new Error('GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET are not set on the server.');
+  if (!gdriveState.refreshToken) throw new Error('Google Drive is not connected.');
+  _gdriveRunning = true;
+  gdriveState.lastAttemptAt = Date.now();
+  try {
+    const localName = await takeServerBackup(reason === 'manual' ? 'manual' : 'auto');
+    _lastAutoBackupAt = Date.now();
+    const raw = await fs.promises.readFile(path.join(BACKUP_DIR, localName));
+    const gz = await new Promise((resolve, reject) => zlib.gzip(raw, { level: 9 }, (err, out) => err ? reject(err) : resolve(out)));
+    const folderId = await gdriveEnsureFolder();
+    const driveName = 'plant-console-' + localName + '.gz';
+    // Resumable upload (two steps) — the simple multipart upload is capped
+    // at 5 MB, and a compressed snapshot can grow past that.
+    const init = await gdriveFetch('POST', 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,size', {
+      headers: { 'X-Upload-Content-Type': 'application/gzip', 'X-Upload-Content-Length': String(gz.length) },
+      body: { name: driveName, parents: [folderId], mimeType: 'application/gzip',
+        description: 'Plant Console full backup (' + reason + '). Restore: Settings → Backup & restore → Restore from a saved file.',
+        appProperties: { plantConsoleBackup: '1' } }
+    });
+    const sessionUrl = init.headers && init.headers.location;
+    if (init.status !== 200 || !sessionUrl) throw new Error('Google Drive refused the upload (HTTP ' + init.status + (init.data && init.data.error ? ': ' + init.data.error.message : '') + ').');
+    const up = await gdriveFetch('PUT', sessionUrl, { headers: { 'Content-Type': 'application/gzip' }, body: gz });
+    if ((up.status !== 200 && up.status !== 201) || !up.data || !up.data.id) throw new Error('Upload to Google Drive failed (HTTP ' + up.status + ').');
+    if (String(up.data.size) !== String(gz.length)) throw new Error('Upload size mismatch — Drive has ' + up.data.size + ' bytes, expected ' + gz.length + '.');
+    gdriveState.lastSuccessAt = Date.now();
+    gdriveState.lastFileName = driveName;
+    gdriveState.lastFileSize = gz.length;
+    gdriveState.lastError = '';
+    gdriveState.lastErrorAt = 0;
+    saveGDriveState();
+    console.log('Google Drive backup uploaded: ' + driveName + ' (' + Math.round(gz.length / 1024) + ' KB, from ' + Math.round(raw.length / 1024) + ' KB)');
+    gdrivePrune(folderId).then(n => { if (n) console.log('Google Drive backups: moved ' + n + ' old backup(s) to trash'); })
+      .catch(e => console.error('Google Drive prune failed:', e.message));
+    return { fileName: driveName, size: gz.length };
+  } catch (e) {
+    gdriveState.lastError = e.message;
+    gdriveState.lastErrorAt = Date.now();
+    saveGDriveState();
+    console.error('Google Drive backup failed:', e.message);
+    throw e;
+  } finally {
+    _gdriveRunning = false;
+  }
+}
+
+function nyHourNow() {
+  return parseInt(new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hourCycle: 'h23' }), 10);
+}
+
+// Checked every 10 minutes. Runs once a day in the GDRIVE_BACKUP_HOUR_ET
+// window; if that window was missed (server down/asleep), catches up as
+// soon as it's been over 26h. A failure retries at most once an hour.
+function gdriveSchedulerTick() {
+  if (!gdriveState.refreshToken || !GDRIVE_CLIENT_ID || _gdriveRunning) return;
+  const now = Date.now();
+  const sinceSuccess = now - (gdriveState.lastSuccessAt || 0);
+  const sinceAttempt = now - (gdriveState.lastAttemptAt || 0);
+  if (sinceAttempt < 60 * 60 * 1000) return;
+  const h = nyHourNow();
+  const inWindow = h >= GDRIVE_BACKUP_HOUR_ET && h < GDRIVE_BACKUP_HOUR_ET + 3;
+  if ((inWindow && sinceSuccess > 20 * 60 * 60 * 1000) || sinceSuccess > 26 * 60 * 60 * 1000) {
+    runGDriveBackup('scheduled').catch(() => { /* already logged + saved to state */ });
+  }
+}
+
+function gdriveStatusPayload() {
+  const now = Date.now();
+  const configured = !!(GDRIVE_CLIENT_ID && GDRIVE_CLIENT_SECRET);
+  const connected = !!gdriveState.refreshToken;
+  // "healthy" = a good backup within the last 36h. The UI turns red otherwise.
+  const healthy = connected && gdriveState.lastSuccessAt > 0 && (now - gdriveState.lastSuccessAt) < 36 * 60 * 60 * 1000;
+  return {
+    configured: configured, connected: connected, healthy: healthy, running: _gdriveRunning,
+    email: gdriveState.email || null, folderName: GDRIVE_FOLDER_NAME,
+    folderUrl: gdriveState.folderId ? 'https://drive.google.com/drive/folders/' + gdriveState.folderId : null,
+    lastSuccessAt: gdriveState.lastSuccessAt || null, lastFileName: gdriveState.lastFileName || null, lastFileSize: gdriveState.lastFileSize || null,
+    lastError: gdriveState.lastError || null, lastErrorAt: gdriveState.lastErrorAt || null,
+    scheduleHourET: GDRIVE_BACKUP_HOUR_ET, keepDaily: GDRIVE_KEEP_DAILY, keepMonthly: GDRIVE_KEEP_MONTHLY,
+    redirectUri: GDRIVE_REDIRECT_URI
+  };
+}
+
+function gdriveHtmlPage(title, message, ok) {
+  const safe = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    (ok ? '<meta http-equiv="refresh" content="3;url=/">' : '') + '<title>' + safe(title) + '</title></head>' +
+    '<body style="font-family:system-ui,sans-serif;max-width:560px;margin:60px auto;padding:0 16px;line-height:1.5">' +
+    '<h2 style="color:' + (ok ? '#1a7f37' : '#b42318') + '">' + safe(title) + '</h2><p>' + safe(message) + '</p>' +
+    '<p><a href="/">Back to Plant Console</a></p></body></html>';
+}
+
 // ===== SESSIONS =====
 // Session store backed by an HttpOnly cookie, persisted to disk (see
 // SESSIONS_FILE above) so a server restart doesn't force everyone to log
@@ -4413,6 +4664,104 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ===== Off-site backups to Google Drive (admin only) =====
+  if (url === '/api/gdrive/status' && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return;
+    const payload = gdriveStatusPayload();
+    if (payload.connected && queryParams.list === '1') {
+      try {
+        const folderId = gdriveState.folderId;
+        payload.recent = folderId ? (await gdriveListBackups(folderId)).slice(0, 10) : [];
+      } catch (e) { payload.listError = e.message; }
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+    res.end(JSON.stringify(payload));
+    return;
+  }
+  if (url === '/api/gdrive/backup-now' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const result = await runGDriveBackup('manual');
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ success: true, fileName: result.fileName, size: result.size }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  if (url === '/api/gdrive/disconnect' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
+    const tokenToRevoke = gdriveState.refreshToken;
+    gdriveState.refreshToken = '';
+    gdriveState.email = '';
+    gdriveState.folderId = ''; // reconnecting creates a fresh folder — drive.file can't see the old one from a new grant anyway
+    _gdriveAccessToken = '';
+    _gdriveAccessTokenExpires = 0;
+    saveGDriveState();
+    if (tokenToRevoke) {
+      gdriveFetch('POST', 'https://oauth2.googleapis.com/revoke', { auth: false, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: querystring.stringify({ token: tokenToRevoke }) })
+        .catch(() => { /* best-effort */ });
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+    res.end(JSON.stringify({ success: true }));
+    return;
+  }
+  // Step 1 of connecting: send the admin to Google's sign-in/consent page.
+  if (url === '/gdrive/connect' && req.method === 'GET') {
+    const session = requireAdmin(req, res);
+    if (!session) return;
+    if (!GDRIVE_CLIENT_ID || !GDRIVE_CLIENT_SECRET || !GDRIVE_REDIRECT_URI) {
+      res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(gdriveHtmlPage('Google Drive not set up yet', 'GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET need to be added to the Render environment first.', false));
+      return;
+    }
+    const state = crypto.randomBytes(24).toString('hex');
+    const now = Date.now();
+    for (const [k, v] of _gdriveOAuthStates.entries()) if (v.expires < now) _gdriveOAuthStates.delete(k);
+    _gdriveOAuthStates.set(state, { userId: session.userId, expires: now + 10 * 60 * 1000 });
+    const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' + querystring.stringify({
+      client_id: GDRIVE_CLIENT_ID, redirect_uri: GDRIVE_REDIRECT_URI, response_type: 'code',
+      scope: GDRIVE_SCOPE, access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true', state: state
+    });
+    res.writeHead(302, { 'Location': authUrl });
+    res.end();
+    return;
+  }
+  // Step 2: Google sends the admin back here with a one-time code.
+  if (url === '/gdrive/callback' && req.method === 'GET') {
+    const session = requireAdmin(req, res);
+    if (!session) return;
+    const sendPage = (status, title, msg, ok) => { res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(gdriveHtmlPage(title, msg, ok)); };
+    const st = _gdriveOAuthStates.get(String(queryParams.state || ''));
+    _gdriveOAuthStates.delete(String(queryParams.state || ''));
+    if (!st || st.expires < Date.now() || st.userId !== session.userId) return sendPage(400, 'Connection expired', 'That sign-in link expired or did not start here. Go back to Settings and click Connect Google Drive again.', false);
+    if (queryParams.error) return sendPage(400, 'Google Drive not connected', 'Google said: ' + queryParams.error, false);
+    try {
+      const r = await gdriveFetch('POST', 'https://oauth2.googleapis.com/token', {
+        auth: false, headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: querystring.stringify({ code: String(queryParams.code || ''), client_id: GDRIVE_CLIENT_ID, client_secret: GDRIVE_CLIENT_SECRET, redirect_uri: GDRIVE_REDIRECT_URI, grant_type: 'authorization_code' })
+      });
+      if (r.status !== 200 || !r.data || !r.data.access_token) throw new Error((r.data && (r.data.error_description || r.data.error)) || ('HTTP ' + r.status));
+      if (!r.data.refresh_token) throw new Error('Google did not return a long-lived token. Remove "Plant Console" from your Google account\'s third-party access page and connect again.');
+      let email = '';
+      try { email = JSON.parse(Buffer.from(String(r.data.id_token || '').split('.')[1] || '', 'base64url').toString('utf8')).email || ''; } catch (e) { /* email is display-only */ }
+      gdriveState.refreshToken = r.data.refresh_token;
+      gdriveState.email = email;
+      gdriveState.connectedAt = Date.now();
+      gdriveState.folderId = '';
+      gdriveState.lastError = '';
+      _gdriveAccessToken = r.data.access_token;
+      _gdriveAccessTokenExpires = Date.now() + (r.data.expires_in || 3600) * 1000;
+      saveGDriveState();
+      // First backup right away, so there's proof it works before tonight.
+      runGDriveBackup('first').catch(() => { /* surfaced in the Settings panel */ });
+      return sendPage(200, 'Google Drive connected', 'Backups will go to the "' + GDRIVE_FOLDER_NAME + '" folder in ' + (email || 'that Google account') + '\'s Drive. The first one is uploading now. Taking you back…', true);
+    } catch (e) {
+      return sendPage(500, 'Google Drive not connected', e.message, false);
+    }
+  }
+
   // ===== Server-side backups (admin only — these expose everything,
   // including hashed PINs, and a restore can overwrite all shared data) =====
   if (url === '/api/backups' && req.method === 'GET') {
@@ -5171,6 +5520,10 @@ const server = http.createServer(async (req, res) => {
     // on disk right away, instead of waiting for the next backup to be taken
     // (which could be up to an hour away) to trim down existing excess files.
     pruneOldBackups().catch(e => console.error('Could not prune old backups on startup:', e.message));
+    // Off-site Google Drive backups — see runGDriveBackup(). First check 1 min
+    // after boot (lets startup work settle), then every 10 minutes.
+    setTimeout(gdriveSchedulerTick, 60 * 1000);
+    setInterval(gdriveSchedulerTick, 10 * 60 * 1000);
     // Repeated OOM crashes (Sep 2026) at wildly varying times-since-restart
     // (2.5 min once, 7 min another) but always right at whatever the heap
     // ceiling happened to be set to — and confirmed NOT caused by the data

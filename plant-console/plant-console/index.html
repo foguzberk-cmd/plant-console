@@ -15707,13 +15707,17 @@ function renderSettings(){
           <button class="btn" onclick="document.getElementById('backupRestoreFile').click()">
             <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Restore from a saved file…
           </button>
-          <input type="file" id="backupRestoreFile" accept="application/json" style="display:none" onchange="restoreFromUploadedBackup(this.files[0])"/>
+          <input type="file" id="backupRestoreFile" accept="application/json,.json,.gz,application/gzip" style="display:none" onchange="restoreFromUploadedBackup(this.files[0])"/>
           <span id="backupStatus" style="font-family:var(--mono);font-size:11.5px;color:var(--muted)"></span>
         </div>
         <div style="padding:0 20px 16px">
           <div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Backups on the server</div>
           <div id="backupsList" style="font-size:12.5px;color:var(--muted)"></div>
           <div style="font-size:11px;color:var(--muted);margin-top:8px">One is taken automatically at most once an hour whenever data changes, plus one right before any restore (as an undo path). Use <strong>Download</strong> on any of these if you also want a copy somewhere fully independent of this server (email, Drive, a USB stick).</div>
+        </div>
+        <div style="padding:0 20px 18px;border-top:1px solid var(--line);margin-top:4px">
+          <div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:14px 0 8px">Off-site copies in Google Drive</div>
+          <div id="gdriveBackupPanel" style="font-size:12.5px;color:var(--muted)">Loading…</div>
         </div>
       </div>
 
@@ -17576,6 +17580,7 @@ function saveBulkStorages(){
 // contains everything (including every user's hashed PIN) and a restore
 // overwrites all shared data at once.
 async function renderBackupsPanel(){
+  renderGDrivePanel();
   var listEl=document.getElementById('backupsList');
   var statusEl=document.getElementById('backupStatus');
   if(!listEl) return; // Settings page isn't open right now
@@ -17650,7 +17655,15 @@ async function restoreServerBackup(filename, whenLabel){
 }
 function restoreFromUploadedBackup(file){
   if(!file) return;
-  var reader=new FileReader();
+  // Google Drive copies are gzipped (.json.gz) — unzip them right here in
+  // the browser so they restore exactly like a plain .json download.
+  var reader={};
+  var readText=/\.gz$/i.test(file.name||'')
+    ? (typeof DecompressionStream==='undefined'
+        ? Promise.reject(new Error('This browser can\'t open .gz files — unzip it first, or use a current Chrome/Safari/Edge.'))
+        : new Response(file.stream().pipeThrough(new DecompressionStream('gzip'))).text())
+    : file.text();
+  readText.then(function(t){ reader.result=t; reader.onload(); }, function(e){ alert('Could not read that file: '+(e&&e.message||e)); });
   reader.onload=async function(){
     var payload;
     try{ payload=JSON.parse(reader.result); }
@@ -17681,9 +17694,79 @@ function restoreFromUploadedBackup(file){
       alert('Restore failed — check your connection.');
     }
   };
-  reader.onerror=function(){ alert('Could not read that file.'); };
-  reader.readAsText(file);
   document.getElementById('backupRestoreFile').value=''; // allow re-selecting the same file later
+}
+
+// ===== OFF-SITE BACKUPS: GOOGLE DRIVE =====
+// One full gzipped snapshot a day goes to a Google Drive folder, outside
+// Render entirely (see runGDriveBackup in server.js). This panel shows
+// whether that's healthy and lets an admin connect / back up now.
+function gdriveSize(b){ b=Number(b||0); return b<1048576?Math.max(1,Math.round(b/1024))+' KB':(b/1048576).toFixed(1)+' MB'; }
+function gdriveAgo(ms){
+  if(!ms) return 'never';
+  var m=Math.round((Date.now()-ms)/60000);
+  if(m<1) return 'just now'; if(m<60) return m+' min ago';
+  var h=Math.round(m/60); if(h<48) return h+' hour'+(h!==1?'s':'')+' ago';
+  return Math.round(h/24)+' days ago';
+}
+async function renderGDrivePanel(){
+  var el=document.getElementById('gdriveBackupPanel');
+  if(!el) return;
+  try{
+    var res=await fetch('/api/gdrive/status?list=1',{cache:'no-store'});
+    if(!res.ok){ el.textContent=res.status===403?'Admin access required.':'Could not load Google Drive status.'; return; }
+    var s=await res.json();
+    if(!s.configured){
+      el.innerHTML='<div>Not set up yet. Add <code>GOOGLE_OAUTH_CLIENT_ID</code> and <code>GOOGLE_OAUTH_CLIENT_SECRET</code> in Render → Environment, with this redirect URI on the Google OAuth client:<br><code style="user-select:all">'+esc(s.redirectUri||'')+'</code></div>';
+      return;
+    }
+    if(!s.connected){
+      el.innerHTML='<div style="margin-bottom:10px">Not connected. Sign in with the Google account that should own the backups (a company account is best). The app can only see the files it creates.</div>'
+        +(s.lastError?'<div style="color:var(--danger,#b42318);margin-bottom:10px">'+esc(s.lastError)+'</div>':'')
+        +'<a class="btn btn-primary" href="/gdrive/connect">Connect Google Drive</a>';
+      return;
+    }
+    var ok=s.healthy && !s.lastError;
+    var color=ok?'var(--success,#1a7f37)':'var(--danger,#b42318)';
+    var headline=s.running?'Uploading a backup now…'
+      :(s.lastSuccessAt?('Last backup '+gdriveAgo(s.lastSuccessAt)+' · '+gdriveSize(s.lastFileSize)):'No backup uploaded yet');
+    var h='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
+      +'<span style="width:9px;height:9px;border-radius:50%;background:'+color+';flex:none"></span>'
+      +'<strong style="color:var(--text,inherit)">'+esc(headline)+'</strong></div>'
+      +'<div style="margin-bottom:6px">Saving to <strong>'+esc(s.folderName)+'</strong> in '+esc(s.email||'Google Drive')
+      +(s.folderUrl?' · <a href="'+esc(s.folderUrl)+'" target="_blank" rel="noopener">Open folder</a>':'')+'</div>'
+      +'<div style="margin-bottom:10px">Runs every night around '+((s.scheduleHourET%12)||12)+(s.scheduleHourET<12?' AM':' PM')+' New York time. Keeps the last '+s.keepDaily+' daily copies plus one per month for '+s.keepMonthly+' months.</div>';
+    if(s.lastError) h+='<div style="color:'+color+';margin-bottom:10px">Last attempt failed '+esc(gdriveAgo(s.lastErrorAt))+': '+esc(s.lastError)+'</div>';
+    else if(!s.healthy && s.lastSuccessAt) h+='<div style="color:'+color+';margin-bottom:10px">No successful backup in over 36 hours — check the server.</div>';
+    h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+      +'<button class="btn btn-sm btn-primary" id="gdriveNowBtn" onclick="gdriveBackupNow()"'+(s.running?' disabled':'')+'>Back up to Drive now</button>'
+      +(s.lastError?'<a class="btn btn-sm" href="/gdrive/connect">Reconnect Google Drive</a>':'')
+      +'<button class="btn btn-sm btn-danger" onclick="gdriveDisconnect()">Disconnect</button></div>';
+    if(s.recent&&s.recent.length){
+      h+='<div>'+s.recent.map(function(f){
+        return '<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);flex-wrap:wrap">'
+          +'<span style="font-family:var(--mono);font-size:11px">'+esc(new Date(f.createdTime).toLocaleString())+' · '+gdriveSize(f.size)+'</span>'
+          +(f.webViewLink?'<a href="'+esc(f.webViewLink)+'" target="_blank" rel="noopener" style="font-size:11.5px">Open in Drive</a>':'')+'</div>';
+      }).join('')+'</div>'
+      +'<div style="font-size:11px;margin-top:8px">To restore one: download it from Drive, then use <strong>Restore from a saved file…</strong> above — .gz files are unzipped automatically.</div>';
+    } else if(s.listError){ h+='<div>Could not list Drive files: '+esc(s.listError)+'</div>'; }
+    el.innerHTML=h;
+    if(s.running) setTimeout(renderGDrivePanel,5000);
+  }catch(e){ el.textContent='Could not load Google Drive status (offline?).'; }
+}
+async function gdriveBackupNow(){
+  var b=document.getElementById('gdriveNowBtn'); if(b){ b.disabled=true; b.textContent='Uploading…'; }
+  try{
+    var res=await fetch('/api/gdrive/backup-now',{method:'POST'});
+    var d=await res.json().catch(function(){return {};});
+    if(!res.ok) alert('Google Drive backup failed: '+(d.error||res.status));
+  }catch(e){ alert('Google Drive backup failed — check your connection.'); }
+  renderBackupsPanel();
+}
+async function gdriveDisconnect(){
+  if(!confirm('Stop off-site backups to Google Drive?\n\nFiles already in Drive stay there. You can reconnect any time.')) return;
+  try{ await fetch('/api/gdrive/disconnect',{method:'POST'}); }catch(e){}
+  renderGDrivePanel();
 }
 
 /* ===== USERS ===== */

@@ -12088,7 +12088,7 @@ var _checksDeposited=(function(){ try{ return JSON.parse(localStorage.getItem('p
 // here; _checksDeposited (who's marked what deposited/paid) is separate
 // local-only state, same as before this change.
 function _checksBuildSharedCacheBundle(){
-  return { savedAt:new Date().toISOString(), payments:_checksPayments, depositLinks:_checksDepositLinks, ufIds:_checksUFIds, acctNames:_checksAcctNames, cleared:_checksCleared };
+  return { savedAt:new Date().toISOString(), payments:_checksPayments, depositLinks:_checksDepositLinks, ufIds:_checksUFIds, acctNames:_checksAcctNames, acctTypes:_checksAcctTypes, cleared:_checksCleared };
 }
 function _checksRestoreSharedCacheBundle(b){
   // A cache saved before the 3-stage version has no deposit data — using it
@@ -12098,6 +12098,7 @@ function _checksRestoreSharedCacheBundle(b){
   _checksDepositLinks=b.depositLinks||{};
   _checksUFIds=b.ufIds||{};
   _checksAcctNames=b.acctNames||{};
+  _checksAcctTypes=b.acctTypes||{};
   _checksCleared=b.cleared||null;
   return true;
 }
@@ -12170,6 +12171,16 @@ async function runChecksReport(){
   // more direct signal than guessing from the Ref # field, so it's
   // checked first.
   var NON_CHECK_KEYWORDS=['cash','wire','ach','eft','transfer','card','credit','debit','paypal','venmo','zelle','online','e-check','echeck'];
+  // PaymentMethodRef only ever comes back as a bare id ({"value":"9"}), so
+  // the method's real name ("Cash", "Check", "Zelle"…) is looked up from
+  // QuickBooks's PaymentMethod list. (Oct 2026: a $2,400 CASH payment kept
+  // showing as a check because the name was never resolved.)
+  var pmNames={};
+  try{
+    var pmres=await fetch(base+'/api/qb/documents?entity=PaymentMethod&startposition=1');
+    var pmjd=await pmres.json();
+    ((pmjd&&pmjd.PaymentMethod)||[]).forEach(function(m){ pmNames[m.Id]={name:String(m.Name||''),type:String(m.Type||'')}; });
+  }catch(e){ /* fall back to the other signals below */ }
   // PaymentMethodRef turns out to exist but only ever as a bare numeric
   // reference (e.g. {"value":"9"}) with no name attached — resolving that
   // to an actual method name would need a separate lookup against
@@ -12184,8 +12195,12 @@ async function runChecksReport(){
   function _paymentMethodSaysNonCheck(p){
     if(p.CreditCardPayment) return true;
     if(p.ProcessPayment===true) return true;
-    var pm=((p.PaymentMethodRef&&p.PaymentMethodRef.name)||'').toLowerCase();
-    if(!pm) return false; // no name attached — no signal either way, fall through
+    var pmRef=p.PaymentMethodRef||{};
+    var pmInfo=pmNames[pmRef.value]||{};
+    if(pmInfo.type==='CREDIT_CARD') return true;
+    var pm=(pmRef.name||pmInfo.name||'').toLowerCase();
+    if(!pm) return false; // no method set — no signal either way, fall through
+    if(/\bche(ck|que)\b/.test(pm) && pm.indexOf('e-check')<0 && pm.indexOf('echeck')<0) return false; // explicitly a paper check
     for(var i=0;i<NON_CHECK_KEYWORDS.length;i++){ if(pm.indexOf(NON_CHECK_KEYWORDS[i])>=0) return true; }
     return false;
   }
@@ -12234,12 +12249,12 @@ async function runChecksReport(){
   // a) Chart of Accounts → which account(s) are Undeposited Funds, plus
   //    bank account names for display.
   if(statusEl) statusEl.textContent='Found '+payments.length+' check(s) — checking Undeposited Funds and bank deposits…';
-  var ufIds={}, acctNames={};
+  var ufIds={}, acctNames={}, acctTypes={};
   var acctStart=1;
   for(var ai=0;ai<50;ai++){
     var ar=null;
     try{ var ares=await fetch(base+'/api/qb/documents?entity=Account&startposition='+acctStart); var ajd=await ares.json(); ar=(ajd&&ajd.Account)||[]; }catch(e){ break; }
-    ar.forEach(function(a){ acctNames[a.Id]=a.Name||''; if(a.AccountType==='UndepositedFunds'||a.AccountSubType==='UndepositedFunds') ufIds[a.Id]=true; });
+    ar.forEach(function(a){ acctNames[a.Id]=a.Name||''; acctTypes[a.Id]=a.AccountType||''; if(a.AccountType==='UndepositedFunds'||a.AccountSubType==='UndepositedFunds') ufIds[a.Id]=true; });
     if(ar.length<pageSize) break;
     acctStart+=pageSize;
   }
@@ -12282,7 +12297,7 @@ async function runChecksReport(){
     var cres=await fetch(base+'/api/qb/cleared-status?from='+encodeURIComponent(from),{cache:'no-store'});
     if(cres.ok) cleared=await cres.json();
   }catch(e){ cleared=null; }
-  _checksUFIds=ufIds; _checksAcctNames=acctNames; _checksDepositLinks=depositLinks; _checksCleared=cleared;
+  _checksUFIds=ufIds; _checksAcctNames=acctNames; _checksAcctTypes=acctTypes; _checksDepositLinks=depositLinks; _checksCleared=cleared;
 
   _checksPayments=payments;
   renderChecksInHandSection();
@@ -12399,6 +12414,7 @@ function _checksFmtShort(dateStr){
 var _checksDepositLinks={};   // payment Id -> {id, date, doc, acctId}
 var _checksUFIds={};          // account Id -> true for Undeposited Funds accounts
 var _checksAcctNames={};      // account Id -> name
+var _checksAcctTypes={};      // account Id -> QuickBooks AccountType ('Bank', 'Other Current Asset'…)
 var _checksCleared=null;      // {reliable, deposits:{id:'Cleared'|'Reconciled'}, payments:{...}} or null if unavailable
 
 function _checksIsUF(ref){
@@ -12427,8 +12443,10 @@ function _checksClassify(p){
     out.depositId=link.id; out.depositDate=link.date; out.depositDoc=link.doc;
     out.bank=_checksAcctNames[link.acctId]||'';
     clearKey=link.id; clearMap=_checksCleared&&_checksCleared.deposits;
-  } else if(!_checksIsUF(p.DepositToAccountRef)){
-    // Received straight into a bank account — never sat in Undeposited Funds.
+  } else if(!_checksIsUF(p.DepositToAccountRef) && (!Object.keys(_checksAcctTypes).length || _checksAcctTypes[p.DepositToAccountRef.value]==='Bank')){
+    // Received straight into a BANK account — never sat in Undeposited Funds.
+    // Anything recorded into a non-bank holding account (e.g. "Cash On
+    // Hand") is still physically here, so it falls through to In Hand.
     out.depositDate=txnDate; out.direct=true;
     out.bank=_checksAcctNames[p.DepositToAccountRef.value]||p.DepositToAccountRef.name||'';
     clearKey=p.Id; clearMap=_checksCleared&&_checksCleared.payments;

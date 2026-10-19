@@ -5204,6 +5204,76 @@ const server = http.createServer(async (req, res) => {
   // &since=ISO                       -> only records changed since that time
   // &to=YYYY-MM-DD                   -> only records with TxnDate on/before that date
   //                                     (used by the Purchasing report to pull one week at a time)
+  // ----- Checks tab: bank "cleared" status (Oct 2026) -----------------------
+  // The Deposit / Payment entities themselves don't say whether the bank has
+  // actually cleared them — that flag (the "C" / "R" you see in a QuickBooks
+  // register, set by a bank-feed match or a reconciliation) is only exposed
+  // through the TransactionList report's `cleared` filter. This asks that
+  // report three times per transaction type (Cleared, Reconciled, Uncleared)
+  // and returns just the transaction ids in each bucket.
+  //
+  // `reliable` is a sanity check: if QuickBooks ever ignored the filter, the
+  // same id would come back in both the Cleared and Uncleared lists — in
+  // that case the frontend falls back to a days-since-deposit estimate and
+  // labels it as an estimate, instead of trusting bad data.
+  if (url === '/api/qb/cleared-status' && req.method === 'GET') {
+    if (!requireAuth(req, res)) return;
+    const from = String(queryParams.from || '');
+    if (!isValidQbDateParam(from)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'from=YYYY-MM-DD required' }));
+      return;
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const collectIds = (rows, typeLabel, out) => {
+      (rows || []).forEach(r => {
+        if (r.Rows && r.Rows.Row) collectIds(r.Rows.Row, typeLabel, out);
+        (r.ColData || []).forEach(c => { if (c && c.id && c.value === typeLabel) out.add(String(c.id)); });
+      });
+    };
+    const runReport = async (txnType, cleared, retry) => {
+      if (!retry) await ensureFreshToken();
+      const qs = querystring.stringify({ start_date: from, end_date: today, transaction_type: txnType, cleared: cleared, minorversion: 75 });
+      const r = await httpsRequest({
+        hostname: 'quickbooks.api.intuit.com',
+        path: `/v3/company/${activeRealm}/reports/TransactionList?${qs}`,
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/json' }
+      });
+      if (r.status === 401) {
+        if (!retry && await refreshAccessToken()) return runReport(txnType, cleared, true);
+        throw new Error('NEEDS_RECONNECT');
+      }
+      if (r.status !== 200) throw new Error('QB report error ' + r.status + ': ' + r.body.slice(0, 300));
+      const data = JSON.parse(r.body);
+      // In the report, a Deposit row's type cell reads "Deposit", a Payment
+      // row's reads "Payment" — that cell's `id` is the transaction id.
+      const label = txnType === 'ReceivePayment' ? 'Payment' : txnType;
+      const ids = new Set();
+      collectIds((data.Rows && data.Rows.Row) || [], label, ids);
+      return ids;
+    };
+    try {
+      if (!accessToken) await refreshAccessToken();
+      const out = { from: from, reliable: true, deposits: {}, payments: {} };
+      for (const [txnType, key] of [['Deposit', 'deposits'], ['ReceivePayment', 'payments']]) {
+        const cleared = await runReport(txnType, 'Cleared');
+        const reconciled = await runReport(txnType, 'Reconciled');
+        const uncleared = await runReport(txnType, 'Uncleared');
+        for (const id of cleared) { if (uncleared.has(id)) out.reliable = false; out[key][id] = 'Cleared'; }
+        for (const id of reconciled) { if (uncleared.has(id)) out.reliable = false; out[key][id] = 'Reconciled'; }
+        out[key + 'UnclearedCount'] = uncleared.size;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify(out));
+    } catch (err) {
+      const needsReconnect = err.message === 'NEEDS_RECONNECT';
+      res.writeHead(needsReconnect ? 401 : 500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+      res.end(JSON.stringify({ error: err.message, needsReconnect: needsReconnect }));
+    }
+    return;
+  }
+
   if (url === '/api/qb/documents') {
     if (!requireAuth(req, res)) return;
     try {

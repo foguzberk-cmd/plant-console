@@ -12088,12 +12088,12 @@ var _checksDeposited=(function(){ try{ return JSON.parse(localStorage.getItem('p
 // here; _checksDeposited (who's marked what deposited/paid) is separate
 // local-only state, same as before this change.
 function _checksBuildSharedCacheBundle(){
-  return { savedAt:new Date().toISOString(), payments:_checksPayments, depositLinks:_checksDepositLinks, ufIds:_checksUFIds, acctNames:_checksAcctNames, acctTypes:_checksAcctTypes, cleared:_checksCleared };
+  return { v:3, savedAt:new Date().toISOString(), payments:_checksPayments, depositLinks:_checksDepositLinks, ufIds:_checksUFIds, acctNames:_checksAcctNames, acctTypes:_checksAcctTypes, cleared:_checksCleared };
 }
 function _checksRestoreSharedCacheBundle(b){
   // A cache saved before the 3-stage version has no deposit data — using it
   // would show every check as In Hand, so ignore it and wait for a fresh pull.
-  if(!b || !b.payments || !b.depositLinks) return false;
+  if(!b || !b.payments || !b.depositLinks || (b.v||0)<3) return false; // older pull, made before the latest matching rules — wait for a fresh one
   _checksPayments=b.payments;
   _checksDepositLinks=b.depositLinks||{};
   _checksUFIds=b.ufIds||{};
@@ -12597,7 +12597,7 @@ function _checksRenderStage(stage){
     list.forEach(function(r){
       var p=r.p, c=r.c, d=(p.TxnDate||'').slice(0,10);
       var cust=(p.CustomerRef&&p.CustomerRef.name)||'No customer on file';
-      var cells=[esc(fmtDateUS(d)),esc(cust),esc(p.PaymentRefNum||'')];
+      var cells=[esc(fmtDateUS(d)),esc(cust),esc(p.PaymentRefNum||'')+(showDep?'':' <a href="#" class="no-print" onclick="event.preventDefault();explainCheck(\''+esc(p.Id)+'\')" title="Show what QuickBooks has for this check and any deposit that might include it" style="font-size:11px;margin-left:6px">why?</a>')];
       if(showDep){
         cells.push(esc(fmtDateUS(c.depositDate||'')));
         var depCell=c.direct?'<span title="Received straight into '+esc(c.bank)+'">Direct'+(c.bank?' · '+esc(c.bank):'')+'</span>'
@@ -12619,6 +12619,61 @@ function _checksRenderStage(stage){
     +'<td style="border:1px solid '+cfg.grpLine+';padding:7px 10px;text-align:right;font-weight:700;background:'+cfg.grp+';font-family:var(--mono)">'+_checksMoneyFmt(grand)+'</td></tr>';
   el.innerHTML=html+'</tbody></table></div>';
 }
+// "why?" on an In Hand row: shows exactly what QuickBooks has for that
+// payment, plus every deposit within 60 days that mentions the same
+// customer, the same amount, or links to it — so a check that's really at
+// the bank can be traced to the deposit that should have matched.
+async function explainCheck(paymentId){
+  var p=(_checksPayments||[]).find(function(x){ return x.Id===paymentId; });
+  if(!p){ alert('Pull from QuickBooks first.'); return; }
+  var box=document.getElementById('chk-explain');
+  if(!box){ box=document.createElement('div'); box.id='chk-explain'; document.body.appendChild(box); }
+  box.style.cssText='position:fixed;inset:5% 5%;z-index:9999;background:#fff;color:#000;border:2px solid #333;border-radius:12px;padding:16px;overflow:auto;font:12px/1.45 var(--mono,monospace);box-shadow:0 10px 40px rgba(0,0,0,.35)';
+  box.innerHTML='Looking up deposits around '+esc(p.TxnDate)+'…';
+  var custId=String((p.CustomerRef&&p.CustomerRef.value)||'');
+  var cents=Math.round(Number(p.TotalAmt||0)*100);
+  var d0=new Date(p.TxnDate+'T00:00:00'); d0.setDate(d0.getDate()-60);
+  var d1=new Date(p.TxnDate+'T00:00:00'); d1.setDate(d1.getDate()+60);
+  var from=d0.toISOString().slice(0,10), to=d1.toISOString().slice(0,10);
+  var deps=[], start=1;
+  try{
+    for(var i=0;i<200;i++){
+      var r=await fetch('/api/qb/documents?entity=Deposit&startposition='+start+'&from='+from+'&to='+to);
+      var j=await r.json(); var rows=(j&&j.Deposit)||[];
+      deps=deps.concat(rows); if(rows.length<100) break; start+=100;
+    }
+  }catch(e){ box.innerHTML='Could not load deposits: '+esc(e.message); return; }
+  var hits=deps.filter(function(dep){
+    return (dep.Line||[]).some(function(l){
+      var ent=l.DepositLineDetail&&l.DepositLineDetail.Entity;
+      if(ent && String(ent.value)===custId) return true;
+      if(Math.round(Number(l.Amount||0)*100)===cents) return true;
+      return (l.LinkedTxn||[]).some(function(lt){ return lt.TxnId===p.Id; });
+    });
+  });
+  var acct=function(ref){ if(!ref) return '(none)'; return (_checksAcctNames[ref.value]||ref.name||'?')+' [id '+ref.value+(_checksUFIds[ref.value]?', Undeposited Funds':'')+(_checksAcctTypes[ref.value]?', '+_checksAcctTypes[ref.value]:'')+']'; };
+  var lines=[];
+  lines.push('CHECK  Ref #'+(p.PaymentRefNum||'')+'  ·  '+((p.CustomerRef&&p.CustomerRef.name)||'')+' [cust id '+custId+']  ·  $'+Number(p.TotalAmt||0).toFixed(2)+'  ·  '+p.TxnDate+'  ·  payment id '+p.Id);
+  lines.push('  Deposit to: '+acct(p.DepositToAccountRef));
+  lines.push('  Payment method id: '+((p.PaymentMethodRef&&p.PaymentMethodRef.value)||'(none)'));
+  (p.Line||[]).forEach(function(l,ix){ lines.push('  Line '+(ix+1)+': $'+Number(l.Amount||0).toFixed(2)+'  links → '+((l.LinkedTxn||[]).map(function(lt){ return lt.TxnType+' '+lt.TxnId; }).join(', ')||'(none)')); });
+  lines.push('  App matched it to deposit: '+(_checksDepositLinks[p.Id]?JSON.stringify(_checksDepositLinks[p.Id]):'NONE'));
+  lines.push('');
+  lines.push(hits.length+' deposit(s) between '+from+' and '+to+' mention this customer, this amount, or this payment (of '+deps.length+' total):');
+  hits.forEach(function(dep){
+    lines.push('');
+    lines.push('DEPOSIT id '+dep.Id+'  #'+(dep.DocNumber||'—')+'  ·  '+dep.TxnDate+'  ·  total $'+Number(dep.TotalAmt||0).toFixed(2)+'  ·  into '+acct(dep.DepositToAccountRef)+(dep.PrivateNote?'  ·  memo: '+dep.PrivateNote:''));
+    (dep.Line||[]).forEach(function(l,ix){
+      var dd=l.DepositLineDetail||{};
+      var mark=((dd.Entity&&String(dd.Entity.value)===custId)||Math.round(Number(l.Amount||0)*100)===cents||(l.LinkedTxn||[]).some(function(lt){ return lt.TxnId===p.Id; }))?'  ◀':'';
+      lines.push('  Line '+(ix+1)+': $'+Number(l.Amount||0).toFixed(2)+'  type '+(l.DetailType||'')+'  from '+((dd.Entity&&(dd.Entity.name||dd.Entity.type+' '+dd.Entity.value))||'—')+'  acct '+((dd.AccountRef&&(dd.AccountRef.name||dd.AccountRef.value))||'—')+'  ref '+(dd.CheckNum||'—')+'  links → '+((l.LinkedTxn||[]).map(function(lt){ return lt.TxnType+' '+lt.TxnId; }).join(', ')||'(none)')+mark);
+    });
+  });
+  box.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><strong style="font-size:14px">Why is this check In Hand?</strong><button class="btn btn-sm" onclick="document.getElementById(\'chk-explain\').remove()">Close</button></div>'
+    +'<pre style="white-space:pre-wrap;margin:0">'+esc(lines.join('\n'))+'</pre>';
+}
+window.explainCheck=explainCheck;
+
 // Kept under their old names so existing callers (collapse toggles, the
 // tab-open shared-cache load) keep working unchanged.
 function renderChecksInHandSection(){ renderChecksSummary(); _checksRenderStage('inhand'); _checksRenderStage('deposited'); _checksRenderStage('cleared'); }

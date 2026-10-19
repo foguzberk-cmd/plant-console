@@ -732,7 +732,12 @@ function gdriveSchedulerTick() {
   if (sinceAttempt < 60 * 60 * 1000) return;
   const h = nyHourNow();
   const inWindow = h >= GDRIVE_BACKUP_HOUR_ET && h < GDRIVE_BACKUP_HOUR_ET + 3;
-  if ((inWindow && sinceSuccess > 20 * 60 * 60 * 1000) || sinceSuccess > 26 * 60 * 60 * 1000) {
+  // In the nightly window: run unless one already succeeded inside THIS
+  // window (the window is 3h wide, so "> 3h ago" means "not tonight yet").
+  // This used to require 20h since the last success, which let a daytime
+  // manual or catch-up backup push the next nightly run out by a full day
+  // and drift the schedule into the afternoon.
+  if ((inWindow && sinceSuccess > 3 * 60 * 60 * 1000) || sinceSuccess > 26 * 60 * 60 * 1000) {
     runGDriveBackup('scheduled').catch(() => { /* already logged + saved to state */ });
   }
 }

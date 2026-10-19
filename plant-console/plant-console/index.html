@@ -12236,6 +12236,9 @@ async function runChecksReport(){
   payments=payments.filter(function(p){
     if(_paymentMethodSaysNonCheck(p)){ exclusionCounts.paymentMethod++; return false; }
     if(_refSharedAcrossCustomers(p.PaymentRefNum)){ exclusionCounts.sharedRef++; return false; }
+    // A $0 payment is QuickBooks applying an existing credit to an invoice —
+    // no money changed hands, so it's never a check in hand.
+    if(!(Number(p.TotalAmt||0)>0.004)){ exclusionCounts.zero=(exclusionCounts.zero||0)+1; return false; }
     if(!(p.PaymentRefNum||'').trim()){ exclusionCounts.blank++; return false; }
     if(!_looksLikeCheckRef(p.PaymentRefNum)){ exclusionCounts.refKeyword++; return false; }
     return true;
@@ -12262,12 +12265,17 @@ async function runChecksReport(){
   //    of Undeposited Funds. Voided deposits keep their lines at $0 in
   //    QuickBooks, so $0 deposits/lines are ignored — a voided deposit must
   //    never move a check out of In Hand.
-  var depositLinks={};
+  var depositLinks={}, depositById={}, unlinkedCustLines=[];
+  // Deposits are fetched from 45 days BEFORE the payment window: a check is
+  // sometimes put straight onto a bank deposit first (as a customer line)
+  // and the Receive Payment is recorded a day or more later, so the deposit
+  // can be dated before the payment it covers.
+  var depFrom=new Date(from+'T00:00:00'); depFrom.setDate(depFrom.getDate()-45); depFrom=depFrom.toISOString().slice(0,10);
   var depStart=1, depCount=0, depOk=true;
   for(var di=0;di<1000;di++){
     var drows=null;
     try{
-      var dres=await fetch(base+'/api/qb/documents?entity=Deposit&startposition='+depStart+'&from='+encodeURIComponent(from));
+      var dres=await fetch(base+'/api/qb/documents?entity=Deposit&startposition='+depStart+'&from='+encodeURIComponent(depFrom));
       if(dres.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
       var djd=await dres.json();
       if(djd && djd.error){ depOk=false; break; }
@@ -12275,6 +12283,16 @@ async function runChecksReport(){
     }catch(e){ depOk=false; break; }
     drows.forEach(function(dep){
       if(!(Number(dep.TotalAmt||0)>0)) return;
+      depositById[dep.Id]={id:dep.Id,date:(dep.TxnDate||'').slice(0,10),doc:dep.DocNumber||'',acctId:(dep.DepositToAccountRef&&dep.DepositToAccountRef.value)||''};
+      // Customer lines entered straight on the deposit (no link to any
+      // payment) — kept for the amount+customer match further down.
+      (dep.Line||[]).forEach(function(line){
+        var ent=line.DepositLineDetail&&line.DepositLineDetail.Entity;
+        var amt=Number(line.Amount||0);
+        if(!ent || !ent.value || !(amt>0.004)) return;
+        if((line.LinkedTxn||[]).length) return;
+        unlinkedCustLines.push({depId:dep.Id,custId:String(ent.value),amount:Math.round(amt*100),date:(dep.TxnDate||'').slice(0,10),used:false});
+      });
       (dep.Line||[]).forEach(function(line){
         if(!(Math.abs(Number(line.Amount||0))>0.004)) return;
         (line.LinkedTxn||[]).forEach(function(lt){
@@ -12288,13 +12306,47 @@ async function runChecksReport(){
     depStart+=pageSize;
   }
   if(!depOk){ if(statusEl){ statusEl.textContent='Could not read bank deposits from QuickBooks — try again.'; statusEl.style.color='#c0392b'; } return; }
+  // The other direction: when a check was entered directly on a bank
+  // deposit (customer line → Accounts Receivable) and the Receive Payment
+  // then applied that deposit's credit to the invoice, the link lives on
+  // the PAYMENT's own lines (LinkedTxn type "Deposit"), not on the
+  // deposit. That money is in the bank — it must not sit in In Hand.
+  // (Oct 2026: Hamza Grocery Ref #192, $306.56, deposited 7/20 and cleared,
+  // was still showing as In Hand.)
+  payments.forEach(function(p){
+    if(depositLinks[p.Id]) return;
+    (p.Line||[]).some(function(l){
+      return (l.LinkedTxn||[]).some(function(lt){
+        if(lt.TxnType!=='Deposit') return false;
+        depositLinks[p.Id]=depositById[lt.TxnId]||{id:lt.TxnId,date:'',doc:'',acctId:''};
+        return true;
+      });
+    });
+  });
+  // Last resort, for a check typed directly onto a deposit with no link at
+  // all: same customer, same exact amount, deposit within 10 days either
+  // side of the payment date. Each deposit line can match only one check,
+  // closest date first.
+  payments.forEach(function(p){
+    if(depositLinks[p.Id]) return;
+    var custId=String((p.CustomerRef&&p.CustomerRef.value)||'');
+    var cents=Math.round(Number(p.TotalAmt||0)*100);
+    var pd=new Date((p.TxnDate||'').slice(0,10)+'T00:00:00');
+    var best=null, bestGap=1e9;
+    unlinkedCustLines.forEach(function(l){
+      if(l.used || l.custId!==custId || l.amount!==cents) return;
+      var gap=Math.abs((new Date(l.date+'T00:00:00')-pd)/86400000);
+      if(gap<=10 && gap<bestGap){ best=l; bestGap=gap; }
+    });
+    if(best){ best.used=true; var info=depositById[best.depId]; depositLinks[p.Id]=Object.assign({},info,{matched:true}); }
+  });
   // c) Bank-cleared flags (Cleared / Reconciled) from QuickBooks's
   //    TransactionList report. Optional — if it fails, Cleared falls back
   //    to an estimate and the page says so.
   var cleared=null;
   try{
     if(statusEl) statusEl.textContent='Checking which deposits the bank has cleared…';
-    var cres=await fetch(base+'/api/qb/cleared-status?from='+encodeURIComponent(from),{cache:'no-store'});
+    var cres=await fetch(base+'/api/qb/cleared-status?from='+encodeURIComponent(depFrom),{cache:'no-store'});
     if(cres.ok) cleared=await cres.json();
   }catch(e){ cleared=null; }
   _checksUFIds=ufIds; _checksAcctNames=acctNames; _checksAcctTypes=acctTypes; _checksDepositLinks=depositLinks; _checksCleared=cleared;
@@ -12310,12 +12362,13 @@ async function runChecksReport(){
       statusEl.textContent='0 checks found, but '+allPaymentsInWindow.length+' other payment(s) exist since '+esc(from)+'. Sample Ref # values seen: '+esc(sample)+'. Tell me if checks are recorded differently and I\'ll adjust the match.';
       statusEl.style.color='#b8460b';
     } else {
-      var excludedTotal=exclusionCounts.paymentMethod+exclusionCounts.sharedRef+exclusionCounts.refKeyword+exclusionCounts.blank;
+      var excludedTotal=exclusionCounts.paymentMethod+exclusionCounts.sharedRef+exclusionCounts.refKeyword+exclusionCounts.blank+(exclusionCounts.zero||0);
       var exclusionParts=[];
       if(exclusionCounts.paymentMethod) exclusionParts.push(exclusionCounts.paymentMethod+' by payment method');
       if(exclusionCounts.sharedRef) exclusionParts.push(exclusionCounts.sharedRef+' shared-ref batch');
       if(exclusionCounts.refKeyword) exclusionParts.push(exclusionCounts.refKeyword+' by ref keyword');
       if(exclusionCounts.blank) exclusionParts.push(exclusionCounts.blank+' blank ref');
+      if(exclusionCounts.zero) exclusionParts.push(exclusionCounts.zero+' $0 credit applications');
       statusEl.textContent=payments.length+' check(s) found (since '+esc(from)+')'+(excludedTotal?' — '+excludedTotal+' other payment(s) excluded ('+exclusionParts.join(', ')+')':'');
       statusEl.style.color='#1a7a3c';
     }
@@ -12440,7 +12493,7 @@ function _checksClassify(p){
   var txnDate=(p.TxnDate||'').slice(0,10);
   var clearKey=null, clearMap=null;
   if(link){
-    out.depositId=link.id; out.depositDate=link.date; out.depositDoc=link.doc;
+    out.depositId=link.id; out.depositDate=link.date||txnDate; out.depositDoc=link.doc;
     out.bank=_checksAcctNames[link.acctId]||'';
     clearKey=link.id; clearMap=_checksCleared&&_checksCleared.deposits;
   } else if(!_checksIsUF(p.DepositToAccountRef) && (!Object.keys(_checksAcctTypes).length || _checksAcctTypes[p.DepositToAccountRef.value]==='Bank')){

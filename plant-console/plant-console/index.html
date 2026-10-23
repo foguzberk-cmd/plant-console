@@ -4714,8 +4714,18 @@ function _ordProdInput(inputEl){
   // this particular order-line row happens to sit.
   var r=inputEl.getBoundingClientRect();
   box.style.left=r.left+'px';
-  box.style.top=(r.bottom+2)+'px';
   box.style.width=r.width+'px';
+  // Fit the list to the space actually left on screen (Oct 2026: on a field
+  // near the bottom of the window the 420px list ran off-screen, and since
+  // scrolling the page closes it, the lower items could never be reached).
+  // Opens upward instead when there's clearly more room above.
+  var vh=window.innerHeight||document.documentElement.clientHeight;
+  var below=vh-r.bottom-10, above=r.top-10;
+  var openUp=(below<220 && above>below);
+  var maxH=Math.max(120,Math.min(420,openUp?above:below));
+  box.style.maxHeight=maxH+'px';
+  if(openUp){ box.style.top='auto'; box.style.bottom=(vh-r.top+2)+'px'; }
+  else { box.style.bottom='auto'; box.style.top=(r.bottom+2)+'px'; }
 }
 window._ordProdInput=_ordProdInput;
 function _ordSelectProduct(rowEl){

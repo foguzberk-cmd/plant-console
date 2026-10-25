@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Plant Console</title><!-- BUILD-1611 -->
 <!-- Home screen app support (iOS Safari "Add to Home Screen"). No App
      Store, no code signing, no Apple Developer account needed -- Safari
@@ -545,6 +545,45 @@
     .view h2{font-size:28px}
     .nav-item.active::before{left:10px;right:10px;top:auto;bottom:0;height:2px}
   }
+  /* ---- Accessibility & device fit ---- */
+  [role="button"][tabindex],tr[tabindex]{cursor:pointer}
+  tr[tabindex]:focus-visible{outline:2px solid var(--cold);outline-offset:-2px}
+  .modal:focus{outline:none}
+  #view:focus,#view:focus-visible{outline:none} /* programmatic focus target on section change, not a control */
+  /* ---- In-page notices (replace alert()) ---- */
+  #noticeHost{position:fixed;right:max(16px,env(safe-area-inset-right,0px));bottom:max(16px,env(safe-area-inset-bottom,0px));z-index:10000;display:flex;flex-direction:column;gap:8px;width:min(420px,calc(100vw - 32px));pointer-events:none}
+  .notice{pointer-events:auto;display:flex;align-items:flex-start;gap:10px;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-left:4px solid var(--cold);border-radius:var(--radius);box-shadow:0 12px 32px rgba(17,19,22,.18);padding:12px 10px 12px 12px;font-size:14px;line-height:1.45;animation:notice-in .16s ease-out}
+  .notice-error{border-left-color:var(--brand-bright)}
+  .notice-warn{border-left-color:#B7791F}
+  .notice-success{border-left-color:#2F855A}
+  .notice-ico{flex:0 0 20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;color:#fff;background:var(--cold);margin-top:1px}
+  .notice-error .notice-ico{background:var(--brand-bright)}
+  .notice-warn .notice-ico{background:#B7791F}
+  .notice-success .notice-ico{background:#2F855A}
+  .notice-msg{flex:1;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere}
+  .notice-long .notice-msg{max-height:50vh;overflow:auto;overscroll-behavior:contain}
+  .notice-x{flex:0 0 auto;border:0;background:transparent;color:var(--muted);font-size:20px;line-height:1;width:28px;height:28px;border-radius:6px;cursor:pointer;margin:-4px 0 0}
+  .notice-x:hover{background:var(--panel-2);color:var(--ink)}
+  .notice-out{opacity:0;transform:translateY(4px);transition:opacity .15s,transform .15s}
+  @keyframes notice-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .modal,.lll-sidebar,.lll-canvas-wrap,#chatLog{overscroll-behavior:contain}
+  button,a,input,select,textarea,label,[role="button"],tr[tabindex]{touch-action:manipulation}
+  body{-webkit-tap-highlight-color:rgba(31,110,125,.15)}
+  .view h2,.modal h3,.settings-section-head h3,.login-box h2{text-wrap:balance}
+  .lede,.empty p,.modal .sub{text-wrap:pretty}
+  /* iOS home-screen app (black-translucent status bar + viewport-fit=cover):
+     keep content clear of the notch, status bar, and home indicator. */
+  .rail{padding-top:env(safe-area-inset-top,0px);padding-left:env(safe-area-inset-left,0px)}
+  .topbar{height:calc(56px + env(safe-area-inset-top,0px));padding-top:env(safe-area-inset-top,0px);padding-right:calc(32px + env(safe-area-inset-right,0px))}
+  .rail-user{padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}
+  .view{padding-right:calc(40px + env(safe-area-inset-right,0px));padding-bottom:calc(48px + env(safe-area-inset-bottom,0px))}
+  #loginScreen{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
+  @media (max-width:780px){
+    /* Rail stacks on top here and already absorbs the top inset */
+    .topbar{height:56px;padding-top:0;padding-right:calc(16px + env(safe-area-inset-right,0px))}
+    .view{padding-right:calc(16px + env(safe-area-inset-right,0px));padding-left:calc(16px + env(safe-area-inset-left,0px))}
+    .rail-user{padding-bottom:12px}
+  }
 </style>
 </head>
 <body>
@@ -561,16 +600,18 @@
       <div class="login-mark">PC</div>
       <h2>Plant Console</h2>
       <p class="sub">Sign in to continue to your facility dashboard.</p>
-      <div class="login-error" id="loginError">Incorrect email or PIN. Please try again.</div>
-      <div class="login-field">
-        <label>Email</label>
-        <input type="email" id="loginEmail" placeholder="your@email.com" autocomplete="username"/>
-      </div>
-      <div class="login-field">
-        <label>PIN / Password</label>
-        <input type="password" id="loginPin" placeholder="Enter your PIN or password" autocomplete="current-password"/>
-      </div>
-      <button class="login-btn" onclick="attemptLogin()">Sign in</button>
+      <div class="login-error" id="loginError" role="alert" aria-live="polite">Incorrect email or PIN. Please try again.</div>
+      <form id="loginForm" onsubmit="event.preventDefault();attemptLogin()" novalidate>
+        <div class="login-field">
+          <label for="loginEmail">Email</label>
+          <input type="email" id="loginEmail" name="email" placeholder="name@leadermeat.com" autocomplete="username" spellcheck="false" autocapitalize="none"/>
+        </div>
+        <div class="login-field">
+          <label for="loginPin">PIN or password</label>
+          <input type="password" id="loginPin" name="password" placeholder="Enter your PIN or password" autocomplete="current-password"/>
+        </div>
+        <button type="submit" class="login-btn">Sign in</button>
+      </form>
       <div class="login-footer" style="margin-top:14px">FACILITY PLT-01 · v0.1</div>
     </div>
   </div>
@@ -590,7 +631,7 @@
           <div class="rail-user-name" id="railName">—</div>
           <div class="rail-user-role" id="railRole">—</div>
         </div>
-        <button class="logout-btn" onclick="logout()" title="Sign out">
+        <button class="logout-btn" onclick="logout()" title="Sign out" aria-label="Sign out">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         </button>
       </div>
@@ -712,7 +753,7 @@
   </div>
 
   <!-- Product Report Modal -->
-  <div class="modal-bg hidden" id="reportModal" role="dialog" aria-modal="true" onclick="if(event.target===this)closeReportModal()">
+  <div class="modal-bg hidden" id="reportModal" role="dialog" aria-modal="true" aria-label="Report details" onclick="if(event.target===this)closeReportModal()">
     <div class="modal" style="max-width:min(1200px,97vw);width:97%">
       <div id="reportBody"></div>
     </div>
@@ -1220,17 +1261,117 @@ function _copyFallback(text){
 // ordering only works lexicographically in ISO order), so this is applied
 // at render time, never to the stored value itself. Anything that doesn't
 // match the expected shape is left exactly as-is rather than guessed at.
+var _fmtDateUS=new Intl.DateTimeFormat('en-US',{month:'2-digit',day:'2-digit',year:'numeric'});
 function fmtDateUS(s){
   var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s||'');
-  return m?(m[2]+'/'+m[3]+'/'+m[1]):s;
+  // Built as a LOCAL date (not new Date('yyyy-mm-dd'), which is UTC and
+  // would show the previous day for anyone west of Greenwich).
+  return m?_fmtDateUS.format(new Date(+m[1],+m[2]-1,+m[3])):s;
 }
 // Same mm/dd/yyyy style, for an actual Date object / timestamp (fmtDateUS
 // above only handles a plain yyyy-mm-dd string).
 function fmtDateObjUS(d){
-  var mm=String(d.getMonth()+1).padStart(2,'0');
-  var dd=String(d.getDate()).padStart(2,'0');
-  return mm+'/'+dd+'/'+d.getFullYear();
+  return _fmtDateUS.format(d);
 }
+// Shared display formatters — money as $1,234.56, quantities/weights as
+// 1,234.56. Display only: CSV exports, input values, and match keys keep
+// plain toFixed(2) so other code can parse them back.
+var _fmtUSD=new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'});
+var _fmtNum2=new Intl.NumberFormat('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+function fmtMoney(n){ n=Number(n); return isFinite(n)?_fmtUSD.format(n):'—'; }
+function fmtNum2(n){ n=Number(n); return isFinite(n)?_fmtNum2.format(n):'—'; }
+
+// ===== IN-PAGE NOTICES =====
+// Replaces the browser's blocking alert(): a stack of notices in the corner,
+// announced to screen readers. Short info/success notices dismiss on their
+// own; errors and long or multi-line messages stay until closed. Kind is
+// inferred from the wording unless passed explicitly: notify(msg,{kind}).
+function notify(msg,opts){
+  opts=opts||{};
+  msg=String(msg==null?'':msg);
+  var kind=opts.kind
+    || (/(fail|could ?n[o']t|cannot|can't|error|expired|not found|isn't valid|doesn't look|don't have permission|went wrong|not reach)/i.test(msg)?'error'
+    : /^(please|nothing|no |run |pull |enter |every part|customer is required|driver name|this (bill|order|payment)|everything is still|bill not found|that file)/i.test(msg)?'warn'
+    : /^(restored|done|invoice #|connected)|\b(created|saved)\b/i.test(msg)?'success':'info');
+  var host=document.getElementById('noticeHost');
+  if(!host){
+    host=document.createElement('div');
+    host.id='noticeHost';
+    host.setAttribute('aria-live','polite');
+    host.setAttribute('aria-relevant','additions');
+    document.body.appendChild(host);
+  }
+  var long=msg.length>160||msg.indexOf('\n')>-1;
+  var el=document.createElement('div');
+  el.className='notice notice-'+kind+(long?' notice-long':'');
+  el.setAttribute('role',kind==='error'?'alert':'status');
+  var icon={error:'!',warn:'!',success:'✓',info:'i'}[kind];
+  el.innerHTML='<span class="notice-ico" aria-hidden="true">'+icon+'</span><div class="notice-msg"></div>'
+    +'<button type="button" class="notice-x" aria-label="Dismiss">×</button>';
+  el.querySelector('.notice-msg').textContent=msg;
+  var timer=null;
+  function close(){ if(timer) clearTimeout(timer); el.classList.add('notice-out'); setTimeout(function(){ el.remove(); },160); }
+  el.querySelector('.notice-x').addEventListener('click',close);
+  el.addEventListener('keydown',function(e){ if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); close(); } });
+  host.appendChild(el);
+  while(host.children.length>4) host.firstChild.remove();
+  if(!long&&kind!=='error'){
+    var ms=opts.duration||(kind==='warn'?8000:5000);
+    var start=function(){ timer=setTimeout(close,ms); };
+    el.addEventListener('mouseenter',function(){ clearTimeout(timer); });
+    el.addEventListener('mouseleave',start);
+    el.addEventListener('focusin',function(){ clearTimeout(timer); });
+    start();
+  }
+  return el;
+}
+
+// ===== URL ROUTING =====
+// The address bar mirrors where you are — #/items, #/reports/cashflow,
+// #/settings/users — so reload keeps your place, Back/Forward move between
+// sections and tabs, and a link can point straight at a screen. Permission
+// checks still happen in select()/switch*Tab(), so a URL can never open
+// something the signed-in user isn't allowed to see.
+var _routeHold=0;
+function _routeSub(){
+  if(currentSectionId==='reports') return _reportActiveTab||'';
+  if(currentSectionId==='settings') return _settingsActiveTab||'';
+  return '';
+}
+function syncRoute(push){
+  if(!currentSectionId||!currentUser) return;
+  var sub=_routeSub();
+  var hash='#/'+currentSectionId+(sub?'/'+encodeURIComponent(sub):'');
+  if(location.hash===hash) return;
+  try{ history[push?'pushState':'replaceState'](null,'',hash); }catch(e){}
+}
+function _parseRoute(){
+  var m=/^#\/([\w-]+)(?:\/([\w-]+))?/.exec(location.hash||'');
+  return m?{section:m[1],sub:m[2]||''}:null;
+}
+function openRoute(){
+  var r=_parseRoute();
+  var id=(r&&SECTIONS.some(function(s){ return s.id===r.section; }))?r.section:'dashboard';
+  _routeHold++;
+  try{
+    if(id==='settings'&&r&&r.sub) _settingsActiveTab=r.sub;
+    _selectImpl(id);
+    // Only honour a tab that actually rendered for this user; anything else
+    // (typo, stale link, no permission) falls back to the section default.
+    if(id==='reports'&&r&&r.sub&&r.sub!==_reportActiveTab&&document.getElementById('rpt-tab-'+r.sub)) switchReportTab(r.sub);
+    if(id==='settings'&&!document.getElementById('stab-btn-'+_settingsActiveTab)) switchSettingsTab('account');
+  }finally{ _routeHold--; }
+  syncRoute(false);
+}
+function _onRouteChange(){
+  if(!currentUser) return;
+  var r=_parseRoute();
+  if(r&&r.section===currentSectionId&&(r.sub||'')===_routeSub()) return;
+  openRoute();
+}
+window.addEventListener('popstate',_onRouteChange);
+window.addEventListener('hashchange',_onRouteChange);
+
 // Browsers cap localStorage at roughly 5-10MB per site. A large QuickBooks
 // transaction history can push the local mirror of the data past that limit
 // (this actually happened: "Setting the value of 'pc_transactions' exceeded
@@ -2124,7 +2265,7 @@ async function restoreSession(){
     document.getElementById('railRole').textContent=currentUser.role.charAt(0).toUpperCase()+currentUser.role.slice(1);
     buildNav();
     initRailChat();
-    select('dashboard');
+    openRoute();
     await pullFromServer();
     migrateSlaughterDeptMerge();
   }catch(e){
@@ -2324,7 +2465,7 @@ function findOrphanedItems(){
   }).then(function(result){
     if(btn) btn.disabled=false;
     if(!result.ok||!result.data||!result.data.success){
-      alert('Could not check: '+((result.data&&result.data.error)||'unknown error'));
+      notify('Could not check: '+((result.data&&result.data.error)||'unknown error'));
       return;
     }
     var relinked=result.data.relinked||[];
@@ -2349,14 +2490,14 @@ function findOrphanedItems(){
     var combined=orphans.map(function(o){ return Object.assign({},o,{reason:'orphan'}); })
       .concat(duplicates.map(function(d){ return Object.assign({},d,{reason:'duplicate'}); }));
     if(!combined.length){
-      alert((relinked.length?relinked.length+' item'+(relinked.length!==1?'s were':' was')+' relinked to the correct QuickBooks record (they had the right name but a stale id from a different QuickBooks connection).\n\n':'')
+      notify((relinked.length?relinked.length+' item'+(relinked.length!==1?'s were':' was')+' relinked to the correct QuickBooks record (they had the right name but a stale id from a different QuickBooks connection).\n\n':'')
         +'No genuinely orphaned or duplicate items found — everything else matches something in the currently connected QuickBooks company ('+result.data.checkedAgainst+' items checked against).');
       return;
     }
     _showOrphanedItemsModal(combined,relinked.length);
   }).catch(function(){
     if(btn) btn.disabled=false;
-    alert('Could not reach the server to check.');
+    notify('Could not reach the server to check.');
   });
 }
 function _showOrphanedItemsModal(orphans,relinkedCount){
@@ -2409,7 +2550,7 @@ function _showOrphanedItemsModal(orphans,relinkedCount){
     }).then(function(result){
       overlay.remove();
       if(!result.ok||!result.data||!result.data.success){
-        alert('Delete failed: '+((result.data&&result.data.error)||'unknown error'));
+        notify('Delete failed: '+((result.data&&result.data.error)||'unknown error'));
         return;
       }
       items=items.filter(function(it){ return ids.indexOf(it.id)<0; });
@@ -2419,7 +2560,7 @@ function _showOrphanedItemsModal(orphans,relinkedCount){
       if(statusEl) statusEl.textContent=items.length+' item'+(items.length!==1?'s':'')+' on file';
     }).catch(function(){
       overlay.remove();
-      alert('Delete failed: could not reach the server.');
+      notify('Delete failed: could not reach the server.');
     });
   };
 }
@@ -2893,7 +3034,7 @@ function _showOrphanedCustomersModal(orphans){
     }).then(function(result){
       overlay.remove();
       if(!result.ok||!result.data||!result.data.success){
-        alert('Delete failed: '+((result.data&&result.data.error)||'unknown error'));
+        notify('Delete failed: '+((result.data&&result.data.error)||'unknown error'));
         return;
       }
       customers=customers.filter(function(c){ return ids.indexOf(c.id)<0; });
@@ -2904,7 +3045,7 @@ function _showOrphanedCustomersModal(orphans){
       if(status) status.textContent=result.data.remaining+' customers on file';
     }).catch(function(){
       overlay.remove();
-      alert('Delete failed: could not reach the server.');
+      notify('Delete failed: could not reach the server.');
     });
   };
 }
@@ -3596,7 +3737,7 @@ async function attemptLogin(){
   var pin=document.getElementById('loginPin').value.trim();
   var err=document.getElementById('loginError');
   var btn=document.querySelector('.login-btn');
-  if(btn) btn.disabled=true;
+  if(btn){ btn.disabled=true; btn.textContent='Signing in…'; }
   try{
     var res=await fetch('/api/login',{
       method:'POST',
@@ -3617,7 +3758,7 @@ async function attemptLogin(){
     document.getElementById('railRole').textContent=currentUser.role.charAt(0).toUpperCase()+currentUser.role.slice(1);
     buildNav();
     initRailChat();
-    select('dashboard');
+    openRoute();
     // Now that we're authenticated, pull the shared items/transactions/
     // storages/users so the UI has real data to show.
     await pullFromServer();
@@ -3625,12 +3766,11 @@ async function attemptLogin(){
   }catch(e){
     err.classList.add('show');
   }finally{
-    if(btn) btn.disabled=false;
+    if(btn){ btn.disabled=false; btn.textContent='Sign in'; }
   }
 }
 
-document.getElementById('loginPin').addEventListener('keydown',e=>{if(e.key==='Enter')attemptLogin()});
-document.getElementById('loginEmail').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('loginPin').focus()});
+document.getElementById('loginEmail').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();document.getElementById('loginPin').focus()}});
 
 async function logout(){
   stopChatPoll();
@@ -3677,6 +3817,11 @@ function buildNav(){
 
 var currentSectionId=null;
 function select(id){
+  _routeHold++;
+  try{ _selectImpl(id); } finally{ _routeHold--; }
+  syncRoute(true);
+}
+function _selectImpl(id){
   var vp=SECTION_VIEW_PERM[id];
   if(vp && !hasViewPerm(vp)){
     id='dashboard';
@@ -3784,10 +3929,10 @@ function initRailChat(){
      '<div style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:#fff;text-transform:uppercase;padding:8px 12px;background:var(--cold);display:flex;align-items:center;justify-content:space-between;font-weight:700">'
       +'<span>#leader-meat-plant</span><span id="chatConnStatus" style="letter-spacing:0;text-transform:none;font-size:13px">…</span>'
     +'</div>'
-    +'<div id="chatLog" style="flex:1;min-height:0;overflow-y:auto;padding:8px 12px;font-size:12px;line-height:1.6;color:#fff"></div>'
+    +'<div id="chatLog" aria-live="polite" aria-label="Team chat messages" style="flex:1;min-height:0;overflow-y:auto;padding:8px 12px;font-size:12px;line-height:1.6;color:#fff"></div>'
     +'<div id="chatOnlineLine" style="padding:3px 12px;font-size:10.5px;color:#cfe8ee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>'
     +'<div style="padding:6px 10px 10px;display:flex;gap:5px">'
-      +'<input id="chatInput" type="text" placeholder="Message…" maxlength="2000" style="flex:1;min-width:0;font-family:\'Courier New\',monospace;font-size:12px;padding:6px 8px;border:1.5px solid rgba(255,255,255,.35);border-radius:5px;background:rgba(0,0,0,.35);color:#fff;outline:none" onkeydown="if(event.key===\'Enter\') sendChatMessage()"/>'
+      +'<input id="chatInput" type="text" aria-label="Message the team" autocomplete="off" placeholder="Message…" maxlength="2000" style="flex:1;min-width:0;font-family:\'Courier New\',monospace;font-size:12px;padding:6px 8px;border:1.5px solid rgba(255,255,255,.35);border-radius:5px;background:rgba(0,0,0,.35);color:#fff;outline:none" onkeydown="if(event.key===\'Enter\') sendChatMessage()"/>'
       +'<button onclick="sendChatMessage()" title="Send" style="flex:0 0 auto;border:0;border-radius:5px;background:#fff;color:var(--cold);padding:0 10px;cursor:pointer;font-size:13px;font-weight:700">➤</button>'
     +'</div>';
   _chatFetch(true);
@@ -3952,7 +4097,7 @@ function printOrders(orderIds,title){
     return (a.customer||'')<(b.customer||'')?-1:1;
   });
   var w=window.open('','_blank');
-  if(!w){ alert('Please allow pop-ups for this site to print.'); return; }
+  if(!w){ notify('Please allow pop-ups for this site to print.'); return; }
   w.document.write('<html><head><title>'+esc(title)+'</title>'
     +'<style>'+_ORDERS_PRINT_STYLE+'</style></head><body>'
     +'<h1>'+esc(title)+'</h1><div class="meta">'+toPrint.length+' order'+(toPrint.length!==1?'s':'')+'</div>'
@@ -3982,7 +4127,7 @@ function printDriverOrders(orderIds,driverName,dateStr,formOnly){
   var dateDisplay=dateStr;
   try{ dateDisplay=new Date(dateStr+'T00:00:00').toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'numeric'}); }catch(e){}
   var w=window.open('','_blank');
-  if(!w){ alert('Please allow pop-ups for this site to print.'); return; }
+  if(!w){ notify('Please allow pop-ups for this site to print.'); return; }
   var deliveryRows=custNames.map(function(name){
     return '<tr><td class="custcol">'+esc(name)+'</td><td></td><td></td><td></td><td></td></tr>';
   }).join('')
@@ -4079,7 +4224,7 @@ function printProcessingSheet(orderIds,title){
       if(l.needsProcessing) rows.push({customer:o.customer||'(no customer)',product:l.product||'(no product)',description:l.description||'',quantity:l.quantity||''});
     });
   });
-  if(!rows.length){ alert('Nothing is currently checked as needing processing.'); return; }
+  if(!rows.length){ notify('Nothing is currently checked as needing processing.'); return; }
   // CONFIRMED live (Sep 2026): the "all drivers" print button pulls from
   // EVERY unshipped order in the system — Received Orders has no date
   // limit at all, unlike Shipped Orders. If unshipped orders have quietly
@@ -4095,7 +4240,7 @@ function printProcessingSheet(orderIds,title){
   }
   rows.sort(function(a,b){ return a.customer<b.customer?-1:(a.customer>b.customer?1:0); });
   var w=window.open('','_blank');
-  if(!w){ alert('Please allow pop-ups for this site to print.'); return; }
+  if(!w){ notify('Please allow pop-ups for this site to print.'); return; }
   var rowsHtml=rows.map(function(r){
     return '<tr><td>'+esc(r.customer)+'</td><td class="prod">'+esc(r.product)+'</td><td class="desc">'+esc(r.description)+'</td><td class="qty">'+esc(r.quantity)+'</td></tr>';
   }).join('');
@@ -4182,7 +4327,7 @@ function renderOrdersPage(){
 // visited Customer Payments THIS session, as long as someone has recently.
 async function matchOrdersWithQuickBooks(){
   var toCheck=orders.filter(function(o){ return !o.shipped && o.customer && o.date; });
-  if(!toCheck.length){ alert('Nothing to match — every order is already shipped.'); return; }
+  if(!toCheck.length){ notify('Nothing to match — every order is already shipped.'); return; }
   var btn=document.getElementById('matchQbBtn');
   if(btn){ btn.disabled=true; btn.textContent='Fetching invoices…'; }
   // CONFIRMED (Aug 2026): relying only on the existing shared invoice
@@ -4206,7 +4351,7 @@ async function matchOrdersWithQuickBooks(){
       safety++;
       if(safety>200) break; // hard cap (~20k rows) — shouldn't ever get close for a date-scoped fetch
       var r=await fetch(base+'/api/qb/documents?entity=Invoice&startposition='+start+'&from='+encodeURIComponent(fromDate));
-      if(r.status===401){ if(btn){btn.disabled=false;btn.textContent='Match with QuickBooks';} alert('QuickBooks connection expired — reconnect from the Items tab, then try again.'); return; }
+      if(r.status===401){ if(btn){btn.disabled=false;btn.textContent='Match with QuickBooks';} notify('QuickBooks connection expired — reconnect from the Items tab, then try again.'); return; }
       if(!r.ok) throw new Error('HTTP '+r.status);
       var jd=await r.json();
       if(jd&&jd.error) throw new Error(jd.error);
@@ -4218,7 +4363,7 @@ async function matchOrdersWithQuickBooks(){
     }
   }catch(e){
     if(btn){ btn.disabled=false; btn.textContent='Match with QuickBooks'; }
-    alert('Could not fetch invoices from QuickBooks: '+(e&&e.message?e.message:e)+' — try again in a moment.');
+    notify('Could not fetch invoices from QuickBooks: '+(e&&e.message?e.message:e)+' — try again in a moment.');
     return;
   }
   // Merge into the shared cache too (harmless, and helps the Customer
@@ -4297,7 +4442,7 @@ async function matchOrdersWithQuickBooks(){
   if(diagnostics.length){
     msg+='\n\nWhy the rest didn\'t match:\n'+diagnostics.slice(0,10).join('\n')+(diagnostics.length>10?'\n…and '+(diagnostics.length-10)+' more':'');
   }
-  alert(msg);
+  notify(msg);
 }
 window.matchOrdersWithQuickBooks=matchOrdersWithQuickBooks;
 // Shipped Orders — grouped by day only (not driver — once shipped, the
@@ -4491,7 +4636,7 @@ async function saveShippedOrderSplit(orderId){
     if(chk.checked) shippedLines.push(lines[idx]); else unshippedLines.push(lines[idx]);
   });
   if(!unshippedLines.length){
-    alert('Everything is still checked as shipped — nothing to move back. Uncheck whatever didn\'t actually ship first.');
+    notify('Everything is still checked as shipped — nothing to move back. Uncheck whatever didn\'t actually ship first.');
     return;
   }
   if(!shippedLines.length){
@@ -4510,7 +4655,7 @@ async function saveShippedOrderSplit(orderId){
   };
   var saved1=await saveOrder(updatedShipped);
   var saved2=await saveOrder(newUnshipped);
-  if(!saved1||!saved2){ alert('Could not save the split — check your connection and try again.'); }
+  if(!saved1||!saved2){ notify('Could not save the split — check your connection and try again.'); }
   _renderShippedOrdersSummary();
   _renderOrdersWeekSummary();
 }
@@ -4911,7 +5056,7 @@ async function addDriverFromModal(){
     safeSetLocal('pc_drivers',JSON.stringify(drivers));
   }catch(e){
     console.error('Add driver failed:',e);
-    alert('Could not add driver: '+(e&&e.message?e.message:e));
+    notify('Could not add driver: '+(e&&e.message?e.message:e));
   }
   _renderManageDriversModal();
 }
@@ -4921,7 +5066,7 @@ async function saveDriverRename(btn){
   var input=row.querySelector('.driver-edit-input');
   var oldName=input.getAttribute('data-orig');
   var newName=(input.value||'').trim();
-  if(!newName){ alert('Driver name cannot be blank.'); input.value=oldName; return; }
+  if(!newName){ notify('Driver name cannot be blank.'); input.value=oldName; return; }
   newName=newName.toUpperCase();
   if(newName===oldName) return; // nothing actually changed
   var affectedCount=orders.filter(function(o){return _driverGroupKey(o.driver)===_driverGroupKey(oldName);}).length;
@@ -4946,7 +5091,7 @@ async function saveDriverRename(btn){
     safeSetLocal('pc_orders',JSON.stringify(orders));
   }catch(e){
     console.error('Rename driver failed:',e);
-    alert('Could not rename driver: '+(e&&e.message?e.message:e));
+    notify('Could not rename driver: '+(e&&e.message?e.message:e));
   }
   _renderManageDriversModal();
   _renderOrdersWeekSummary();
@@ -4955,7 +5100,7 @@ async function saveDriverRename(btn){
 window.saveDriverRename=saveDriverRename;
 async function deleteDriverFromModal(name,count){
   if(count>0){
-    alert('Cannot delete "'+name+'" — it\'s still assigned to '+count+' order'+(count!==1?'s':'')+'. Rename it to merge into another driver, or reassign those orders first.');
+    notify('Cannot delete "'+name+'" — it\'s still assigned to '+count+' order'+(count!==1?'s':'')+'. Rename it to merge into another driver, or reassign those orders first.');
     return;
   }
   if(!confirm('Delete driver "'+name+'"? It can be re-added later if needed.')) return;
@@ -4971,7 +5116,7 @@ async function deleteDriverFromModal(name,count){
     safeSetLocal('pc_drivers',JSON.stringify(drivers));
   }catch(e){
     console.error('Delete driver failed:',e);
-    alert('Could not delete driver: '+(e&&e.message?e.message:e));
+    notify('Could not delete driver: '+(e&&e.message?e.message:e));
   }
   _renderManageDriversModal();
 }
@@ -5463,7 +5608,7 @@ async function toggleOrderShippedManually(id,shipped){
   };
   closeOrderDetailModal();
   var saved=await saveOrder(fullOrder);
-  if(!saved){ alert('Could not save — check your connection and try again.'); }
+  if(!saved){ notify('Could not save — check your connection and try again.'); }
   _renderOrdersWeekSummary();
   _renderShippedOrdersSummary();
 }
@@ -5683,7 +5828,7 @@ function _regularRouteMilesLabelHtml(driverOrders,dName,dk){
 // instead of guessing from the final number alone.
 function _showRouteMilesBreakdown(key){
   var entry=_routeMilesCache[key];
-  if(!entry||!entry.stopDetails||!entry.stopDetails.length){ alert('No stop-by-stop details are available for this route yet.'); return; }
+  if(!entry||!entry.stopDetails||!entry.stopDetails.length){ notify('No stop-by-stop details are available for this route yet.'); return; }
   var lines=entry.stopDetails.map(function(s){
     if(s.error) return '⚠ '+s.address+' — could not be located ('+s.error+')';
     var flag=s.excluded?' — EXCLUDED (too far, likely wrong match)':'';
@@ -5699,7 +5844,7 @@ function _showRouteMilesBreakdown(key){
   if(entry.majorRoads&&entry.majorRoads.length){
     roadsBlock='\n\nRoads driven (longest stretches first):\n'+entry.majorRoads.map(function(r){ return '• '+r.name+' — '+r.miles+' mi'; }).join('\n');
   }
-  alert('Stop-by-stop breakdown (≈'+entry.miles+' mi total):\n\n'+lines.join('\n\n')+roadsBlock+'\n\nIf a stop looks wrong, check that customer\'s address in QuickBooks for a missing city/state/ZIP.');
+  notify('Stop-by-stop breakdown (≈'+entry.miles+' mi total):\n\n'+lines.join('\n\n')+roadsBlock+'\n\nIf a stop looks wrong, check that customer\'s address in QuickBooks for a missing city/state/ZIP.');
 }
 window._showRouteMilesBreakdown=_showRouteMilesBreakdown;
 // Same idea as _showRouteMilesBreakdown above, but for the regular-route
@@ -5709,9 +5854,9 @@ window._showRouteMilesBreakdown=_showRouteMilesBreakdown;
 // excluded/error-per-stop flag to show here.
 function _showRegularRouteMilesBreakdown(key){
   var entry=_regularRouteMilesCache[key];
-  if(!entry||!entry.stopDetails||!entry.stopDetails.length){ alert('No stop-by-stop details are available for this route yet.'); return; }
+  if(!entry||!entry.stopDetails||!entry.stopDetails.length){ notify('No stop-by-stop details are available for this route yet.'); return; }
   var lines=entry.stopDetails.map(function(s){ return '✓ to '+s.address+' — '+s.distanceMiles+' mi'; });
-  alert('Regular route, stop-by-stop (≈'+entry.miles+' mi total, normal car routing):\n\n'+lines.join('\n\n'));
+  notify('Regular route, stop-by-stop (≈'+entry.miles+' mi total, normal car routing):\n\n'+lines.join('\n\n'));
 }
 window._showRegularRouteMilesBreakdown=_showRegularRouteMilesBreakdown;
 // Per-driver total mileage across one week — sums each day's route-miles
@@ -5858,7 +6003,7 @@ var _invoicePreviewOrderId=null;
 function showCreateInvoiceModal(orderId){
   var o=orders.find(function(x){return x.id===orderId;});
   if(!o) return;
-  if(o.shipped){ alert('This order is already marked Shipped. If you need to re-invoice it, click "↩ Undo" on it in Shipped Orders first.'); return; }
+  if(o.shipped){ notify('This order is already marked Shipped. If you need to re-invoice it, click "↩ Undo" on it in Shipped Orders first.'); return; }
   _invoicePreviewOrderId=orderId;
   _invoicePreviewData=_buildInvoicePreviewData(o);
   var bg=document.createElement('div');
@@ -5899,8 +6044,8 @@ function _renderInvoicePreviewLines(){
       +'<div style="display:flex;align-items:center;gap:10px">'
         +'<input type="checkbox" class="inv-line-chk" data-idx="'+li+'" '+(ld.matched?'checked':'disabled')+' onchange="_updateInvoicePreviewTotal()" style="flex-shrink:0;width:15px;height:15px"/>'
         +'<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">'+esc(ld.line.product||'(no product)')+(ld.line.description?' — '+esc(ld.line.description):'')+'</div>'
-        +'<div style="flex-shrink:0;font-family:var(--mono);font-size:12px;text-align:right;min-width:70px">'+(ld.qtyNum!=null?ld.qtyNum:'—')+' × $'+ld.unitPrice.toFixed(2)+'</div>'
-        +'<div class="inv-line-total" style="flex-shrink:0;font-weight:700;min-width:60px;text-align:right">'+(ld.matched?'$'+lineTotal.toFixed(2):'—')+'</div>'
+        +'<div style="flex-shrink:0;font-family:var(--mono);font-size:12px;text-align:right;min-width:70px">'+(ld.qtyNum!=null?ld.qtyNum:'—')+' × '+fmtMoney(ld.unitPrice)+'</div>'
+        +'<div class="inv-line-total" style="flex-shrink:0;font-weight:700;min-width:60px;text-align:right">'+(ld.matched?''+fmtMoney(lineTotal):'—')+'</div>'
       +'</div>'
       +(problem?'<div style="color:#c0392b;font-size:11px;margin:4px 0 0 25px">⚠ '+problem+'</div>':'')
     +'</div>';
@@ -5916,7 +6061,7 @@ function _updateInvoicePreviewTotal(){
     if(ld&&ld.matched) total+=ld.qtyNum*ld.unitPrice;
   });
   var totalEl=document.getElementById('invoicePreviewTotal');
-  if(totalEl) totalEl.textContent='$'+total.toFixed(2);
+  if(totalEl) totalEl.textContent=''+fmtMoney(total);
   var confirmBtn=document.getElementById('createInvoiceConfirmBtn');
   if(confirmBtn) confirmBtn.disabled=!_invoicePreviewData.customerMatch||total<=0;
 }
@@ -5946,8 +6091,8 @@ async function confirmCreateInvoice(){
       SalesItemLineDetail:{ ItemRef:{value:ld.itemMatch.qbId}, Qty:ld.qtyNum, UnitPrice:ld.unitPrice }
     });
   });
-  if(!qbLines.length){ alert('No valid product lines selected — nothing to invoice.'); return; }
-  if(!confirm('Create a QuickBooks invoice for '+o.customer+' totaling $'+total.toFixed(2)+'?\n\nThis creates a REAL invoice in QuickBooks — it cannot be undone from here once created (you\'d need to void or delete it in QuickBooks directly).')) return;
+  if(!qbLines.length){ notify('No valid product lines selected — nothing to invoice.'); return; }
+  if(!confirm('Create a QuickBooks invoice for '+o.customer+' totaling '+fmtMoney(total)+'?\n\nThis creates a REAL invoice in QuickBooks — it cannot be undone from here once created (you\'d need to void or delete it in QuickBooks directly).')) return;
   var btn=document.getElementById('createInvoiceConfirmBtn');
   if(btn){ btn.disabled=true; btn.textContent='Creating…'; }
   try{
@@ -5961,7 +6106,7 @@ async function confirmCreateInvoice(){
     });
     var data=await res.json();
     if(!res.ok||data.error){
-      alert('Could not create invoice: '+(data.needsReconnect?'QuickBooks connection expired — reconnect from the Items tab.':(data.error||res.status)));
+      notify('Could not create invoice: '+(data.needsReconnect?'QuickBooks connection expired — reconnect from the Items tab.':(data.error||res.status)));
       if(btn){ btn.disabled=false; btn.textContent='Create Invoice'; }
       return;
     }
@@ -5978,9 +6123,9 @@ async function confirmCreateInvoice(){
     await saveOrder(fullOrder);
     _renderOrdersWeekSummary();
     _renderShippedOrdersSummary();
-    alert('Invoice #'+((inv&&inv.DocNumber)||'?')+' created in QuickBooks. This order has been moved to Shipped Orders.');
+    notify('Invoice #'+((inv&&inv.DocNumber)||'?')+' created in QuickBooks. This order has been moved to Shipped Orders.');
   }catch(e){
-    alert('Could not create invoice: '+(e&&e.message?e.message:e));
+    notify('Could not create invoice: '+(e&&e.message?e.message:e));
     if(btn){ btn.disabled=false; btn.textContent='Create Invoice'; }
   }
 }
@@ -6141,7 +6286,7 @@ async function updateOrderLineFinalCount(id,lineIdx,value){
   }
   var fullOrder={ id:o.id, date:o.date, customer:o.customer, driver:o.driver, lines:lines };
   var saved=await saveOrder(fullOrder);
-  if(!saved){ alert('Could not save the count — check your connection and try again.'); }
+  if(!saved){ notify('Could not save the count — check your connection and try again.'); }
   else if(justFlaggedShortage){
     // Full re-render (rather than the usual quiet in-place tweak) so the
     // shortage badge/highlight added below actually shows up right away.
@@ -6165,7 +6310,7 @@ async function updateOrderLineNeedsProcessing(id,lineIdx,checkboxEl){
   lines[lineIdx].needsProcessing=checked;
   var fullOrder={ id:o.id, date:o.date, customer:o.customer, driver:o.driver, lines:lines };
   var saved=await saveOrder(fullOrder);
-  if(!saved){ alert('Could not save — check your connection and try again.'); }
+  if(!saved){ notify('Could not save — check your connection and try again.'); }
 }
 window.updateOrderLineNeedsProcessing=updateOrderLineNeedsProcessing;
 function closeOrderDetailModal(){
@@ -6187,7 +6332,7 @@ async function submitEditOrder(id){
   if(document.activeElement && typeof document.activeElement.blur==='function') document.activeElement.blur();
   var vals=_readOrderFormFields(rowEl);
   vals.id=id;
-  if(!vals.customer.trim()){ alert('Customer is required.'); return; }
+  if(!vals.customer.trim()){ notify('Customer is required.'); return; }
   var saveBtn=rowEl.querySelector('button.btn-primary');
   if(saveBtn){ saveBtn.disabled=true; saveBtn.textContent='Saving…'; }
   _orderSaveInProgress=true;
@@ -6198,7 +6343,7 @@ async function submitEditOrder(id){
     _orderSaveInProgress=false;
   }
   _ordersEditingId=null;
-  if(!saved){ alert('Could not save — check your connection and try again.'); }
+  if(!saved){ notify('Could not save — check your connection and try again.'); }
   _renderOrdersWeekSummary();
   _renderShippedOrdersSummary();
 }
@@ -6230,7 +6375,7 @@ try{
     if(removed){ orders.push(removed); safeSetLocal('pc_orders',JSON.stringify(orders)); }
     _renderOrdersWeekSummary();
     _renderShippedOrdersSummary();
-alert('Could not delete — check your connection and try again.');
+notify('Could not delete — check your connection and try again.');
   }
 }
 window.deleteOrder=deleteOrder;
@@ -6313,7 +6458,7 @@ function renderReports(){
           +'<button class="btn btn-sm" title="Balance/Unapplied data syncs incrementally for speed — use this if you suspect it\'s drifted (e.g. a deleted/voided record)" onclick="forceFullCollectionResync()">Force full resync</button>'
         +'</div>'
         +'<div style="position:relative;margin-bottom:14px;max-width:320px">'
-          +'<input type="text" id="coll-search" placeholder="Search customer or sales person..." oninput="renderCollectionReport();toggleCollSearchClear()" style="width:100%;padding:9px 34px 9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
+          +'<input type="text" id="coll-search" aria-label="Search customer payments" autocomplete="off" placeholder="Search customer or sales person…" oninput="renderCollectionReport();toggleCollSearchClear()" style="width:100%;padding:9px 34px 9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
           +'<button id="coll-search-clear" type="button" onclick="clearCollSearch()" title="Clear search" style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);width:22px;height:22px;border:none;background:var(--muted);color:var(--panel);border-radius:50%;font-size:13px;line-height:1;cursor:pointer;padding:0">✕</button>'
         +'</div>'
         +'<div id="coll-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
@@ -6344,7 +6489,7 @@ function renderReports(){
           +'<button class="btn" onclick="exportActiveSalesReportCSV()">Download CSV</button>'
         +'</div>'
         +'<div style="position:relative;margin-bottom:14px;max-width:320px">'
-          +'<input type="text" id="sbc-search" placeholder="Search customer..." oninput="renderActiveSalesReport()" style="width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
+          +'<input type="text" id="sbc-search" aria-label="Search sales report" autocomplete="off" placeholder="Search customer…" oninput="renderActiveSalesReport()" style="width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
         +'</div>'
         +'<div id="sbc-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
       +'</div>'
@@ -6358,7 +6503,7 @@ function renderReports(){
           +'<button class="btn" onclick="findLikelyBadPaidEntries()" title="Scans the Paid section for entries where the confirmed-paid amount doesn\'t match what was actually scheduled — the pattern left by an old, now-disabled bug — and pre-selects them below for review">🔍 Find likely-bad Paid entries</button>'
         +'</div>'
         +'<div style="position:relative;margin-bottom:14px;max-width:320px">'
-          +'<input type="text" id="cf-search" placeholder="Search bill #, amount, or vendor…" value="'+esc(_cfSearchQuery)+'" oninput="filterCFSearch()" style="width:100%;padding:9px 34px 9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
+          +'<input type="text" id="cf-search" aria-label="Search scheduled payments" autocomplete="off" placeholder="Search bill #, amount, or vendor…" value="'+esc(_cfSearchQuery)+'" oninput="filterCFSearch()" style="width:100%;padding:9px 34px 9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
           +'<button id="cf-search-clear" onclick="document.getElementById(\'cf-search\').value=\'\';filterCFSearch();" style="display:'+(_cfSearchQuery?'block':'none')+';position:absolute;right:8px;top:50%;transform:translateY(-50%);border:none;background:none;color:var(--muted);cursor:pointer;font-size:15px;padding:2px 4px">✕</button>'
         +'</div>'
         +'<div id="cf-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
@@ -6376,7 +6521,7 @@ function renderReports(){
           +'<button class="btn" onclick="debugCheckDepositLink(\'4882\')" title="Temporary — finds exactly which QuickBooks Deposit record (if any) incorrectly claims to include Ref #4882">🔍 Debug deposit link (4882)</button>'
         +'</div>'
         +'<div style="position:relative;margin-bottom:14px;max-width:320px">'
-          +'<input type="text" id="chk-search" placeholder="Search ref #, amount, or customer…" oninput="filterChecksSearch()" style="width:100%;padding:9px 34px 9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
+          +'<input type="text" id="chk-search" aria-label="Search checks" autocomplete="off" placeholder="Search ref #, amount, or customer…" oninput="filterChecksSearch()" style="width:100%;padding:9px 34px 9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>'
           +'<button id="chk-search-clear" onclick="document.getElementById(\'chk-search\').value=\'\';filterChecksSearch();" style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);border:none;background:none;color:var(--muted);cursor:pointer;font-size:15px;padding:2px 4px">✕</button>'
         +'</div>'
         +'<div id="chk-status" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:14px"></div>'
@@ -8414,7 +8559,7 @@ window.printSalesByCustomerReport=printSalesByCustomerReport;
 // all in one flat file so it's usable in Excel (filter, subtotal, pivot)
 // without needing to click through every customer first.
 function exportSalesByCustomerCSV(){
-  if(!_sbcSalesDocs.length){ alert('Pull the report first, then export.'); return; }
+  if(!_sbcSalesDocs.length){ notify('Pull the report first, then export.'); return; }
   var periodLabel=document.getElementById('sbc-period-label');
   var curByCust=_sbcTotalsByCustomer(_sbcSalesDocs);
   var priorByCust=_sbcPriorDocs?_sbcTotalsByCustomer(_sbcPriorDocs):{};
@@ -8465,7 +8610,7 @@ function switchSalesReportsSubTab(sub){
     pair[0].style.borderRight=active?'1.5px solid var(--line)':'1.5px solid transparent';
   });
   var searchEl=document.getElementById('sbc-search');
-  if(searchEl) searchEl.placeholder=(sub==='products')?'Search product...':'Search customer...';
+  if(searchEl) searchEl.placeholder=(sub==='products')?'Search product…':'Search customer…';
   renderActiveSalesReport();
 }
 window.switchSalesReportsSubTab=switchSalesReportsSubTab;
@@ -8656,7 +8801,7 @@ function printSalesByProductsReport(){
 }
 window.printSalesByProductsReport=printSalesByProductsReport;
 function exportSalesByProductsCSV(){
-  if(!_sbcSalesDocs.length){ alert('Pull the report first, then export.'); return; }
+  if(!_sbcSalesDocs.length){ notify('Pull the report first, then export.'); return; }
   var periodLabel=document.getElementById('sbc-period-label');
   var curByProd=_sbcTotalsByProduct(_sbcSalesDocs);
   var priorByProd=_sbcPriorDocs?_sbcTotalsByProduct(_sbcPriorDocs):{};
@@ -9285,7 +9430,7 @@ function doPrintReportGroup(key){
 
   var keys;
   if(key!==null && key!==undefined){
-    if(!byMode[key]){ alert('No data for that '+groupLabel+' in the currently loaded date range.'); return; }
+    if(!byMode[key]){ notify('No data for that '+groupLabel+' in the currently loaded date range.'); return; }
     keys=[key];
   } else {
     keys=Object.keys(byMode).sort(function(a,b){
@@ -9483,7 +9628,7 @@ function _downloadCSVRows(rows,filename){
 function exportCollectionReportCSV(){
   var from=_collRange?_collRange.from:'', to=_collRange?_collRange.to:'';
   var rows=_buildCollectionCSVRows(null);
-  if(!rows){ alert('Run the report first, then export.'); return; }
+  if(!rows){ notify('Run the report first, then export.'); return; }
   _downloadCSVRows(rows,'customer-payments-'+(from||'')+'-to-'+(to||'')+'.csv');
 }
 window.exportCollectionReportCSV=exportCollectionReportCSV;
@@ -9493,7 +9638,7 @@ window.exportCollectionReportCSV=exportCollectionReportCSV;
 function exportCollectionReportGroupCSV(key){
   var from=_collRange?_collRange.from:'', to=_collRange?_collRange.to:'';
   var rows=_buildCollectionCSVRows(key);
-  if(!rows){ alert('No data for that row in the currently loaded date range.'); return; }
+  if(!rows){ notify('No data for that row in the currently loaded date range.'); return; }
   var safeName=String(key).replace(/[^a-z0-9]+/gi,'-').replace(/^-+|-+$/g,'').slice(0,60)||'export';
   _downloadCSVRows(rows,'customer-payments-'+safeName+'-'+(from||'')+'-to-'+(to||'')+'.csv');
 }
@@ -9897,7 +10042,7 @@ function _cfAddSplit(billId,date,amount){
         // automatically — re-enter the date to try again, now unblocked.
       }
     } else {
-      alert('This bill already has '+detail.join(' and ')+' — that covers its balance, so nothing more should need to be scheduled.\n\nIf that looks wrong, find it in the Paid/Approved/In Process/Scheduled sections above (try the search box) and correct or remove the mistaken entry there.');
+      notify('This bill already has '+detail.join(' and ')+' — that covers its balance, so nothing more should need to be scheduled.\n\nIf that looks wrong, find it in the Paid/Approved/In Process/Scheduled sections above (try the search box) and correct or remove the mistaken entry there.');
     }
     return;
   }
@@ -9961,7 +10106,7 @@ function _cfWeekendDayName(dateStr){
 // partially scheduled before). For scheduling a SPECIFIC smaller amount,
 // use "Partial..." instead (see scheduleCFPartial).
 function setCashFlowScheduledDate(billId,value){
-  if(!hasPerm('cfSchedulePayment')){ alert('You don\'t have permission to schedule payments.'); renderCashFlowReport(); return; }
+  if(!hasPerm('cfSchedulePayment')){ notify('You don\'t have permission to schedule payments.'); renderCashFlowReport(); return; }
   if(!value) return; // nothing to clear here anymore — remove specific installments from the pinned section's ⋮ menu instead
   if(_cfIsWeekend(value) && !confirm('This falls on a '+_cfWeekendDayName(value)+' — '+value+' is not a business day.\n\nSchedule it anyway?')){
     renderCashFlowReport(); // reset the date input back to blank rather than leaving a typed-but-unscheduled date sitting there
@@ -9995,7 +10140,7 @@ var _cfSplitState=null; // {billId, splitId, vendor, docNum, totalAmount, rows:[
 
 function splitCFPayment(billId,splitId){
   var rec=_cfScheduledDates[billId];
-  if(!rec||!rec.splits||!rec.splits.length){ alert('This payment isn\'t scheduled yet.'); return; }
+  if(!rec||!rec.splits||!rec.splits.length){ notify('This payment isn\'t scheduled yet.'); return; }
   if(splitId===undefined) splitId=rec.splits[0].id;
   var target=rec.splits.find(function(s){return s.id===splitId;});
   if(!target) return;
@@ -10147,7 +10292,7 @@ function cfSplitAddRow(){
     _cfSplitState.rows.push({date:_cfSplitState.rows[_cfSplitState.rows.length-1].date, amount:0});
     _cfRenderSplitRows();
   }catch(err){
-    alert('Could not add a row: '+(err&&err.message?err.message:err));
+    notify('Could not add a row: '+(err&&err.message?err.message:err));
   }
 }
 window.cfSplitAddRow=cfSplitAddRow;
@@ -10172,11 +10317,11 @@ window.closeCFSplitModal=closeCFSplitModal;
 var _cfPartialState=null; // {billId, remaining}
 
 function scheduleCFPartial(billId){
-  if(!hasPerm('cfSchedulePayment')){ alert('You don\'t have permission to schedule payments.'); return; }
+  if(!hasPerm('cfSchedulePayment')){ notify('You don\'t have permission to schedule payments.'); return; }
   var bill=(_cashFlowBills||[]).find(function(b){ return b.Id===billId; });
-  if(!bill){ alert('Bill not found — try re-pulling from QuickBooks.'); return; }
+  if(!bill){ notify('Bill not found — try re-pulling from QuickBooks.'); return; }
   var remaining=_cfRemainingFor(bill);
-  if(remaining<=0.004){ alert('This bill is already fully scheduled.'); return; }
+  if(remaining<=0.004){ notify('This bill is already fully scheduled.'); return; }
   var vName=(bill.VendorRef&&bill.VendorRef.name)||'No vendor on file';
   _cfPartialState={billId:billId,remaining:remaining};
 
@@ -10233,7 +10378,7 @@ function cfSplitSave(){
   var st=_cfSplitState;
   if(!st) return;
   var bad=st.rows.find(function(r){ return !r.date || !r.amount || r.amount<=0; });
-  if(bad){ alert('Every part needs a date and an amount greater than $0.'); return; }
+  if(bad){ notify('Every part needs a date and an amount greater than $0.'); return; }
   var weekendDates=st.rows.map(function(r){return r.date;}).filter(_cfIsWeekend);
   if(weekendDates.length){
     var uniqueWeekendDates=weekendDates.filter(function(d,i){return weekendDates.indexOf(d)===i;});
@@ -10273,7 +10418,7 @@ window.cfSplitSave=cfSplitSave;
 // split ONE way, so that failure mode can't happen anymore — a duplicate
 // call just harmlessly re-applies (or re-clears) the same state.
 function approveCFPayment(billId,splitId){
-  if(!hasPerm('cfApprovePayment')){ alert('You don\'t have permission to approve payments.'); return; }
+  if(!hasPerm('cfApprovePayment')){ notify('You don\'t have permission to approve payments.'); return; }
   var rec=_cfScheduledDates[billId];
   if(!rec) return;
   var split=rec.splits.find(function(s){return s.id===splitId;});
@@ -10284,7 +10429,7 @@ function approveCFPayment(billId,splitId){
 }
 window.approveCFPayment=approveCFPayment;
 function unapproveCFPayment(billId,splitId){
-  if(!hasPerm('cfApprovePayment')){ alert('You don\'t have permission to approve payments.'); return; }
+  if(!hasPerm('cfApprovePayment')){ notify('You don\'t have permission to approve payments.'); return; }
   var rec=_cfScheduledDates[billId];
   if(!rec) return;
   var split=rec.splits.find(function(s){return s.id===splitId;});
@@ -10302,7 +10447,7 @@ window.unapproveCFPayment=unapproveCFPayment;
 // verify anything itself, unlike the automatic checks in
 // _cfReconcileApprovedPayments.
 function markCFPaidManually(billId,splitId){
-  if(!hasPerm('cfInitiatePayment')){ alert('You don\'t have permission to do this.'); return; }
+  if(!hasPerm('cfInitiatePayment')){ notify('You don\'t have permission to do this.'); return; }
   var rec=_cfScheduledDates[billId];
   if(!rec) return;
   var split=rec.splits.find(function(s){return s.id===splitId;});
@@ -10520,7 +10665,7 @@ function printReportSection(elId,title){
   var el=document.getElementById(elId);
   if(!el) return;
   var w=window.open('','_blank');
-  if(!w){ alert('Please allow pop-ups for this site to print.'); return; }
+  if(!w){ notify('Please allow pop-ups for this site to print.'); return; }
   w.document.write('<html><head><title>'+title+'</title>'
     +'<style>body{font-family:Arial,sans-serif;padding:30px;color:#222}table{width:100%}.no-print{display:none!important}</style></head><body>'
     +el.outerHTML+'</body></html>');
@@ -10543,7 +10688,7 @@ function printCFWeekGroup(sectionElId,rowClass,weekLabel){
   var rows=table.querySelectorAll('.'+rowClass+'-hdr, .'+rowClass);
   if(!rows.length) return;
   var w=window.open('','_blank');
-  if(!w){ alert('Please allow pop-ups for this site to print.'); return; }
+  if(!w){ notify('Please allow pop-ups for this site to print.'); return; }
   var tbodyHtml='';
   rows.forEach(function(r){ tbodyHtml+=r.outerHTML; });
   w.document.write('<html><head><title>'+weekLabel+'</title>'
@@ -11243,7 +11388,7 @@ window.clearCFSchedSelection=clearCFSchedSelection;
 // when two selected payments happen to belong to the same bill; they
 // won't race each other.
 async function bulkApproveCFScheduledSelected(){
-  if(!hasPerm('cfApprovePayment')){ alert('You don\'t have permission to approve payments.'); return; }
+  if(!hasPerm('cfApprovePayment')){ notify('You don\'t have permission to approve payments.'); return; }
   var checked=Array.prototype.slice.call(document.querySelectorAll('.cf-sched-select:checked'));
   if(!checked.length) return;
   if(!confirm('Approve these '+checked.length+' selected payment'+(checked.length!==1?'s':'')+'?')) return;
@@ -11363,7 +11508,7 @@ function findLikelyBadPaidEntries(){
     });
   });
   if(!mismatches.length){
-    alert('No mismatched or duplicate Paid entries found — every entry currently marked Paid matches its own scheduled amount, and no bill has more than one Paid entry of the same amount.');
+    notify('No mismatched or duplicate Paid entries found — every entry currently marked Paid matches its own scheduled amount, and no bill has more than one Paid entry of the same amount.');
     return;
   }
   var searchEl=document.getElementById('cf-search');
@@ -11388,16 +11533,16 @@ function findLikelyBadPaidEntries(){
       }).join('\n')
       +(mismatches.length>15?'\n…and '+(mismatches.length-15)+' more':'')
       +'\n\nThey\'re checked in the Paid table below (you may need to scroll to see all of them, especially in a collapsed week). For duplicates, the EARLIEST entry on each bill was left unchecked (assumed to be the real payment) — double check that assumption against QuickBooks before deleting. Review, then click "🗑 Delete selected" in the yellow bar above the table.';
-    alert(summary);
+    notify(summary);
   },50);
 }
 window.findLikelyBadPaidEntries=findLikelyBadPaidEntries;
 
 function startCFPaymentProcess(billId,splitId){
-  if(!hasPerm('cfInitiatePayment')){ alert('You don\'t have permission to initiate payments.'); return; }
+  if(!hasPerm('cfInitiatePayment')){ notify('You don\'t have permission to initiate payments.'); return; }
   var rec=_cfScheduledDates[billId];
   var split=rec&&rec.splits.find(function(s){return s.id===splitId;});
-  if(!split){ alert('Could not find that payment.'); return; }
+  if(!split){ notify('Could not find that payment.'); return; }
 
   var bg=document.createElement('div');
   bg.className='modal-bg';
@@ -11477,11 +11622,11 @@ function cfProcessConfirm(billId,splitId,method,checkNumber){
       split.inProcess={method:method,checkNumber:(method==='check'?(checkNumber||''):undefined),by:(currentUser&&currentUser.name)||'Unknown user',at:new Date().toISOString()};
       _cfSaveScheduled(billId);
     } else {
-      alert('Could not find this payment to update — it may have changed on another device in the meantime. Please try again after the page refreshes.');
+      notify('Could not find this payment to update — it may have changed on another device in the meantime. Please try again after the page refreshes.');
     }
   }catch(e){
     console.error('cfProcessConfirm failed:',e);
-    alert('Something went wrong confirming this payment method: '+(e&&e.message?e.message:e)+'. Please try again — if it keeps happening, note which bill this was and let support know.');
+    notify('Something went wrong confirming this payment method: '+(e&&e.message?e.message:e)+'. Please try again — if it keeps happening, note which bill this was and let support know.');
   }
   closeCFProcessModal();
   renderCashFlowReport();
@@ -11490,7 +11635,7 @@ window.cfProcessConfirm=cfProcessConfirm;
 
 // Undo — sends an In Process payment back to Approved.
 function revertCFPaymentProcess(billId,splitId){
-  if(!hasPerm('cfInitiatePayment')){ alert('You don\'t have permission to initiate payments.'); return; }
+  if(!hasPerm('cfInitiatePayment')){ notify('You don\'t have permission to initiate payments.'); return; }
   var rec=_cfScheduledDates[billId];
   var split=rec&&rec.splits.find(function(s){return s.id===splitId;});
   if(!split) return;
@@ -11628,7 +11773,7 @@ async function setVendorDepartment(vendorKey,dept){
     if(prevDept) _vendorDepartments[vendorKey]=prevDept; else delete _vendorDepartments[vendorKey];
     safeSetLocal('pc_vendor_departments',JSON.stringify(_vendorDepartments));
     renderCashFlowReport();
-    alert('Could not save that department assignment — check your connection and try again.');
+    notify('Could not save that department assignment — check your connection and try again.');
   }
 }
 window.setVendorDepartment=setVendorDepartment;
@@ -12012,7 +12157,7 @@ window.runChecksReport=runChecksReport;
 async function debugCheckDepositLink(targetRef){
   var targetPayment=(_checksPayments||[]).find(function(p){ return (p.PaymentRefNum||'').trim()===targetRef; });
   if(!targetPayment){
-    alert('Ref #'+targetRef+' not found in the current Checks In Hand list. Click "Pull from QuickBooks" first, then try this again.');
+    notify('Ref #'+targetRef+' not found in the current Checks In Hand list. Click "Pull from QuickBooks" first, then try this again.');
     return;
   }
   console.log('[DEPOSIT DEBUG] Target payment (Ref '+targetRef+') full object:',JSON.stringify(targetPayment,null,2));
@@ -12046,7 +12191,7 @@ async function debugCheckDepositLink(targetRef){
   } else {
     console.log('[DEPOSIT DEBUG] Deposit(s) linking to payment Id '+targetPayment.Id+' ('+matches.length+' found):',JSON.stringify(matches,null,2));
   }
-  alert('Done — check the browser console for lines starting with [DEPOSIT DEBUG]. Found '+matches.length+' deposit(s) claiming to link to Ref #'+targetRef+'.');
+  notify('Done — check the browser console for lines starting with [DEPOSIT DEBUG]. Found '+matches.length+' deposit(s) claiming to link to Ref #'+targetRef+'.');
 }
 window.debugCheckDepositLink=debugCheckDepositLink;
 
@@ -12417,7 +12562,7 @@ window.deleteCheckPaid=deleteCheckPaid;
 
 function markCheckDeposited(paymentId){
   var p=(_checksPayments||[]).find(function(x){ return x.Id===paymentId; });
-  if(!p){ alert('Could not find that check — try pulling from QuickBooks again.'); return; }
+  if(!p){ notify('Could not find that check — try pulling from QuickBooks again.'); return; }
   _checksDeposited[paymentId]={
     id:paymentId,
     customer:(p.CustomerRef&&p.CustomerRef.name)||'No customer on file',
@@ -12509,7 +12654,7 @@ function switchReportTab(tab){
   var rptTabsBarEl=document.getElementById('rpt-tabs-bar');
   var activeToolbarId=_reportToolbarIdForTab(tab);
   var activeToolbarEl=activeToolbarId?document.getElementById(activeToolbarId):null;
-  _reportActiveTab=tab;
+  _reportActiveTab=tab; if(!_routeHold) syncRoute(true);
   if(rptHeaderEl){
     if(activeToolbarEl){
       activeToolbarEl.insertBefore(rptHeaderEl,activeToolbarEl.firstChild);
@@ -12755,7 +12900,7 @@ function editPurchaseWeekDates(wid){
   if(newStart===null) return;
   var newEnd=prompt('End date (YYYY-MM-DD):',w.endDate);
   if(newEnd===null) return;
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(newStart)||!/^\d{4}-\d{2}-\d{2}$/.test(newEnd)){ alert('Please use YYYY-MM-DD for both dates.'); return; }
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(newStart)||!/^\d{4}-\d{2}-\d{2}$/.test(newEnd)){ notify('Please use YYYY-MM-DD for both dates.'); return; }
   purchaseConfig.weeks[wid]={startDate:newStart,endDate:newEnd};
   savePurchaseConfig();
   _purchRealized=null;
@@ -13287,7 +13432,7 @@ function renderPurchaseReport(){
 // printed later without being affected by data that changes afterward.
 function saveCurrentReport(){
   var el=document.getElementById('rpt-print');
-  if(!el){ alert('Run a report first, then click Save.'); return; }
+  if(!el){ notify('Run a report first, then click Save.'); return; }
   var deptSelEl=document.getElementById('rpt-dept');
   var fromEl=document.getElementById('rpt-from');
   var toEl=document.getElementById('rpt-to');
@@ -14290,7 +14435,7 @@ function renderDashboard(){
     alerts.forEach(function(it,i){
       html+='<div style="display:flex;justify-content:space-between;padding:9px 16px'+(i<alerts.length-1?';border-bottom:1px solid rgba(194,59,51,.12)':'')+'">'
         +'<span style="font-size:13px;font-weight:600">'+esc(it.name)+'</span>'
-        +'<span style="font-family:var(--mono);font-size:13px;color:#c23b33;font-weight:700">'+Number(it.qty).toFixed(2)+'</span></div>';
+        +'<span style="font-family:var(--mono);font-size:13px;color:#c23b33;font-weight:700">'+fmtNum2(Number(it.qty))+'</span></div>';
     });
     html+='</div><div style="font-size:11px;color:var(--muted);margin-top:8px">Negative quantities usually mean sales were synced before an opening count was set. Set opening counts or recalculate.</div></div>';
   }
@@ -14522,11 +14667,11 @@ async function connectPlaidBank(){
     data=await res.json();
     if(!res.ok) throw new Error(data.error||'Could not start bank connection');
   }catch(e){
-    alert('Could not start bank connection: '+e.message);
+    notify('Could not start bank connection: '+e.message);
     return;
   }
   if(typeof Plaid==='undefined'){
-    alert('Plaid\'s widget failed to load — check your internet connection and try again.');
+    notify('Plaid\'s widget failed to load — check your internet connection and try again.');
     return;
   }
   var handler=Plaid.create({
@@ -14541,7 +14686,7 @@ async function connectPlaidBank(){
         if(!exRes.ok) throw new Error(exData.error||'Could not finish connecting');
         renderBankBalanceCard(true);
       }catch(e){
-        alert('Connected to your bank, but saving the connection failed: '+e.message);
+        notify('Connected to your bank, but saving the connection failed: '+e.message);
       }
     },
     onExit: function(err){ if(err) console.log('Plaid Link exited:',err); }
@@ -14789,7 +14934,7 @@ function qtyAtLoc(it,locId){
 async function checkServerMemory(){
   try{
     var res=await fetchWithTimeout('/api/diagnostics/memory?_ts='+Date.now(),{cache:'no-store'});
-    if(!res.ok){ alert('Could not reach the server for this ('+res.status+').'); return; }
+    if(!res.ok){ notify('Could not reach the server for this ('+res.status+').'); return; }
     var d=await res.json();
     var msg='SERVER MEMORY & DATA SIZE\n\n';
     msg+='Process memory right now:\n';
@@ -14808,9 +14953,9 @@ async function checkServerMemory(){
     msg+='  Items + transactions file: '+(d.fileSizesMB.itemsTransactionsFile!=null?d.fileSizesMB.itemsTransactionsFile+' MB':'not found')+'\n';
     msg+='  Main data file (everything else): '+(d.fileSizesMB.mainDataFile!=null?d.fileSizesMB.mainDataFile+' MB':'not found')+'\n\n';
     msg+='If RSS climbs noticeably higher every time you check this over the\ncoming days without a restart in between, that confirms a genuine,\nongoing memory leak rather than just a naturally large dataset.';
-    alert(msg);
+    notify(msg);
   }catch(e){
-    alert('Could not check server memory: '+(e&&e.message?e.message:e));
+    notify('Could not check server memory: '+(e&&e.message?e.message:e));
   }
 }
 window.checkServerMemory=checkServerMemory;
@@ -14876,7 +15021,7 @@ function diagnoseLocations(){
       msg+='  (no server fetch errors)\n';
     }
   }
-  alert(msg);
+  notify(msg);
 }
 
 function diagnoseLocationsOLD(){
@@ -14928,7 +15073,7 @@ function diagnoseLocationsOLD(){
       msg+='\n  >> '+d.skippedNoItem+' line(s) referenced items not in your synced list.\n     Sample QB item IDs: '+d.unmatchedSample.join(', ')+'\n     Run Sync from QuickBooks to refresh items first.\n';
     }
   }
-  alert(msg);
+  notify(msg);
 }
 
 function renderItemsView(){
@@ -14971,9 +15116,9 @@ function renderItemsView(){
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;align-items:center">
       <div style="display:flex;align-items:center;gap:8px;background:var(--panel);border:1.5px solid var(--line);border-radius:8px;padding:7px 14px">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;stroke:var(--muted)"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input id="itemSearch" type="text" placeholder="Search by name or SKU…" oninput="renderItemsTable()" style="border:none;background:transparent;outline:none;font-family:var(--mono);font-size:12px;width:180px;color:var(--ink)"/>
+        <input id="itemSearch" aria-label="Search items" autocomplete="off" type="text" placeholder="Search by name or SKU…" oninput="renderItemsTable()" style="border:none;background:transparent;outline:none;font-family:var(--mono);font-size:12px;width:180px;color:var(--ink)"/>
       </div>
-      <select id="itemLocFilter" onchange="renderItemsTable()" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);outline:none">
+      <select id="itemLocFilter" aria-label="Filter by location" onchange="renderItemsTable()" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);outline:none">
         <option value="">All locations</option>
         <option value="__none__">No location assigned</option>
       </select>
@@ -14981,12 +15126,12 @@ function renderItemsView(){
         <input type="checkbox" id="hideZero" ${_myFilterPrefs.hideZero?'checked':''} onchange="renderItemsTable();saveItemFilterPrefs()" style="width:14px;height:14px;accent-color:var(--cold)"/>
         Hide zero quantity
       </label>
-      <select id="itemActiveFilter" onchange="renderItemsTable();saveItemFilterPrefs()" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);outline:none">
+      <select id="itemActiveFilter" aria-label="Filter by status" onchange="renderItemsTable();saveItemFilterPrefs()" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);outline:none">
         <option value="" ${_savedActiveFilter===''?'selected':''}>All items (active + inactive)</option>
         <option value="active" ${_savedActiveFilter==='active'?'selected':''}>Active only</option>
         <option value="inactive" ${_savedActiveFilter==='inactive'?'selected':''}>Inactive (deleted) only</option>
       </select>
-      <select id="itemKindFilter" onchange="renderItemsTable();saveItemFilterPrefs()" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);outline:none">
+      <select id="itemKindFilter" aria-label="Filter by item type" onchange="renderItemsTable();saveItemFilterPrefs()" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);outline:none">
         <option value="" ${_savedKindFilter===''?'selected':''}>Products + services</option>
         <option value="product" ${_savedKindFilter==='product'?'selected':''}>Products only</option>
         <option value="service" ${_savedKindFilter==='service'?'selected':''}>Services only</option>
@@ -15041,11 +15186,11 @@ function itemRow(it,avgDailyQtyById){
   return '<tr>'
     +'<td style="font-family:var(--mono);font-size:12px;color:var(--cold)">'+esc(it.sku||'—')+'</td>'
     +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+conflictBadge+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
-    +'<td style="font-family:var(--mono);font-size:13px;text-align:right;'+qtyColor+'">'+onHand.toFixed(2)+'</td>'
-    +'<td style="font-family:var(--mono);font-size:13px;text-align:right">$'+Number(it.cost||it.price||0).toFixed(2)+'</td>'
+    +'<td style="font-family:var(--mono);font-size:13px;text-align:right;'+qtyColor+'">'+fmtNum2(onHand)+'</td>'
+    +'<td style="font-family:var(--mono);font-size:13px;text-align:right">'+fmtMoney(Number(it.cost||it.price||0))+'</td>'
     +'<td style="font-family:var(--mono);font-size:12px;text-align:right;border-left:1.5px solid var(--line)" title="Current on-hand ÷ average daily units shipped over the trailing 28 days">'+_sbcDaysOfSupplyStr(days)+'</td>'
     +'<td style="text-align:right;position:relative;width:40px">'
-    +'<button class="dots-btn" onclick="toggleItemMenu(event,this.dataset.id)" data-id="'+it.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;stroke:var(--muted)"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>'
+    +'<button class="dots-btn" aria-label="Item actions" onclick="toggleItemMenu(event,this.dataset.id)" data-id="'+it.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;stroke:var(--muted)"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>'
     +'</td>'
     +'</tr>';
 }
@@ -15195,10 +15340,10 @@ function itemsTableLoc(rows){
     return '<tr>'
       +'<td style="font-family:var(--mono);font-size:12px;color:var(--cold)">'+esc(it.sku||'—')+'</td>'
       +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+conflictBadge+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
-      +'<td style="font-family:var(--mono);font-size:13px;text-align:right;'+qtyColor+'">'+Number(r.locQty||0).toFixed(2)+'</td>'
-      +'<td style="font-family:var(--mono);font-size:13px;text-align:right">$'+Number(it.cost||it.price||0).toFixed(2)+'</td>'
+      +'<td style="font-family:var(--mono);font-size:13px;text-align:right;'+qtyColor+'">'+fmtNum2(Number(r.locQty||0))+'</td>'
+      +'<td style="font-family:var(--mono);font-size:13px;text-align:right">'+fmtMoney(Number(it.cost||it.price||0))+'</td>'
       +'<td style="text-align:right;position:relative;width:40px">'
-      +'<button class="dots-btn" onclick="toggleItemMenu(event,this.dataset.id)" data-id="'+it.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;stroke:var(--muted)"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>'
+      +'<button class="dots-btn" aria-label="Item actions" onclick="toggleItemMenu(event,this.dataset.id)" data-id="'+it.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;stroke:var(--muted)"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>'
       +'</td></tr>';
   }).join('');
   return '<table class="txn-table"><thead><tr><th>SKU</th><th>Product Name</th><th style="text-align:right">Qty here</th><th style="text-align:right">Cost</th><th></th></tr></thead><tbody>'+body+'</tbody></table>';
@@ -15216,7 +15361,7 @@ function addOCLine(){
   line.style.cssText='display:grid;grid-template-columns:'+OC_GRID_STD+';gap:6px;align-items:start';
   line.innerHTML=''
     +'<div class="item-search-wrap">'
-    +'<input type="text" id="oc-search-'+idx+'" class="item-search-input" placeholder="Search product..." autocomplete="off" oninput="filterOCItems('+idx+')" onkeydown="ocKeyNav(event,'+idx+')"/>'
+    +'<input type="text" id="oc-search-'+idx+'" class="item-search-input" placeholder="Search product…" autocomplete="off" oninput="filterOCItems('+idx+')" onkeydown="ocKeyNav(event,'+idx+')"/>'
     +'<input type="hidden" id="oc-item-'+idx+'" value=""/>'
     +'</div>'
     +'<input type="number" id="oc-qty-'+idx+'" placeholder="Qty" min="0" step="0.01" oninput="updatePhysicalDiff('+idx+')" style="padding:8px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;text-align:right;width:100%"/>'
@@ -15437,7 +15582,7 @@ function renderSettings(){
           <button class="btn" onclick="document.getElementById('backupRestoreFile').click()">
             <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Restore from a saved file…
           </button>
-          <input type="file" id="backupRestoreFile" accept="application/json" style="display:none" onchange="restoreFromUploadedBackup(this.files[0])"/>
+          <input type="file" id="backupRestoreFile" aria-label="Choose backup file to restore" accept="application/json" style="display:none" onchange="restoreFromUploadedBackup(this.files[0])"/>
           <span id="backupStatus" style="font-family:var(--mono);font-size:11.5px;color:var(--muted)"></span>
         </div>
         <div style="padding:0 20px 16px">
@@ -15460,7 +15605,7 @@ function renderSettings(){
           <div><h3>Permissions matrix</h3><p>Every permission, every person, in one view — tick a box to grant it, right here, no need to open each person individually. Admins always have everything and can't be edited (their column is grayed out).</p></div>
         </div>
         <div style="padding:14px 20px 4px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-          <input type="text" id="permMatrixFilter" placeholder="Filter permissions… (e.g. &quot;reports&quot;, &quot;transactions&quot;)" oninput="renderPermissionsMatrix()" style="flex:1;max-width:360px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
+          <input type="text" id="permMatrixFilter" aria-label="Filter permissions" autocomplete="off" placeholder="Filter permissions… (e.g. &quot;reports&quot;, &quot;transactions&quot;)" oninput="renderPermissionsMatrix()" style="flex:1;max-width:360px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
           <button class="btn btn-sm" onclick="togglePermMatrixAllGroups()">Expand/Collapse all</button>
         </div>
         <div style="overflow-x:auto;padding:4px 20px 20px">
@@ -15508,6 +15653,7 @@ function switchSettingsTab(tab){
   var tabKeys=['account','storage','backup','users','permMatrix','labeling','vendors','labelTemplates'];
   if(tab==='permMatrix' && !(currentUser&&currentUser.role==='admin')) tab='account'; // that tab/button doesn't exist for non-admins
   _settingsActiveTab=tab;
+  if(!_routeHold) syncRoute(true);
   tabKeys.forEach(function(t){
     var panel=document.getElementById('stab-'+t);
     if(panel) panel.style.display=(t===tab)?'block':'none';
@@ -15546,7 +15692,7 @@ function renderLabelingPanel(){
       <span style="font-size:11px;color:var(--muted);font-style:italic">Each department has its own product list — this only affects what shows up when printing for "${esc(_lblPanelDept)}".</span>
     </div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
-      <input type="text" id="lbl-filter" placeholder="Search products..." oninput="renderLabelingList()" style="flex:1;min-width:200px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
+      <input type="text" id="lbl-filter" aria-label="Search products" autocomplete="off" placeholder="Search products…" oninput="renderLabelingList()" style="flex:1;min-width:200px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
       <button class="btn btn-sm" onclick="labelSelectAll(true)">Select all</button>
       <button class="btn btn-sm" onclick="labelSelectAll(false)">Clear all</button>
       <span id="lbl-count" style="font-family:var(--mono);font-size:11px;color:var(--muted)"></span>
@@ -15799,7 +15945,7 @@ function _renderCustomersPanelBody(panel){
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;align-items:center">
       <div style="display:flex;align-items:center;gap:8px;background:var(--panel);border:1.5px solid var(--line);border-radius:8px;padding:7px 14px">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;stroke:var(--muted)"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input id="cust-filter" type="text" placeholder="Search customers or Sales Rep…" oninput="renderCustomersList()" style="border:none;background:transparent;outline:none;font-family:var(--mono);font-size:12px;width:200px;color:var(--ink)"/>
+        <input id="cust-filter" aria-label="Search customers" autocomplete="off" type="text" placeholder="Search customers or Sales Rep…" oninput="renderCustomersList()" style="border:none;background:transparent;outline:none;font-family:var(--mono);font-size:12px;width:200px;color:var(--ink)"/>
       </div>
       <select id="cust-dept" onchange="onCustomerDeptChange()" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);outline:none">
         ${DEPARTMENTS.map(function(d){return '<option value="'+esc(d)+'" '+(d===_custPanelDept?'selected':'')+'>'+esc(d)+'</option>';}).join('')}
@@ -16354,7 +16500,7 @@ function _renderVendorsPanelBody(panel){
       <span style="font-size:11px;color:var(--muted);font-style:italic">Checking a vendor here assigns it to "${esc(_vendPanelDept)}" — a vendor can only belong to one department, so checking it here moves it out of any other department it was in.</span>
     </div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
-      <input type="text" id="vend-filter" placeholder="Search vendors or Purch Rep..." oninput="renderVendorsList()" style="flex:1;min-width:200px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
+      <input type="text" id="vend-filter" aria-label="Search vendors" autocomplete="off" placeholder="Search vendors or Purch Rep…" oninput="renderVendorsList()" style="flex:1;min-width:200px;padding:8px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
       <button class="btn btn-sm" onclick="vendorSelectAll(true)">Select all</button>
       <button class="btn btn-sm" onclick="vendorSelectAll(false)">Clear all</button>
       <button class="btn btn-sm" id="vendSyncBtn" onclick="qbSyncVendors()" title="Pull the latest vendor list from QuickBooks">
@@ -16731,7 +16877,7 @@ function renderLabelTemplatesPanel(){
         <div class="form-group"><label>Address</label><textarea id="lt-address" rows="2" oninput="updateLabelTemplatePreview()" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;font-family:inherit;resize:vertical"></textarea></div>
         <div class="form-row">
           <div class="form-group"><label>Establishment Number</label><input type="text" id="lt-est" oninput="updateLabelTemplatePreview()" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/></div>
-          <div class="form-group"><label>"Keep..." wording</label><input type="text" id="lt-keep" oninput="updateLabelTemplatePreview()" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/></div>
+          <div class="form-group"><label>“Keep…” wording</label><input type="text" id="lt-keep" oninput="updateLabelTemplatePreview()" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/></div>
         </div>
         <div class="form-group"><label>Safe Handling Instructions (one per line)</label><textarea id="lt-safehandling" rows="5" oninput="updateLabelTemplatePreview()" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;font-family:inherit;resize:vertical"></textarea></div>
         <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
@@ -17225,8 +17371,8 @@ function renderStorageList(){
     <div class="storage-info"><div class="storage-name">${esc(loc.name)}</div><div class="storage-meta">${loc.zone?esc(loc.zone)+' · ':''}${loc.temp?esc(loc.temp)+' · ':''}${loc.capacity?Number(loc.capacity).toLocaleString()+' lb cap':'no capacity set'}</div>${loc.department?`<div style="display:inline-block;margin-top:4px;font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--cold);background:var(--cold-soft);border-radius:5px;padding:2px 6px">${esc(loc.department)}</div>`:''}</div>
     ${typeBadge(loc.type)}
     <div class="storage-actions">
-      <button class="btn btn-sm" onclick="openEditStorageModal('${loc.id}')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-      <button class="btn btn-sm btn-danger" onclick="openDeleteModal('${loc.id}','storage')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
+      <button class="btn btn-sm" aria-label="Edit location" title="Edit location" onclick="openEditStorageModal('${loc.id}')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+      <button class="btn btn-sm btn-danger" aria-label="Delete location" title="Delete location" onclick="openDeleteModal('${loc.id}','storage')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
     </div>
   </li>`).join('');
 }
@@ -17267,7 +17413,7 @@ function parseBulkStorageLines(text){
 function saveBulkStorages(){
   var text=document.getElementById('bulk-storage-text').value;
   var rows=parseBulkStorageLines(text);
-  if(!rows.length){ alert('Enter at least one location name, one per line.'); return; }
+  if(!rows.length){ notify('Enter at least one location name, one per line.'); return; }
   var added=0, deptWarnings=[];
   rows.forEach(function(r,i){
     var dept=r.department;
@@ -17295,7 +17441,7 @@ function saveBulkStorages(){
   renderStorageList();
   var msg='Added '+added+' location'+(added!==1?'s':'')+'.';
   if(deptWarnings.length) msg+='\n\nNote: these departments weren\'t recognized (location was still added, just without a department — edit it to fix):\n'+deptWarnings.join('\n');
-  alert(msg);
+  notify(msg);
 }
 
 // ===== BACKUP & RESTORE =====
@@ -17352,7 +17498,7 @@ async function takeBackupNow(){
 async function downloadServerBackup(filename){
   try{
     var res=await fetch('/api/backups/'+encodeURIComponent(filename));
-    if(!res.ok){ alert('Could not download that backup.'); return; }
+    if(!res.ok){ notify('Could not download that backup.'); return; }
     var blob=await res.blob();
     var url=URL.createObjectURL(blob);
     var a=document.createElement('a');
@@ -17360,7 +17506,7 @@ async function downloadServerBackup(filename){
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(function(){URL.revokeObjectURL(url);},1000);
   }catch(e){
-    alert('Could not download that backup — check your connection.');
+    notify('Could not download that backup — check your connection.');
   }
 }
 async function restoreServerBackup(filename, whenLabel){
@@ -17370,11 +17516,11 @@ async function restoreServerBackup(filename, whenLabel){
   try{
     var res=await fetch('/api/backups/'+encodeURIComponent(filename)+'/restore',{method:'POST'});
     var data=await res.json();
-    if(!res.ok){ alert('Restore failed: '+(data.error||res.status)); if(statusEl) statusEl.textContent=''; return; }
-    alert('Restored. Reloading the app now.');
-    location.reload();
+    if(!res.ok){ notify('Restore failed: '+(data.error||res.status)); if(statusEl) statusEl.textContent=''; return; }
+    notify('Restored. Reloading the app now.',{kind:'success'});
+    setTimeout(function(){ location.reload(); },1500);
   }catch(e){
-    alert('Restore failed — check your connection.');
+    notify('Restore failed — check your connection.');
     if(statusEl) statusEl.textContent='';
   }
 }
@@ -17384,9 +17530,9 @@ function restoreFromUploadedBackup(file){
   reader.onload=async function(){
     var payload;
     try{ payload=JSON.parse(reader.result); }
-    catch(e){ alert('That file isn\'t valid JSON — make sure you picked a backup file downloaded from this app.'); return; }
+    catch(e){ notify('That file isn\'t valid JSON — make sure you picked a backup file downloaded from this app.'); return; }
     if(!payload || payload._backupType!=='plant-console-server-backup' || !payload.data){
-      alert('That doesn\'t look like a valid Plant Console server backup file.');
+      notify('That doesn\'t look like a valid Plant Console server backup file.');
       return;
     }
     var d=payload.data;
@@ -17404,14 +17550,14 @@ function restoreFromUploadedBackup(file){
     try{
       var res=await fetch('/api/backups/restore-upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       var data=await res.json();
-      if(!res.ok){ alert('Restore failed: '+(data.error||res.status)); if(statusEl) statusEl.textContent=''; return; }
-      alert('Restored. Reloading the app now.');
-      location.reload();
+      if(!res.ok){ notify('Restore failed: '+(data.error||res.status)); if(statusEl) statusEl.textContent=''; return; }
+      notify('Restored. Reloading the app now.',{kind:'success'});
+      setTimeout(function(){ location.reload(); },1500);
     }catch(e){
-      alert('Restore failed — check your connection.');
+      notify('Restore failed — check your connection.');
     }
   };
-  reader.onerror=function(){ alert('Could not read that file.'); };
+  reader.onerror=function(){ notify('Could not read that file.'); };
   reader.readAsText(file);
   document.getElementById('backupRestoreFile').value=''; // allow re-selecting the same file later
 }
@@ -17428,8 +17574,8 @@ function renderUserList(){
     <div class="user-info"><div class="user-name">${esc(u.name)}${u.id===currentUser?.id?' <span style="font-family:var(--mono);font-size:10px;color:var(--muted)">(you)</span>':''}</div><div class="user-email">${esc(u.email)}</div></div>
     ${roleBadge(u.role)}
     ${isAdmin?`<div class="user-actions">
-      <button class="btn btn-sm" onclick="openEditUserModal('${u.id}')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-      ${u.id!==currentUser?.id?`<button class="btn btn-sm btn-danger" onclick="openDeleteModal('${u.id}','user')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`:''}
+      <button class="btn btn-sm" aria-label="Edit user" title="Edit user" onclick="openEditUserModal('${u.id}')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+      ${u.id!==currentUser?.id?`<button class="btn btn-sm btn-danger" aria-label="Delete user" title="Delete user" onclick="openDeleteModal('${u.id}','user')"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`:''}
     </div>`:''}
   </li>`).join('');
 }
@@ -17597,7 +17743,7 @@ async function saveUser(){
   // Editing an EXISTING user can still leave it blank (that means "keep
   // their current PIN unchanged"), so this only applies to creation.
   if(!editingUserId && !pinInput.trim()){
-    alert('Please set a login PIN for this new user \u2014 without one, they will not be able to log in.');
+    notify('Please set a login PIN for this new user \u2014 without one, they will not be able to log in.');
     document.getElementById('u-pin').focus();
     return;
   }
@@ -17614,7 +17760,7 @@ async function saveUser(){
       return u.id!==editingUserId && (u.email||'').trim().toLowerCase()===emailLower;
     });
     if(dupe){
-      alert('A user with this email already exists ("'+dupe.name+'"). Please use a different email address.');
+      notify('A user with this email already exists ("'+dupe.name+'"). Please use a different email address.');
       document.getElementById('u-email').focus();
       return;
     }
@@ -17626,7 +17772,7 @@ async function saveUser(){
   // Surface any unexpected failure instead of silently doing nothing, so
   // it's actually diagnosable instead of just "the button doesn't work".
   console.error('saveUser failed:', err);
-  alert('Could not save this user: '+(err&&err.message?err.message:err)+'\n\nPlease share this message so it can be fixed.');
+  notify('Could not save this user: '+(err&&err.message?err.message:err)+'\n\nPlease share this message so it can be fixed.');
  }
 }
 
@@ -17667,7 +17813,7 @@ function renderScaleLog(){
         </div>
         <div class="form-group"><label>Product</label>
           <div class="item-search-wrap">
-            <input type="text" id="sl-search" class="item-search-input" placeholder="Search product..." autocomplete="off" value="${esc(_slSeriesTotal>1?_slSeriesProduct:'')}" oninput="filterScaleItems();updateLabelPreview()" onfocus="showScaleItemDropdown()" onblur="hideScaleSugg()" ${_slSeriesTotal>1?'readonly':''}/>
+            <input type="text" id="sl-search" class="item-search-input" placeholder="Search product…" autocomplete="off" value="${esc(_slSeriesTotal>1?_slSeriesProduct:'')}" oninput="filterScaleItems();updateLabelPreview()" onfocus="showScaleItemDropdown()" onblur="hideScaleSugg()" ${_slSeriesTotal>1?'readonly':''}/>
             <input type="hidden" id="sl-item" value="${esc(_slSeriesTotal>1?_slSeriesItemId:'')}"/>
           </div>
         </div>
@@ -17690,7 +17836,7 @@ function renderScaleLog(){
         <div class="form-group"><label>Tag Number (optional)</label><input type="text" id="sl-tag" placeholder="e.g. TAG-4471" oninput="updateLabelPreview()"/></div>
         <div class="form-group"><label>Customer (optional)</label>
           <div class="item-search-wrap">
-            <input type="text" id="sl-customer-search" class="item-search-input" placeholder="Search customer..." autocomplete="off" value="${esc(_slSeriesTotal>1?_slSeriesCustomer:'')}" oninput="filterScaleCustomers();updateLabelPreview()" onfocus="showScaleCustomerDropdown()" onblur="hideCustomerSugg()"/>
+            <input type="text" id="sl-customer-search" class="item-search-input" placeholder="Search customer…" autocomplete="off" value="${esc(_slSeriesTotal>1?_slSeriesCustomer:'')}" oninput="filterScaleCustomers();updateLabelPreview()" onfocus="showScaleCustomerDropdown()" onblur="hideCustomerSugg()"/>
             <input type="hidden" id="sl-customer" value="${esc(_slSeriesTotal>1?_slSeriesCustomer:'')}"/>
           </div>
           ${!customers.length?'<div style="font-size:11px;color:var(--muted);margin-top:5px">No customers synced yet — go to <strong>Customers</strong> and click Sync from QuickBooks.</div>':''}
@@ -17723,7 +17869,7 @@ function renderScaleLog(){
       </div>
       <!-- Log filters: everything here scopes BOTH the table below and the Excel export -->
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
-        <input type="text" id="sl-filter" placeholder="Search product/lot/tag..." oninput="renderScaleLogTable()" style="padding:7px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;width:200px"/>
+        <input type="text" id="sl-filter" aria-label="Search scale log" autocomplete="off" placeholder="Search product/lot/tag…" oninput="renderScaleLogTable()" style="padding:7px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;width:200px"/>
         <select id="sl-view-dept" onchange="onScaleViewDeptChange()" style="padding:7px 11px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none">${filterDeptOpts}</select>
         <label style="font-size:11px;color:var(--muted);font-family:var(--mono)">From <input type="date" id="sl-date-from" value="${esc(_slDateFrom)}" onchange="onScaleDateRangeChange()" style="padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;margin-left:4px"/></label>
         <label style="font-size:11px;color:var(--muted);font-family:var(--mono)">To <input type="date" id="sl-date-to" value="${esc(_slDateTo)}" onchange="onScaleDateRangeChange()" style="padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--ink);outline:none;margin-left:4px"/></label>
@@ -17972,10 +18118,10 @@ function renderScaleLogTable(){
       +'<td style="font-size:12px;color:var(--muted)">'+esc(l.department||'—')+'</td>'
       +'<td style="font-size:12px;color:var(--muted)">'+esc(l.customer||'—')+'</td>'
       +'<td style="font-size:12px;color:var(--muted)">'+esc(l.loggedBy||'—')+'</td>'
-      +'<td style="font-family:var(--mono);font-size:13px;text-align:right;font-weight:700">'+Number(l.weight||0).toFixed(2)+' lbs</td>'
+      +'<td style="font-family:var(--mono);font-size:13px;text-align:right;font-weight:700">'+fmtNum2(Number(l.weight||0))+' lbs</td>'
       +'<td style="text-align:right"><div class="txn-actions">'
-      +'<button class="btn btn-sm" title="Reprint" onclick="reprintLabel(this.dataset.id)" data-id="'+l.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button>'
-      +'<button class="btn btn-sm btn-danger" onclick="deleteScaleLog(this.dataset.id)" data-id="'+l.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>'
+      +'<button class="btn btn-sm" title="Reprint" aria-label="Reprint label" onclick="reprintLabel(this.dataset.id)" data-id="'+l.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button>'
+      +'<button class="btn btn-sm btn-danger" aria-label="Delete log entry" title="Delete log entry" onclick="deleteScaleLog(this.dataset.id)" data-id="'+l.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>'
       +'</div></td></tr>';
   }
   // Group into weeks (Mon–Sat). `list` is already sorted newest-first, so
@@ -18000,7 +18146,7 @@ function renderScaleLogTable(){
           +'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;stroke:var(--muted);flex-shrink:0;transform:rotate('+(collapsed?'0':'90')+'deg);transition:transform .15s"><polyline points="9 6 15 12 9 18"/></svg>'
           +'Week of '+esc(label)+' ('+weekRows[wk].length+')'
         +'</span></td>'
-      +'<td style="text-align:right;font-family:var(--mono);font-size:12.5px;font-weight:700">'+weekTotalLbs[wk].toFixed(2)+' lbs</td>'
+      +'<td style="text-align:right;font-family:var(--mono);font-size:12.5px;font-weight:700">'+fmtNum2(weekTotalLbs[wk])+' lbs</td>'
       +'<td></td></tr>';
     var dataRows=collapsed?'':weekRows[wk].map(row).join('');
     return headerRow+dataRows;
@@ -18180,7 +18326,7 @@ async function retryPushUntilConfirmed(product, weight){
       // failure — if the person has since printed something else (a new
       // #sl-status element with its own message), leave that alone.
       if(el && el.textContent.indexOf('could not reach the server')>=0){
-        el.textContent='Now confirmed on the server: '+product+' · '+Number(weight).toFixed(2)+' lbs';
+        el.textContent='Now confirmed on the server: '+product+' · '+fmtNum2(Number(weight))+' lbs';
         el.style.color='#0f6e40';
       }
       return;
@@ -18321,7 +18467,7 @@ async function printScaleLabel(){
     if(freshBtn) freshBtn.disabled=true;
     if(freshStatus){
       freshStatus.textContent=printOk
-        ? ('Printed'+seriesLabel+': '+product+' · '+Number(weight).toFixed(2)+' lbs. Saving to server…')
+        ? ('Printed'+seriesLabel+': '+product+' · '+fmtNum2(Number(weight))+' lbs. Saving to server…')
         : ('Printing failed ('+printError+'), but it is saved locally. Saving to server…');
     }
 
@@ -18365,7 +18511,7 @@ async function printScaleLabel(){
         finalStatus.style.color='#c0392b';
         retryPushUntilConfirmed(product, weight);
       }else{
-        finalStatus.textContent='Saved to server & printed'+seriesLabel+': '+product+' · '+Number(weight).toFixed(2)+' lbs — all '+scaleLogs.length+' records on this device are now on the server';
+        finalStatus.textContent='Saved to server & printed'+seriesLabel+': '+product+' · '+fmtNum2(Number(weight))+' lbs — all '+scaleLogs.length+' records on this device are now on the server';
         finalStatus.style.color='';
       }
     }
@@ -18375,7 +18521,7 @@ async function printScaleLabel(){
     console.error('printScaleLabel crashed unexpectedly:', e);
     logSync('SAVE CRASHED unexpectedly: '+(e&&e.message?e.message:String(e)));
     var msg='Something went wrong before saving ('+(e&&e.message?e.message:String(e))+'). Please try again; if it keeps happening, try a full refresh of the app.';
-    if(status) status.textContent=msg; else alert(msg);
+    if(status) status.textContent=msg; else notify(msg);
   }
 }
 
@@ -18386,7 +18532,7 @@ function reprintLabel(id){
     doPrintLabel(entry);
   }catch(e){
     console.error('Reprint failed:', e);
-    alert('Printing failed: '+(e&&e.message?e.message:e));
+    notify('Printing failed: '+(e&&e.message?e.message:e));
   }
 }
 
@@ -18503,7 +18649,7 @@ async function confirmScaleLogDeletion(id){
   // meaning it would still show up everywhere else. Now it's surfaced
   // clearly instead of quietly failing.
   delete _deletedScaleLogIds[id];
-  alert('Could not confirm this deletion with the server after several attempts (check your connection). '+
+  notify('Could not confirm this deletion with the server after several attempts (check your connection). '+
         'The entry has been removed on this device, but it may still exist on the server and reappear here or on other devices. '+
         'Once you have a stable connection, try deleting it again from the log below (it may need to reload first).');
   pullFromServer(); // refresh this device's own view to reflect reality
@@ -18515,11 +18661,11 @@ async function confirmScaleLogDeletion(id){
 // "export what I just searched for" both just work with one button.
 function exportScaleLogToExcel(){
   if(typeof XLSX==='undefined'){
-    alert('Excel export library failed to load (this device may be offline). Please check your connection and try again.');
+    notify('Excel export library failed to load (this device may be offline). Please check your connection and try again.');
     return;
   }
   var list=getFilteredScaleLogs();
-  if(!list.length){ alert('Nothing to export — no rows match the current filters.'); return; }
+  if(!list.length){ notify('Nothing to export — no rows match the current filters.'); return; }
   try{
     var rows=list.map(function(l){
       return {
@@ -18552,7 +18698,7 @@ function exportScaleLogToExcel(){
     // An uncaught error here would otherwise fail completely silently (no
     // alert, nothing) since it's inside a click handler — surface it instead.
     console.error('Excel export failed:', e);
-    alert('Export failed: '+(e&&e.message?e.message:e));
+    notify('Export failed: '+(e&&e.message?e.message:e));
   }
 }
 
@@ -18671,7 +18817,7 @@ function renderTransactions(){
       </div>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;align-items:center">
-      <input type="text" id="txnSearch" placeholder="Search transaction #, product, customer/vendor..." oninput="renderTxnTable()" style="flex:1;min-width:240px;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
+      <input type="text" id="txnSearch" aria-label="Search transactions" autocomplete="off" placeholder="Search transaction #, product, customer/vendor…" oninput="renderTxnTable()" style="flex:1;min-width:240px;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
       <select id="txnTypeFilter" onchange="renderTxnTable()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none">
         <option value="">All types</option>
         <optgroup label="Inventory movement">
@@ -18820,7 +18966,7 @@ function renderTxnTable(){
         +'<td>'+typeBadge+'</td>'
         +'<td style="font-family:var(--mono);font-size:12px;font-weight:700;text-align:right;color:var(--cold)">'+valStr+'</td>'
         +'<td style="text-align:right;position:relative">'
-        +'<button class="dots-btn" onclick="event.stopPropagation();toggleTxnMenu(event,this.dataset.doc)" data-doc="'+g.docId+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;stroke:var(--muted)"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>'
+        +'<button class="dots-btn" aria-label="Transaction actions" onclick="event.stopPropagation();toggleTxnMenu(event,this.dataset.doc)" data-doc="'+g.docId+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;stroke:var(--muted)"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>'
         +'</td></tr>';
       var detailRow='';
       if(expanded){
@@ -18861,8 +19007,8 @@ function renderTxnTable(){
           return '<tr style="background:var(--bg)">'
             +'<td></td>'
             +'<td style="padding-left:24px;font-size:12.5px">'+esc(nm)+(it&&it.sku?' <span style="font-family:var(--mono);font-size:10px;color:var(--cold)">'+esc(it.sku)+'</span>':'')+'</td>'
-            +'<td style="font-family:var(--mono);font-size:12px;color:var(--muted)">'+q.toFixed(2)+' '+(t.unit||'lbs')+'</td>'
-            +'<td style="font-family:var(--mono);font-size:12px;text-align:right">$'+price.toFixed(2)+' &middot; <b>$'+lv.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</b></td>'
+            +'<td style="font-family:var(--mono);font-size:12px;color:var(--muted)">'+fmtNum2(q)+' '+(t.unit||'lbs')+'</td>'
+            +'<td style="font-family:var(--mono);font-size:12px;text-align:right">'+fmtMoney(price)+' &middot; <b>$'+lv.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</b></td>'
             +'<td></td></tr>';
         }).join('');
         detailRow='<tr><td colspan="5" style="padding:0"><table style="width:100%;border-collapse:collapse"><tbody>'+lineRows+'</tbody></table></td></tr>';
@@ -18883,7 +19029,7 @@ function renderTxnTable(){
         +'<td><span class="type-badge type-'+t.type+'">'+(TXN_TYPES[t.type]||t.type)+'</span></td>'
         +'<td style="font-family:var(--mono);font-size:12px;font-weight:700;text-align:right;color:var(--cold)">'+valStr+'</td>'
         +'<td style="text-align:right;position:relative">'
-        +'<button class="dots-btn" onclick="event.stopPropagation();toggleTxnMenu(event,this.dataset.txn)" data-txn="'+t.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;stroke:var(--muted)"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>'
+        +'<button class="dots-btn" aria-label="Transaction actions" onclick="event.stopPropagation();toggleTxnMenu(event,this.dataset.txn)" data-txn="'+t.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;stroke:var(--muted)"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>'
         +'</td></tr>';
       var detailRow='';
       if(expanded){
@@ -18894,7 +19040,7 @@ function renderTxnTable(){
         detailRow='<tr><td colspan="5" style="padding:0"><table style="width:100%;border-collapse:collapse"><tbody><tr style="background:var(--bg)">'
           +'<td></td>'
           +'<td style="padding-left:24px;font-size:12.5px">'+esc(nm)+(it&&it.sku?' <span style="font-family:var(--mono);font-size:10px;color:var(--cold)">'+esc(it.sku)+'</span>':'')+'</td>'
-          +'<td style="font-family:var(--mono);font-size:12px;color:var(--muted)">'+q.toFixed(2)+' '+(t.unit||'lbs')+'</td>'
+          +'<td style="font-family:var(--mono);font-size:12px;color:var(--muted)">'+fmtNum2(q)+' '+(t.unit||'lbs')+'</td>'
           +'<td style="font-family:var(--mono);font-size:12px;text-align:right">'+(lOut!=='—'||lIn!=='—'?esc(lOut)+' &#8594; '+esc(lIn):'')+'</td>'
           +'<td></td></tr></tbody></table></td></tr>';
       }
@@ -19064,9 +19210,9 @@ function viewItemHistory(itemId){
     var amountCell;
     if(t.type==='adjustment'){
       var setVal=(t.physicalCount!==undefined)?Number(t.physicalCount):running;
-      amountCell='<td style="font-family:var(--mono);font-size:12px;text-align:right;'+(!counts?'color:var(--muted)':'')+'">'+(!counts?'('+setVal.toFixed(2)+')':setVal.toFixed(2))+' '+(t.unit||'')+'</td>';
+      amountCell='<td style="font-family:var(--mono);font-size:12px;text-align:right;'+(!counts?'color:var(--muted)':'')+'">'+(!counts?'('+fmtNum2(setVal)+')':fmtNum2(setVal))+' '+(t.unit||'')+'</td>';
     } else {
-      amountCell='<td style="font-family:var(--mono);font-size:12px;text-align:right;color:'+(!counts?'var(--muted)':(effect<0?'#c23b33':'var(--ink)'))+'">'+(!counts?'('+(effect<0?'-':'+')+Math.abs(effect).toFixed(2)+')':((effect<0?'-':'+')+Math.abs(effect).toFixed(2)))+' '+(t.unit||'')+'</td>';
+      amountCell='<td style="font-family:var(--mono);font-size:12px;text-align:right;color:'+(!counts?'var(--muted)':(effect<0?'#c23b33':'var(--ink)'))+'">'+(!counts?'('+(effect<0?'-':'+')+fmtNum2(Math.abs(effect))+')':((effect<0?'-':'+')+fmtNum2(Math.abs(effect))))+' '+(t.unit||'')+'</td>';
     }
     return '<tr style="cursor:pointer" onclick="openBillFromReport('+openArg+')" title="Click to view / edit this bill">'
       +'<td style="font-size:12px">'+ds+'</td>'
@@ -19075,7 +19221,7 @@ function viewItemHistory(itemId){
       +'<td><span class="type-badge type-'+t.type+'">'+(TXN_TYPES[t.type]||t.type)+'</span></td>'
       +'<td style="font-size:11.5px">'+(acct?esc(acct):'<span style="color:var(--muted)">—</span>')+'</td>'
       +amountCell
-      +'<td style="font-family:var(--mono);font-size:12px;text-align:right;font-weight:700">'+running.toFixed(2)+'</td>'
+      +'<td style="font-family:var(--mono);font-size:12px;text-align:right;font-weight:700">'+fmtNum2(running)+'</td>'
       +'<td style="font-family:var(--mono);font-size:12px;text-align:right;color:var(--cold)">'+(val>0?'$'+val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'—')+'</td>'
       +'<td style="font-size:11px;color:var(--muted)">'+loc+'</td>'
       +'</tr>';
@@ -19102,7 +19248,7 @@ function viewItemHistory(itemId){
     +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">'
       +'<div><div style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--cold)">Product Report</div>'
       +'<h2 style="margin:6px 0 2px;font-size:22px">'+esc(it.name)+'</h2>'
-      +'<div style="color:var(--muted);font-size:13px">'+(it.sku?'SKU: '+esc(it.sku)+' · ':'')+'Current on hand: <b style="color:var(--ink)">'+Number(it.qty||0).toFixed(2)+'</b> · Unit cost: $'+Number(it.cost||it.price||0).toFixed(2)+'</div></div>'
+      +'<div style="color:var(--muted);font-size:13px">'+(it.sku?'SKU: '+esc(it.sku)+' · ':'')+'Current on hand: <b style="color:var(--ink)">'+fmtNum2(Number(it.qty||0))+'</b> · Unit cost: '+fmtMoney(Number(it.cost||it.price||0))+'</div></div>'
       +'<button class="btn" onclick="closeReportModal()" style="flex-shrink:0">Close</button>'
     +'</div>';
 
@@ -19112,7 +19258,7 @@ function viewItemHistory(itemId){
     body.innerHTML+=''
       +'<div style="display:flex;gap:14px;margin:18px 0 14px;flex-wrap:wrap">'
         +'<div style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px"><div style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Transactions</div><div style="font-size:20px;font-weight:700;margin-top:2px">'+hist.length+'</div></div>'
-        +'<div style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px"><div style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">On hand now</div><div style="font-size:20px;font-weight:700;margin-top:2px">'+Number(it.qty||0).toFixed(2)+'</div></div>'
+        +'<div style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px"><div style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">On hand now</div><div style="font-size:20px;font-weight:700;margin-top:2px">'+fmtNum2(Number(it.qty||0))+'</div></div>'
         +'<div style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px"><div style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Total value moved</div><div style="font-size:20px;font-weight:700;margin-top:2px;color:var(--cold)">$'+totalVal.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div></div>'
       +'</div>'
       +'<table class="txn-table"><thead><tr><th>Date</th><th>Created</th><th>Transaction</th><th>Type</th><th>Account</th><th style="text-align:right">Amount</th><th style="text-align:right">Balance</th><th style="text-align:right">Value</th><th>Movement</th></tr></thead><tbody>'+rows+'</tbody></table>';
@@ -19338,9 +19484,9 @@ function updatePhysicalDiff(idx){
   var diffVal=diff*cost;
   var color=diff>0?'#0f6e40':(diff<0?'#c23b33':'var(--muted)');
   var sign=diff>0?'+':(diff<0?'':'');
-  onrecEl.textContent=onRecord.toFixed(2);
+  onrecEl.textContent=fmtNum2(onRecord);
   onrecEl.style.color='var(--muted)';
-  diffEl.textContent=(diff>0?'+':'')+diff.toFixed(2);
+  diffEl.textContent=(diff>0?'+':'')+fmtNum2(diff);
   diffEl.style.color=color;
   valEl.textContent=(diff>0?'+':(diff<0?'-':''))+'$'+Math.abs(diffVal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   valEl.style.color=color;
@@ -19503,7 +19649,7 @@ function saveTxnOrOpening(){
       transactions.push({id:'txn_'+Date.now()+'_'+k,docId:docId,num:num,lineNum:saved+1,date:date,time:(preservedTime!==null?preservedTime:time),createTime:entryCreate,type:'opening',itemId:itemId,qty:m.qty,unit:m.unit,unitPrice:m.price,locOut:'',locIn:ocLocation,desc:notes||'Opening count'});
       saved++;
     });
-    if(saved===0){alert('Please add at least one item with a quantity.');return;}
+    if(saved===0){notify('Please add at least one item with a quantity.');return;}
     editingDocId=null;editingDocMeta=null;
     saveTxns();closeTxnModal();renderTransactions();
     recalcQuantities(); // engine assigns per-location quantities
@@ -19515,7 +19661,7 @@ function saveTxnOrOpening(){
   var adjustLoc='';
   if(isAdjust){
     adjustLoc=document.getElementById('t-adjust-loc')?document.getElementById('t-adjust-loc').value:'';
-    if(!adjustLoc){alert('Please select the location you counted.');return;}
+    if(!adjustLoc){notify('Please select the location you counted.');return;}
   }
   var locOut=document.getElementById('t-loc-out').value;
   var locIn=document.getElementById('t-loc-in').value;
@@ -19555,7 +19701,7 @@ function saveTxnOrOpening(){
       }
     });
     if(missingOpening.length){
-      alert('Can\'t save this physical count — the following item(s) don\'t have an opening count yet:\n\n'
+      notify('Can\'t save this physical count — the following item(s) don\'t have an opening count yet:\n\n'
         +missingOpening.join('\n')
         +'\n\nEnter an opening count for '+(missingOpening.length>1?'these items':'this item')+' first, then come back and do the physical count.');
       return;
@@ -19584,7 +19730,7 @@ function saveTxnOrOpening(){
     transactions.push(row);
     saved++;
   });
-  if(saved===0){alert('Please add at least one product with a quantity.');return;}
+  if(saved===0){notify('Please add at least one product with a quantity.');return;}
   editingDocId=null;editingDocMeta=null;
   saveTxns();closeTxnModal();renderTransactions();
   // recalc quantities so the movement is reflected
@@ -19655,6 +19801,82 @@ function tick(){
   document.getElementById('date').textContent=d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
 }
 tick();setInterval(tick,1000);
+// ===== ACCESSIBILITY LAYER =====
+// Much of the UI is built as HTML strings with onclick on <div>/<span>/<tr>
+// (expand/collapse rows, group headers). Rather than rewrite every one, this
+// layer upgrades them as they're inserted: focusable, announced as buttons,
+// and activated with Enter/Space. It also names icon buttons, dialogs, and
+// unlabelled fields, closes the top modal on Escape, and returns focus to
+// whatever opened a modal when it closes.
+(function(){
+  var NATIVE=/^(BUTTON|A|INPUT|SELECT|TEXTAREA|LABEL|SUMMARY|OPTION)$/;
+  var uid=0;
+  function upgrade(el){
+    if(el.nodeType!==1) return;
+    var list=[el].concat([].slice.call(el.querySelectorAll('[onclick],button,svg,[role="dialog"],input,select,textarea')));
+    list.forEach(function(n){
+      var tag=n.tagName;
+      if(n.hasAttribute&&n.hasAttribute('onclick')&&!NATIVE.test(tag)&&!n.classList.contains('modal-bg')&&!n.hasAttribute('tabindex')){
+        n.setAttribute('tabindex','0');
+        // Keep table semantics intact for rows/cells; everything else is a button
+        if(tag!=='TR'&&tag!=='TD'&&!n.hasAttribute('role')) n.setAttribute('role','button');
+      }
+      if(tag==='BUTTON'&&!n.hasAttribute('aria-label')&&!n.textContent.trim()&&n.title) n.setAttribute('aria-label',n.title);
+      if(tag==='svg'&&!n.hasAttribute('aria-hidden')&&!n.closest('.lbl-page')) n.setAttribute('aria-hidden','true');
+      if(n.getAttribute&&n.getAttribute('role')==='dialog'&&!n.hasAttribute('aria-labelledby')&&!n.hasAttribute('aria-label')){
+        var h=n.querySelector('h1,h2,h3');
+        if(h){ if(!h.id) h.id='dlg-title-'+(++uid); n.setAttribute('aria-labelledby',h.id); }
+      }
+      if((tag==='INPUT'||tag==='SELECT'||tag==='TEXTAREA')&&n.type!=='hidden'&&!n.hasAttribute('aria-label')&&!n.hasAttribute('aria-labelledby')&&!n.closest('label')){
+        if(n.id&&document.querySelector('label[for="'+n.id.replace(/"/g,'')+'"]')) return;
+        var g=n.closest('.form-group'), lab=g&&g.querySelector('label');
+        if(lab&&!lab.contains(n)){ if(!lab.id) lab.id='fld-label-'+(++uid); n.setAttribute('aria-labelledby',lab.id); }
+        else if(n.placeholder) n.setAttribute('aria-label',n.placeholder.replace(/\u2026$/,''));
+      }
+    });
+  }
+  function isOpenModal(m){ return m.classList.contains('modal-bg')&&!m.classList.contains('hidden')&&getComputedStyle(m).display!=='none'; }
+  var opener=new WeakMap();
+  var mo=new MutationObserver(function(recs){
+    recs.forEach(function(r){
+      if(r.type==='childList'){ r.addedNodes.forEach(upgrade); return; }
+      var m=r.target;
+      if(!m.classList||!(m.classList.contains('modal-bg')||(r.oldValue||'').indexOf('modal-bg')>-1)) return;
+      var wasOpen=(' '+(r.oldValue||'')+' ').indexOf(' hidden ')===-1;
+      var nowOpen=isOpenModal(m);
+      if(nowOpen&&!opener.has(m)){
+        opener.set(m,document.activeElement);
+        var panel=m.querySelector('.modal')||m;
+        if(!panel.contains(document.activeElement)){ panel.setAttribute('tabindex','-1'); panel.focus({preventScroll:true}); }
+      }else if(!nowOpen&&wasOpen&&opener.has(m)){
+        var back=opener.get(m); opener.delete(m);
+        if(back&&document.contains(back)&&back.focus) back.focus({preventScroll:true});
+      }
+    });
+  });
+  upgrade(document.body);
+  mo.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['class'],attributeOldValue:true});
+
+  document.addEventListener('keydown',function(e){
+    var t=e.target;
+    // Enter/Space activates upgraded clickable rows/toggles
+    if((e.key==='Enter'||e.key===' ')&&t&&t.hasAttribute&&t.hasAttribute('onclick')&&t.hasAttribute('tabindex')&&!NATIVE.test(t.tagName)){
+      e.preventDefault(); t.click(); return;
+    }
+    if(e.key!=='Escape'||e.defaultPrevented) return;
+    // In a text field the first Escape just leaves the field (and lets any
+    // autocomplete dropdown close); a second Escape closes the dialog.
+    if(t&&/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)){ t.blur(); return; }
+    var open=[].filter.call(document.querySelectorAll('.modal-bg'),isOpenModal);
+    if(!open.length) return;
+    var m=open[open.length-1];
+    var btns=[].slice.call(m.querySelectorAll('button'));
+    var btn=btns.find(function(b){ return /^\s*close\w*\(\s*\)\s*;?\s*$/.test(b.getAttribute('onclick')||''); })
+         || btns.find(function(b){ return /^(cancel|close|keep it)$/i.test(b.textContent.trim()); });
+    if(btn){ e.preventDefault(); btn.click(); }
+    else if(m.hasAttribute('onclick')){ e.preventDefault(); m.click(); }
+  });
+})();
 </script>
 </body>
 </html>

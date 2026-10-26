@@ -824,7 +824,7 @@ async function gdriveSyncLegalDocs(parentFolderId) {
     const mime = (LEGAL_INLINE_TYPES[doc.ext] || 'application/octet-stream').split(';')[0];
     const init = await gdriveFetch('POST', 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id', {
       headers: { 'X-Upload-Content-Type': mime, 'X-Upload-Content-Length': String(buf.length) },
-      body: { name: (doc.category ? doc.category + ' - ' : '') + doc.title + '.' + doc.ext, parents: [folderId], mimeType: mime,
+      body: { name: (doc.folder ? doc.folder + ' - ' : '') + (doc.category ? doc.category + ' - ' : '') + doc.title + '.' + doc.ext, parents: [folderId], mimeType: mime,
         description: 'Uploaded to Plant Console by ' + doc.uploadedBy + ' on ' + doc.uploadedAt.slice(0, 10) + (doc.expires ? ' · expires ' + doc.expires : ''),
         appProperties: { plantConsoleLegalDoc: doc.id } }
     });
@@ -4788,6 +4788,7 @@ const server = http.createServer(async (req, res) => {
         id: id,
         title: legalHeader(req, 'x-doc-title').slice(0, 200) || fileName.replace(/\.[^.]+$/, ''),
         category: legalHeader(req, 'x-doc-category').slice(0, 60) || 'Other',
+        folder: legalHeader(req, 'x-doc-folder').replace(/\s+/g, ' ').slice(0, 120),
         expires: /^\d{4}-\d{2}-\d{2}$/.test(expires) ? expires : '',
         notes: legalHeader(req, 'x-doc-notes').slice(0, 500),
         fileName: fileName, ext: ext, size: size,
@@ -4818,6 +4819,31 @@ const server = http.createServer(async (req, res) => {
       'Cache-Control': 'private, no-store'
     });
     fs.createReadStream(path.join(LEGAL_DIR, doc.id)).on('error', () => res.end()).pipe(res);
+    return;
+  }
+  // Edit a document's details / move it to another folder — admin only,
+  // same as delete (uploading stays open to everyone with the tab).
+  if (url.startsWith('/api/legal-docs/') && req.method === 'PATCH') {
+    if (!requireAdmin(req, res)) return;
+    const id = url.slice('/api/legal-docs/'.length);
+    let body = {};
+    try { body = JSON.parse(await readRequestBody(req) || '{}'); } catch (e) { /* treated as empty */ }
+    let updated = null;
+    await withLegalLock(async () => {
+      const list = await readLegalIndex();
+      const doc = list.find(d => d.id === id);
+      if (!doc) return;
+      if (typeof body.title === 'string' && body.title.trim()) doc.title = body.title.trim().slice(0, 200);
+      if (typeof body.folder === 'string') doc.folder = body.folder.replace(/\s+/g, ' ').trim().slice(0, 120);
+      if (typeof body.category === 'string' && body.category.trim()) doc.category = body.category.trim().slice(0, 60);
+      if (typeof body.expires === 'string') doc.expires = /^\d{4}-\d{2}-\d{2}$/.test(body.expires) ? body.expires : '';
+      if (typeof body.notes === 'string') doc.notes = body.notes.trim().slice(0, 500);
+      await writeLegalIndex(list);
+      updated = doc;
+    });
+    if (!updated) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Document not found.' })); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, doc: updated }));
     return;
   }
   if (url.startsWith('/api/legal-docs/') && req.method === 'DELETE') {

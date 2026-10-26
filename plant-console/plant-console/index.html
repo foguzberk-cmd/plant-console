@@ -15990,6 +15990,12 @@ function renderCustomersList(){
     if(countElEmpty) countElEmpty.textContent='';
     return;
   }
+  // An inactive customer can never stay in a department's allow-list: if one
+  // was allowed before it was merged/deactivated in QuickBooks, drop it here
+  // so it can't show up in the Scale Log / Orders pickers (the Save writes
+  // this pruned list). Only runs once customers are loaded (guarded above).
+  var _activeIds={}; customers.forEach(function(c){ if(c&&c.active!==false) _activeIds[c.id]=true; });
+  if(Array.isArray(_custDraft)) _custDraft=_custDraft.filter(function(id){ return _activeIds[id]; });
   var q=(document.getElementById('cust-filter')&&document.getElementById('cust-filter').value||'').toLowerCase().trim();
   var shown=customers.filter(function(c){ return !q || (c.name||'').toLowerCase().includes(q) || (c.salesRep||'').toLowerCase().includes(q); });
   shown.sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
@@ -16001,16 +16007,23 @@ function renderCustomersList(){
   var repOptions=Object.keys(repSet).sort();
   window._custRepOptions=repOptions;
   listEl.innerHTML=shown.map(function(c){
-    var on=_custDraft.indexOf(c.id)>=0;
-    return '<label style="display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer">'
-      +'<input type="checkbox" '+(on?'checked':'')+' onchange="toggleCustomerAllowed(\''+c.id+'\',this.checked)" style="width:17px;height:17px;cursor:pointer;accent-color:var(--brand)"/>'
-      +'<div style="flex:1;font-size:13px;font-weight:600">'+esc(c.name)+'</div>'
+    // Inactive in QuickBooks (merged-away / deactivated customers). Shown so
+    // reports stay accurate, painted red, and never selectable into a
+    // department (checkbox disabled; see the draft-prune above + the guards
+    // in toggleCustomerAllowed / customerSelectAll).
+    var inactive=(c.active===false);
+    var on=!inactive && _custDraft.indexOf(c.id)>=0;
+    var rowStyle='display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--line);'+(inactive?'cursor:not-allowed;background:#fdecea':'cursor:pointer');
+    return '<label style="'+rowStyle+'"'+(inactive?' title="Inactive in QuickBooks \u2014 shown for reporting only, cannot be added to a department"':'')+'>'
+      +'<input type="checkbox" '+(on?'checked':'')+(inactive?' disabled':'')+' onchange="toggleCustomerAllowed(\''+c.id+'\',this.checked)" style="width:17px;height:17px;'+(inactive?'cursor:not-allowed':'cursor:pointer')+';accent-color:var(--brand)"/>'
+      +'<div style="flex:1;font-size:13px;font-weight:600;'+(inactive?'color:#c0392b':'')+'">'+esc(c.name)+(inactive?' <span style="font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.06em;color:#fff;background:#c0392b;padding:1px 6px;border-radius:999px;vertical-align:middle;margin-left:6px">INACTIVE</span>':'')+'</div>'
       +'<input type="text" data-repinput="'+c.id+'" value="'+esc(c.salesRep||'')+'" placeholder="Sales Rep" onclick="event.stopPropagation()" onfocus="event.stopPropagation();showRepSuggestions(this,\''+c.id+'\')" oninput="showRepSuggestions(this,\''+c.id+'\')" onchange="updateCustomerSalesRep(\''+c.id+'\',this.value)" style="width:140px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink);cursor:text"/>'
       +'<input type="text" value="'+esc(c.dunsNumber||'')+'" placeholder="Dun#" title="Dun# (D-U-N-S number) — not available from QuickBooks\'s API, entered here manually" onclick="event.stopPropagation()" onchange="updateCustomerDunsNumber(\''+c.id+'\',this.value)" style="width:100px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;font-family:var(--mono);background:var(--bg);color:var(--ink);cursor:text"/>'
       +'</label>';
   }).join('');
   var countEl=document.getElementById('cust-count');
-  if(countEl) countEl.textContent=_custDraft.length+' of '+customers.length+' customers allowed for '+_custPanelDept+' (unsaved until you click Save)';
+  var _inactiveCount=customers.filter(function(c){ return c&&c.active===false; }).length;
+  if(countEl) countEl.textContent=_custDraft.length+' of '+customers.length+' customers allowed for '+_custPanelDept+(_inactiveCount?' \u00b7 '+_inactiveCount+' inactive (red, not selectable)':'')+' (unsaved until you click Save)';
 }
 // Custom Sales Rep suggestion dropdown — replaces relying on the browser's
 // native <input list="..."> + showPicker() combo, which silently does
@@ -16345,6 +16358,10 @@ function _applyCustomerSalesRepRows(rows,statusEl){
   if(statusEl){ statusEl.textContent=msg; statusEl.style.color=unmatched.length?'#b8860b':''; }
 }
 function toggleCustomerAllowed(id,on){
+  // Inactive customers are never selectable (the checkbox is disabled, but
+  // guard here too in case this is reached any other way).
+  var _c=customers.find(function(x){ return x && x.id===id; });
+  if(_c && _c.active===false) return;
   var i=_custDraft.indexOf(id);
   if(on && i<0) _custDraft.push(id);
   else if(!on && i>=0) _custDraft.splice(i,1);
@@ -16354,6 +16371,7 @@ function customerSelectAll(on){
   var q=(document.getElementById('cust-filter')&&document.getElementById('cust-filter').value||'').toLowerCase().trim();
   var shown=customers.filter(function(c){ return !q || (c.name||'').toLowerCase().includes(q) || (c.salesRep||'').toLowerCase().includes(q); });
   shown.forEach(function(c){
+    if(c.active===false) return; // never select inactive customers
     var i=_custDraft.indexOf(c.id);
     if(on && i<0) _custDraft.push(c.id);
     else if(!on && i>=0) _custDraft.splice(i,1);

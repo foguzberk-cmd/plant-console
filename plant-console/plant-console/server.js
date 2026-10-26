@@ -2233,7 +2233,16 @@ let _lastCustomerSyncAt = null; // ISO string, or null until the first successfu
 async function backgroundSyncCustomers() {
   const syncStartedAt = new Date().toISOString();
   const sinceIso = _lastCustomerSyncAt; // capture before this run, so a slow run doesn't miss anything that changes mid-sync
-  const data = await fetchQBCustomers(false, sinceIso);
+  // includeInactive=true (Oct 2026): without it QuickBooks returns ACTIVE
+  // customers only, so when a customer is merged or made inactive in QB its
+  // LastUpdatedTime bumps but it's filtered OUT of the incremental pull — so
+  // Plant Console never learned the record went inactive and kept the stale
+  // copy as a normal, pickable account (the "Ayat Bay Ridge" / "Ayat
+  // Bayridge Meast" duplicate: one live, one merged-away but still showing).
+  // Pulling inactive too keeps each customer's `active` flag current AND
+  // surfaces the inactive ones so reports stay accurate; the UI paints them
+  // red and blocks picking them.
+  const data = await fetchQBCustomers(false, sinceIso, true);
   const qbCustomers = (data.QueryResponse && data.QueryResponse.Customer) || [];
   await updateSharedData(async (current) => {
     const customers = Array.isArray(current.customers) ? current.customers.slice() : [];

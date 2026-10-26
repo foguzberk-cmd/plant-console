@@ -17568,7 +17568,8 @@ function restoreFromUploadedBackup(file){
 // Delete / Edit buttons (and the server refuses them from anyone else).
 // Documents can be grouped into FOLDERS (e.g. "Hanover Insurance",
 // "254 Site") — a folder is just a name on each document, created the
-// first time someone uploads into it. Several files can be uploaded at once.
+// first time someone uploads into it. Several files uploaded together form
+// ONE entry (one subject, many attachments), shown as a single row.
 var LEGAL_CATEGORIES=['License / Permit','Certificate','Inspection Record','HACCP Plan','Insurance','Lab / Test Result','Contract','Other'];
 var _legalDocs=null, _legalFilter='', _legalCat='';
 var _legalOpen=(function(){ try{ return JSON.parse(localStorage.getItem('pc_legal_open')||'{}'); }catch(e){ return {}; } })();
@@ -17607,7 +17608,7 @@ function renderLegalPage(){
       +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;align-items:end">'
         +'<label style="font-size:12px">File(s)<br><input type="file" id="legal-file" multiple accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.heic,.txt,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,image/*,application/pdf" style="width:100%;margin-top:4px" onchange="_legalFilesPicked(this)"/></label>'
         +'<label style="font-size:12px">Folder <span style="color:var(--muted)">(pick or type a new one)</span><br><input type="text" id="legal-folder" list="legal-folder-list" maxlength="120" placeholder="e.g. Hanover Insurance" style="'+inp+'"/><datalist id="legal-folder-list"></datalist></label>'
-        +'<label style="font-size:12px" id="legal-title-wrap">Title<br><input type="text" id="legal-title" maxlength="200" placeholder="e.g. NJ Food Establishment License" style="'+inp+'"/></label>'
+        +'<label style="font-size:12px" id="legal-title-wrap">Title / subject<br><input type="text" id="legal-title" maxlength="200" placeholder="e.g. NJ Food Establishment License" style="'+inp+'"/></label>'
         +'<label style="font-size:12px">Category<br><select id="legal-cat" style="'+inp+'">'+opts+'</select></label>'
         +'<label style="font-size:12px">Expires / renewal <span style="color:var(--muted)">(optional)</span><br><input type="date" id="legal-exp" style="'+inp+';padding:7px 10px"/></label>'
       +'</div>'
@@ -17616,7 +17617,7 @@ function renderLegalPage(){
         +'<button class="btn btn-primary" id="legal-upload-btn" onclick="uploadLegalDoc()">Upload</button>'
         +'<span id="legal-upload-status" style="font-family:var(--mono);font-size:11.5px;color:var(--muted)"></span>'
       +'</div>'
-      +'<div style="font-size:11px;color:var(--muted);margin-top:8px">Select several files at once to put them all in the same folder (each keeps its own file name as the title). PDF, photos, Word, Excel, PowerPoint, CSV or TXT · up to 25 MB each. Anyone can upload; only an admin can edit or delete.</div>'
+      +'<div style="font-size:11px;color:var(--muted);margin-top:8px">Select several files at once to save them as ONE entry under the title you type (e.g. 8 photos of one policy). Use \'+ File\' on a row to attach more later. PDF, photos, Word, Excel, PowerPoint, CSV or TXT · up to 25 MB each. Anyone can upload; only an admin can edit or delete.</div>'
     +'</div>'
     +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;max-width:1100px">'
       +'<input type="text" id="legal-search" placeholder="Search title, folder, file, notes…" value="'+esc(_legalFilter)+'" oninput="_legalFilter=this.value;renderLegalList()" style="flex:1;min-width:200px;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;background:var(--bg);color:var(--ink)"/>'
@@ -17628,9 +17629,25 @@ function renderLegalPage(){
   loadLegalDocs();
 }
 function _legalFilesPicked(input){
-  var n=input.files.length, t=document.getElementById('legal-title'), wrap=document.getElementById('legal-title-wrap');
-  if(n>1){ wrap.style.opacity='.45'; t.disabled=true; t.value=''; t.placeholder=n+' files — each uses its file name'; }
-  else { wrap.style.opacity=''; t.disabled=false; t.placeholder='e.g. NJ Food Establishment License'; if(n===1&&!t.value) t.value=input.files[0].name.replace(/\.[^.]+$/,''); }
+  var n=input.files.length, t=document.getElementById('legal-title');
+  t.placeholder=n>1?('Subject for these '+n+' files, e.g. GEICO Auto Policy'):'e.g. NJ Food Establishment License';
+  if(n===1&&!t.value) t.value=input.files[0].name.replace(/\.[^.]+$/,'');
+}
+// Entries: files sharing a groupId are one subject with several attachments.
+function _legalGid(d){ return d.groupId||('g_'+String(d.id).slice(3)); }
+function _legalEntries(docs){
+  var m={}, order=[];
+  docs.forEach(function(d){ var g=_legalGid(d); if(!m[g]){ m[g]={gid:g,files:[]}; order.push(g); } m[g].files.push(d); });
+  return order.map(function(g){
+    var e=m[g], f0=e.files[0];
+    e.files.sort(function(a,b){ return String(a.fileName).localeCompare(String(b.fileName),undefined,{numeric:true}); });
+    e.title=f0.title; e.folder=f0.folder||''; e.category=f0.category; e.expires=f0.expires; e.notes=f0.notes;
+    e.uploadedAt=e.files.reduce(function(m,d){ return (!m||d.uploadedAt<m)?d.uploadedAt:m; },'');
+    e.lastAt=e.files.reduce(function(m,d){ return (!m||d.uploadedAt>m)?d.uploadedAt:m; },'');
+    var who={}; e.files.forEach(function(d){ who[d.uploadedBy||'']=1; }); e.uploadedBy=Object.keys(who).join(', ');
+    e.size=e.files.reduce(function(n,d){ return n+Number(d.size||0); },0);
+    return e;
+  });
 }
 function _legalToggleFolder(key){
   _legalOpen[key]=!_legalOpen[key];
@@ -17642,19 +17659,42 @@ function _legalUploadInto(folder){
   var card=document.getElementById('legal-upload-card'); if(card) card.scrollIntoView({behavior:'smooth',block:'start'});
   var file=document.getElementById('legal-file'); if(file) setTimeout(function(){ file.focus(); },350);
 }
-function _legalRowHtml(d,admin,td,indent){
-  var ex=_legalExpiry(d);
+// "+ File" on an entry: anyone can add more attachments to an existing subject.
+function _legalAddToEntry(gid){
+  var e=_legalEntries(_legalDocs||[]).find(function(x){ return x.gid===gid; });
+  if(!e) return;
+  var pick=document.createElement('input'); pick.type='file'; pick.multiple=true;
+  pick.accept=document.getElementById('legal-file').accept;
+  pick.onchange=function(){ _legalSendFiles(Array.prototype.slice.call(pick.files||[]),{group:gid,title:e.title,folder:e.folder,category:e.category,expires:e.expires||'',notes:e.notes||''},null,null); };
+  pick.click();
+}
+function _legalFileChip(d,admin){
   var href='/api/legal-docs/'+encodeURIComponent(d.id)+'/file';
+  var isImg=/^(png|jpe?g|gif|webp)$/.test(d.ext||'');
+  return '<span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:8px;padding:3px 6px;margin:4px 6px 0 0;background:var(--bg);font-size:11.5px;max-width:260px">'
+    +(isImg?'<a href="'+href+'" target="_blank" rel="noopener"><img src="'+href+'" alt="" loading="lazy" style="width:34px;height:34px;object-fit:cover;border-radius:5px;display:block"></a>':'<span aria-hidden="true">📄</span>')
+    +'<a href="'+href+'" target="_blank" rel="noopener" title="'+esc(d.fileName)+'" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(d.fileName)+'</a>'
+    +'<span style="color:var(--muted);font-family:var(--mono);font-size:10px;white-space:nowrap">'+_legalSize(d.size)+'</span>'
+    +'<a href="'+href+'?download=1" title="Download" aria-label="Download '+esc(d.fileName)+'" style="text-decoration:none">⬇</a>'
+    +(admin?'<button onclick="deleteLegalDoc(\''+esc(d.id)+'\')" title="Delete this file only" aria-label="Delete '+esc(d.fileName)+'" style="border:none;background:none;color:#b42318;cursor:pointer;font-size:13px;padding:0 2px">×</button>':'')
+  +'</span>';
+}
+function _legalRowHtml(e,admin,td,indent){
+  var ex=_legalExpiry(e);
+  var one=e.files.length===1;
+  var titleHref='/api/legal-docs/'+encodeURIComponent(e.files[0].id)+'/file';
   return '<tr>'
-    +'<td style="'+td+(indent?';padding-left:34px':'')+'"><a href="'+href+'" target="_blank" rel="noopener" style="font-weight:600">'+esc(d.title)+'</a>'
-      +'<div style="font-family:var(--mono);font-size:10.5px;color:var(--muted)">'+esc(d.fileName)+' · '+_legalSize(d.size)+'</div>'
-      +(d.notes?'<div style="font-size:12px;color:var(--muted);margin-top:2px">'+esc(d.notes)+'</div>':'')+'</td>'
-    +'<td style="'+td+'">'+esc(d.category||'')+'</td>'
+    +'<td style="'+td+(indent?';padding-left:34px':'')+'">'
+      +(one?'<a href="'+titleHref+'" target="_blank" rel="noopener" style="font-weight:600">'+esc(e.title)+'</a>':'<span style="font-weight:600">'+esc(e.title)+'</span>')
+      +' <span style="font-family:var(--mono);font-size:10.5px;color:var(--muted)">· '+e.files.length+' file'+(one?'':'s')+' · '+_legalSize(e.size)+'</span>'
+      +(e.notes?'<div style="font-size:12px;color:var(--muted);margin-top:2px">'+esc(e.notes)+'</div>':'')
+      +'<div>'+e.files.map(function(d){ return _legalFileChip(d,admin); }).join('')+'</div></td>'
+    +'<td style="'+td+'">'+esc(e.category||'')+'</td>'
     +'<td style="'+td+';'+ex.style+'">'+esc(ex.label)+'</td>'
-    +'<td style="'+td+';font-size:12px">'+esc(fmtDateObjUS(new Date(d.uploadedAt)))+'<div style="color:var(--muted)">'+esc(d.uploadedBy||'')+'</div></td>'
+    +'<td style="'+td+';font-size:12px">'+esc(fmtDateObjUS(new Date(e.uploadedAt)))+'<div style="color:var(--muted)">'+esc(e.uploadedBy||'')+'</div></td>'
     +'<td style="'+td+';white-space:nowrap;text-align:right">'
-      +'<a class="btn btn-sm" href="'+href+'?download=1">Download</a>'
-      +(admin?' <button class="btn btn-sm" onclick="editLegalDoc(\''+esc(d.id)+'\')">Edit</button> <button class="btn btn-sm btn-danger" onclick="deleteLegalDoc(\''+esc(d.id)+'\')">Delete</button>':'')
+      +'<button class="btn btn-sm" onclick="_legalAddToEntry(\''+esc(e.gid)+'\')" title="Attach more files to this entry">+ File</button>'
+      +(admin?' <button class="btn btn-sm" onclick="editLegalDoc(\''+esc(e.gid)+'\')">Edit</button> <button class="btn btn-sm btn-danger" onclick="deleteLegalEntry(\''+esc(e.gid)+'\')">Delete</button>':'')
     +'</td></tr>';
 }
 function renderLegalList(){
@@ -17665,18 +17705,19 @@ function renderLegalList(){
     return;
   }
   var q=(_legalFilter||'').toLowerCase();
-  var docs=(_legalDocs||[]).filter(function(d){
-    if(_legalCat && d.category!==_legalCat) return false;
+  var allEntries=_legalEntries(_legalDocs||[]);
+  var docs=allEntries.filter(function(e){
+    if(_legalCat && e.category!==_legalCat) return false;
     if(!q) return true;
-    return [d.title,d.folder,d.fileName,d.notes,d.category,d.uploadedBy].join(' ').toLowerCase().indexOf(q)>=0;
+    return [e.title,e.folder,e.notes,e.category,e.uploadedBy].concat(e.files.map(function(d){ return d.fileName; })).join(' ').toLowerCase().indexOf(q)>=0;
   });
   var byExpiryThenNewest=function(a,b){
     var ra=_legalExpiry(a).rank, rb=_legalExpiry(b).rank;
     if(ra!==rb) return ra-rb;
-    return (b.uploadedAt||'').localeCompare(a.uploadedAt||'');
+    return (b.lastAt||'').localeCompare(a.lastAt||'');
   };
-  var expired=(_legalDocs||[]).filter(function(d){ return _legalExpiry(d).rank===0; }).length;
-  var soon=(_legalDocs||[]).filter(function(d){ return _legalExpiry(d).rank===1; }).length;
+  var expired=allEntries.filter(function(d){ return _legalExpiry(d).rank===0; }).length;
+  var soon=allEntries.filter(function(d){ return _legalExpiry(d).rank===1; }).length;
   var admin=_legalIsAdmin();
   var td='border-bottom:1px solid var(--line);padding:9px 10px;vertical-align:top';
   var html='';
@@ -17697,9 +17738,10 @@ function renderLegalList(){
     var worst=Math.min.apply(null,list.map(function(d){ return _legalExpiry(d).rank; }));
     var flag=worst===0?' <span style="color:#b42318;font-size:11px;font-weight:700">● expired inside</span>':(worst===1?' <span style="color:#b8460b;font-size:11px;font-weight:700">● expiring soon</span>':'');
     var bytes=list.reduce(function(n,d){ return n+Number(d.size||0); },0);
+    var nFiles=list.reduce(function(n,d){ return n+d.files.length; },0);
     html+='<tr style="background:var(--bg);cursor:pointer" onclick="_legalToggleFolder(\''+esc(key).replace(/'/g,"\\'")+'\')">'
       +'<td colspan="4" style="'+td+';font-weight:700"><span style="display:inline-block;width:16px;transition:transform .12s;transform:rotate('+(open?'0deg':'-90deg')+')">▾</span>📁 '+esc(f)
-        +' <span style="font-weight:400;color:var(--muted);font-size:12px">· '+list.length+' document'+(list.length===1?'':'s')+' · '+_legalSize(bytes)+'</span>'+flag+'</td>'
+        +' <span style="font-weight:400;color:var(--muted);font-size:12px">· '+list.length+' entr'+(list.length===1?'y':'ies')+(nFiles!==list.length?' · '+nFiles+' files':'')+' · '+_legalSize(bytes)+'</span>'+flag+'</td>'
       +'<td style="'+td+';text-align:right"><button class="btn btn-sm" onclick="event.stopPropagation();_legalUploadInto(\''+esc(f).replace(/'/g,"\\'")+'\')">+ Add files</button></td></tr>';
     if(open) list.forEach(function(d){ html+=_legalRowHtml(d,admin,td,true); });
   });
@@ -17709,49 +17751,55 @@ function renderLegalList(){
 }
 async function uploadLegalDoc(){
   var files=Array.prototype.slice.call(document.getElementById('legal-file').files||[]);
-  var st=document.getElementById('legal-upload-status');
-  var btn=document.getElementById('legal-upload-btn');
   if(!files.length){ notify('Please choose at least one file.'); return; }
+  var notes=document.getElementById('legal-notes').value.trim();
+  var title=document.getElementById('legal-title').value.trim()||(files.length>1?(notes||files[0].name.replace(/\.[^.]+$/,'')):'');
+  var meta={group:'g_'+Date.now().toString(36)+Math.random().toString(36).slice(2,10),title:title,
+    folder:document.getElementById('legal-folder').value.replace(/\s+/g,' ').trim(),
+    category:document.getElementById('legal-cat').value, expires:document.getElementById('legal-exp').value||'',
+    notes:(files.length>1&&notes===title)?'':notes};
+  await _legalSendFiles(files,meta,document.getElementById('legal-upload-btn'),document.getElementById('legal-upload-status'),true);
+}
+async function _legalSendFiles(files,meta,btn,st,clearForm){
+  if(!files.length) return;
   var tooBig=files.filter(function(f){ return f.size>25*1024*1024; });
   if(tooBig.length){ notify('Larger than 25 MB, please make smaller: '+tooBig.map(function(f){ return f.name; }).join(', ')); return; }
-  var folder=document.getElementById('legal-folder').value.replace(/\s+/g,' ').trim();
-  var title=files.length===1?document.getElementById('legal-title').value.trim():'';
-  var cat=document.getElementById('legal-cat').value;
-  var exp=document.getElementById('legal-exp').value||'';
-  var notes=document.getElementById('legal-notes').value.trim();
-  btn.disabled=true;
+  if(btn) btn.disabled=true;
   var ok=0, failed=[];
   for(var i=0;i<files.length;i++){
     var f=files[i];
-    st.textContent='Uploading '+(i+1)+' of '+files.length+'…';
+    if(st) st.textContent='Uploading '+(i+1)+' of '+files.length+'…';
     try{
       var r=await fetch('/api/legal-docs',{method:'POST',body:f,headers:{
         'Content-Type':'application/octet-stream',
         'X-File-Name':encodeURIComponent(f.name),
-        'X-Doc-Title':encodeURIComponent(title),
-        'X-Doc-Folder':encodeURIComponent(folder),
-        'X-Doc-Category':encodeURIComponent(cat),
-        'X-Doc-Expires':encodeURIComponent(exp),
-        'X-Doc-Notes':encodeURIComponent(notes)
+        'X-Doc-Group':encodeURIComponent(meta.group),
+        'X-Doc-Title':encodeURIComponent(meta.title||''),
+        'X-Doc-Folder':encodeURIComponent(meta.folder||''),
+        'X-Doc-Category':encodeURIComponent(meta.category||''),
+        'X-Doc-Expires':encodeURIComponent(meta.expires||''),
+        'X-Doc-Notes':encodeURIComponent(meta.notes||'')
       }});
       var j=await r.json().catch(function(){ return {}; });
       if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
       (_legalDocs=_legalDocs||[]).push(j.doc); ok++;
     }catch(e){ failed.push(f.name+' ('+e.message+')'); }
   }
-  btn.disabled=false; st.textContent='';
-  if(folder){ _legalOpen['f:'+folder]=true; try{ localStorage.setItem('pc_legal_open',JSON.stringify(_legalOpen)); }catch(e){} }
+  if(btn) btn.disabled=false; if(st) st.textContent='';
+  if(meta.folder){ _legalOpen['f:'+meta.folder]=true; try{ localStorage.setItem('pc_legal_open',JSON.stringify(_legalOpen)); }catch(e){} }
   if(ok){
-    ['legal-file','legal-title','legal-exp','legal-notes'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
-    _legalFilesPicked(document.getElementById('legal-file'));
-    notify('Saved '+ok+' document'+(ok===1?'':'s')+(folder?' to "'+folder+'"':''),{kind:'success'});
+    if(clearForm){
+      ['legal-file','legal-title','legal-exp','legal-notes'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
+      _legalFilesPicked(document.getElementById('legal-file'));
+    }
+    notify('Saved '+ok+' file'+(ok===1?'':'s')+(meta.title?' to "'+meta.title+'"':''),{kind:'success'});
   }
   if(failed.length) notify('Upload failed for: '+failed.join('; '),{kind:'error'});
   renderLegalList(); _legalFillFolderList();
 }
 // Admin-only: change title / folder / category / expiry / notes.
 function editLegalDoc(id){
-  var d=(_legalDocs||[]).find(function(x){ return x.id===id; });
+  var d=_legalEntries(_legalDocs||[]).find(function(x){ return x.gid===id; });
   if(!d) return;
   var inp='width:100%;margin-top:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)';
   var box=document.getElementById('legal-edit');
@@ -17771,10 +17819,12 @@ function editLegalDoc(id){
 async function saveLegalEdit(id){
   var body={title:document.getElementById('le-title').value,folder:document.getElementById('le-folder').value,category:document.getElementById('le-cat').value,expires:document.getElementById('le-exp').value,notes:document.getElementById('le-notes').value};
   try{
-    var r=await fetch('/api/legal-docs/'+encodeURIComponent(id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var r=await fetch('/api/legal-docs/group/'+encodeURIComponent(id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var j=await r.json().catch(function(){ return {}; });
     if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
-    _legalDocs=_legalDocs.map(function(x){ return x.id===id?j.doc:x; });
+    var byId={}; (j.docs||[]).forEach(function(x){ byId[x.id]=x; });
+    _legalDocs=_legalDocs.map(function(x){ return byId[x.id]||x; });
+    j.doc=(j.docs||[])[0]||{title:body.title,folder:body.folder};
     if(j.doc.folder){ _legalOpen['f:'+j.doc.folder]=true; try{ localStorage.setItem('pc_legal_open',JSON.stringify(_legalOpen)); }catch(e){} }
     var b=document.getElementById('legal-edit'); if(b) b.remove();
     renderLegalList(); _legalFillFolderList();
@@ -17783,7 +17833,7 @@ async function saveLegalEdit(id){
 }
 async function deleteLegalDoc(id){
   var d=(_legalDocs||[]).find(function(x){ return x.id===id; });
-  if(!d || !confirm('Delete "'+d.title+'"?\n\nThis removes it from Plant Console for everyone. (A copy already backed up to Google Drive stays there.)')) return;
+  if(!d || !confirm('Delete the file "'+d.fileName+'" from "'+d.title+'"?\n\nThis removes it from Plant Console for everyone. (A copy already backed up to Google Drive stays there.)')) return;
   try{
     var r=await fetch('/api/legal-docs/'+encodeURIComponent(id),{method:'DELETE'});
     var j=await r.json().catch(function(){ return {}; });
@@ -17793,6 +17843,19 @@ async function deleteLegalDoc(id){
     notify('Deleted: '+d.title,{kind:'success'});
   }catch(e){ notify('Could not delete: '+e.message); }
 }
+async function deleteLegalEntry(gid){
+  var e=_legalEntries(_legalDocs||[]).find(function(x){ return x.gid===gid; });
+  if(!e || !confirm('Delete "'+e.title+'" and all '+e.files.length+' of its file'+(e.files.length===1?'':'s')+'?\n\nThis removes it from Plant Console for everyone. (Copies already backed up to Google Drive stay there.)')) return;
+  try{
+    var r=await fetch('/api/legal-docs/group/'+encodeURIComponent(gid),{method:'DELETE'});
+    var j=await r.json().catch(function(){ return {}; });
+    if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+    _legalDocs=_legalDocs.filter(function(x){ return _legalGid(x)!==gid; });
+    renderLegalList(); _legalFillFolderList();
+    notify('Deleted: '+e.title,{kind:'success'});
+  }catch(err){ notify('Could not delete: '+err.message); }
+}
+window.deleteLegalEntry=deleteLegalEntry; window._legalAddToEntry=_legalAddToEntry;
 window.renderLegalPage=renderLegalPage; window.renderLegalList=renderLegalList; window.uploadLegalDoc=uploadLegalDoc; window.deleteLegalDoc=deleteLegalDoc;
 window.editLegalDoc=editLegalDoc; window.saveLegalEdit=saveLegalEdit; window._legalToggleFolder=_legalToggleFolder; window._legalUploadInto=_legalUploadInto; window._legalFilesPicked=_legalFilesPicked;
 

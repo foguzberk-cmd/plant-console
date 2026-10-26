@@ -512,6 +512,38 @@ function maybeAutoBackup() {
   takeServerBackup('auto').catch(e => console.error('Auto-backup failed:', e.message));
 }
 
+// ===== LEGAL DOCUMENTS (Oct 2026) =====
+// Certificates, inspection records, HACCP plans, licenses. Anyone who can
+// see the Legal Documents tab (viewLegal) can list, open and UPLOAD; only
+// an admin can DELETE. Files live on the persistent disk under
+// DATA_DIR/legal-docs/<id>; the list itself is a small JSON file with its
+// own lock (same atomic temp+rename write as everything else). Files are
+// also copied to Google Drive by the nightly backup — see
+// gdriveSyncLegalDocs.
+const LEGAL_DIR = path.join(DATA_DIR, 'legal-docs');
+const LEGAL_INDEX_FILE = path.join(DATA_DIR, 'legal-docs.json');
+const LEGAL_MAX_BYTES = 25 * 1024 * 1024;
+// Only these types are ever shown inline in the browser; anything else is
+// served as a plain download so an uploaded HTML/SVG file can never run
+// script inside the app.
+const LEGAL_INLINE_TYPES = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', txt: 'text/plain; charset=utf-8' };
+const LEGAL_ALLOWED_EXT = /^(pdf|png|jpe?g|gif|webp|heic|txt|docx?|xlsx?|csv|pptx?)$/;
+let _legalLock = Promise.resolve();
+function withLegalLock(fn) { const run = _legalLock.then(fn, fn); _legalLock = run.then(() => {}, () => {}); return run; }
+async function readLegalIndex() {
+  try { return JSON.parse(await fs.promises.readFile(LEGAL_INDEX_FILE, 'utf8') || '[]'); } catch (e) { return []; }
+}
+async function writeLegalIndex(list) {
+  if (!fs.existsSync(DATA_DIR)) await fs.promises.mkdir(DATA_DIR, { recursive: true });
+  const tmp = LEGAL_INDEX_FILE + '.tmp-' + process.pid + '-' + Date.now();
+  await fs.promises.writeFile(tmp, JSON.stringify(list, null, 2));
+  await fs.promises.rename(tmp, LEGAL_INDEX_FILE);
+}
+function legalHeader(req, name) {
+  // Text fields travel in headers (URI-encoded) so the body can be the raw file.
+  try { return decodeURIComponent(String(req.headers[name] || '')).trim(); } catch (e) { return ''; }
+}
+
 // ===== OFF-SITE BACKUPS TO GOOGLE DRIVE (Oct 2026) =====
 // The server backups above all live on the SAME Render disk as the live
 // data — if that disk is lost, deleted, or the service is recreated, the
@@ -705,6 +737,8 @@ async function runGDriveBackup(reason) {
     console.log('Google Drive backup uploaded: ' + driveName + ' (' + Math.round(gz.length / 1024) + ' KB, from ' + Math.round(raw.length / 1024) + ' KB)');
     gdrivePrune(folderId).then(n => { if (n) console.log('Google Drive backups: moved ' + n + ' old backup(s) to trash'); })
       .catch(e => console.error('Google Drive prune failed:', e.message));
+    gdriveSyncLegalDocs(folderId).then(n => { if (n) console.log('Google Drive: copied ' + n + ' legal document(s)'); })
+      .catch(e => console.error('Google Drive legal-docs copy failed:', e.message));
     return { fileName: driveName, size: gz.length };
   } catch (e) {
     gdriveState.lastError = e.message;
@@ -757,6 +791,50 @@ function gdriveStatusPayload() {
     scheduleHourET: GDRIVE_BACKUP_HOUR_ET, keepDaily: GDRIVE_KEEP_DAILY, keepMonthly: GDRIVE_KEEP_MONTHLY,
     redirectUri: GDRIVE_REDIRECT_URI
   };
+}
+
+// Copies every Legal Document not yet in Drive into a "Legal Documents"
+// subfolder of the backup folder. Runs after each successful Drive backup.
+// One-way and additive: deleting a document in the app does NOT delete the
+// Drive copy (that's the point of an off-site copy).
+async function gdriveSyncLegalDocs(parentFolderId) {
+  const list = await readLegalIndex();
+  if (!list.length) return 0;
+  gdriveState.legalUploaded = gdriveState.legalUploaded || {};
+  let folderId = gdriveState.legalFolderId;
+  if (folderId) {
+    const chk = await gdriveFetch('GET', 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(folderId) + '?fields=id,trashed');
+    if (chk.status !== 200 || !chk.data || chk.data.trashed) folderId = '';
+  }
+  if (!folderId) {
+    const c = await gdriveFetch('POST', 'https://www.googleapis.com/drive/v3/files?fields=id', {
+      body: { name: 'Legal Documents', mimeType: 'application/vnd.google-apps.folder', parents: [parentFolderId] }
+    });
+    if (c.status !== 200 || !c.data || !c.data.id) throw new Error('Could not create the Legal Documents folder in Drive (HTTP ' + c.status + ').');
+    folderId = c.data.id;
+    gdriveState.legalFolderId = folderId;
+    gdriveState.legalUploaded = {}; // new folder — everything needs copying again
+    saveGDriveState();
+  }
+  let n = 0;
+  for (const doc of list) {
+    if (gdriveState.legalUploaded[doc.id]) continue;
+    let buf;
+    try { buf = await fs.promises.readFile(path.join(LEGAL_DIR, doc.id)); } catch (e) { continue; }
+    const mime = (LEGAL_INLINE_TYPES[doc.ext] || 'application/octet-stream').split(';')[0];
+    const init = await gdriveFetch('POST', 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id', {
+      headers: { 'X-Upload-Content-Type': mime, 'X-Upload-Content-Length': String(buf.length) },
+      body: { name: (doc.category ? doc.category + ' - ' : '') + doc.title + '.' + doc.ext, parents: [folderId], mimeType: mime,
+        description: 'Uploaded to Plant Console by ' + doc.uploadedBy + ' on ' + doc.uploadedAt.slice(0, 10) + (doc.expires ? ' · expires ' + doc.expires : ''),
+        appProperties: { plantConsoleLegalDoc: doc.id } }
+    });
+    const loc = init.headers && init.headers.location;
+    if (init.status !== 200 || !loc) continue;
+    const up = await gdriveFetch('PUT', loc, { headers: { 'Content-Type': mime }, body: buf });
+    if ((up.status === 200 || up.status === 201) && up.data && up.data.id) { gdriveState.legalUploaded[doc.id] = up.data.id; n++; }
+  }
+  if (n) saveGDriveState();
+  return n;
 }
 
 function gdriveHtmlPage(title, message, ok) {
@@ -4666,6 +4744,99 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ error: e.message }));
     }
+    return;
+  }
+
+  // ===== Legal Documents =====
+  if (url === '/api/legal-docs' && req.method === 'GET') {
+    if (!requirePerm(req, res, 'viewLegal')) return;
+    const list = await readLegalIndex();
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+    res.end(JSON.stringify({ docs: list }));
+    return;
+  }
+  if (url === '/api/legal-docs' && req.method === 'POST') {
+    const session = requirePerm(req, res, 'viewLegal');
+    if (!session) return;
+    const sendErr = (code, msg) => { if (!res.headersSent) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: msg })); } };
+    const fileName = legalHeader(req, 'x-file-name').replace(/[\\/\r\n]/g, '_').slice(0, 200);
+    const ext = (fileName.split('.').pop() || '').toLowerCase();
+    if (!fileName || !LEGAL_ALLOWED_EXT.test(ext)) { req.resume(); return sendErr(400, 'File type not allowed. Use PDF, a photo (JPG/PNG/HEIC), Word, Excel, PowerPoint, CSV or TXT.'); }
+    const declared = parseInt(req.headers['content-length'] || '0', 10);
+    if (declared > LEGAL_MAX_BYTES) { req.resume(); return sendErr(413, 'File is larger than 25 MB.'); }
+    const id = 'ld_' + Date.now().toString(36) + crypto.randomBytes(4).toString('hex');
+    try {
+      await fs.promises.mkdir(LEGAL_DIR, { recursive: true });
+      const dest = path.join(LEGAL_DIR, id);
+      const tmp = dest + '.part';
+      const size = await new Promise((resolve, reject) => {
+        let n = 0, failed = false;
+        const out = fs.createWriteStream(tmp);
+        req.on('data', chunk => {
+          n += chunk.length;
+          if (n > LEGAL_MAX_BYTES && !failed) { failed = true; out.destroy(); req.destroy(); reject(new Error('TOO_BIG')); }
+        });
+        req.on('error', e => { if (!failed) { failed = true; reject(e); } });
+        out.on('error', e => { if (!failed) { failed = true; reject(e); } });
+        out.on('finish', () => { if (!failed) resolve(n); });
+        req.pipe(out);
+      }).catch(async e => { try { await fs.promises.unlink(tmp); } catch (x) { /* nothing to clean */ } throw e; });
+      if (!size) { await fs.promises.unlink(tmp).catch(() => {}); return sendErr(400, 'The file was empty.'); }
+      await fs.promises.rename(tmp, dest);
+      const expires = legalHeader(req, 'x-doc-expires');
+      const doc = {
+        id: id,
+        title: legalHeader(req, 'x-doc-title').slice(0, 200) || fileName.replace(/\.[^.]+$/, ''),
+        category: legalHeader(req, 'x-doc-category').slice(0, 60) || 'Other',
+        expires: /^\d{4}-\d{2}-\d{2}$/.test(expires) ? expires : '',
+        notes: legalHeader(req, 'x-doc-notes').slice(0, 500),
+        fileName: fileName, ext: ext, size: size,
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: session.name || session.email || 'Unknown'
+      };
+      await withLegalLock(async () => { const list = await readLegalIndex(); list.push(doc); await writeLegalIndex(list); });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, doc: doc }));
+    } catch (e) {
+      if (e.message === 'TOO_BIG') return sendErr(413, 'File is larger than 25 MB.');
+      console.error('Legal doc upload failed:', e.message);
+      sendErr(500, 'Upload failed: ' + e.message);
+    }
+    return;
+  }
+  if (url.startsWith('/api/legal-docs/') && url.endsWith('/file') && req.method === 'GET') {
+    if (!requirePerm(req, res, 'viewLegal')) return;
+    const id = url.slice('/api/legal-docs/'.length, -'/file'.length);
+    const doc = /^ld_[a-z0-9]+$/.test(id) ? (await readLegalIndex()).find(d => d.id === id) : null;
+    if (!doc) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Document not found.' })); return; }
+    const inlineType = LEGAL_INLINE_TYPES[doc.ext];
+    const wantDownload = queryParams.download === '1' || !inlineType;
+    const safeName = doc.fileName.replace(/["\\]/g, '_');
+    res.writeHead(200, {
+      'Content-Type': inlineType && !wantDownload ? inlineType : 'application/octet-stream',
+      'Content-Disposition': (wantDownload ? 'attachment' : 'inline') + '; filename="' + safeName.replace(/[^\x20-\x7e]/g, '_') + '"; filename*=UTF-8\'\'' + encodeURIComponent(doc.fileName),
+      'Cache-Control': 'private, no-store'
+    });
+    fs.createReadStream(path.join(LEGAL_DIR, doc.id)).on('error', () => res.end()).pipe(res);
+    return;
+  }
+  if (url.startsWith('/api/legal-docs/') && req.method === 'DELETE') {
+    const session = requireAdmin(req, res); // uploading is open to everyone with the tab; deleting is admin-only
+    if (!session) return;
+    const id = url.slice('/api/legal-docs/'.length);
+    let removed = null;
+    await withLegalLock(async () => {
+      const list = await readLegalIndex();
+      const ix = list.findIndex(d => d.id === id);
+      if (ix < 0) return;
+      removed = list.splice(ix, 1)[0];
+      await writeLegalIndex(list);
+    });
+    if (!removed) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Document not found.' })); return; }
+    try { await fs.promises.unlink(path.join(LEGAL_DIR, removed.id)); } catch (e) { /* already gone */ }
+    console.log('Legal document deleted by ' + (session.name || session.email) + ': ' + removed.title + ' (' + removed.fileName + ')');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true }));
     return;
   }
 

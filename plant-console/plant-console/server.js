@@ -539,6 +539,40 @@ async function writeLegalIndex(list) {
   await fs.promises.writeFile(tmp, JSON.stringify(list, null, 2));
   await fs.promises.rename(tmp, LEGAL_INDEX_FILE);
 }
+// One-time (Oct 2026): documents uploaded before multi-file entries existed
+// each became their own row. Files the same person uploaded together —
+// same note, category, expiry and folder, each within 3 minutes of the
+// previous — are joined into one entry, titled by that shared note.
+async function migrateLegalGroups() {
+  await withLegalLock(async () => {
+    const list = await readLegalIndex();
+    if (!list.length || list.every(d => d.groupId)) return;
+    const legacy = list.filter(d => !d.groupId).sort((a, b) => (a.uploadedAt || '').localeCompare(b.uploadedAt || ''));
+    // Bucket by everything that must match, then split each bucket wherever
+    // there's a gap of more than 3 minutes between uploads.
+    const buckets = {};
+    legacy.forEach(d => {
+      const key = d.notes ? [d.uploadedBy, d.notes, d.category, d.expires || '', d.folder || ''].join('\u0001') : 'solo:' + d.id;
+      (buckets[key] = buckets[key] || []).push(d);
+    });
+    const assign = run => {
+      const gid = 'g_' + run[0].id.slice(3);
+      const shared = run.length > 1 && run[0].notes;
+      run.forEach(d => { d.groupId = gid; if (shared) { d.title = run[0].notes; d.notes = ''; } });
+    };
+    Object.values(buckets).forEach(b => {
+      let run = [];
+      b.forEach(d => {
+        const prev = run[run.length - 1];
+        if (prev && (new Date(d.uploadedAt) - new Date(prev.uploadedAt)) > 3 * 60 * 1000) { assign(run); run = []; }
+        run.push(d);
+      });
+      if (run.length) assign(run);
+    });
+    await writeLegalIndex(list);
+    console.log('Legal documents: grouped legacy uploads into entries');
+  });
+}
 function legalHeader(req, name) {
   // Text fields travel in headers (URI-encoded) so the body can be the raw file.
   try { return decodeURIComponent(String(req.headers[name] || '')).trim(); } catch (e) { return ''; }
@@ -4789,6 +4823,9 @@ const server = http.createServer(async (req, res) => {
         title: legalHeader(req, 'x-doc-title').slice(0, 200) || fileName.replace(/\.[^.]+$/, ''),
         category: legalHeader(req, 'x-doc-category').slice(0, 60) || 'Other',
         folder: legalHeader(req, 'x-doc-folder').replace(/\s+/g, ' ').slice(0, 120),
+        // Several files uploaded together share one groupId and show as ONE
+        // entry (one subject, many attachments). The browser makes the id.
+        groupId: /^g_[a-z0-9]{6,40}$/.test(legalHeader(req, 'x-doc-group')) ? legalHeader(req, 'x-doc-group') : 'g_' + id.slice(3),
         expires: /^\d{4}-\d{2}-\d{2}$/.test(expires) ? expires : '',
         notes: legalHeader(req, 'x-doc-notes').slice(0, 500),
         fileName: fileName, ext: ext, size: size,
@@ -4819,6 +4856,42 @@ const server = http.createServer(async (req, res) => {
       'Cache-Control': 'private, no-store'
     });
     fs.createReadStream(path.join(LEGAL_DIR, doc.id)).on('error', () => res.end()).pipe(res);
+    return;
+  }
+  // Whole-entry edit / delete (every attachment in the group) — admin only.
+  if (url.startsWith('/api/legal-docs/group/') && (req.method === 'PATCH' || req.method === 'DELETE')) {
+    const session = requireAdmin(req, res);
+    if (!session) return;
+    const gid = url.slice('/api/legal-docs/group/'.length);
+    let body = {};
+    if (req.method === 'PATCH') { try { body = JSON.parse(await readRequestBody(req) || '{}'); } catch (e) { /* empty */ } }
+    let touched = [];
+    await withLegalLock(async () => {
+      const list = await readLegalIndex();
+      const members = list.filter(d => (d.groupId || ('g_' + d.id.slice(3))) === gid);
+      if (!members.length) return;
+      if (req.method === 'DELETE') {
+        touched = members;
+        await writeLegalIndex(list.filter(d => members.indexOf(d) < 0));
+        return;
+      }
+      members.forEach(doc => {
+        if (typeof body.title === 'string' && body.title.trim()) doc.title = body.title.trim().slice(0, 200);
+        if (typeof body.folder === 'string') doc.folder = body.folder.replace(/\s+/g, ' ').trim().slice(0, 120);
+        if (typeof body.category === 'string' && body.category.trim()) doc.category = body.category.trim().slice(0, 60);
+        if (typeof body.expires === 'string') doc.expires = /^\d{4}-\d{2}-\d{2}$/.test(body.expires) ? body.expires : '';
+        if (typeof body.notes === 'string') doc.notes = body.notes.trim().slice(0, 500);
+      });
+      touched = members;
+      await writeLegalIndex(list);
+    });
+    if (!touched.length) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Entry not found.' })); return; }
+    if (req.method === 'DELETE') {
+      for (const d of touched) { try { await fs.promises.unlink(path.join(LEGAL_DIR, d.id)); } catch (e) { /* already gone */ } }
+      console.log('Legal entry deleted by ' + (session.name || session.email) + ': ' + touched[0].title + ' (' + touched.length + ' file(s))');
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, docs: req.method === 'PATCH' ? touched : [] }));
     return;
   }
   // Edit a document's details / move it to another folder — admin only,
@@ -5785,7 +5858,8 @@ const server = http.createServer(async (req, res) => {
 
 (async () => {
   await loadSessionsFromDisk(); // restore sessions BEFORE accepting any requests, so nobody gets a spurious 401 right after a restart
-  await migrateItemsTxnIfNeeded(); // one-time: move any existing items/transactions out of the old combined file before anything tries to read either store
+  await migrateItemsTxnIfNeeded();
+  await migrateLegalGroups().catch(e => console.error('Legal group migration failed:', e.message)); // one-time: move any existing items/transactions out of the old combined file before anything tries to read either store
   server.listen(PORT, () => {
     console.log('Plant Console running on port ' + PORT);
     // Apply the (possibly just-lowered) BACKUP_KEEP_MAX to whatever's already

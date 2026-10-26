@@ -4661,8 +4661,25 @@ async function saveShippedOrderSplit(orderId){
   _renderOrdersWeekSummary();
 }
 window.saveShippedOrderSplit=saveShippedOrderSplit;
+// True only when `name` resolves EXCLUSIVELY to inactive customer(s) in
+// QuickBooks — if an active customer shares the name, that one wins and this
+// returns false. The datalist below drops inactive customers from the
+// suggestions, but the order Customer field is free text, so the save paths
+// (submitNewOrder / submitEditOrder) guard with this too.
+function _isInactiveCustomerName(name){
+  var key=(name||'').trim().toLowerCase();
+  if(!key) return false;
+  var matchActive=false, matchInactive=false;
+  customers.forEach(function(c){
+    if(!c || (c.name||'').trim().toLowerCase()!==key) return;
+    if(c.active===false) matchInactive=true; else matchActive=true;
+  });
+  return matchInactive && !matchActive;
+}
 function _orderDatalists(){
-  var customerNames=Array.from(new Set(customers.map(function(c){return c.name;}).filter(Boolean))).sort();
+  // Inactive (merged/deactivated) customers are left out of the suggestions
+  // entirely — you can't pick a dead account onto an order.
+  var customerNames=Array.from(new Set(customers.filter(function(c){return c&&c.active!==false;}).map(function(c){return c.name;}).filter(Boolean))).sort();
   // Product suggestions are no longer a native <datalist> — see
   // _ordProdInput/_ordRenderProdSuggestions below. A native datalist can't
   // be sorted by last-purchase-date or color-coded per option (browsers
@@ -5180,6 +5197,7 @@ async function submitNewOrder(){
   if(document.activeElement && typeof document.activeElement.blur==='function') document.activeElement.blur();
   var vals=_readOrderFormFields(fieldsWrap);
   if(!vals.customer.trim()){ if(statusEl){ statusEl.textContent='Customer is required.'; statusEl.style.color='#c0392b'; } return; }
+  if(_isInactiveCustomerName(vals.customer)){ if(statusEl){ statusEl.textContent='"'+vals.customer.trim()+'" is inactive in QuickBooks \u2014 pick an active customer.'; statusEl.style.color='#c0392b'; } return; }
   // Same customer, same date already has an order on the books — easy to
   // do by accident (e.g. re-submitting after a save that only looked like
   // it failed), and the fix once it happens is a manual cleanup, so it's
@@ -6334,6 +6352,7 @@ async function submitEditOrder(id){
   var vals=_readOrderFormFields(rowEl);
   vals.id=id;
   if(!vals.customer.trim()){ notify('Customer is required.'); return; }
+  if(_isInactiveCustomerName(vals.customer)){ notify('"'+vals.customer.trim()+'" is inactive in QuickBooks \u2014 pick an active customer.'); return; }
   var saveBtn=rowEl.querySelector('button.btn-primary');
   if(saveBtn){ saveBtn.disabled=true; saveBtn.textContent='Saving…'; }
   _orderSaveInProgress=true;

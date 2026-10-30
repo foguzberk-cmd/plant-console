@@ -15648,7 +15648,7 @@ function itemRow(it,avgDailyQtyById){
     +'<td style="font-family:var(--mono);font-size:12px;color:var(--cold)">'+esc(it.sku||'—')+'</td>'
     +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+conflictBadge+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
     +'<td style="font-family:var(--mono);font-size:13px;text-align:right;'+qtyColor+'">'+fmtNum2(onHand)+'</td>'
-    +'<td style="font-family:var(--mono);font-size:13px;text-align:right">'+(Number(it.cost)>0?fmtMoney(Number(it.cost)):'<span style="color:var(--muted)">—</span>')+'</td>'
+    +_lppCellHtml(it)
       +'<td style="font-family:var(--mono);font-size:13px;text-align:right;font-weight:600">'+(Number(it.price)>0?fmtMoney(Number(it.price)):'<span style="color:var(--muted)">—</span>')+'</td>'
     +'<td style="font-family:var(--mono);font-size:12px;text-align:right;border-left:1.5px solid var(--line)" title="Current on-hand ÷ average daily units shipped over the trailing 28 days">'+_sbcDaysOfSupplyStr(days)+'</td>'
     +'<td style="text-align:right;position:relative;width:40px">'
@@ -15657,10 +15657,37 @@ function itemRow(it,avgDailyQtyById){
     +'</tr>';
 }
 
+// ----- Last purchase price (LPP) for the Items tables (Oct 2026) ----------
+// The unit price on the most recent QuickBooks BILL line for each product
+// (vendor credits/returns don't count). Ties on date go to the later-created
+// bill. Rebuilt only when the transaction list changes.
+var _lppCache={ref:null,len:-1,map:{}};
+function _lastPurchasePriceMap(){
+  if(_lppCache.ref===transactions && _lppCache.len===transactions.length) return _lppCache.map;
+  var map={};
+  for(var i=0;i<transactions.length;i++){
+    var t=transactions[i];
+    if(!t || t.qbDocType!=='Bill' || !t.itemId) continue;
+    var up=Number(t.unitPrice);
+    if(!(up>0)) continue;
+    var key=(t.date||'')+'|'+(t.createTime||'');
+    var cur=map[t.itemId];
+    if(!cur || key>cur.key) map[t.itemId]={key:key,price:up,date:t.date||'',vendor:t.account||'',num:t.num||''};
+  }
+  _lppCache={ref:transactions,len:transactions.length,map:map};
+  return map;
+}
+function _lppCellHtml(it){
+  var lp=_lastPurchasePriceMap()[it.id];
+  if(!lp) return '<td style="font-family:var(--mono);font-size:13px;text-align:right" title="No QuickBooks bill found for this product"><span style="color:var(--muted)">—</span></td>';
+  var d=lp.date?fmtDateUS(lp.date):'';
+  var tip='Last bought'+(d?' '+d:'')+(lp.vendor?' from '+lp.vendor:'')+(lp.num?' ('+lp.num+')':'');
+  return '<td style="font-family:var(--mono);font-size:13px;text-align:right" title="'+esc(tip)+'">'+fmtMoney(lp.price)+'</td>';
+}
 function itemsTable(list){
   if(!list.length) return '<div style="padding:28px 24px;text-align:center;color:var(--muted);font-size:13px">No items match the current filters.</div>';
   var avgDailyQtyById=_itemsAvgDailyQtySoldTrailing28();
-  return '<table class="txn-table"><thead><tr><th>SKU</th><th>Product Name</th><th style="text-align:right">Quantity</th><th style="text-align:right">Cost</th><th style="text-align:right" title="Sales price listed in QuickBooks">Price</th><th style="text-align:right;border-left:1.5px solid var(--line)" title="Current on-hand ÷ average daily units shipped over the trailing 28 days">Days of Supply</th><th></th></tr></thead><tbody>'+list.map(function(it){ return itemRow(it,avgDailyQtyById); }).join('')+'</tbody></table>';
+  return '<table class="txn-table"><thead><tr><th>SKU</th><th>Product Name</th><th style="text-align:right">Quantity</th><th style="text-align:right" title="Last purchase price: the unit price on the most recent QuickBooks bill for this product">LPP</th><th style="text-align:right" title="Sales price listed in QuickBooks">Price</th><th style="text-align:right;border-left:1.5px solid var(--line)" title="Current on-hand ÷ average daily units shipped over the trailing 28 days">Days of Supply</th><th></th></tr></thead><tbody>'+list.map(function(it){ return itemRow(it,avgDailyQtyById); }).join('')+'</tbody></table>';
 }
 
 function renderItemsTable(){
@@ -15803,13 +15830,13 @@ function itemsTableLoc(rows){
       +'<td style="font-family:var(--mono);font-size:12px;color:var(--cold)">'+esc(it.sku||'—')+'</td>'
       +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+conflictBadge+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
       +'<td style="font-family:var(--mono);font-size:13px;text-align:right;'+qtyColor+'">'+fmtNum2(Number(r.locQty||0))+'</td>'
-      +'<td style="font-family:var(--mono);font-size:13px;text-align:right">'+(Number(it.cost)>0?fmtMoney(Number(it.cost)):'<span style="color:var(--muted)">—</span>')+'</td>'
+      +_lppCellHtml(it)
       +'<td style="font-family:var(--mono);font-size:13px;text-align:right;font-weight:600">'+(Number(it.price)>0?fmtMoney(Number(it.price)):'<span style="color:var(--muted)">—</span>')+'</td>'
       +'<td style="text-align:right;position:relative;width:40px">'
       +'<button class="dots-btn" aria-label="Item actions" onclick="toggleItemMenu(event,this.dataset.id)" data-id="'+it.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;stroke:var(--muted)"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>'
       +'</td></tr>';
   }).join('');
-  return '<table class="txn-table"><thead><tr><th>SKU</th><th>Product Name</th><th style="text-align:right">Qty here</th><th style="text-align:right">Cost</th><th style="text-align:right" title="Sales price listed in QuickBooks">Price</th><th></th></tr></thead><tbody>'+body+'</tbody></table>';
+  return '<table class="txn-table"><thead><tr><th>SKU</th><th>Product Name</th><th style="text-align:right">Qty here</th><th style="text-align:right" title="Last purchase price: the unit price on the most recent QuickBooks bill for this product">LPP</th><th style="text-align:right" title="Sales price listed in QuickBooks">Price</th><th></th></tr></thead><tbody>'+body+'</tbody></table>';
 }
 
 

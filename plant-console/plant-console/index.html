@@ -4357,7 +4357,23 @@ function printDriverOrders(orderIds,driverName,dateStr,formOnly){
   var idSet={}; orderIds.forEach(function(id){ idSet[id]=true; });
   var toPrint=orders.filter(function(o){ return idSet[o.id]; });
   if(!toPrint.length) return;
+  // Print in the SAME stop order the Orders screen shows: the most efficient
+  // visiting order from the route lookup (Oct 2026 fix — this used to sort
+  // alphabetically by customer, so the sheet didn't match the route).
+  // Alphabetical is only the fallback when no route has been worked out yet
+  // (e.g. customers without addresses). Same key as the screen: the driver
+  // name and date passed in by the print button.
   toPrint.sort(function(a,b){ return (a.customer||'')<(b.customer||'')?-1:1; });
+  var _printVisitSeq=null;
+  try{ _printVisitSeq=_routeVisitOrderCustomerSequence(toPrint,driverName,dateStr); }catch(e){}
+  if(_printVisitSeq){
+    toPrint.sort(function(a,b){
+      var ia=_printVisitSeq.indexOf(a.customer||''), ib=_printVisitSeq.indexOf(b.customer||'');
+      if(ia<0) ia=1e9; if(ib<0) ib=1e9;
+      if(ia!==ib) return ia-ib;
+      return (a.customer||'')<(b.customer||'')?-1:1;
+    });
+  }
   var custNames=Array.from(new Set(toPrint.map(function(o){ return o.customer||'(no customer)'; })));
   var dateDisplay=dateStr;
   try{ dateDisplay=new Date(dateStr+'T00:00:00').toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'numeric'}); }catch(e){}

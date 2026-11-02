@@ -1665,7 +1665,7 @@ function isValidQbDateParam(s) {
 //          5/9/2026"), which need a closed range, not just an open-ended
 //          floor. Optional and backward-compatible: existing callers that
 //          never pass it are unaffected.
-async function fetchQBEntityPage(entity, startPosition, retry, since, from, to) {
+async function fetchQBEntityPage(entity, startPosition, retry, since, from, to, openOnly) {
   if (!retry) await ensureFreshToken(); // keep token alive during long paged syncs
   if (since && !isValidQbDateParam(since)) throw new Error('Invalid since parameter');
   if (from && !isValidQbDateParam(from)) throw new Error('Invalid from parameter');
@@ -1674,6 +1674,10 @@ async function fetchQBEntityPage(entity, startPosition, retry, since, from, to) 
   if (since) clauses.push(`MetaData.LastUpdatedTime >= '${since}'`);
   if (from)  clauses.push(`TxnDate >= '${from}'`);
   if (to)    clauses.push(`TxnDate <= '${to}'`);
+  // Open documents only (Oct 2026): asks QuickBooks for bills/invoices that
+  // still have a balance, instead of the whole history. The browser falls
+  // back to a full fetch if QuickBooks ever rejects this filter.
+  if (openOnly && (entity === 'Bill' || entity === 'Invoice')) clauses.push("Balance > '0'");
   const where = clauses.length ? (' WHERE ' + clauses.join(' AND ')) : '';
   const query = `SELECT * FROM ${entity}${where} STARTPOSITION ${startPosition} MAXRESULTS 100`;
   const reqPath = `/v3/company/${activeRealm}/query?query=${encodeURIComponent(query)}&minorversion=75`;
@@ -1690,7 +1694,7 @@ async function fetchQBEntityPage(entity, startPosition, retry, since, from, to) 
   if (res.status === 401) {
     if (!retry) {
       const ok = await refreshAccessToken();
-      if (ok) return fetchQBEntityPage(entity, startPosition, true, since, from, to);
+      if (ok) return fetchQBEntityPage(entity, startPosition, true, since, from, to, openOnly);
     }
     throw new Error('NEEDS_RECONNECT');
   }
@@ -5574,7 +5578,8 @@ const server = http.createServer(async (req, res) => {
         if (!accessToken) await refreshAccessToken();
         // Single-page mode: return just one page so each HTTP request is fast.
         if (startPos !== null && !isNaN(startPos)) {
-          const data = await fetchQBEntityPage(ent, startPos, false, since, from, to);
+          const openOnly = queryParams.open === '1';
+          const data = await fetchQBEntityPage(ent, startPos, false, since, from, to, openOnly);
           const rows = (data.QueryResponse && data.QueryResponse[ent]) || [];
           res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
           const out = {}; out[ent] = rows; out.pageSize = 100; out.startPosition = startPos;

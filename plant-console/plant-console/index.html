@@ -10095,7 +10095,28 @@ window.exportCollectionReportGroupCSV=exportCollectionReportGroupCSV;
 // report, which are scoped to a period) and filtered client-side, the
 // same page-at-a-time way, so one slow page never times out the whole
 // pull.
+// Open documents only (Oct 2026 speed fix): this used to download EVERY
+// bill ever entered in QuickBooks (100 per request, one request after
+// another) and only then drop the paid ones, so "Pull from QuickBooks" on
+// Scheduled Payments got slower every month as bills piled up. Now it asks
+// QuickBooks for bills that still have a balance. If QuickBooks ever rejects
+// that filter, it falls back to the old full download (remembered for the
+// session), so it is never slower than before. Results are still filtered
+// to balance > 0 either way.
+var _qbOpenFilterUnsupported={};
 async function _fetchAllOpenQBEntity(entity,onProgress){
+  if(!_qbOpenFilterUnsupported[entity]){
+    try{ return await _fetchQBEntityPagesFor(entity,onProgress,'&open=1'); }
+    catch(e){
+      var msg=String(e&&e.message||'');
+      if(/expired|reconnect|timed out/i.test(msg)) throw e; // real problems: report them
+      console.warn('Open-only '+entity+' query not accepted by QuickBooks; using full download instead:',msg);
+      _qbOpenFilterUnsupported[entity]=true;
+    }
+  }
+  return await _fetchQBEntityPagesFor(entity,onProgress,'');
+}
+async function _fetchQBEntityPagesFor(entity,onProgress,extraParam){
   var base=window.location.origin;
   var rows=[];
   var startPos=1;
@@ -10108,7 +10129,7 @@ async function _fetchAllOpenQBEntity(entity,onProgress){
     var timer=setTimeout(function(){ctrl.abort();},60000);
     var pageRows=null;
     try{
-      var r=await fetch(base+'/api/qb/documents?entity='+entity+'&startposition='+startPos,{signal:ctrl.signal});
+      var r=await fetch(base+'/api/qb/documents?entity='+entity+'&startposition='+startPos+(extraParam||''),{signal:ctrl.signal});
       clearTimeout(timer);
       if(r.status===401) throw new Error('QuickBooks connection expired — reconnect and try again.');
       var jd=await r.json();

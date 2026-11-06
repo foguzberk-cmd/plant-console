@@ -12596,7 +12596,7 @@ async function runChecksReport(){
   // IS set on a given payment (newer records may have it), it's a much
   // more direct signal than guessing from the Ref # field, so it's
   // checked first.
-  var NON_CHECK_KEYWORDS=['cash','wire','ach','eft','transfer','card','credit','debit','paypal','venmo','zelle','online','e-check','echeck'];
+  var NON_CHECK_KEYWORDS=['cash','wire','ach','eft','transfer','card','credit','debit','paypal','venmo','zelle','online','e-check','echeck','journal']; // 'journal' (Nov 2026): Ref # like "journal 37" is a journal entry, not a check
   // PaymentMethodRef turns out to exist but only ever as a bare numeric
   // reference (e.g. {"value":"9"}) with no name attached — resolving that
   // to an actual method name would need a separate lookup against
@@ -12653,16 +12653,19 @@ async function runChecksReport(){
     return true;
   }
   var allPaymentsInWindow=payments;
-  var exclusionCounts={paymentMethod:0,sharedRef:0,refKeyword:0,blank:0};
+  var exclusionCounts={paymentMethod:0,sharedRef:0,refKeyword:0,blank:0,zero:0};
   // Every payment NOT counted as a check, with the reason — shown through the
   // "see which" link on the status line, so a missing check can be found.
   _checksExcluded=[];
   function _excl(p,why){ _checksExcluded.push({p:p,why:why}); return false; }
   payments=payments.filter(function(p){
+    // $0 "payments" are QuickBooks applying a credit or journal entry to
+    // invoices — no money changed hands, so never a check in hand (Nov 2026).
+    if(!(Number(p.TotalAmt||0)>0)){ exclusionCounts.zero++; return _excl(p,'Amount is $0 — a credit or journal applied to invoices, no money received'); }
     if(_paymentMethodSaysNonCheck(p)){ exclusionCounts.paymentMethod++; return _excl(p,'Paid electronically (card or bank transfer through QuickBooks)'); }
     if(_refSharedAcrossCustomers(p.PaymentRefNum)){ exclusionCounts.sharedRef++; return _excl(p,'Ref # is shared with other customers — looks like a processor batch id'); }
     if(!(p.PaymentRefNum||'').trim()){ exclusionCounts.blank++; return _excl(p,'No Ref # (check number) entered in QuickBooks'); }
-    if(!_looksLikeCheckRef(p.PaymentRefNum)){ exclusionCounts.refKeyword++; return _excl(p,'Ref # says it was not a check (e.g. cash, Zelle, ACH)'); }
+    if(!_looksLikeCheckRef(p.PaymentRefNum)){ exclusionCounts.refKeyword++; return _excl(p,'Ref # says it was not a check (e.g. cash, Zelle, ACH, journal)'); }
     return true;
   });
 
@@ -12734,12 +12737,13 @@ async function runChecksReport(){
       statusEl.textContent='0 checks found, but '+allPaymentsInWindow.length+' other payment(s) exist since '+esc(from)+'. Sample Ref # values seen: '+esc(sample)+'. Tell me if checks are recorded differently and I\'ll adjust the match.';
       statusEl.style.color='#b8460b';
     } else {
-      var excludedTotal=exclusionCounts.paymentMethod+exclusionCounts.sharedRef+exclusionCounts.refKeyword+exclusionCounts.blank;
+      var excludedTotal=exclusionCounts.paymentMethod+exclusionCounts.sharedRef+exclusionCounts.refKeyword+exclusionCounts.blank+exclusionCounts.zero;
       var exclusionParts=[];
       if(exclusionCounts.paymentMethod) exclusionParts.push(exclusionCounts.paymentMethod+' by payment method');
       if(exclusionCounts.sharedRef) exclusionParts.push(exclusionCounts.sharedRef+' shared-ref batch');
       if(exclusionCounts.refKeyword) exclusionParts.push(exclusionCounts.refKeyword+' by ref keyword');
       if(exclusionCounts.blank) exclusionParts.push(exclusionCounts.blank+' blank ref');
+    if(exclusionCounts.zero) exclusionParts.push(exclusionCounts.zero+' $0');
       statusEl.innerHTML=esc(payments.length+' check(s) found (since '+from+')'+(excludedTotal?' — '+excludedTotal+' other payment(s) not counted as checks ('+exclusionParts.join(', ')+')':''))
       +(excludedTotal?' <a href="#" onclick="showExcludedChecks();return false" style="color:inherit;font-weight:700;text-decoration:underline">see which</a>':'')
       +_checksDepositedStatusHtml();

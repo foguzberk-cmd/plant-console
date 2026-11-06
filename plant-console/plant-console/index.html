@@ -12489,6 +12489,26 @@ async function _checksTryLoadSharedCache(){
 }
 function _checksSaveDeposited(){ safeSetLocalJSON('pc_checks_deposited',(_checksDeposited)); }
 
+// ----- Payments not counted as checks (Nov 2026) --------------------------
+var _checksExcluded=[];
+function showExcludedChecks(){
+  var old=document.getElementById('chkExclModal'); if(old) old.remove();
+  var rows=_checksExcluded.slice().sort(function(a,b){ return String(b.p.TxnDate||'').localeCompare(String(a.p.TxnDate||'')); });
+  var bg=document.createElement('div'); bg.id='chkExclModal';
+  bg.style.cssText='position:fixed;inset:0;z-index:1500;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;padding:16px';
+  bg.onclick=function(e){ if(e.target===bg) bg.remove(); };
+  var money=function(n){ return '$'+Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  bg.innerHTML='<div role="dialog" aria-label="Payments not counted as checks" style="background:var(--panel);border-radius:12px;max-width:820px;width:100%;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.25)">'
+    +'<div style="padding:16px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:12px">'
+      +'<div><div style="font-weight:700;font-size:16px">Payments not counted as checks ('+rows.length+')</div>'
+      +'<div style="font-size:12.5px;color:var(--muted);margin-top:2px">From the same QuickBooks pull. Search with Ctrl+F for a customer or number.</div></div>'
+      +'<button class="btn btn-sm" onclick="document.getElementById(\'chkExclModal\').remove()">Close</button></div>'
+    +'<div style="overflow:auto;padding:0 8px 8px"><table class="txn-table" style="width:100%"><thead><tr><th>Date</th><th>Customer</th><th>Ref #</th><th style="text-align:right">Amount</th><th>Why not counted</th></tr></thead><tbody>'
+    +(rows.length?rows.map(function(x){ var p=x.p; return '<tr><td>'+esc(fmtDateUS(p.TxnDate||''))+'</td><td>'+esc((p.CustomerRef&&p.CustomerRef.name)||'')+'</td><td style="font-family:var(--code,monospace)">'+esc(p.PaymentRefNum||'—')+'</td><td style="text-align:right">'+money(p.TotalAmt)+'</td><td style="font-size:12.5px;color:var(--muted)">'+esc(x.why)+'</td></tr>'; }).join(''):'<tr><td colspan="5" style="color:var(--muted)">None.</td></tr>')
+    +'</tbody></table></div></div>';
+  document.body.appendChild(bg);
+}
+window.showExcludedChecks=showExcludedChecks;
 async function runChecksReport(){
   var statusEl=document.getElementById('chk-status');
   // No date picker for this one — undeposited checks are inherently
@@ -12570,7 +12590,16 @@ async function runChecksReport(){
     refToCustomerIds[ref][custId]=true;
   });
   function _refSharedAcrossCustomers(ref){
-    var seen=refToCustomerIds[(ref||'').trim()];
+    var r=(ref||'').trim();
+    // (Nov 2026 fix) Check numbers are NOT unique across customers — every
+    // customer's checkbook has its own numbering, so two customers can
+    // easily both pay with check #1072 in the same 90 days. Treating that
+    // as a "processor batch" threw BOTH real checks away (e.g. Maklouba
+    // House #1072). A short all-digit ref (up to 6 digits) is a check
+    // number even when shared; only longer or mixed ids that repeat across
+    // customers still count as a processor batch.
+    if(/^\d{1,6}$/.test(r)) return false;
+    var seen=refToCustomerIds[r];
     return !!(seen && Object.keys(seen).length>1);
   }
   function _looksLikeCheckRef(ref){
@@ -12583,11 +12612,15 @@ async function runChecksReport(){
   }
   var allPaymentsInWindow=payments;
   var exclusionCounts={paymentMethod:0,sharedRef:0,refKeyword:0,blank:0};
+  // Every payment NOT counted as a check, with the reason — shown through the
+  // "see which" link on the status line, so a missing check can be found.
+  _checksExcluded=[];
+  function _excl(p,why){ _checksExcluded.push({p:p,why:why}); return false; }
   payments=payments.filter(function(p){
-    if(_paymentMethodSaysNonCheck(p)){ exclusionCounts.paymentMethod++; return false; }
-    if(_refSharedAcrossCustomers(p.PaymentRefNum)){ exclusionCounts.sharedRef++; return false; }
-    if(!(p.PaymentRefNum||'').trim()){ exclusionCounts.blank++; return false; }
-    if(!_looksLikeCheckRef(p.PaymentRefNum)){ exclusionCounts.refKeyword++; return false; }
+    if(_paymentMethodSaysNonCheck(p)){ exclusionCounts.paymentMethod++; return _excl(p,'Paid electronically (card or bank transfer through QuickBooks)'); }
+    if(_refSharedAcrossCustomers(p.PaymentRefNum)){ exclusionCounts.sharedRef++; return _excl(p,'Ref # is shared with other customers — looks like a processor batch id'); }
+    if(!(p.PaymentRefNum||'').trim()){ exclusionCounts.blank++; return _excl(p,'No Ref # (check number) entered in QuickBooks'); }
+    if(!_looksLikeCheckRef(p.PaymentRefNum)){ exclusionCounts.refKeyword++; return _excl(p,'Ref # says it was not a check (e.g. cash, Zelle, ACH)'); }
     return true;
   });
 
@@ -12612,7 +12645,8 @@ async function runChecksReport(){
       if(exclusionCounts.sharedRef) exclusionParts.push(exclusionCounts.sharedRef+' shared-ref batch');
       if(exclusionCounts.refKeyword) exclusionParts.push(exclusionCounts.refKeyword+' by ref keyword');
       if(exclusionCounts.blank) exclusionParts.push(exclusionCounts.blank+' blank ref');
-      statusEl.textContent=payments.length+' check(s) found (since '+esc(from)+')'+(excludedTotal?' — '+excludedTotal+' other payment(s) excluded ('+exclusionParts.join(', ')+')':'');
+      statusEl.innerHTML=esc(payments.length+' check(s) found (since '+from+')'+(excludedTotal?' — '+excludedTotal+' other payment(s) not counted as checks ('+exclusionParts.join(', ')+')':''))
+      +(excludedTotal?' <a href="#" onclick="showExcludedChecks();return false" style="color:inherit;font-weight:700;text-decoration:underline">see which</a>':'');
       statusEl.style.color='#1a7a3c';
     }
   }

@@ -12459,11 +12459,13 @@ var _checksDeposited=(function(){ try{ return JSON.parse(localStorage.getItem('p
 // here; _checksDeposited (who's marked what deposited/paid) is separate
 // local-only state, same as before this change.
 function _checksBuildSharedCacheBundle(){
-  return { savedAt:new Date().toISOString(), payments:_checksPayments };
+  return { savedAt:new Date().toISOString(), payments:_checksPayments, qbDeposited:_checksQbDeposited, depositLookupOk:_checksDepositLookupOk };
 }
 function _checksRestoreSharedCacheBundle(b){
   if(!b || !b.payments) return false;
   _checksPayments=b.payments;
+  _checksQbDeposited=b.qbDeposited||{};
+  _checksDepositLookupOk=b.depositLookupOk!==false;
   return true;
 }
 async function _checksPushSharedCache(){
@@ -12509,6 +12511,46 @@ function showExcludedChecks(){
   document.body.appendChild(bg);
 }
 window.showExcludedChecks=showExcludedChecks;
+// ----- Checks QuickBooks shows as deposited (Nov 2026) --------------------
+var _checksQbDeposited={};      // payment Id -> {date, depositId, amount, how}
+var _checksDepositLookupOk=true;
+var _checksHideQbDeposited=true;
+function _checksDepositedStatusHtml(){
+  if(!_checksDepositLookupOk) return ' — <span style="color:#b8460b">could not check QuickBooks deposits this time, so deposited checks may still be listed</span>';
+  var n=(_checksPayments||[]).filter(function(p){ return _checksQbDeposited[p.Id]; }).length;
+  if(!n) return '';
+  return ' — <b>'+n+'</b> already deposited in QuickBooks '+(_checksHideQbDeposited?'(hidden)':'(shown)')+' <a href="#" onclick="showQbDepositedChecks();return false" style="color:inherit;font-weight:700;text-decoration:underline">see which</a>';
+}
+function toggleQbDepositedChecks(){
+  _checksHideQbDeposited=!_checksHideQbDeposited;
+  renderChecksInHandSection();
+  var st=document.getElementById('chk-status');
+  if(st && st.innerHTML.indexOf('already deposited in QuickBooks')>=0){
+    st.innerHTML=st.innerHTML.replace(/ — <b>\d+<\/b> already deposited in QuickBooks[\s\S]*$/,'')+_checksDepositedStatusHtml();
+  }
+  var m=document.getElementById('chkExclModal'); if(m){ m.remove(); showQbDepositedChecks(); }
+}
+window.toggleQbDepositedChecks=toggleQbDepositedChecks;
+function showQbDepositedChecks(){
+  var old=document.getElementById('chkExclModal'); if(old) old.remove();
+  var rows=(_checksPayments||[]).filter(function(p){ return _checksQbDeposited[p.Id]; })
+    .sort(function(a,b){ return String(b.TxnDate||'').localeCompare(String(a.TxnDate||'')); });
+  var money=function(n){ return '$'+Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var bg=document.createElement('div'); bg.id='chkExclModal';
+  bg.style.cssText='position:fixed;inset:0;z-index:1500;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;padding:16px';
+  bg.onclick=function(e){ if(e.target===bg) bg.remove(); };
+  bg.innerHTML='<div role="dialog" aria-label="Checks already deposited in QuickBooks" style="background:var(--panel);border-radius:12px;max-width:900px;width:100%;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.25)">'
+    +'<div style="padding:16px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">'
+      +'<div><div style="font-weight:700;font-size:16px">Already deposited in QuickBooks ('+rows.length+')</div>'
+      +'<div style="font-size:12.5px;color:var(--muted);margin-top:2px">'+(_checksHideQbDeposited?'Hidden from Checks In Hand.':'Currently shown in Checks In Hand.')+' Nothing was changed in QuickBooks or in your “Mark deposited” records.</div></div>'
+      +'<div style="display:flex;gap:8px"><button class="btn btn-sm" onclick="toggleQbDepositedChecks()">'+(_checksHideQbDeposited?'Show them in Checks In Hand anyway':'Hide them again')+'</button>'
+      +'<button class="btn btn-sm" onclick="document.getElementById(\'chkExclModal\').remove()">Close</button></div></div>'
+    +'<div style="overflow:auto;padding:0 8px 8px"><table class="txn-table" style="width:100%"><thead><tr><th>Check date</th><th>Customer</th><th>Ref #</th><th style="text-align:right">Amount</th><th>Deposited</th><th>How it was matched</th></tr></thead><tbody>'
+    +(rows.length?rows.map(function(p){ var d=_checksQbDeposited[p.Id]; return '<tr><td>'+esc(fmtDateUS(p.TxnDate||''))+'</td><td>'+esc((p.CustomerRef&&p.CustomerRef.name)||'')+'</td><td style="font-family:var(--code,monospace)">'+esc(p.PaymentRefNum||'—')+'</td><td style="text-align:right">'+money(p.TotalAmt)+'</td><td>'+esc(fmtDateUS(d.date||''))+'</td><td style="font-size:12.5px;color:var(--muted)">'+esc(d.how)+'</td></tr>'; }).join(''):'<tr><td colspan="6" style="color:var(--muted)">None.</td></tr>')
+    +'</tbody></table></div></div>';
+  document.body.appendChild(bg);
+}
+window.showQbDepositedChecks=showQbDepositedChecks;
 async function runChecksReport(){
   var statusEl=document.getElementById('chk-status');
   // No date picker for this one — undeposited checks are inherently
@@ -12628,6 +12670,59 @@ async function runChecksReport(){
   // every genuine check payment on file in this window, full stop. All
   // of them are treated as still "in hand" (not yet deposited); nothing
   // here moves itself anywhere automatically.
+  // ---- Already deposited in QuickBooks? (Nov 2026) ----
+  // Checks In Hand used to list every check payment unless someone had
+  // clicked "Mark deposited" here — QuickBooks's own deposits were never
+  // consulted, so deposited checks piled up (843). A QuickBooks Deposit lists
+  // the exact payments it contains (by payment Id, never by Ref #, so two
+  // customers' check #4882 can't be confused). Deposits entered separately
+  // and not linked to the payment are matched by same customer + exact
+  // amount within 21 days, each deposit line used once. Voided / $0 lines are
+  // ignored. Nothing is recorded or moved: matching checks are only HIDDEN
+  // from Checks In Hand, listed under "see which", and can be shown again.
+  if(statusEl) statusEl.textContent='Checking which checks QuickBooks shows as deposited…';
+  var depWindow=new Date(from+'T00:00:00'); depWindow.setDate(depWindow.getDate()-30);
+  depWindow=depWindow.toISOString().slice(0,10);
+  var deposits=[], depOk=true;
+  try{
+    var dPos=1, dSafety=0;
+    while(true){
+      dSafety++; if(dSafety>500) break;
+      var dr=await fetch(base+'/api/qb/documents?entity=Deposit&startposition='+dPos+'&from='+encodeURIComponent(depWindow));
+      var dj=await dr.json();
+      if(!dr.ok || (dj&&dj.error)) throw new Error((dj&&dj.error)||('HTTP '+dr.status));
+      var dRows=(dj&&dj.Deposit)?dj.Deposit:[];
+      deposits=deposits.concat(dRows);
+      if(dRows.length<100) break;
+      dPos+=100;
+    }
+  }catch(e){ depOk=false; console.warn('Could not load QuickBooks deposits:',e); }
+  _checksQbDeposited={};
+  if(depOk){
+    var byPaymentId={}, looseLines=[];
+    deposits.forEach(function(dep){
+      (dep.Line||[]).forEach(function(ln,li){
+        var amt=Number(ln.Amount||0);
+        if(!(amt>0)) return; // voided / zeroed lines never count
+        var info={date:(dep.TxnDate||'').slice(0,10),depositId:dep.Id,amount:amt};
+        var linked=(ln.LinkedTxn||[]).filter(function(lt){ return lt.TxnType==='Payment'; });
+        if(linked.length){ linked.forEach(function(lt){ byPaymentId[lt.TxnId]=info; }); return; }
+        var ent=ln.DepositLineDetail&&ln.DepositLineDetail.Entity;
+        if(ent && ent.value) looseLines.push({cust:String(ent.value),amount:amt,info:info,used:false});
+      });
+    });
+    payments.forEach(function(p){
+      if(byPaymentId[p.Id]){ _checksQbDeposited[p.Id]=Object.assign({how:'Listed on the QuickBooks deposit'},byPaymentId[p.Id]); return; }
+      var cust=String((p.CustomerRef&&p.CustomerRef.value)||''), amt=Number(p.TotalAmt||0), pd=new Date((p.TxnDate||'').slice(0,10)+'T00:00:00');
+      var hit=looseLines.find(function(l){
+        if(l.used || l.cust!==cust || Math.abs(l.amount-amt)>0.005) return false;
+        var days=Math.abs((new Date(l.info.date+'T00:00:00')-pd)/86400000);
+        return days<=21;
+      });
+      if(hit){ hit.used=true; _checksQbDeposited[p.Id]=Object.assign({how:'Same customer and exact amount (deposit not linked to the payment in QuickBooks)'},hit.info); }
+    });
+  }
+  _checksDepositLookupOk=depOk;
   _checksPayments=payments;
   renderChecksInHandSection();
   if(statusEl){
@@ -12646,7 +12741,8 @@ async function runChecksReport(){
       if(exclusionCounts.refKeyword) exclusionParts.push(exclusionCounts.refKeyword+' by ref keyword');
       if(exclusionCounts.blank) exclusionParts.push(exclusionCounts.blank+' blank ref');
       statusEl.innerHTML=esc(payments.length+' check(s) found (since '+from+')'+(excludedTotal?' — '+excludedTotal+' other payment(s) not counted as checks ('+exclusionParts.join(', ')+')':''))
-      +(excludedTotal?' <a href="#" onclick="showExcludedChecks();return false" style="color:inherit;font-weight:700;text-decoration:underline">see which</a>':'');
+      +(excludedTotal?' <a href="#" onclick="showExcludedChecks();return false" style="color:inherit;font-weight:700;text-decoration:underline">see which</a>':'')
+      +_checksDepositedStatusHtml();
       statusEl.style.color='#1a7a3c';
     }
   }
@@ -12731,7 +12827,7 @@ function renderChecksInHandSection(){
   if(!el) return;
   // No more Deposited/Paid distinction — every genuine check payment
   // found is shown here, full stop.
-  var payments=(_checksPayments||[]).filter(function(p){ return _checksMatchesSearch((p.CustomerRef&&p.CustomerRef.name)||'',p.PaymentRefNum||'',p.TotalAmt||0); });
+  var payments=(_checksPayments||[]).filter(function(p){ return !(_checksHideQbDeposited && _checksQbDeposited[p.Id]) && _checksMatchesSearch((p.CustomerRef&&p.CustomerRef.name)||'',p.PaymentRefNum||'',p.TotalAmt||0); });
   if(!payments.length){
     el.innerHTML=_collapsibleHeader('chkInHand','📄 Checks In Hand',0,'chk-inhand-section','Checks In Hand')
       +'<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px;background:var(--panel);border:1px solid var(--line);border-radius:14px">'+(_checksSearchQuery?'No checks in hand match your search.':'No checks yet — click "Pull from QuickBooks" above.')+'</div>';

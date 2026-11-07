@@ -12550,6 +12550,36 @@ function showQbDepositedChecks(){
   document.body.appendChild(bg);
 }
 window.showQbDepositedChecks=showQbDepositedChecks;
+// ----- Faster QuickBooks paging (Nov 2026) --------------------------------
+// Asks for several pages of 100 at once instead of waiting for each page
+// before requesting the next. Results come back in the same order. Stops as
+// soon as any page in a wave is short (the end of the data). 4 at a time is
+// well within QuickBooks' per-company limit. Throws {code:401} or an Error.
+async function _qbFetchPagesParallel(entity,query,onProgress,parallel){
+  parallel=parallel||4;
+  var base=window.location.origin, all=[], start=1, waves=0;
+  async function one(pos){
+    var ctrl=new AbortController(), timer=setTimeout(function(){ctrl.abort();},60000);
+    try{
+      var r=await fetch(base+'/api/qb/documents?entity='+entity+'&startposition='+pos+(query||''),{signal:ctrl.signal});
+      if(r.status===401){ var e401=new Error('QuickBooks connection expired — reconnect and try again.'); e401.code=401; throw e401; }
+      var jd=await r.json();
+      if(jd && jd.error) throw new Error(jd.error);
+      return (jd && jd[entity]) ? jd[entity] : [];
+    } finally { clearTimeout(timer); }
+  }
+  while(waves<250){
+    waves++;
+    var positions=[]; for(var k=0;k<parallel;k++) positions.push(start+k*100);
+    var pages=await Promise.all(positions.map(one));
+    var done=false;
+    for(var j=0;j<pages.length;j++){ all=all.concat(pages[j]); if(pages[j].length<100){ done=true; break; } }
+    if(onProgress) onProgress(all.length);
+    if(done) break;
+    start+=parallel*100;
+  }
+  return all;
+}
 async function runChecksReport(){
   var statusEl=document.getElementById('chk-status');
   // No date picker for this one — undeposited checks are inherently
@@ -12561,32 +12591,24 @@ async function runChecksReport(){
   from=from.toISOString().slice(0,10);
   var base=window.location.origin;
   var payments=[];
-  var startPos=1;
-  var pageSize=100;
-  var safety=0;
-  if(statusEl){ statusEl.textContent='Fetching payments from QuickBooks…'; statusEl.style.color=''; }
-  while(true){
-    safety++;
-    if(safety>1000) break; // hard cap (~100k rows)
-    var ctrl=new AbortController();
-    var timer=setTimeout(function(){ctrl.abort();},60000);
-    var pageRows=null;
-    try{
-      var r=await fetch(base+'/api/qb/documents?entity=Payment&startposition='+startPos+'&from='+encodeURIComponent(from),{signal:ctrl.signal});
-      clearTimeout(timer);
-      if(r.status===401){ if(statusEl){ statusEl.textContent='QuickBooks connection expired — reconnect and try again.'; statusEl.style.color='#c0392b'; } return; }
-      var jd=await r.json();
-      if(jd && jd.error){ if(statusEl){ statusEl.textContent='Error: '+jd.error; statusEl.style.color='#c0392b'; } return; }
-      pageRows=(jd && jd.Payment) ? jd.Payment : [];
-    }catch(e){
-      clearTimeout(timer);
-      if(statusEl){ statusEl.textContent='Network error while fetching payments — try again.'; statusEl.style.color='#c0392b'; }
-      return;
+  // Payments and deposits are fetched AT THE SAME TIME, several pages at once
+  // (Nov 2026 speed-up) — they used to be fetched one page after another,
+  // payments first, then deposits.
+  var depWindow=new Date(from+'T00:00:00'); depWindow.setDate(depWindow.getDate()-30);
+  depWindow=depWindow.toISOString().slice(0,10);
+  var _payN=0, _depN=0;
+  function _progress(){ if(statusEl) statusEl.textContent='Fetching from QuickBooks… '+_payN+' payment(s), '+_depN+' deposit(s) so far…'; }
+  if(statusEl){ statusEl.textContent='Fetching payments and deposits from QuickBooks…'; statusEl.style.color=''; }
+  var depositsPromise=_qbFetchPagesParallel('Deposit','&from='+encodeURIComponent(depWindow),function(n){ _depN=n; _progress(); })
+    .then(function(rows){ return {ok:true,rows:rows}; }, function(e){ console.warn('Could not load QuickBooks deposits:',e); return {ok:false,rows:[]}; });
+  try{
+    payments=await _qbFetchPagesParallel('Payment','&from='+encodeURIComponent(from),function(n){ _payN=n; _progress(); });
+  }catch(e){
+    if(statusEl){
+      statusEl.textContent=(e&&e.code===401)?e.message:(e&&e.message&&!/abort/i.test(e.message)?'Error: '+e.message:'Network error while fetching payments — try again.');
+      statusEl.style.color='#c0392b';
     }
-    payments=payments.concat(pageRows);
-    if(statusEl) statusEl.textContent='Fetched '+payments.length+' payment(s) so far…';
-    if(pageRows.length<pageSize) break;
-    startPos+=pageSize;
+    return;
   }
 
   // Historically PaymentMethodRef wasn't populated in this QuickBooks
@@ -12683,22 +12705,8 @@ async function runChecksReport(){
   // ignored. Nothing is recorded or moved: matching checks are only HIDDEN
   // from Checks In Hand, listed under "see which", and can be shown again.
   if(statusEl) statusEl.textContent='Checking which checks QuickBooks shows as deposited…';
-  var depWindow=new Date(from+'T00:00:00'); depWindow.setDate(depWindow.getDate()-30);
-  depWindow=depWindow.toISOString().slice(0,10);
-  var deposits=[], depOk=true;
-  try{
-    var dPos=1, dSafety=0;
-    while(true){
-      dSafety++; if(dSafety>500) break;
-      var dr=await fetch(base+'/api/qb/documents?entity=Deposit&startposition='+dPos+'&from='+encodeURIComponent(depWindow));
-      var dj=await dr.json();
-      if(!dr.ok || (dj&&dj.error)) throw new Error((dj&&dj.error)||('HTTP '+dr.status));
-      var dRows=(dj&&dj.Deposit)?dj.Deposit:[];
-      deposits=deposits.concat(dRows);
-      if(dRows.length<100) break;
-      dPos+=100;
-    }
-  }catch(e){ depOk=false; console.warn('Could not load QuickBooks deposits:',e); }
+  var _depResult=await depositsPromise; // already fetched alongside the payments
+  var deposits=_depResult.rows, depOk=_depResult.ok;
   _checksQbDeposited={};
   if(depOk){
     var byPaymentId={}, looseLines=[];
@@ -15514,150 +15522,7 @@ function qtyAtLoc(it,locId){
 }
 
 // Diagnostic: shows how transfers stored their locations and what the engine produced
-async function checkServerMemory(){
-  try{
-    var res=await fetchWithTimeout('/api/diagnostics/memory?_ts='+Date.now(),{cache:'no-store'});
-    if(!res.ok){ notify('Could not reach the server for this ('+res.status+').'); return; }
-    var d=await res.json();
-    var msg='SERVER MEMORY & DATA SIZE\n\n';
-    msg+='Process memory right now:\n';
-    msg+='  RSS (total OS-allocated memory — the number that matters for a crash): '+d.processMemoryMB.rss+' MB\n';
-    msg+='  Heap used: '+d.processMemoryMB.heapUsed+' MB   Heap total: '+d.processMemoryMB.heapTotal+' MB\n';
-    msg+='  External: '+d.processMemoryMB.external+' MB   Array buffers: '+d.processMemoryMB.arrayBuffers+' MB\n';
-    msg+='  Server uptime since last restart: '+d.uptimeMinutes+' minutes\n\n';
-    msg+='Record counts:\n';
-    msg+='  Items: '+d.dataCounts.items.toLocaleString()+'\n';
-    msg+='  Transactions: '+d.dataCounts.transactions.toLocaleString()+'\n';
-    msg+='  Orders: '+d.dataCounts.orders.toLocaleString()+'\n';
-    msg+='  Scale logs: '+d.dataCounts.scaleLogs.toLocaleString()+'\n';
-    msg+='  Customers: '+d.dataCounts.customers.toLocaleString()+'\n';
-    msg+='  Vendors: '+d.dataCounts.vendors.toLocaleString()+'\n\n';
-    msg+='On-disk file sizes:\n';
-    msg+='  Items + transactions file: '+(d.fileSizesMB.itemsTransactionsFile!=null?d.fileSizesMB.itemsTransactionsFile+' MB':'not found')+'\n';
-    msg+='  Main data file (everything else): '+(d.fileSizesMB.mainDataFile!=null?d.fileSizesMB.mainDataFile+' MB':'not found')+'\n\n';
-    msg+='If RSS climbs noticeably higher every time you check this over the\ncoming days without a restart in between, that confirms a genuine,\nongoing memory leak rather than just a naturally large dataset.';
-    notify(msg);
-  }catch(e){
-    notify('Could not check server memory: '+(e&&e.message?e.message:e));
-  }
-}
-window.checkServerMemory=checkServerMemory;
-function diagnoseLocations(){
-  var allTxns=transactions;
 
-  // Count what TYPES of transactions actually exist in storage
-  var typeCounts={};
-  var qbTypeCounts={};
-  allTxns.forEach(function(t){
-    typeCounts[t.type]=(typeCounts[t.type]||0)+1;
-    if(t.qbDocType) qbTypeCounts[t.qbDocType]=(qbTypeCounts[t.qbDocType]||0)+1;
-  });
-
-  var msg='=== WHAT IS IN YOUR TRANSACTIONS ===\n';
-  msg+='Total transaction lines: '+allTxns.length+'\n\n';
-  msg+='By movement type:\n';
-  Object.keys(typeCounts).sort().forEach(function(k){ msg+='  '+k+': '+typeCounts[k]+'\n'; });
-  msg+='\nBy QuickBooks document type:\n';
-  if(!Object.keys(qbTypeCounts).length) msg+='  (none from QuickBooks)\n';
-  Object.keys(qbTypeCounts).sort().forEach(function(k){ msg+='  '+k+': '+qbTypeCounts[k]+'\n'; });
-
-  // The decisive answer about sales:
-  var invCount=qbTypeCounts['Invoice']||0;
-  var srCount=qbTypeCounts['SalesReceipt']||0;
-  var cmCount=qbTypeCounts['CreditMemo']||0;
-  var billCount=qbTypeCounts['Bill']||0;
-  msg+='\n=== SALES DIAGNOSIS ===\n';
-  if(invCount===0 && srCount===0){
-    msg+='>> NO invoices or sales receipts were parsed.\n';
-    if(cmCount>0) msg+='   But '+cmCount+' credit memos (returns) WERE parsed.\n   This means invoices are failing while returns/bills work.\n';
-    else msg+='   No sales documents of any kind were parsed.\n';
-  } else {
-    msg+='>> Invoices/sales receipts ARE present ('+invCount+' inv, '+srCount+' SR).\n   If a product shows no sale, it simply was not sold in QB.\n';
-  }
-
-  // Server-side sync snapshot (what QB actually returned)
-  var d=window.__lastDocSync;
-  msg+='\n=== LAST SERVER SYNC (what QuickBooks returned) ===\n';
-  if(!d){
-    msg+='  No sync run this session. Click "Sync from QuickBooks", then Check again.\n';
-  } else {
-    msg+='  Returned: '+d.docCounts.Bill+' bills, '+d.docCounts.Invoice+' invoices, '+d.docCounts.SalesReceipt+' sales receipts, '+d.docCounts.CreditMemo+' credit memos, '+(d.docCounts.VendorCredit||0)+' vendor credits, '+(d.docCounts.InventoryAdjustment||0)+' inventory adjustments\n';
-    msg+='  Item lines seen: '+d.lineItemsSeen+'\n';
-    msg+='  Movements added: '+d.added+'\n';
-    msg+='  Skipped (item not matched): '+d.skippedNoItem+'\n';
-    if(d.skippedNoItem>0 && d.unmatchedSample && d.unmatchedSample.length){
-      msg+='    >> Unmatched QuickBooks Item ID(s): '+d.unmatchedSample.join(', ')+'\n';
-      msg+='       These lines reference an Item ID that doesn\'t match anything in your\n';
-      msg+='       current synced item list — often because the item was deleted and\n';
-      msg+='       recreated under a new name in QuickBooks rather than renamed, so the\n';
-      msg+='       old ID is now orphaned. A resync won\'t fix this on its own; the fix is\n';
-      msg+='       usually re-pointing that old bill/invoice line to the current item in\n';
-      msg+='       QuickBooks itself.\n';
-    }
-    msg+='  Skipped (no quantity on line): '+d.skippedNoQty+'\n';
-    msg+='  Skipped (unexpected error while processing): '+(d.docErrors||0)+'\n';
-    if(d.duplicatesRemoved) msg+='  Duplicate transactions removed (same line seen twice): '+d.duplicatesRemoved+'\n';
-    if(d.serverErrors&&Object.keys(d.serverErrors).length){
-      msg+='  SERVER FETCH ERRORS:\n';
-      Object.keys(d.serverErrors).forEach(function(k){ msg+='    '+k+': '+d.serverErrors[k]+'\n'; });
-    } else {
-      msg+='  (no server fetch errors)\n';
-    }
-  }
-  notify(msg);
-}
-
-function diagnoseLocationsOLD(){
-  var allTxns=transactions;
-  var moves=allTxns.filter(function(t){return t.type==='transfer'||t.type==='receive'||t.type==='shipment';});
-  function locName(id){ if(!id||id==='external') return '(external/none)'; var s=storages.find(function(x){return x.id===id;}); return s?s.name:('UNKNOWN ID: '+id); }
-  var msg='STORAGE LOCATIONS DEFINED:\n';
-  if(!storages.length) msg+='  (none — you have no storage locations set up!)\n';
-  storages.forEach(function(s){ msg+='  • '+s.name+'  [id: '+s.id+']\n'; });
-  msg+='\nMOVEMENT TRANSACTIONS:\n';
-  if(!moves.length) msg+='  (none found)\n';
-  moves.slice(-10).forEach(function(t){
-    var it=items.find(function(x){return x.id===t.itemId;});
-    msg+='  '+(t.num||'?')+' '+t.type.toUpperCase()+' — '+(it?it.name:'?')+' '+Number(t.qty||0)+'\n';
-    msg+='      OUT: '+locName(t.locOut)+'   IN: '+locName(t.locIn)+'\n';
-  });
-  // show one affected item's per-location breakdown
-  var anyItem=null;
-  moves.forEach(function(t){ if(!anyItem){var it=items.find(function(x){return x.id===t.itemId;}); if(it) anyItem=it;} });
-  if(anyItem){
-    msg+='\nEXAMPLE ITEM "'+anyItem.name+'":\n';
-    msg+='  total qty = '+Number(anyItem.qty||0)+'\n';
-    if(anyItem.locQtys){
-      Object.keys(anyItem.locQtys).forEach(function(k){ msg+='    '+locName(k)+': '+anyItem.locQtys[k]+'\n'; });
-    } else {
-      msg+='    locQtys = NONE (engine has not run — click Recalculate)\n';
-    }
-  }
-
-  // Document sync diagnostic
-  msg+='\n=== LAST QUICKBOOKS DOCUMENT SYNC ===\n';
-  var d=window.__lastDocSync;
-  if(!d){
-    msg+='  No document sync run yet this session. Click "Sync from QuickBooks".\n';
-  } else {
-    msg+='  Documents pulled: '+d.docCounts.Bill+' bills, '+d.docCounts.Invoice+' invoices, '+d.docCounts.SalesReceipt+' sales receipts, '+d.docCounts.CreditMemo+' credit memos, '+(d.docCounts.VendorCredit||0)+' vendor credits, '+(d.docCounts.InventoryAdjustment||0)+' inventory adjustments\n';
-    msg+='  Item lines seen: '+d.lineItemsSeen+'\n';
-    msg+='  Movements added: '+d.added+'\n';
-    msg+='  Skipped (item not matched): '+d.skippedNoItem+'\n';
-    msg+='  Skipped (no quantity on line): '+d.skippedNoQty+'\n';
-    if(d.serverErrors&&Object.keys(d.serverErrors).length){
-      msg+='  SERVER FETCH ERRORS:\n';
-      Object.keys(d.serverErrors).forEach(function(k){ msg+='    '+k+': '+d.serverErrors[k]+'\n'; });
-    }
-    if(d.docCounts.Invoice===0&&d.docCounts.SalesReceipt===0){
-      msg+='\n  >> QuickBooks returned ZERO invoices and sales receipts.\n     Either no sales exist for these items, or sales are recorded differently.\n';
-    }
-    if(d.skippedNoItem>0){
-      msg+='\n  >> '+d.skippedNoItem+' line(s) referenced items not in your synced list.\n     Sample QB item IDs: '+d.unmatchedSample.join(', ')+'\n     Run Sync from QuickBooks to refresh items first.\n';
-    }
-  }
-  notify(msg);
-}
 
 function renderItemsView(){
   var _myFilterPrefs=(currentUser&&itemFilterPrefs[currentUser.id])||{};
@@ -15681,14 +15546,6 @@ function renderItemsView(){
         <button class="btn" onclick="recalcQuantities()" title="Rebuild per-location quantities from transaction history">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/></svg>
           Recalculate
-        </button>
-        <button class="btn" onclick="diagnoseLocations()" title="Show how transfers and locations are stored">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-          Check
-        </button>
-        <button class="btn" onclick="checkServerMemory()" title="Show the server's actual current memory usage and data size — for tracking down the repeated crashes">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>
-          Memory
         </button>
         <button class="btn" onclick="findOrphanedItems()" title="Checks every item against what the CURRENTLY connected QuickBooks company actually has — finds leftovers from a wrong/old QuickBooks connection that were never really deleted from here">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>

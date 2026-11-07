@@ -4254,7 +4254,14 @@ function _ordersProductTablesHtml(toPrint){
             +'<td class="prod">'+esc(l.product||'(no product)')+shortageNote+'</td>'
             +'<td class="desc">'+esc(l.description||'')+'</td>'
             +'<td class="qty">'+esc(l.quantity||'')+'</td>'
-            +'<td class="fill"></td>'
+            // Weight already entered in the app is printed (Nov 2026); lines
+            // not counted yet stay blank to fill in by hand. A 0 count says
+            // "out of stock" so it can't be mistaken for a missing count.
+            +'<td class="fill" style="font-weight:700">'+(function(){
+                var fc=l.finalCount; if(fc===undefined||fc===null||String(fc).trim()==='') return '';
+                if(Number(fc)===0||l.shortage) return '0 <span style="color:#a3231b;font-weight:700">— out of stock</span>';
+                return esc(String(fc));
+              })()+'</td>'
             +'<td class="fill notes"></td>'
           +'</tr>';
         }).join('')

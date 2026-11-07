@@ -12828,12 +12828,28 @@ function renderChecksInHandSection(){
       +'<th style="border:1px solid #e0c56b;background:#fff3cd;padding:6px 10px;text-align:right;font-weight:700">Amount</th>'
     +'</tr></thead><tbody>';
 
+  // (Nov 2026) Weeks were already in date order, but without a year a
+  // post-dated check in January next year ("Week 3") looked out of order
+  // after Week 51. Labels now show the year when it isn't this year, and a
+  // divider marks where post-dated checks (dated after today) begin.
+  var _thisYear=String(new Date().getFullYear());
+  var _todayIso=new Date().toISOString().slice(0,10);
+  var _postDatedShown=false;
   weekKeys.forEach(function(weekMonday){
     var weekSunday=new Date(weekMonday+'T00:00:00'); weekSunday.setDate(weekSunday.getDate()+6);
     var weekCount=0;
     var weekTotal=0;
     byWeek[weekMonday].forEach(function(d){ byDate[d].forEach(function(p){ weekTotal+=Number(p.TotalAmt||0); weekCount++; }); });
-    var weekLabel='Week '+_isoWeekNumber(weekMonday)+' · '+_checksFmtShort(weekMonday)+' – '+_checksFmtShort(weekSunday.toISOString().slice(0,10))+' ('+weekCount+')';
+    var _sunIso=weekSunday.toISOString().slice(0,10), _yr=_sunIso.slice(0,4);
+    var weekLabel='Week '+_isoWeekNumber(weekMonday)+' · '+_checksFmtShort(weekMonday)+' – '+_checksFmtShort(_sunIso)+(_yr!==_thisYear?', '+_yr:'')+' ('+weekCount+')';
+    if(!_postDatedShown && weekMonday>_todayIso){
+      _postDatedShown=true;
+      var _pdCount=0, _pdTotal=0;
+      payments.forEach(function(p){ if(String(p.TxnDate||'').slice(0,10)>=weekMonday){ _pdCount++; _pdTotal+=Number(p.TotalAmt||0); } });
+      html+='<tr><td colspan="4" style="border:1px solid #c9a227;padding:9px 10px;background:#fff8e1;font-weight:700;color:#7a5a00">'
+        +'Post-dated checks — dated after today ('+_pdCount+', '+_checksMoneyFmt(_pdTotal)+'). Not depositable yet.'
+        +'</td></tr>';
+    }
     grandTotal+=weekTotal;
     var weekKey='chkInHand_'+weekMonday;
     var rowClass='wk-chkInHand-'+weekMonday;

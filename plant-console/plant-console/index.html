@@ -12599,10 +12599,13 @@ async function runChecksReport(){
   var _payN=0, _depN=0;
   function _progress(){ if(statusEl) statusEl.textContent='Fetching from QuickBooks… '+_payN+' payment(s), '+_depN+' deposit(s) so far…'; }
   if(statusEl){ statusEl.textContent='Fetching payments and deposits from QuickBooks…'; statusEl.style.color=''; }
-  var depositsPromise=_qbFetchPagesParallel('Deposit','&from='+encodeURIComponent(depWindow),function(n){ _depN=n; _progress(); })
+  // 3 payment pages + 2 deposit pages at a time: the server also caps ALL
+  // QuickBooks traffic at 4 in flight and retries "too many requests"
+  // (429), so this stays fast without tripping QuickBooks' limit.
+  var depositsPromise=_qbFetchPagesParallel('Deposit','&from='+encodeURIComponent(depWindow),function(n){ _depN=n; _progress(); },2)
     .then(function(rows){ return {ok:true,rows:rows}; }, function(e){ console.warn('Could not load QuickBooks deposits:',e); return {ok:false,rows:[]}; });
   try{
-    payments=await _qbFetchPagesParallel('Payment','&from='+encodeURIComponent(from),function(n){ _payN=n; _progress(); });
+    payments=await _qbFetchPagesParallel('Payment','&from='+encodeURIComponent(from),function(n){ _payN=n; _progress(); },3);
   }catch(e){
     if(statusEl){
       statusEl.textContent=(e&&e.code===401)?e.message:(e&&e.message&&!/abort/i.test(e.message)?'Error: '+e.message:'Network error while fetching payments — try again.');

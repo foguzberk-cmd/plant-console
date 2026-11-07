@@ -1311,7 +1311,40 @@ let tokenRefreshedAt = 0; // ms timestamp of last successful token refresh
   }
 })();
 
-function httpsRequest(options, body) {
+// ----- QuickBooks traffic control (Nov 2026) --------------------------------
+// QuickBooks allows only ~10 requests in flight per company and answers
+// "429 ThrottleExceeded" beyond that. Pages fetched in parallel by the
+// browser + the background item/customer syncs + other users can add up,
+// so EVERY QuickBooks request goes through one queue here: at most
+// QB_MAX_CONCURRENT at a time (the rest wait their turn), and a 429 is
+// retried automatically after a short, growing pause instead of failing.
+const QB_MAX_CONCURRENT = 4;
+let _qbActive = 0;
+const _qbWaiting = [];
+function _qbAcquire() {
+  if (_qbActive < QB_MAX_CONCURRENT) { _qbActive++; return Promise.resolve(); }
+  return new Promise(resolve => _qbWaiting.push(resolve));
+}
+function _qbRelease() {
+  const next = _qbWaiting.shift();
+  if (next) next(); else _qbActive--;
+}
+async function httpsRequest(options, body) {
+  if (!options || options.hostname !== 'quickbooks.api.intuit.com') return _httpsRequestRaw(options, body);
+  const waits = [1000, 2000, 4000, 8000];
+  for (let attempt = 0; ; attempt++) {
+    await _qbAcquire();
+    let res;
+    try { res = await _httpsRequestRaw(options, body); }
+    finally { _qbRelease(); }
+    if (res.status !== 429 || attempt >= waits.length) return res;
+    const ra = Number(res.headers && res.headers['retry-after']);
+    const pause = (ra > 0 && ra < 60) ? ra * 1000 : waits[attempt] + Math.floor(Math.random() * 300);
+    console.warn('[qb] QuickBooks said too many requests (429) — retrying in ' + pause + 'ms (attempt ' + (attempt + 2) + ' of ' + (waits.length + 1) + ')');
+    await new Promise(r => setTimeout(r, pause));
+  }
+}
+function _httpsRequestRaw(options, body) {
   return new Promise((resolve, reject) => {
     const req = https.request(options, (res) => {
       // Same whole-body UTF-8 decoding as readRequestBody — see there.

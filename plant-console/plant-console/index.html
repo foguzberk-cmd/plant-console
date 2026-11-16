@@ -12613,6 +12613,10 @@ async function runChecksReport(){
   // 3 payment pages + 2 deposit pages at a time: the server also caps ALL
   // QuickBooks traffic at 4 in flight and retries "too many requests"
   // (429), so this stays fast without tripping QuickBooks' limit.
+  // QuickBooks sends a payment's method only as an id ({"value":"9"}); this
+  // list turns it into the real name ("Check", "Visa", "Cash"...). (Nov 2026)
+  var methodsPromise=_qbFetchPagesParallel('PaymentMethod','',null,1)
+    .then(function(rows){ var m={}; rows.forEach(function(r){ if(r&&r.Id) m[String(r.Id)]={name:String(r.Name||''),type:String(r.Type||'')}; }); return m; }, function(){ return {}; });
   var depositsPromise=_qbFetchPagesParallel('Deposit','&from='+encodeURIComponent(depWindow),function(n){ _depN=n; _progress(); },2)
     .then(function(rows){ return {ok:true,rows:rows}; }, function(e){ console.warn('Could not load QuickBooks deposits:',e); return {ok:false,rows:[]}; });
   try{
@@ -12643,12 +12647,33 @@ async function runChecksReport(){
   // QuickBooks's own payment processing, and ProcessPayment:true means
   // ANY electronic processing happened (card or bank transfer) — neither
   // can ever be true for a paper check someone deposited manually.
+  // (Nov 2026) The payment's ACTUAL method now decides, looked up by id in
+  // QuickBooks' PaymentMethod list: method "Check"/"Cheque" = a check, full
+  // stop — even if a CreditCardPayment record is attached (QuickBooks can
+  // attach one to a plain recorded check, e.g. when the customer has a card
+  // on file; Carniceria Prime Ribs #2643 was dropped that way). The old
+  // hints are only used when no method is recorded, and an attached card
+  // record only counts if a charge actually went through.
+  var _nonCheckWhy='';
+  function _methodNameOf(p){
+    var ref=p.PaymentMethodRef||{};
+    var m=_payMethods[String(ref.value||'')];
+    return ((m&&m.name)||ref.name||'').trim();
+  }
   function _paymentMethodSaysNonCheck(p){
-    if(p.CreditCardPayment) return true;
-    if(p.ProcessPayment===true) return true;
-    var pm=((p.PaymentMethodRef&&p.PaymentMethodRef.name)||'').toLowerCase();
-    if(!pm) return false; // no name attached — no signal either way, fall through
-    for(var i=0;i<NON_CHECK_KEYWORDS.length;i++){ if(pm.indexOf(NON_CHECK_KEYWORDS[i])>=0) return true; }
+    _nonCheckWhy='';
+    var name=_methodNameOf(p), lc=name.toLowerCase();
+    if(lc){
+      if(/\b(check|cheque|chk)\b/.test(lc) && !/e-?check|echeque/.test(lc)) return false; // a real check
+      for(var i=0;i<NON_CHECK_KEYWORDS.length;i++){ if(lc.indexOf(NON_CHECK_KEYWORDS[i])>=0){ _nonCheckWhy='Payment method in QuickBooks is “'+name+'”'; return true; } }
+      var m=_payMethods[String((p.PaymentMethodRef&&p.PaymentMethodRef.value)||'')];
+      if(m && /CREDIT_CARD/i.test(m.type) && !/NON_CREDIT_CARD/i.test(m.type)){ _nonCheckWhy='Payment method in QuickBooks is a card (“'+name+'”)'; return true; }
+      return false; // some other named method (e.g. "Money order") — treat like a check
+    }
+    if(p.ProcessPayment===true){ _nonCheckWhy='Processed electronically through QuickBooks Payments'; return true; }
+    var cc=p.CreditCardPayment;
+    var charged=cc && ((cc.CreditChargeResponse&&/complete|captur|approv/i.test(String(cc.CreditChargeResponse.Status||'')))||(cc.CreditChargeInfo&&cc.CreditChargeInfo.ProcessPayment===true));
+    if(charged){ _nonCheckWhy='A card charge was processed through QuickBooks'; return true; }
     return false;
   }
   // Second signal, independent of the above: a genuine check number is
@@ -12688,6 +12713,7 @@ async function runChecksReport(){
     return true;
   }
   var allPaymentsInWindow=payments;
+  var _payMethods=await methodsPromise;
   var exclusionCounts={paymentMethod:0,sharedRef:0,refKeyword:0,blank:0,zero:0};
   // Every payment NOT counted as a check, with the reason — shown through the
   // "see which" link on the status line, so a missing check can be found.
@@ -12697,7 +12723,7 @@ async function runChecksReport(){
     // $0 "payments" are QuickBooks applying a credit or journal entry to
     // invoices — no money changed hands, so never a check in hand (Nov 2026).
     if(!(Number(p.TotalAmt||0)>0)){ exclusionCounts.zero++; return _excl(p,'Amount is $0 — a credit or journal applied to invoices, no money received'); }
-    if(_paymentMethodSaysNonCheck(p)){ exclusionCounts.paymentMethod++; return _excl(p,'Paid electronically (card or bank transfer through QuickBooks)'); }
+    if(_paymentMethodSaysNonCheck(p)){ exclusionCounts.paymentMethod++; return _excl(p,'Not a check — '+(_nonCheckWhy||'paid by card or bank transfer through QuickBooks')); }
     if(_refSharedAcrossCustomers(p.PaymentRefNum)){ exclusionCounts.sharedRef++; return _excl(p,'Ref # is shared with other customers — looks like a processor batch id'); }
     if(!(p.PaymentRefNum||'').trim()){ exclusionCounts.blank++; return _excl(p,'No Ref # (check number) entered in QuickBooks'); }
     if(!_looksLikeCheckRef(p.PaymentRefNum)){ exclusionCounts.refKeyword++; return _excl(p,'Ref # says it was not a check (e.g. cash, Zelle, ACH, journal)'); }

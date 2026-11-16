@@ -1244,6 +1244,31 @@ async function _sendCachedJson(req, res, entry) {
 let _indexGz = null; // { len, buf } compressed index.html
 let _smallJsonCache = null; // { ref, json, etag, gzPromise }
 let _smallJsonVersion = 0;
+// ----- Order change summary for edit tracking (Nov 2026) --------------------
+// Short, human-readable list of what changed between two versions of an order.
+function _orderChangeSummary(prev, next) {
+  const out = [];
+  const d = v => String(v || '').trim();
+  if (d(prev.date) !== d(next.date)) out.push('Date ' + (d(prev.date) || '—') + ' → ' + (d(next.date) || '—'));
+  if (d(prev.customer) !== d(next.customer)) out.push('Customer ' + (d(prev.customer) || '—') + ' → ' + (d(next.customer) || '—'));
+  if (d(prev.driver) !== d(next.driver)) out.push('Driver ' + (d(prev.driver) || '—') + ' → ' + (d(next.driver) || '—'));
+  if (!!prev.shipped !== !!next.shipped) out.push(next.shipped ? 'Marked shipped' : 'Marked not shipped');
+  const pl = Array.isArray(prev.lines) ? prev.lines : [], nl = Array.isArray(next.lines) ? next.lines : [];
+  const key = l => d(l.product).toUpperCase() + '|' + d(l.description).toUpperCase();
+  const used = new Set();
+  nl.forEach(n => {
+    // match the same product line (first unused one with the same name/description)
+    let mi = pl.findIndex((p, i) => !used.has(i) && key(p) === key(n));
+    if (mi < 0) { out.push('Added ' + (d(n.product) || 'line') + (d(n.quantity) ? ' (' + d(n.quantity) + ')' : '')); return; }
+    used.add(mi);
+    const p = pl[mi], name = d(n.product) || 'line';
+    if (d(p.quantity) !== d(n.quantity)) out.push(name + ' qty ' + (d(p.quantity) || '—') + ' → ' + (d(n.quantity) || '—'));
+    if (d(p.finalCount) !== d(n.finalCount)) out.push(d(n.finalCount) === '' ? (name + ' weight cleared') : ((d(p.finalCount) === '' ? 'Weight entered: ' : 'Weight changed: ') + name + ' ' + (d(p.finalCount) ? d(p.finalCount) + ' → ' : '') + d(n.finalCount)));
+    if (!!p.needsProcessing !== !!n.needsProcessing) out.push(name + (n.needsProcessing ? ' marked for processing' : ' unmarked for processing'));
+  });
+  pl.forEach((p, i) => { if (!used.has(i)) out.push('Removed ' + (d(p.product) || 'line')); });
+  return out.slice(0, 12);
+}
 // ===== END SHARED DATA STORE =====
 
 // ===== QUICKBOOKS TOKEN PERSISTENCE =====
@@ -4516,7 +4541,9 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (url === '/api/data/save-order' && req.method === 'POST') {
-    if (!requireAuth(req, res)) return;
+    const _orderSession = requireAuth(req, res);
+    if (!_orderSession) return;
+    const _who = String(_orderSession.name || _orderSession.email || 'Unknown user').slice(0, 80);
     try {
       const bodyStr = await readRequestBody(req);
       const body = JSON.parse(bodyStr || '{}');
@@ -4593,7 +4620,8 @@ const server = http.createServer(async (req, res) => {
         // Preserve the original creator/creation time across edits — only
         // set them fresh when this is genuinely a brand-new order.
         if (idx >= 0) {
-          saved.createdBy = orders[idx].createdBy || order.createdBy || '';
+          // Who added it never changes; legacy orders keep whatever they had.
+          saved.createdBy = orders[idx].createdBy || '';
           saved.createdAt = orders[idx].createdAt || new Date().toISOString();
           // Shipped status set by "Match with QuickBooks" — preserved
           // across ordinary edits (date/driver/products), which never
@@ -4613,10 +4641,23 @@ const server = http.createServer(async (req, res) => {
           // P.O. number: permanent — carried over (this endpoint rebuilds
           // the order from scratch, so any field not copied here is lost).
           saved.poNumber = orders[idx].poNumber || '';
+          // Edit tracking (Nov 2026): who changed what, from the logged-in
+          // account on the server — never taken from the browser. A save that
+          // changes nothing (repeat/auto save) adds no history entry.
+          saved.history = Array.isArray(orders[idx].history) ? orders[idx].history.slice(-29) : [];
+          saved.editedBy = orders[idx].editedBy || '';
+          saved.editedAt = orders[idx].editedAt || '';
+          const what = _orderChangeSummary(orders[idx], saved);
+          if (what.length) {
+            saved.editedBy = _who;
+            saved.editedAt = new Date().toISOString();
+            saved.history.push({ by: _who, at: saved.editedAt, what: what });
+          }
           orders[idx] = saved;
         } else {
-          saved.createdBy = order.createdBy || '';
+          saved.createdBy = _who; // the logged-in account, not the browser's claim
           saved.createdAt = new Date().toISOString();
+          saved.history = [{ by: _who, at: saved.createdAt, what: ['Order added'] }];
           saved.shipped = order.shipped === true;
           saved.invoiceDocNumber = String(order.invoiceDocNumber || '').trim().slice(0, 100);
           saved.invoiceDate = String(order.invoiceDate || '').slice(0, 10);

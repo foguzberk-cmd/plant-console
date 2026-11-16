@@ -4647,6 +4647,26 @@ const server = http.createServer(async (req, res) => {
           saved.history = Array.isArray(orders[idx].history) ? orders[idx].history.slice(-29) : [];
           saved.editedBy = orders[idx].editedBy || '';
           saved.editedAt = orders[idx].editedAt || '';
+          // Weights are never erased by a stale copy (Nov 2026): a device
+          // holding an older copy of this order (e.g. "Match with QuickBooks"
+          // on a computer that hadn't yet received the weights a tablet just
+          // entered) sends those lines with a blank weight, which used to wipe
+          // them. Only the Count box itself may clear a weight — it marks its
+          // saves with allowCountClear. Lines are matched by product +
+          // description, each stored line used once.
+          if (order.allowCountClear !== true && Array.isArray(saved.lines) && Array.isArray(orders[idx].lines)) {
+            const k = l => String((l && l.product) || '').trim().toUpperCase() + '|' + String((l && l.description) || '').trim().toUpperCase();
+            const usedPrev = new Set();
+            saved.lines.forEach(nl => {
+              if (!nl || String(nl.finalCount || '').trim() !== '') return;
+              const pi = orders[idx].lines.findIndex((pl, i) => !usedPrev.has(i) && pl && k(pl) === k(nl) && String(pl.finalCount || '').trim() !== '');
+              if (pi < 0) return;
+              usedPrev.add(pi);
+              const pl = orders[idx].lines[pi];
+              nl.finalCount = pl.finalCount;
+              if (pl.shortage) { nl.shortage = true; if (pl.rescheduledOrderId) nl.rescheduledOrderId = pl.rescheduledOrderId; if (pl.rescheduledToDate) nl.rescheduledToDate = pl.rescheduledToDate; }
+            });
+          }
           const what = _orderChangeSummary(orders[idx], saved);
           if (what.length) {
             saved.editedBy = _who;

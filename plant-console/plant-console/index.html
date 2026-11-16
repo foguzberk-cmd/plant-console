@@ -5798,7 +5798,7 @@ function _renderOrderRow(o){
   // badge there). The comment above describes the old hide-it behavior.
   var visibleLines=lines;
   return '<div id="ordRow-'+esc(o.id)+'" style="display:flex;align-items:flex-start;gap:14px;padding:8px 16px 8px 30px;font-size:12.5px;border-bottom:1px dashed var(--line)">'
-    +'<span onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;width:80px;flex-shrink:0;color:var(--muted);padding-top:5px;display:flex;flex-direction:column;align-items:flex-start;gap:4px">'+esc(o.date)+(o.poNumber?'<span title="P.O. number — right-click to copy" oncontextmenu="copyPoNumber(event,\''+esc(o.poNumber)+'\')" style="flex-shrink:0;font-family:var(--mono);font-size:10.5px;font-weight:700;color:var(--cold);background:var(--cold-soft);border:1px solid rgba(46,124,139,.25);padding:2px 7px;border-radius:9px;white-space:nowrap;cursor:copy;-webkit-touch-callout:none">'+esc(o.poNumber)+'</span>':'')+'</span>'
+    +'<span onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;width:80px;flex-shrink:0;color:var(--muted);padding-top:5px;display:flex;flex-direction:column;align-items:flex-start;gap:4px">'+esc(o.date)+(o.poNumber?'<span title="P.O. number — right-click to copy" oncontextmenu="copyPoNumber(event,\''+esc(o.poNumber)+'\')" style="flex-shrink:0;font-family:var(--mono);font-size:10.5px;font-weight:700;color:var(--cold);background:var(--cold-soft);border:1px solid rgba(46,124,139,.25);padding:2px 7px;border-radius:9px;white-space:nowrap;cursor:copy;-webkit-touch-callout:none">'+esc(o.poNumber)+'</span>':'')+_orderWhoHtml(o)+'</span>'
     +'<span style="flex:1;min-width:0">'
       +(!lines.length
         ? '<span style="color:var(--muted);font-style:italic">(no products listed)</span>'
@@ -5864,7 +5864,10 @@ function showOrderDetailModal(id){
       +'<div style="color:var(--muted)">Date</div><div>'+esc(o.date||'—')+'</div>'
       +'<div style="color:var(--muted)">Customer</div><div>'+esc(o.customer||'—')+'</div>'
       +'<div style="color:var(--muted)">Driver</div><div>'+esc(o.driver||'—')+'</div>'
+      +'<div style="color:var(--muted)">Added by</div><div>'+(o.createdBy?esc(o.createdBy)+' <span style="color:var(--muted)">· '+esc(_orderWhenStr(o.createdAt))+'</span>':'<span style="color:var(--muted)">Not recorded (added before Nov 2026)</span>')+'</div>'
+      +'<div style="color:var(--muted)">Last edited by</div><div>'+(o.editedBy?esc(o.editedBy)+' <span style="color:var(--muted)">· '+esc(_orderWhenStr(o.editedAt))+'</span>':'<span style="color:var(--muted)">Not edited since it was added</span>')+'</div>'
     +'</div>'
+    +_orderHistoryHtml(o)
     +'<div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:6px;border-top:1px solid var(--line);padding-top:12px">Products ('+lines.length+')</div>'
     +(lines.length
         ? '<div style="border:1px solid var(--line);border-radius:9px;overflow:hidden;margin-bottom:16px">'
@@ -20801,6 +20804,35 @@ window.showWeakPinBanner=showWeakPinBanner;
     else if(m.hasAttribute('onclick')){ e.preventDefault(); m.click(); }
   });
 })();
+
+/* ----- Who added / edited an order (Nov 2026) ----------------------------
+   Recorded by the server from the logged-in account (see save-order). */
+function _orderWhenStr(iso){
+  if(!iso) return '';
+  try{ var d=new Date(iso); return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})+', '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); }catch(e){ return String(iso).slice(0,16); }
+}
+function _firstName(n){ n=String(n||'').trim(); return n.split(/\s+/)[0]||n; }
+function _orderWhoHtml(o){
+  if(!o.createdBy && !o.editedBy) return '';
+  var t=(o.createdBy?'Added by '+o.createdBy+' · '+_orderWhenStr(o.createdAt):'')+(o.editedBy?(o.createdBy?'\n':'')+'Last edited by '+o.editedBy+' · '+_orderWhenStr(o.editedAt):'');
+  return '<span title="'+esc(t)+'" style="font-size:10.5px;line-height:1.3;color:var(--muted);white-space:normal">'
+    +(o.createdBy?'by '+esc(_firstName(o.createdBy)):'')
+    +(o.editedBy?(o.createdBy?'<br>':'')+'✎ '+esc(_firstName(o.editedBy)):'')
+    +'</span>';
+}
+function _orderHistoryHtml(o){
+  var h=Array.isArray(o.history)?o.history.slice().reverse():[];
+  if(!h.length) return '';
+  return '<div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:4px 0 6px;border-top:1px solid var(--line);padding-top:12px">Change history ('+h.length+')</div>'
+    +'<div style="border:1px solid var(--line);border-radius:9px;max-height:220px;overflow:auto;margin-bottom:16px">'
+    +h.map(function(e,i){
+      return '<div style="padding:8px 12px;font-size:12.5px;'+(i<h.length-1?'border-bottom:1px solid var(--line);':'')+'">'
+        +'<div><b>'+esc(e.by||'?')+'</b> <span style="color:var(--muted)">· '+esc(_orderWhenStr(e.at))+'</span></div>'
+        +'<div style="color:var(--ink);margin-top:2px">'+(e.what||[]).map(esc).join('<br>')+'</div>'
+      +'</div>';
+    }).join('')
+    +'</div>';
+}
 </script>
 </body>
 </html>

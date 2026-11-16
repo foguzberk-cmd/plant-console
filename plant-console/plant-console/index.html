@@ -4865,7 +4865,7 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
                 +'<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+(l.description?' — '+esc(l.description):'')+'</span>'
                 +'<span style="flex-shrink:0;text-align:right;min-width:60px">'
                   +(l.quantity?'<b style="white-space:nowrap">'+esc(l.quantity)+'</b>':'')
-                  +(l.finalCount?'<div style="font-size:10.5px;color:var(--muted);white-space:nowrap">count: '+esc(l.finalCount)+'</div>':'')
+                  +(String(l.finalCount||'').trim()!==''?'<div style="font-size:12px;font-weight:700;color:var(--ink);white-space:nowrap">Weighed: '+esc(l.finalCount)+'</div>':'')
                 +'</span>'
               +'</div>';
             }).join('')
@@ -6596,7 +6596,9 @@ async function updateOrderLineFinalCount(id,lineIdx,value){
     // genuinely no longer needed.
     lines[lineIdx].shortage=false;
   }
-  var fullOrder={ id:o.id, date:o.date, customer:o.customer, driver:o.driver, lines:lines };
+  // allowCountClear: this is the Count box itself, so a blank weight here is
+  // a deliberate clear (every other kind of save keeps stored weights).
+  var fullOrder={ id:o.id, date:o.date, customer:o.customer, driver:o.driver, lines:lines, allowCountClear:true };
   var saved=await saveOrder(fullOrder);
   if(!saved){ notify('Could not save the count — check your connection and try again.'); }
   else if(justFlaggedShortage){

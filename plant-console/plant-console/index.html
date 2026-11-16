@@ -644,6 +644,22 @@
     .m-tab:active{background:rgba(255,255,255,.06)}
     .btn{min-height:40px}
   }
+
+  /* ===== Display size (Nov 2026) — scales the whole app per computer ===== */
+  html{zoom:var(--ui-zoom,1)}
+  body{min-height:calc(100vh / var(--ui-zoom,1))}
+  #appShell{min-height:calc(100vh / var(--ui-zoom,1))}
+  .rail{height:calc(100vh / var(--ui-zoom,1))}
+  #dispBtn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);font:600 12.5px var(--sans);cursor:pointer}
+  #dispBtn:hover{border-color:var(--ink)}
+  #dispMenu{position:absolute;right:0;top:calc(100% + 6px);z-index:1200;min-width:330px;max-height:80vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.18);padding:6px}
+  #dispMenu button{display:flex;width:100%;align-items:center;gap:10px;padding:9px 10px;border:0;background:none;border-radius:7px;text-align:left;cursor:pointer;font:500 13px var(--sans);color:var(--ink)}
+  #dispMenu button:hover,#dispMenu button:focus-visible{background:var(--bg)}
+  #dispMenu button[onclick="detectMyScreen()"]:hover,#dispMenu button[onclick="detectMyScreen()"]:focus-visible{background:var(--cold);filter:brightness(1.08)}
+  #dispMenu .dm-check{width:16px;flex:none;text-align:center;color:var(--cold);font-weight:700}
+  #dispMenu .dm-sub{margin-left:auto;color:var(--muted);font-size:12px}
+  #dispMenu .dm-note{padding:8px 10px 4px;border-top:1px solid var(--line);margin-top:4px;color:var(--muted);font-size:11.5px}
+  @media (max-width:780px){ #dispWrap{display:none} }
 </style>
 <style>
 /* Sales report rows (Sep 2026): alternating shading + hover highlight so a
@@ -708,6 +724,12 @@
       <header class="topbar">
         <div class="where"><span class="m-mark" onclick="openMobileSheet('more')">PC</span><b id="crumb">Items</b></div>
         <div class="status-cluster">
+          <div id="dispWrap" style="position:relative">
+            <button id="dispBtn" type="button" onclick="toggleDisplayMenu(event)" title="Display size — fit Plant Console to this screen" aria-label="Display size" aria-haspopup="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+              <span id="dispLabel">Auto</span>
+            </button>
+          </div>
           <span class="pill"><span class="dot"></span>Cold chain OK</span>
           <div class="clock"><span id="time">--:--:--</span><small id="date">—</small></div>
         </div>
@@ -20919,6 +20941,106 @@ function _orderHistoryHtml(o){
     }).join('')
     +'</div>';
 }
+
+/* ===== Display size (Nov 2026) ==========================================
+   Lets each computer pick how big Plant Console is drawn. "Auto" picks from
+   the window's real width (so Windows display scaling is accounted for).
+   Saved per computer; phones always keep the phone layout at 100%. */
+// Common screen resolutions by pixels (Nov 2026). The app turns the chosen
+// resolution into a size using THIS computer's display scaling: Windows
+// often enlarges laptops (a 1920x1080 laptop at 125% gives the browser only
+// 1536 px), so effective width = chosen width / devicePixelRatio.
+var DISPLAY_RESOLUTIONS=[
+  {w:1366,h:768,  note:'budget laptops'},
+  {w:1440,h:900,  note:''},
+  {w:1536,h:864,  note:''},
+  {w:1600,h:900,  note:''},
+  {w:1920,h:1080, note:'Full HD — most common'},
+  {w:2560,h:1440, note:'QHD, many 27" monitors'},
+  {w:3840,h:2160, note:'4K'}
+];
+function _displayChoice(){ try{ return localStorage.getItem('pc_display_size')||'auto'; }catch(e){ return 'auto'; } }
+function _zoomForEffectiveWidth(w){
+  if(w<=1300) return 0.8; if(w<=1400) return 0.85; if(w<=1500) return 0.9; if(w<=1700) return 0.95;
+  if(w<=2100) return 1; if(w<=2700) return 1.15; if(w<=3300) return 1.3; return 1.5;
+}
+function _dpr(){ return window.devicePixelRatio||1; }
+function _detectedResolution(){
+  var w=Math.round((window.screen&&screen.width||window.innerWidth)*_dpr()), h=Math.round((window.screen&&screen.height||window.innerHeight)*_dpr());
+  return {w:w,h:h};
+}
+function _zoomForChoice(choice){
+  if(choice==='auto') return _zoomForEffectiveWidth(window.innerWidth);
+  var m=/^r(\d+)x(\d+)$/.exec(choice);
+  if(m) return _zoomForEffectiveWidth(Number(m[1])/_dpr());
+  var n=Number(choice); return (n>0.5&&n<2)?n:1;   // older saved percentage choices still work
+}
+function applyDisplaySize(){
+  var root=document.documentElement, choice=_displayChoice();
+  var realWidth=window.innerWidth; // the browser reports the real window width regardless of this scaling
+  var z = realWidth<=780 ? 1 : _zoomForChoice(choice);   // phones keep the phone layout
+  root.style.setProperty('--ui-zoom', String(z));
+  var lbl=document.getElementById('dispLabel');
+  if(lbl){
+    var m=/^r(\d+)x(\d+)$/.exec(choice);
+    lbl.textContent = choice==='auto' ? ('Auto · '+Math.round(z*100)+'%') : (m ? (m[1]+'×'+m[2]) : (Math.round(z*100)+'%'));
+  }
+}
+// "Detect my screen" (Nov 2026): reads this computer's real resolution and
+// display scaling, selects the closest common resolution, and confirms.
+// Unlike Auto (which follows the browser WINDOW and changes as it's
+// resized), this locks in a size for the actual screen.
+function detectMyScreen(){
+  var det=_detectedResolution();
+  var best=DISPLAY_RESOLUTIONS.reduce(function(b,r){ var d=Math.abs(r.w-det.w)+Math.abs(r.h-det.h), bd=Math.abs(b.w-det.w)+Math.abs(b.h-det.h); return d<bd?r:b; },DISPLAY_RESOLUTIONS[0]);
+  var id='r'+best.w+'x'+best.h;
+  setDisplaySize(id);
+  var pct=Math.round(_zoomForChoice(id)*100);
+  var exact=(best.w===det.w&&best.h===det.h);
+  var msg='Your screen: '+det.w+' × '+det.h+(_dpr()!==1?' at '+Math.round(_dpr()*100)+'% scaling':'')
+    +(exact?'':' (closest match '+best.w+' × '+best.h+')')+' — set to '+pct+'%.';
+  var t=document.createElement('div'); t.setAttribute('role','status'); t.textContent=msg;
+  t.style.cssText='position:fixed;right:18px;top:62px;z-index:3000;max-width:420px;background:#1f2a2c;color:#fff;font:600 13px var(--sans);padding:10px 14px;border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.25);transition:opacity .3s';
+  document.body.appendChild(t);
+  setTimeout(function(){ t.style.opacity='0'; },3200); setTimeout(function(){ t.remove(); },3600);
+}
+window.detectMyScreen=detectMyScreen;
+function setDisplaySize(id){
+  try{ localStorage.setItem('pc_display_size',id); }catch(e){}
+  applyDisplaySize();
+  var m=document.getElementById('dispMenu'); if(m) m.remove();
+}
+function toggleDisplayMenu(ev){
+  if(ev) ev.stopPropagation();
+  var old=document.getElementById('dispMenu'); if(old){ old.remove(); return; }
+  var wrap=document.getElementById('dispWrap'); if(!wrap) return;
+  var cur=_displayChoice(), det=_detectedResolution();
+  var closest=DISPLAY_RESOLUTIONS.reduce(function(best,r){ return Math.abs(r.w-det.w)<Math.abs(best.w-det.w)?r:best; },DISPLAY_RESOLUTIONS[0]);
+  var scaleNote=_dpr()!==1?(' at '+Math.round(_dpr()*100)+'% display scaling'):'';
+  function row(id,title,sub,mark){
+    var pct=Math.round(_zoomForChoice(id)*100);
+    return '<button type="button" role="menuitemradio" aria-checked="'+(id===cur)+'" onclick="setDisplaySize(\''+id+'\')">'
+      +'<span class="dm-check">'+(id===cur?'✓':'')+'</span>'
+      +'<span><b style="font-weight:600">'+esc(title)+'</b>'+(sub?'<span style="display:block;font-size:11.5px;color:var(--muted)">'+esc(sub)+'</span>':'')+'</span>'
+      +'<span class="dm-sub">'+(mark?'<b style="color:var(--cold)">this screen</b> · ':'')+pct+'%</span></button>';
+  }
+  var m=document.createElement('div'); m.id='dispMenu'; m.setAttribute('role','menu');
+  m.innerHTML='<div style="padding:6px 6px 8px"><button type="button" onclick="detectMyScreen()" style="width:100%;justify-content:center;gap:8px;background:var(--cold);color:#fff;font-weight:700;padding:10px 12px;border-radius:8px">'
+      +'<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/><circle cx="12" cy="10" r="2.5"/></svg>'
+      +'Detect my screen</button>'
+      +'<div style="font-size:11.5px;color:var(--muted);text-align:center;margin-top:5px">Finds this screen\'s resolution and sets the best size</div></div>'
+    +row('auto','Auto — follow the window size','Detected '+det.w+' × '+det.h+scaleNote,false)
+    +'<div style="padding:6px 10px 2px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Pick your screen resolution</div>'
+    +DISPLAY_RESOLUTIONS.map(function(r){ return row('r'+r.w+'x'+r.h, r.w+' × '+r.h, r.note, r===closest); }).join('')
+    +'<div class="dm-note">Saved for this computer only. Not sure? Windows: Settings › System › Display › “Display resolution”.</div>';
+  m.onclick=function(e){ e.stopPropagation(); };
+  wrap.appendChild(m);
+  setTimeout(function(){ document.addEventListener('click',function close(){ var x=document.getElementById('dispMenu'); if(x) x.remove(); document.removeEventListener('click',close); }); },0);
+}
+window.toggleDisplayMenu=toggleDisplayMenu; window.setDisplaySize=setDisplaySize;
+window.addEventListener('resize',function(){ if(_displayChoice()==='auto') applyDisplaySize(); });
+document.addEventListener('keydown',function(e){ if(e.key==='Escape'){ var m=document.getElementById('dispMenu'); if(m) m.remove(); } });
+applyDisplaySize();
 </script>
 </body>
 </html>

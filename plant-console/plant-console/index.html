@@ -12473,6 +12473,7 @@ function _checksBuildSharedCacheBundle(){
 function _checksRestoreSharedCacheBundle(b){
   if(!b || !b.payments) return false;
   _checksPayments=b.payments;
+  _checksPulledAt=b.savedAt||null;
   _checksQbDeposited=b.qbDeposited||{};
   _checksDepositLookupOk=b.depositLookupOk!==false;
   return true;
@@ -12734,19 +12735,39 @@ async function runChecksReport(){
         if(ent && ent.value) looseLines.push({cust:String(ent.value),amount:amt,info:info,used:false});
       });
     });
+    // 1) exact: listed on the deposit by payment Id
     payments.forEach(function(p){
-      if(byPaymentId[p.Id]){ _checksQbDeposited[p.Id]=Object.assign({how:'Listed on the QuickBooks deposit'},byPaymentId[p.Id]); return; }
+      if(byPaymentId[p.Id]) _checksQbDeposited[p.Id]=Object.assign({how:'Listed on the QuickBooks deposit'},byPaymentId[p.Id]);
+    });
+    // 2) unlinked deposits: same customer + exact amount, CLOSEST pairs first
+    //    (Nov 2026 tightening). A deposit may be at most 10 days before the
+    //    check (data-entry quirks like Soup N Burger, 7 days) and 21 days
+    //    after. Pairing nearest-first means a customer who pays the same
+    //    amount every week has each check matched to its own deposit, and a
+    //    newer check can't take an older check's deposit (e.g. Carniceria
+    //    #2643 was matched to a deposit 12 days before it was written).
+    var pairs=[];
+    payments.forEach(function(p){
+      if(_checksQbDeposited[p.Id]) return;
       var cust=String((p.CustomerRef&&p.CustomerRef.value)||''), amt=Number(p.TotalAmt||0), pd=new Date((p.TxnDate||'').slice(0,10)+'T00:00:00');
-      var hit=looseLines.find(function(l){
-        if(l.used || l.cust!==cust || Math.abs(l.amount-amt)>0.005) return false;
-        var days=Math.abs((new Date(l.info.date+'T00:00:00')-pd)/86400000);
-        return days<=21;
+      looseLines.forEach(function(l,li){
+        if(l.cust!==cust || Math.abs(l.amount-amt)>0.005) return;
+        var days=(new Date(l.info.date+'T00:00:00')-pd)/86400000; // + = deposit after the check
+        if(days<-10 || days>21) return;
+        pairs.push({p:p,li:li,dist:Math.abs(days),before:days<0});
       });
-      if(hit){ hit.used=true; _checksQbDeposited[p.Id]=Object.assign({how:'Same customer and exact amount (deposit not linked to the payment in QuickBooks)'},hit.info); }
+    });
+    pairs.sort(function(x,y){ return (x.dist-y.dist) || ((x.before?1:0)-(y.before?1:0)); });
+    pairs.forEach(function(pr){
+      var l=looseLines[pr.li];
+      if(l.used || _checksQbDeposited[pr.p.Id]) return;
+      l.used=true;
+      _checksQbDeposited[pr.p.Id]=Object.assign({how:'Same customer and exact amount (deposit not linked to the payment in QuickBooks)'},l.info);
     });
   }
   _checksDepositLookupOk=depOk;
   _checksPayments=payments;
+  _checksPulledAt=new Date().toISOString();
   renderChecksInHandSection();
   if(statusEl){
     if(!payments.length && allPaymentsInWindow.length){
@@ -12798,7 +12819,44 @@ function _checksFmtShort(dateStr){
 
 // Checks In Hand — received, not yet marked deposited. Grouped by the
 // week received, same visual format as Scheduled Payments.
+// Wrapper (Nov 2026): when the search box is used, anything that matches but
+// is NOT in Checks In Hand is listed above it with the reason — so "where is
+// check #2643?" is answered right there instead of hunting through lists.
 function renderChecksInHandSection(){
+  _renderChecksInHandSectionImpl();
+  var el=document.getElementById('chk-inhand-section');
+  if(el && _checksSearchQuery && _checksPayments) el.insertAdjacentHTML('afterbegin',_checksSearchExplainHtml());
+}
+var _checksPulledAt=null;
+function _checksSearchExplainHtml(){
+  var money=function(n){ return '$'+Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  var rows=[];
+  (_checksPayments||[]).forEach(function(p){
+    var d=_checksQbDeposited[p.Id];
+    if(d && _checksHideQbDeposited && _checksMatchesSearch((p.CustomerRef&&p.CustomerRef.name)||'',p.PaymentRefNum||'',p.TotalAmt||0))
+      rows.push({p:p,why:'Hidden — already deposited in QuickBooks on '+fmtDateUS(d.date||'')+' ('+d.how.charAt(0).toLowerCase()+d.how.slice(1)+')',show:true});
+  });
+  (_checksExcluded||[]).forEach(function(x){
+    var p=x.p;
+    if(_checksMatchesSearch((p.CustomerRef&&p.CustomerRef.name)||'',p.PaymentRefNum||'',p.TotalAmt||0)) rows.push({p:p,why:'Not counted as a check — '+x.why});
+  });
+  var inHand=(_checksPayments||[]).some(function(p){ return !(_checksHideQbDeposited&&_checksQbDeposited[p.Id]) && _checksMatchesSearch((p.CustomerRef&&p.CustomerRef.name)||'',p.PaymentRefNum||'',p.TotalAmt||0); });
+  if(!rows.length){
+    if(inHand) return '';
+    return '<div style="margin:0 0 10px;padding:10px 12px;border-radius:9px;background:#fff8e1;border:1px solid #e0c56b;font-size:13px">'
+      +'<b>Not in the last pull from QuickBooks</b>'+(_checksPulledAt?' ('+esc(_orderWhenStr?_orderWhenStr(_checksPulledAt):String(_checksPulledAt))+')':'')+'. Nothing matching “'+esc(_checksSearchQuery)+'” came back from QuickBooks at all — if it was entered in QuickBooks after that, or is dated more than 90 days ago, click <b>Pull from QuickBooks</b>.</div>';
+  }
+  return '<div style="margin:0 0 10px;padding:10px 12px;border-radius:9px;background:#fff8e1;border:1px solid #e0c56b;font-size:13px">'
+    +'<div style="font-weight:700;margin-bottom:6px">Also matching “'+esc(_checksSearchQuery)+'” — but not in Checks In Hand:</div>'
+    +rows.slice(0,15).map(function(r){ var p=r.p;
+      return '<div style="padding:4px 0;border-top:1px dashed #e0c56b">'
+        +esc(fmtDateUS(p.TxnDate||''))+' · <b>'+esc((p.CustomerRef&&p.CustomerRef.name)||'')+'</b> · #'+esc(p.PaymentRefNum||'—')+' · '+money(p.TotalAmt)
+        +'<div style="color:#7a5a00;font-size:12px">'+esc(r.why)+(r.show?' — <a href="#" onclick="toggleQbDepositedChecks();return false" style="color:inherit;font-weight:700">show deposited checks</a>':'')+'</div></div>';
+    }).join('')
+    +(rows.length>15?'<div style="color:var(--muted);font-size:12px;padding-top:4px">…and '+(rows.length-15)+' more — narrow the search.</div>':'')
+    +'</div>';
+}
+function _renderChecksInHandSectionImpl(){
   var el=document.getElementById('chk-inhand-section');
   if(!el) return;
   // No more Deposited/Paid distinction — every genuine check payment

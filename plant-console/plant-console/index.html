@@ -4884,7 +4884,7 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
             +lines.map(function(l,li){
               return '<div style="display:flex;align-items:center;gap:10px;padding:6px 16px 6px 54px;border-bottom:1px dashed var(--line);font-size:12.5px">'
                 +'<input type="checkbox" class="ship-line-chk" data-orderid="'+esc(o.id)+'" data-lineidx="'+li+'" checked style="flex-shrink:0;width:15px;height:15px;cursor:pointer"/>'
-                +'<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+_qbDescSpan(l.product)+(l.description?' — '+esc(l.description):'')+'</span>'
+                +'<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+_qbDescSpan(l.product,l.description)+(l.description?' — '+esc(l.description):'')+'</span>'
                 +'<span style="flex-shrink:0;text-align:right;min-width:60px">'
                   +(l.quantity?'<b style="white-space:nowrap">'+esc(l.quantity)+'</b>':'')
                   +(String(l.finalCount||'').trim()!==''?'<div style="font-size:12px;font-weight:700;color:var(--ink);white-space:nowrap">Weighed: '+esc(l.finalCount)+'</div>':'')
@@ -5069,8 +5069,9 @@ function _qbSalesDesc(productName){
   }
   return _qbDescCache.map[String(productName||'').trim().toUpperCase()]||'';
 }
-function _qbDescSpan(productName){
+function _qbDescSpan(productName,lineDesc){
   var d=_qbSalesDesc(productName);
+  if(d && lineDesc && String(lineDesc).toUpperCase().indexOf(d.toUpperCase())>=0) return ''; // already in the line's Description
   return d?' <span style="font-weight:400;color:var(--muted)">· '+esc(d)+'</span>':'';
 }
 // Product search (Nov 2026): matches the product NAME, the SALES DESCRIPTION
@@ -5132,9 +5133,29 @@ function _ordProdInput(inputEl){
   box.style.width=((r.width)/_uiZoom())+'px';
 }
 window._ordProdInput=_ordProdInput;
+// Fill the line's Description with the product's QuickBooks sales description
+// (Nov 2026), like QuickBooks does. Only fills an empty box, or one still
+// holding text this filled in earlier (so switching products updates it) —
+// anything a person typed is never overwritten. Skipped when the sales
+// description just repeats the product name.
+function _ordAutofillDescription(productInput){
+  if(!productInput) return;
+  var row=productInput.closest('.ord-line'); if(!row) return;
+  var desc=row.querySelector('.ord-line-description'); if(!desc) return;
+  var cur=desc.value.trim(), auto=desc.getAttribute('data-autofill')||'';
+  if(cur!=='' && cur!==auto) return; // the person typed their own description
+  var name=(productInput.value||'').trim().toUpperCase();
+  var it=items.find(function(x){ return x && x.name && x.name.trim().toUpperCase()===name; });
+  var d=(it && it.description && it.description.trim().toUpperCase()!==name) ? it.description.trim() : '';
+  if(d===cur) return;
+  desc.value=d;
+  desc.setAttribute('data-autofill',d);
+  if(d){ desc.style.transition='background .6s'; desc.style.background='#e3f3e6'; setTimeout(function(){ desc.style.background=''; },700); }
+}
+window._ordAutofillDescription=_ordAutofillDescription;
 function _ordSelectProduct(rowEl){
   var input=_ordActiveProdInput;
-  if(input){ input.value=rowEl.getAttribute('data-name'); }
+  if(input){ input.value=rowEl.getAttribute('data-name'); _ordAutofillDescription(input); }
   var box=rowEl.parentElement;
   box.style.display='none';
   box.innerHTML='';
@@ -5148,6 +5169,7 @@ function _ordProdBlur(inputEl){
   // works — this just closes the dropdown for every other way of leaving
   // the field (Tab, clicking elsewhere).
   if(_ordActiveProdInput===inputEl) _ordCloseAllProductDropdowns();
+  _ordAutofillDescription(inputEl); // typed the exact product name and moved on
 }
 window._ordProdBlur=_ordProdBlur;
 function _ordProdKeydown(e,inputEl){
@@ -5216,7 +5238,7 @@ function _orderLineRowHtml(line,isFirst,o){
           +'<input type="text" class="ord-f-customer" list="ordersCustomerList" value="'+esc(o.customer||'')+'" placeholder="Customer" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
           +_driverSelectHtml(o.driver||'')
         : '<span></span><span></span><span></span>')
-    +'<input type="text" class="ord-line-product" autocomplete="off" value="'+esc(line.product||'')+'" placeholder="Product" oninput="_ordProdInput(this)" onfocus="_ordProdInput(this)" onkeydown="_ordProdKeydown(event,this)" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
+    +'<input type="text" class="ord-line-product" autocomplete="off" value="'+esc(line.product||'')+'" placeholder="Product" oninput="_ordProdInput(this)" onfocus="_ordProdInput(this)" onkeydown="_ordProdKeydown(event,this)" onchange="_ordAutofillDescription(this)" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
     +'<input type="text" class="ord-line-description" value="'+esc(line.description||'')+'" placeholder="Description" style="padding:7px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
     +'<input type="text" class="ord-line-quantity" value="'+esc(line.quantity||'')+'" placeholder="Qty" onkeydown="if(event.key===\'Enter\'){event.preventDefault();_orderLineEnterAddsRow(this);}" style="padding:7px 6px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg);color:var(--ink)"/>'
     +'<input type="text" class="ord-line-finalcount" value="'+esc(line.finalCount||'')+'" placeholder="Count" title="Final physical count for this product" style="padding:7px 6px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;font-family:var(--mono);background:var(--bg);color:var(--ink)"/>'
@@ -5878,7 +5900,7 @@ function _renderOrderRow(o){
               shortageBadge='<span title="Rescheduled to '+esc(l.rescheduledToDate||'the next day')+'" style="flex-shrink:0;font-size:10px;font-weight:700;color:#8a4a12;background:#ffdcb0;padding:2px 6px;border-radius:10px;white-space:nowrap">⚠ Out of stock — moved to '+esc(l.rescheduledToDate||'next day')+'</span>';
             }
             return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 8px;margin:0 -8px;border-radius:5px;'+procBg+'">'
-              +'<span onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+_qbDescSpan(l.product)+(l.description?' — '+esc(l.description):'')+'</span>'
+              +'<span onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+_qbDescSpan(l.product,l.description)+(l.description?' — '+esc(l.description):'')+'</span>'
               +shortageBadge
               +(l.quantity?'<b style="flex-shrink:0;white-space:nowrap">'+esc(l.quantity)+'</b>':'')
               +'<label title="Needs processing" style="flex-shrink:0;display:flex;align-items:center;gap:4px;cursor:pointer;font-size:10.5px;color:#8a6d1a">'

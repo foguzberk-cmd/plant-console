@@ -2992,8 +2992,8 @@ function makeSyncBoxDraggable(box){
     // Switch from centered/bottom anchoring to absolute top/left so we can move freely
     var r=box.getBoundingClientRect();
     box.style.transform='none';
-    box.style.left=r.left+'px';
-    box.style.top=r.top+'px';
+    box.style.left=((r.left)/_uiZoom())+'px';
+    box.style.top=((r.top)/_uiZoom())+'px';
     box.style.bottom='auto';
   }
   function down(e){
@@ -3014,8 +3014,8 @@ function makeSyncBoxDraggable(box){
     // keep it on screen
     nx=Math.max(4,Math.min(window.innerWidth-box.offsetWidth-4,nx));
     ny=Math.max(4,Math.min(window.innerHeight-box.offsetHeight-4,ny));
-    box.style.left=nx+'px';
-    box.style.top=ny+'px';
+    box.style.left=((nx)/_uiZoom())+'px';
+    box.style.top=((ny)/_uiZoom())+'px';
   }
   function up(){ dragging=false; handle.style.cursor='grab'; }
   handle.addEventListener('mousedown',down);
@@ -5053,6 +5053,22 @@ function _ordCloseAllProductDropdowns(){
   if(box){ box.style.display='none'; box.innerHTML=''; }
   _ordActiveProdInput=null;
 }
+// Display-size scaling (Nov 2026): the whole app is drawn at --ui-zoom, but
+// getBoundingClientRect()/mouse positions are in on-screen pixels. Pop-ups
+// placed from those positions must divide by the zoom, or they land off
+// target (e.g. the product suggestions appeared over the Driver field).
+function _uiZoom(){ return Number(document.documentElement.style.getPropertyValue('--ui-zoom'))||1; }
+// Product search (Nov 2026): matches the product NAME, the SALES DESCRIPTION
+// (which starts with your product code, e.g. "74025 BEEF KNUCKLE CHOISE FPL")
+// and the SKU. Every typed word must appear somewhere, in any order, so
+// "74025", "knuckle choise" and "choise knuckle" all find it.
+function _itemSearchHay(it){ return ((it.name||'')+' '+(it.description||'')+' '+(it.sku||'')).toLowerCase(); }
+function _itemMatchesSearch(it,q){
+  q=String(q||'').trim().toLowerCase(); if(!q) return true;
+  var hay=_itemSearchHay(it);
+  return q.split(/\s+/).every(function(w){ return hay.indexOf(w)>=0; });
+}
+function _itemNameHit(it,q){ q=String(q||'').trim().toLowerCase(); return !!q && (it.name||'').toLowerCase().indexOf(q)>=0; }
 function _ordProdInput(inputEl){
   if(!_ordItemLastPurchaseMap) _ordComputeLastPurchaseMap();
   var box=_ordGetSuggestBox();
@@ -5061,13 +5077,15 @@ function _ordProdInput(inputEl){
   if(!q){ box.style.display='none'; box.innerHTML=''; return; } // don't show anything until they've actually typed something
   var today=new Date().toISOString().slice(0,10);
   var todayMs=new Date(today+'T00:00:00').getTime();
-  var candidates=items.filter(function(it){ return it.name && it.active!==false && it.name.toLowerCase().indexOf(q)>=0; });
+  var candidates=items.filter(function(it){ return it.name && it.active!==false && _itemMatchesSearch(it,q); });
   candidates.forEach(function(it){
     var d=_ordItemLastPurchaseMap[it.id];
     it.__lastPurchDate=d||null;
     it.__daysAgo=d?Math.round((todayMs-new Date(d+'T00:00:00').getTime())/86400000):null;
   });
   candidates.sort(function(a,b){
+    // name matches first (typing a name works exactly as before), then recency
+    var na=_itemNameHit(a,q)?0:1, nb=_itemNameHit(b,q)?0:1; if(na!==nb) return na-nb;
     if(a.__daysAgo==null&&b.__daysAgo==null) return a.name.localeCompare(b.name);
     if(a.__daysAgo==null) return 1; // never-purchased items sink to the bottom
     if(b.__daysAgo==null) return -1;
@@ -5082,7 +5100,9 @@ function _ordProdInput(inputEl){
       +'onmousedown="event.preventDefault();_ordSelectProduct(this)" '
       +'style="display:flex;align-items:center;gap:8px;padding:7px 10px;cursor:pointer;border-left:4px solid '+st.color+';font-size:12.5px" '
       +'onmouseenter="this.style.background=\'var(--bg)\'" onmouseleave="if(!this.classList.contains(\'ord-prod-hl\'))this.style.background=\'\'">'
-      +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(it.name)+'</span>'
+      +'<span style="flex:1;min-width:0"><span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(it.name)+'</span>'
+        +((it.description&&it.description.trim().toUpperCase()!==it.name.trim().toUpperCase())?'<span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--muted)">'+esc(it.description)+'</span>':'')
+      +'</span>'
       +'<span style="flex-shrink:0;font-family:var(--mono);font-size:10.5px;color:var(--muted)">'+esc(st.label)+'</span>'
     +'</div>';
   }).join('');
@@ -5092,9 +5112,9 @@ function _ordProdInput(inputEl){
   // current on-screen location — correct no matter how far down the page
   // this particular order-line row happens to sit.
   var r=inputEl.getBoundingClientRect();
-  box.style.left=r.left+'px';
-  box.style.top=(r.bottom+2)+'px';
-  box.style.width=r.width+'px';
+  box.style.left=((r.left)/_uiZoom())+'px';
+  box.style.top=(((r.bottom+2))/_uiZoom())+'px';
+  box.style.width=((r.width)/_uiZoom())+'px';
 }
 window._ordProdInput=_ordProdInput;
 function _ordSelectProduct(rowEl){
@@ -11087,12 +11107,12 @@ function showCFRowMenu(btn,kind,billId,splitId){
   el.style.display='block';
 
   var rect=btn.getBoundingClientRect();
-  el.style.top=(rect.bottom+4)+'px';
-  el.style.left=Math.max(8,rect.right-170)+'px';
+  el.style.top=(((rect.bottom+4))/_uiZoom())+'px';
+  el.style.left=((Math.max(8,rect.right-170))/_uiZoom())+'px';
   requestAnimationFrame(function(){
     var r=el.getBoundingClientRect();
-    if(r.bottom>window.innerHeight-8) el.style.top=Math.max(8,rect.top-r.height-4)+'px';
-    if(r.right>window.innerWidth-8) el.style.left=Math.max(8,window.innerWidth-r.width-8)+'px';
+    if(r.bottom>window.innerHeight-8) el.style.top=((Math.max(8,rect.top-r.height-4))/_uiZoom())+'px';
+    if(r.right>window.innerWidth-8) el.style.left=((Math.max(8,window.innerWidth-r.width-8))/_uiZoom())+'px';
   });
 }
 window.showCFRowMenu=showCFRowMenu;
@@ -15693,7 +15713,7 @@ function renderItemsView(){
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;align-items:center">
       <div style="display:flex;align-items:center;gap:8px;background:var(--panel);border:1.5px solid var(--line);border-radius:8px;padding:7px 14px">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;stroke:var(--muted)"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input id="itemSearch" aria-label="Search items" autocomplete="off" type="text" placeholder="Search by name or SKU…" oninput="renderItemsTable()" style="border:none;background:transparent;outline:none;font-family:var(--mono);font-size:12px;width:180px;color:var(--ink)"/>
+        <input id="itemSearch" aria-label="Search items" autocomplete="off" type="text" placeholder="Search by name, description or SKU…" oninput="renderItemsTable()" style="border:none;background:transparent;outline:none;font-family:var(--mono);font-size:12px;width:180px;color:var(--ink)"/>
       </div>
       <select id="itemLocFilter" aria-label="Filter by location" onchange="renderItemsTable()" style="padding:7px 12px;border:1.5px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);outline:none">
         <option value="">All locations</option>
@@ -15851,7 +15871,7 @@ function renderItemsTable(){
     if(kindFilter==='service'&&it.type==='Inventory') return false;
     if(locFilter==='__none__'&&qtyAtLoc(it,'__none__')===0) return false;
     if(locFilter&&locFilter!=='__none__'&&qtyAtLoc(it,locFilter)===0) return false;
-    if(search&&!(it.name.toLowerCase().includes(search)||(it.sku||'').toLowerCase().includes(search))) return false;
+    if(search&&!_itemMatchesSearch(it,search)) return false; // name, sales description or SKU
     return true;
   });
 
@@ -16062,9 +16082,9 @@ function filterOCItems(idx){
   }).slice(0,12);
   // Position suggestion box under the input using fixed coords
   var rect=inp.getBoundingClientRect();
-  sugg.style.left=rect.left+'px';
-  sugg.style.top=(rect.bottom+4)+'px';
-  sugg.style.width=rect.width+'px';
+  sugg.style.left=((rect.left)/_uiZoom())+'px';
+  sugg.style.top=(((rect.bottom+4))/_uiZoom())+'px';
+  sugg.style.width=((rect.width)/_uiZoom())+'px';
   if(!matches.length){
     sugg.innerHTML='<div class="item-suggestion" style="color:var(--muted);font-style:italic">No matches found</div>';
     sugg.style.display='block';
@@ -16678,10 +16698,10 @@ function showRepSuggestions(inputEl,custId){
   var estHeight=Math.min(opts.length*36+4,220);
   var spaceBelow=window.innerHeight-rect.bottom-4;
   var openUpward=spaceBelow<estHeight && rect.top>estHeight;
-  dd.style.left=Math.round(rect.left)+'px';
-  if(openUpward){ dd.style.top=Math.round(rect.top-estHeight-4)+'px'; }
-  else { dd.style.top=Math.round(rect.bottom+4)+'px'; }
-  dd.style.width=Math.max(Math.round(rect.width),150)+'px';
+  dd.style.left=((Math.round(rect.left))/_uiZoom())+'px';
+  if(openUpward){ dd.style.top=((Math.round(rect.top-estHeight-4))/_uiZoom())+'px'; }
+  else { dd.style.top=((Math.round(rect.bottom+4))/_uiZoom())+'px'; }
+  dd.style.width=((Math.max(Math.round(rect.width),150))/_uiZoom())+'px';
   dd.innerHTML='';
   opts.forEach(function(o){
     var row=document.createElement('div');
@@ -19126,7 +19146,7 @@ function renderScaleItemSuggestions(q){
     wrap.appendChild(sugg);
     return;
   }
-  var rawMatches=allowed.filter(function(it){return it.active!==false && ((it.name||'').toLowerCase().includes(q)||(it.sku||'').toLowerCase().includes(q));});
+  var rawMatches=allowed.filter(function(it){return it.active!==false && _itemMatchesSearch(it,q);}); // name, sales description or SKU
   // Dedupe by name: for picking WHAT to print, seeing "Whole Lamb Baby"
   // twice serves no purpose even if QuickBooks has two separate active
   // item records with that exact name (which does happen — renamed/

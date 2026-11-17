@@ -4884,7 +4884,7 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
             +lines.map(function(l,li){
               return '<div style="display:flex;align-items:center;gap:10px;padding:6px 16px 6px 54px;border-bottom:1px dashed var(--line);font-size:12.5px">'
                 +'<input type="checkbox" class="ship-line-chk" data-orderid="'+esc(o.id)+'" data-lineidx="'+li+'" checked style="flex-shrink:0;width:15px;height:15px;cursor:pointer"/>'
-                +'<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+(l.description?' — '+esc(l.description):'')+'</span>'
+                +'<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+_qbDescSpan(l.product)+(l.description?' — '+esc(l.description):'')+'</span>'
                 +'<span style="flex-shrink:0;text-align:right;min-width:60px">'
                   +(l.quantity?'<b style="white-space:nowrap">'+esc(l.quantity)+'</b>':'')
                   +(String(l.finalCount||'').trim()!==''?'<div style="font-size:12px;font-weight:700;color:var(--ink);white-space:nowrap">Weighed: '+esc(l.finalCount)+'</div>':'')
@@ -5058,6 +5058,21 @@ function _ordCloseAllProductDropdowns(){
 // placed from those positions must divide by the zoom, or they land off
 // target (e.g. the product suggestions appeared over the Driver field).
 function _uiZoom(){ return Number(document.documentElement.style.getPropertyValue('--ui-zoom'))||1; }
+// QuickBooks sales description for a product name (Nov 2026), shown next to
+// the name on order lines, like QuickBooks shows both. Rebuilt when the item
+// list changes; blank when the description just repeats the name.
+var _qbDescCache={ref:null,len:-1,map:{}};
+function _qbSalesDesc(productName){
+  if(_qbDescCache.ref!==items || _qbDescCache.len!==items.length){
+    var m={}; items.forEach(function(it){ if(it&&it.name&&it.description){ var k=it.name.trim().toUpperCase(); if(it.description.trim().toUpperCase()!==k && !m[k]) m[k]=it.description.trim(); } });
+    _qbDescCache={ref:items,len:items.length,map:m};
+  }
+  return _qbDescCache.map[String(productName||'').trim().toUpperCase()]||'';
+}
+function _qbDescSpan(productName){
+  var d=_qbSalesDesc(productName);
+  return d?' <span style="font-weight:400;color:var(--muted)">· '+esc(d)+'</span>':'';
+}
 // Product search (Nov 2026): matches the product NAME, the SALES DESCRIPTION
 // (which starts with your product code, e.g. "74025 BEEF KNUCKLE CHOISE FPL")
 // and the SKU. Every typed word must appear somewhere, in any order, so
@@ -5863,7 +5878,7 @@ function _renderOrderRow(o){
               shortageBadge='<span title="Rescheduled to '+esc(l.rescheduledToDate||'the next day')+'" style="flex-shrink:0;font-size:10px;font-weight:700;color:#8a4a12;background:#ffdcb0;padding:2px 6px;border-radius:10px;white-space:nowrap">⚠ Out of stock — moved to '+esc(l.rescheduledToDate||'next day')+'</span>';
             }
             return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 8px;margin:0 -8px;border-radius:5px;'+procBg+'">'
-              +'<span onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+(l.description?' — '+esc(l.description):'')+'</span>'
+              +'<span onclick="showOrderDetailModal(\''+esc(o.id)+'\')" style="cursor:pointer;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+_qbDescSpan(l.product)+(l.description?' — '+esc(l.description):'')+'</span>'
               +shortageBadge
               +(l.quantity?'<b style="flex-shrink:0;white-space:nowrap">'+esc(l.quantity)+'</b>':'')
               +'<label title="Needs processing" style="flex-shrink:0;display:flex;align-items:center;gap:4px;cursor:pointer;font-size:10.5px;color:#8a6d1a">'
@@ -15782,7 +15797,8 @@ function itemRow(it,avgDailyQtyById){
   var days=avgDaily>0?(onHand/avgDaily):(onHand>0?Infinity:0);
   return '<tr>'
     +'<td style="font-family:var(--mono);font-size:12px;color:var(--cold)">'+esc(it.sku||'—')+'</td>'
-    +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+conflictBadge+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
+    +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+conflictBadge+'</div></td>'
+      +'<td style="font-size:12.5px;color:var(--muted);white-space:normal;min-width:180px">'+esc(it.description||'')+'</td>'
     +'<td style="font-family:var(--mono);font-size:13px;text-align:right;'+qtyColor+'">'+fmtNum2(onHand)+'</td>'
     +_lppCellHtml(it)
       +'<td style="font-family:var(--mono);font-size:13px;text-align:right;font-weight:600">'+(Number(it.price)>0?fmtMoney(Number(it.price)):'<span style="color:var(--muted)">—</span>')+'</td>'
@@ -15823,7 +15839,7 @@ function _lppCellHtml(it){
 function itemsTable(list){
   if(!list.length) return '<div style="padding:28px 24px;text-align:center;color:var(--muted);font-size:13px">No items match the current filters.</div>';
   var avgDailyQtyById=_itemsAvgDailyQtySoldTrailing28();
-  return '<table class="txn-table"><thead><tr><th>SKU</th><th>Product Name</th><th style="text-align:right">Quantity</th><th style="text-align:right" title="Last purchase price: the unit price on the most recent QuickBooks bill for this product">LPP</th><th style="text-align:right" title="Sales price listed in QuickBooks">Price</th><th style="text-align:right;border-left:1.5px solid var(--line)" title="Current on-hand ÷ average daily units shipped over the trailing 28 days">Days of Supply</th><th></th></tr></thead><tbody>'+list.map(function(it){ return itemRow(it,avgDailyQtyById); }).join('')+'</tbody></table>';
+  return '<table class="txn-table"><thead><tr><th>SKU</th><th>Product Name</th><th>Sales Description</th><th style="text-align:right">Quantity</th><th style="text-align:right" title="Last purchase price: the unit price on the most recent QuickBooks bill for this product">LPP</th><th style="text-align:right" title="Sales price listed in QuickBooks">Price</th><th style="text-align:right;border-left:1.5px solid var(--line)" title="Current on-hand ÷ average daily units shipped over the trailing 28 days">Days of Supply</th><th></th></tr></thead><tbody>'+list.map(function(it){ return itemRow(it,avgDailyQtyById); }).join('')+'</tbody></table>';
 }
 
 function renderItemsTable(){
@@ -15964,7 +15980,8 @@ function itemsTableLoc(rows){
       : '';
     return '<tr>'
       +'<td style="font-family:var(--mono);font-size:12px;color:var(--cold)">'+esc(it.sku||'—')+'</td>'
-      +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+conflictBadge+'</div>'+(it.description?'<div class="txn-desc">'+esc(it.description.substring(0,60))+'</div>':'')+'</td>'
+      +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+conflictBadge+'</div></td>'
+      +'<td style="font-size:12.5px;color:var(--muted);white-space:normal;min-width:180px">'+esc(it.description||'')+'</td>'
       +'<td style="font-family:var(--mono);font-size:13px;text-align:right;'+qtyColor+'">'+fmtNum2(Number(r.locQty||0))+'</td>'
       +_lppCellHtml(it)
       +'<td style="font-family:var(--mono);font-size:13px;text-align:right;font-weight:600">'+(Number(it.price)>0?fmtMoney(Number(it.price)):'<span style="color:var(--muted)">—</span>')+'</td>'
@@ -15972,7 +15989,7 @@ function itemsTableLoc(rows){
       +'<button class="dots-btn" aria-label="Item actions" onclick="toggleItemMenu(event,this.dataset.id)" data-id="'+it.id+'"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;stroke:var(--muted)"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>'
       +'</td></tr>';
   }).join('');
-  return '<table class="txn-table"><thead><tr><th>SKU</th><th>Product Name</th><th style="text-align:right">Qty here</th><th style="text-align:right" title="Last purchase price: the unit price on the most recent QuickBooks bill for this product">LPP</th><th style="text-align:right" title="Sales price listed in QuickBooks">Price</th><th></th></tr></thead><tbody>'+body+'</tbody></table>';
+  return '<table class="txn-table"><thead><tr><th>SKU</th><th>Product Name</th><th>Sales Description</th><th style="text-align:right">Qty here</th><th style="text-align:right" title="Last purchase price: the unit price on the most recent QuickBooks bill for this product">LPP</th><th style="text-align:right" title="Sales price listed in QuickBooks">Price</th><th></th></tr></thead><tbody>'+body+'</tbody></table>';
 }
 
 

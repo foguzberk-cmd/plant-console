@@ -16619,6 +16619,7 @@ function _renderCustomersPanelBody(panel){
       <button class="btn btn-sm" onclick="customerSelectAll(false)">Clear all</button>
       <span style="font-size:11px;color:var(--muted);font-style:italic">Each department has its own customer list — this only affects who shows up when printing for "${esc(_custPanelDept)}".</span>
     </div>
+    <div id="custEmailPanel" style="margin:0 0 12px"></div>
     <div id="customersTableWrap">
       <div id="customersList" style="max-height:420px;overflow-y:auto;border:1px solid var(--line);border-radius:10px"></div>
     </div>
@@ -16681,10 +16682,12 @@ function renderCustomersList(){
     return '<label style="'+rowStyle+'"'+(inactive?' title="Inactive in QuickBooks \u2014 shown for reporting only, cannot be added to a department"':'')+'>'
       +'<input type="checkbox" '+(on?'checked':'')+(inactive?' disabled':'')+' onchange="toggleCustomerAllowed(\''+c.id+'\',this.checked)" style="width:17px;height:17px;'+(inactive?'cursor:not-allowed':'cursor:pointer')+';accent-color:var(--brand)"/>'
       +'<div style="flex:1;font-size:13px;font-weight:600;'+(inactive?'color:#c0392b':'')+'">'+esc(c.name)+(inactive?' <span style="font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.06em;color:#fff;background:#c0392b;padding:1px 6px;border-radius:999px;vertical-align:middle;margin-left:6px">INACTIVE</span>':'')+'</div>'
+      +_custEmailBoxesHtml(c,inactive)
       +'<input type="text" data-repinput="'+c.id+'" value="'+esc(c.salesRep||'')+'" placeholder="Sales Rep" onclick="event.stopPropagation()" onfocus="event.stopPropagation();showRepSuggestions(this,\''+c.id+'\')" oninput="showRepSuggestions(this,\''+c.id+'\')" onchange="updateCustomerSalesRep(\''+c.id+'\',this.value)" style="width:140px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink);cursor:text"/>'
       +'<input type="text" value="'+esc(c.dunsNumber||'')+'" placeholder="Dun#" title="Dun# (D-U-N-S number) — not available from QuickBooks\'s API, entered here manually" onclick="event.stopPropagation()" onchange="updateCustomerDunsNumber(\''+c.id+'\',this.value)" style="width:100px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;font-family:var(--mono);background:var(--bg);color:var(--ink);cursor:text"/>'
       +'</label>';
   }).join('');
+  renderCustEmailPanel();
   var countEl=document.getElementById('cust-count');
   var _inactiveCount=customers.filter(function(c){ return c&&c.active===false; }).length;
   if(countEl) countEl.textContent=_custDraft.length+' of '+customers.length+' customers allowed for '+_custPanelDept+(_inactiveCount?' \u00b7 '+_inactiveCount+' inactive (red, not selectable)':'')+' (unsaved until you click Save)';
@@ -21100,6 +21103,102 @@ window.toggleDisplayMenu=toggleDisplayMenu; window.setDisplaySize=setDisplaySize
 window.addEventListener('resize',function(){ if(_displayChoice()==='auto') applyDisplaySize(); });
 document.addEventListener('keydown',function(e){ if(e.key==='Escape'){ var m=document.getElementById('dispMenu'); if(m) m.remove(); } });
 applyDisplaySize();
+
+/* ===== Automatic customer emails — Customers page (Nov 2026) ===========
+   Two boxes per customer: "Invoices" (each new invoice is emailed by
+   QuickBooks automatically) and "Weekly statement". Admins only. The panel
+   above the list has the on/off switch for invoices and the sent log. */
+var _emailAuto={config:{},log:[],loaded:false,loading:false};
+function _isAdminUser(){ return !!(currentUser && currentUser.role==='admin'); }
+function _custEmailBoxesHtml(c,inactive){
+  var can=_isAdminUser() && !inactive;
+  var box=function(field,label,title){
+    return '<span title="'+esc(title)+'" style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--ink);white-space:nowrap">'
+      +'<input type="checkbox" '+(c[field]?'checked':'')+(can?'':' disabled')+' onclick="event.stopPropagation()" onchange="setCustomerEmailPref(\''+c.id+'\',\''+field+'\',this)" style="width:15px;height:15px;cursor:'+(can?'pointer':'not-allowed')+';accent-color:var(--cold)">'+label+'</span>';
+  };
+  var warn=((c.emailInvoices||c.weeklyStatement)&&!c.email)?'<span title="No email address on this customer in QuickBooks — add one there, or nothing can be sent" style="font-size:11px;color:#b8460b;font-weight:700;white-space:nowrap">⚠ no email</span>':'';
+  return '<span onclick="event.stopPropagation();" style="display:inline-flex;align-items:center;gap:12px;margin-right:6px">'
+    +warn
+    +box('emailInvoices','Invoices','Automatically email each NEW invoice to this customer (QuickBooks sends it, same as clicking Send there)'+(c.email?' — to '+c.email:''))
+    +box('weeklyStatement','Weekly statement','Email this customer a statement every week'+(c.email?' — to '+c.email:''))
+    +'</span>';
+}
+async function setCustomerEmailPref(id,field,el){
+  var want=!!el.checked; el.disabled=true;
+  try{
+    var body={}; body[field]=want;
+    var r=await fetch('/api/customers/'+encodeURIComponent(id)+'/email-prefs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var j=await r.json();
+    if(!r.ok||!j.success) throw new Error(j.error||('HTTP '+r.status));
+    var c=customers.find(function(x){ return x.id===id; }); if(c){ c.emailInvoices=j.emailInvoices; c.weeklyStatement=j.weeklyStatement; }
+    renderCustEmailPanel();
+  }catch(e){ el.checked=!want; notify('Could not save: '+e.message,{kind:'error'}); }
+  finally{ el.disabled=false; }
+}
+window.setCustomerEmailPref=setCustomerEmailPref;
+async function _loadEmailAutomation(){
+  if(_emailAuto.loading) return; _emailAuto.loading=true;
+  try{ var r=await fetch('/api/email-automation',{cache:'no-store'}); if(r.ok){ var j=await r.json(); _emailAuto.config=j.config||{}; _emailAuto.log=j.log||[]; _emailAuto.loaded=true; } }catch(e){}
+  _emailAuto.loading=false; renderCustEmailPanel(true);
+}
+function renderCustEmailPanel(fromLoad){
+  var el=document.getElementById('custEmailPanel'); if(!el) return;
+  if(!_emailAuto.loaded && !fromLoad){ _loadEmailAutomation(); }
+  var cfg=_emailAuto.config||{}, on=!!cfg.invoicesOn;
+  var nInv=customers.filter(function(c){ return c.emailInvoices && c.active!==false; }).length;
+  var nSt=customers.filter(function(c){ return c.weeklyStatement && c.active!==false; }).length;
+  var noEmail=customers.filter(function(c){ return (c.emailInvoices||c.weeklyStatement) && !c.email && c.active!==false; }).length;
+  var sent=(_emailAuto.log||[]).filter(function(e){ return e.status==='sent'; }).length;
+  var last=cfg.lastRunAt?_orderWhenStr(cfg.lastRunAt):'never';
+  el.innerHTML='<div style="border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--panel);display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px">'
+    +'<div><div style="font-weight:700;font-size:13.5px;margin-bottom:4px">📧 New invoices — automatic email</div>'
+      +'<div style="font-size:12.5px;color:var(--muted);line-height:1.5">'+nInv+' customer'+(nInv!==1?'s':'')+' ticked. QuickBooks emails each NEW invoice for them (the same email as clicking Send in QuickBooks). '
+      +(on?'<b style="color:#1a7a3c">ON</b> since '+esc(_orderWhenStr(cfg.invoicesOnSince))+' — only invoices created after that are sent, each once.':'<b style="color:#b8460b">OFF</b> — nothing is sent until you switch it on.')
+      +'<br>Last check: '+esc(last)+(cfg.lastError?' — <span style="color:#c0392b">'+esc(cfg.lastError)+'</span>':'')+' · '+sent+' sent</div>'
+      +'<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">'
+        +(_isAdminUser()?'<button class="btn btn-sm '+(on?'':'btn-primary')+'" onclick="toggleInvoiceEmails('+(!on)+')">'+(on?'Turn off':'Turn on automatic invoice emails')+'</button>'
+          +(on?'<button class="btn btn-sm" onclick="runInvoiceEmailsNow(this)">Check for new invoices now</button>':''):'<span style="font-size:12px;color:var(--muted)">Only admins can change these settings.</span>')
+        +'<button class="btn btn-sm" onclick="showInvoiceEmailLog()">Sent log</button>'
+      +'</div></div>'
+    +'<div><div style="font-weight:700;font-size:13.5px;margin-bottom:4px">📄 Weekly statements</div>'
+      +'<div style="font-size:12.5px;color:var(--muted);line-height:1.5">'+nSt+' customer'+(nSt!==1?'s':'')+' ticked. QuickBooks can\'t send statements from another app, so these will be built and emailed from your own Microsoft 365 mailbox. <b>Sending starts once that mailbox is set up</b> — tick customers now and they\'ll be included.</div>'
+      +(noEmail?'<div style="font-size:12.5px;color:#b8460b;margin-top:6px;font-weight:600">⚠ '+noEmail+' ticked customer'+(noEmail!==1?'s have':' has')+' no email address in QuickBooks — add it there, or nothing can be sent to them.</div>':'')
+    +'</div></div>';
+}
+async function toggleInvoiceEmails(turnOn){
+  if(turnOn && !confirm('Turn ON automatic invoice emails?\n\nFrom now on, every NEW invoice for the ticked customers will be emailed by QuickBooks within a few minutes. Invoices that already exist are never sent.')) return;
+  try{
+    var r=await fetch('/api/email-automation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({invoicesOn:!!turnOn})});
+    var j=await r.json(); if(!r.ok||!j.success) throw new Error(j.error||('HTTP '+r.status));
+    _emailAuto.config=j.config; renderCustEmailPanel(true);
+  }catch(e){ notify('Could not change it: '+e.message,{kind:'error'}); }
+}
+window.toggleInvoiceEmails=toggleInvoiceEmails;
+async function runInvoiceEmailsNow(btn){
+  if(btn){ btn.disabled=true; btn.textContent='Checking…'; }
+  try{
+    var r=await fetch('/api/email-automation/run-now',{method:'POST'}); var j=await r.json();
+    notify(j.error?('Could not check: '+j.error):('Checked QuickBooks: '+(j.sent||0)+' invoice email(s) sent'+(j.failed?', '+j.failed+' failed':'')+(j.note?' ('+j.note+')':'')), {kind:j.error?'error':'success'});
+  }catch(e){ notify('Could not check: '+e.message,{kind:'error'}); }
+  await _loadEmailAutomation();
+}
+window.runInvoiceEmailsNow=runInvoiceEmailsNow;
+function showInvoiceEmailLog(){
+  var old=document.getElementById('invEmailLogModal'); if(old) old.remove();
+  var rows=_emailAuto.log||[];
+  var label={sent:'Sent','already-emailed':'Already emailed in QuickBooks','no-email':'No email on file',failed:'Failed'};
+  var color={sent:'#1a7a3c','already-emailed':'var(--muted)','no-email':'#b8460b',failed:'#c0392b'};
+  var bg=document.createElement('div'); bg.id='invEmailLogModal';
+  bg.style.cssText='position:fixed;inset:0;z-index:1500;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;padding:16px';
+  bg.onclick=function(e){ if(e.target===bg) bg.remove(); };
+  bg.innerHTML='<div role="dialog" aria-label="Automatic invoice email log" style="background:var(--panel);border-radius:12px;max-width:900px;width:100%;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.25)">'
+    +'<div style="padding:16px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700;font-size:16px">Automatic invoice emails — log</div><button class="btn btn-sm" onclick="document.getElementById(\'invEmailLogModal\').remove()">Close</button></div>'
+    +'<div style="overflow:auto;padding:0 8px 8px"><table class="txn-table" style="width:100%"><thead><tr><th>When</th><th>Customer</th><th>Invoice</th><th style="text-align:right">Amount</th><th>To</th><th>Result</th></tr></thead><tbody>'
+    +(rows.length?rows.map(function(e){ return '<tr><td>'+esc(_orderWhenStr(e.at))+'</td><td>'+esc(e.customer||'')+'</td><td>#'+esc(e.docNumber||e.invoiceId||'')+'</td><td style="text-align:right">$'+Number(e.amount||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</td><td style="font-size:12px">'+esc(e.to||'—')+'</td><td style="color:'+(color[e.status]||'inherit')+';font-weight:600">'+esc(label[e.status]||e.status)+(e.note&&e.status==='failed'?'<div style="font-weight:400;font-size:11.5px">'+esc(e.note)+'</div>':'')+'</td></tr>'; }).join(''):'<tr><td colspan="6" style="color:var(--muted)">Nothing sent yet.</td></tr>')
+    +'</tbody></table></div></div>';
+  document.body.appendChild(bg);
+}
+window.showInvoiceEmailLog=showInvoiceEmailLog;
 </script>
 </body>
 </html>

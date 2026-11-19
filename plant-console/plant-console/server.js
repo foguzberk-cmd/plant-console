@@ -1269,6 +1269,75 @@ function _orderChangeSummary(prev, next) {
   pl.forEach((p, i) => { if (!used.has(i)) out.push('Removed ' + (d(p.product) || 'line')); });
   return out.slice(0, 12);
 }
+// ===== Automatic customer emails (Nov 2026) ===================================
+// Per-customer settings (customers[].emailInvoices / .weeklyStatement) are set
+// on the Customers page. NEW INVOICES: when switched on, every few minutes
+// the server asks QuickBooks for invoices created since then and has
+// QuickBooks email each one (POST /invoice/{id}/send — the same email and PDF
+// as clicking Send in QuickBooks), for ticked customers only. Only invoices
+// created AFTER the switch was turned on are ever sent; each at most once;
+// every attempt is logged. WEEKLY STATEMENTS: QuickBooks offers no way to
+// send statements from another app, so those need a sending mailbox — the
+// boxes are stored now, sending is added once the mailbox is set up.
+function _qbDateTime(d) { return new Date(d).toISOString().replace(/\.\d{3}Z$/, '-00:00'); }
+let _invoiceEmailRunning = false;
+async function runInvoiceEmailJob(trigger) {
+  if (_invoiceEmailRunning) return { skipped: 'already running' };
+  _invoiceEmailRunning = true;
+  const summary = { sent: 0, skipped: 0, failed: 0, checked: 0 };
+  try {
+    const data = await readSharedData();
+    const cfg = data.emailAutomation || {};
+    if (!cfg.invoicesOn) return { off: true };
+    if (!accessToken && !process.env.QB_REFRESH_TOKEN) return { error: 'QuickBooks is not connected' };
+    const byQbId = {};
+    (data.customers || []).forEach(c => { if (c && c.qbId && c.emailInvoices) byQbId[String(c.qbId)] = c; });
+    if (!Object.keys(byQbId).length) return Object.assign(summary, { note: 'no customers ticked' });
+    const log = Array.isArray(data.invoiceEmailLog) ? data.invoiceEmailLog : [];
+    const done = new Set(log.filter(e => e.status === 'sent' || e.status === 'already-emailed' || e.status === 'no-email').map(e => e.invoiceId));
+    const since = new Date(Math.max(new Date(cfg.invoicesOnSince || Date.now()).getTime(), Date.now() - 3 * 86400000));
+    await ensureFreshToken();
+    let invoices = [], start = 1;
+    while (start < 5000) {
+      const q = `SELECT * FROM Invoice WHERE MetaData.CreateTime >= '${_qbDateTime(since)}' STARTPOSITION ${start} MAXRESULTS 100`;
+      const r = await httpsRequest({ hostname: 'quickbooks.api.intuit.com', path: `/v3/company/${activeRealm}/query?query=${encodeURIComponent(q)}&minorversion=75`, method: 'GET',
+        headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/json' } });
+      if (r.status !== 200) throw new Error('QuickBooks invoice query failed (' + r.status + ')');
+      const rows = (JSON.parse(r.body).QueryResponse || {}).Invoice || [];
+      invoices = invoices.concat(rows);
+      if (rows.length < 100) break;
+      start += 100;
+    }
+    const entries = [];
+    for (const inv of invoices) {
+      summary.checked++;
+      const cust = byQbId[String(inv.CustomerRef && inv.CustomerRef.value)];
+      if (!cust || done.has(inv.Id)) { summary.skipped++; continue; }
+      const base = { invoiceId: inv.Id, docNumber: inv.DocNumber || '', customer: cust.name || (inv.CustomerRef && inv.CustomerRef.name) || '', amount: Number(inv.TotalAmt || 0), at: new Date().toISOString(), trigger: trigger || 'auto' };
+      if (inv.EmailStatus === 'EmailSent') { entries.push(Object.assign(base, { status: 'already-emailed', note: 'Already emailed from QuickBooks' })); summary.skipped++; continue; }
+      const to = (inv.BillEmail && inv.BillEmail.Address) || cust.email || '';
+      if (!to) { entries.push(Object.assign(base, { status: 'no-email', note: 'No email address on this customer in QuickBooks' })); summary.skipped++; continue; }
+      try {
+        const sr = await httpsRequest({ hostname: 'quickbooks.api.intuit.com', path: `/v3/company/${activeRealm}/invoice/${encodeURIComponent(inv.Id)}/send?sendTo=${encodeURIComponent(to)}&minorversion=75`, method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/json', 'Content-Type': 'application/octet-stream' } }, '');
+        if (sr.status === 200) { entries.push(Object.assign(base, { status: 'sent', to })); summary.sent++; }
+        else { entries.push(Object.assign(base, { status: 'failed', to, note: 'QuickBooks answered ' + sr.status })); summary.failed++; }
+      } catch (e) { entries.push(Object.assign(base, { status: 'failed', to, note: e.message })); summary.failed++; }
+    }
+    await updateSharedData(async (current) => {
+      const l = (Array.isArray(current.invoiceEmailLog) ? current.invoiceEmailLog : []).concat(entries).slice(-500);
+      const c = Object.assign({}, current.emailAutomation || {}, { lastRunAt: new Date().toISOString(), lastError: '', lastSummary: summary });
+      return { data: Object.assign({}, current, { invoiceEmailLog: l, emailAutomation: c }) };
+    });
+    if (summary.sent || summary.failed) console.log('[invoice-email] sent ' + summary.sent + ', failed ' + summary.failed + ', checked ' + summary.checked);
+    return summary;
+  } catch (e) {
+    console.warn('[invoice-email] run failed:', e.message);
+    try { await updateSharedData(async (current) => ({ data: Object.assign({}, current, { emailAutomation: Object.assign({}, current.emailAutomation || {}, { lastRunAt: new Date().toISOString(), lastError: e.message }) }) })); } catch (e2) {}
+    return { error: e.message };
+  } finally { _invoiceEmailRunning = false; }
+}
+setInterval(() => { runInvoiceEmailJob('auto').catch(() => {}); }, 5 * 60 * 1000);
 // ===== END SHARED DATA STORE =====
 
 // ===== QUICKBOOKS TOKEN PERSISTENCE =====
@@ -1926,6 +1995,11 @@ async function applyWebhookEntityChange(entityName, id) {
         // /api/customers/:id/dunsnumber) — always carry forward whatever
         // is already stored, same as Sales Rep just above.
         dunsNumber: idx >= 0 ? (customers[idx].dunsNumber || '') : '',
+        // Automatic emails (Nov 2026): Plant-Console-only settings, carried
+        // forward exactly like Sales Rep; email comes from QuickBooks.
+        emailInvoices: idx >= 0 ? !!customers[idx].emailInvoices : false,
+        weeklyStatement: idx >= 0 ? !!customers[idx].weeklyStatement : false,
+        email: (record.PrimaryEmailAddr && record.PrimaryEmailAddr.Address) || (idx >= 0 ? (customers[idx].email || '') : ''),
         balance: Number(record.Balance || 0)
       };
       if (idx >= 0) customers[idx] = mapped; else customers.push(mapped);
@@ -2330,6 +2404,10 @@ async function backgroundSyncCustomers() {
         // /api/customers/:id/dunsnumber for the manual-entry path instead.)
         salesRep: existing >= 0 ? (customers[existing].salesRep || '') : '',
         dunsNumber: existing >= 0 ? (customers[existing].dunsNumber || '') : '',
+        // Automatic emails (Nov 2026) — same carry-forward as Sales Rep.
+        emailInvoices: existing >= 0 ? !!customers[existing].emailInvoices : false,
+        weeklyStatement: existing >= 0 ? !!customers[existing].weeklyStatement : false,
+        email: (qc.PrimaryEmailAddr && qc.PrimaryEmailAddr.Address) || (existing >= 0 ? (customers[existing].email || '') : ''),
         // Delivery address for driver route-mileage estimates — ShipAddr is
         // preferred (it's where the truck actually goes) with BillAddr as a
         // fallback for customers who never set one separately. If QB
@@ -3296,6 +3374,68 @@ const server = http.createServer(async (req, res) => {
   // was actually changed. There's nothing to merge and nothing that can
   // race against another device's edit to a DIFFERENT customer, because
   // this never touches anything but the single record it names.
+  // ---- Automatic customer emails (Nov 2026) — see runInvoiceEmailJob ----
+  if (url.startsWith('/api/customers/') && url.endsWith('/email-prefs') && req.method === 'POST') {
+    const session = requireAdmin(req, res); if (!session) return;
+    const custId = decodeURIComponent(url.slice('/api/customers/'.length, -'/email-prefs'.length));
+    try {
+      const body = JSON.parse((await readRequestBody(req)) || '{}');
+      let found = null;
+      await updateSharedData(async (current) => {
+        const customers = Array.isArray(current.customers) ? current.customers : [];
+        const idx = customers.findIndex(c => c && c.id === custId);
+        if (idx < 0) return { skipWrite: true };
+        const patch = {};
+        if (typeof body.emailInvoices === 'boolean') patch.emailInvoices = body.emailInvoices;
+        if (typeof body.weeklyStatement === 'boolean') patch.weeklyStatement = body.weeklyStatement;
+        customers[idx] = Object.assign({}, customers[idx], patch);
+        found = customers[idx];
+        return { data: Object.assign({}, current, { customers }) };
+      });
+      if (!found) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Customer not found.' })); return; }
+      console.log('[invoice-email] ' + (session.name || '?') + ' set ' + found.name + ': invoices=' + !!found.emailInvoices + ', statements=' + !!found.weeklyStatement);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store' });
+      res.end(JSON.stringify({ success: true, id: custId, emailInvoices: !!found.emailInvoices, weeklyStatement: !!found.weeklyStatement }));
+    } catch (e) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: e.message })); }
+    return;
+  }
+  if (url === '/api/email-automation' && req.method === 'GET') {
+    if (!requireAuth(req, res)) return;
+    const data = await readSharedData();
+    const log = (Array.isArray(data.invoiceEmailLog) ? data.invoiceEmailLog : []).slice(-150).reverse();
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store' });
+    res.end(JSON.stringify({ config: data.emailAutomation || {}, log }));
+    return;
+  }
+  if (url === '/api/email-automation' && req.method === 'POST') {
+    const session = requireAdmin(req, res); if (!session) return;
+    try {
+      const body = JSON.parse((await readRequestBody(req)) || '{}');
+      let cfg = null;
+      await updateSharedData(async (current) => {
+        const c = Object.assign({}, current.emailAutomation || {});
+        if (typeof body.invoicesOn === 'boolean') {
+          // Turning ON starts a fresh window: only invoices created from now on.
+          if (body.invoicesOn && !c.invoicesOn) c.invoicesOnSince = new Date().toISOString();
+          c.invoicesOn = body.invoicesOn;
+          c.changedBy = session.name || ''; c.changedAt = new Date().toISOString();
+        }
+        cfg = c;
+        return { data: Object.assign({}, current, { emailAutomation: c }) };
+      });
+      console.log('[invoice-email] ' + (session.name || '?') + ' turned automatic invoice emails ' + (cfg.invoicesOn ? 'ON' : 'OFF'));
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store' });
+      res.end(JSON.stringify({ success: true, config: cfg }));
+    } catch (e) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: e.message })); }
+    return;
+  }
+  if (url === '/api/email-automation/run-now' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
+    const result = await runInvoiceEmailJob('manual');
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store' });
+    res.end(JSON.stringify(result || {}));
+    return;
+  }
   if (url.startsWith('/api/customers/') && url.endsWith('/salesrep') && req.method === 'POST') {
     if (!requireAuth(req, res)) return;
     const custId = decodeURIComponent(url.slice('/api/customers/'.length, -'/salesrep'.length));

@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#9E2B25">
 <title>Customer Portal · Leader Meat Packing</title>
+<link rel="manifest" href="/portal/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/portal/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Leader Meat">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAAKkUlEQVR4nO3de1ST9x3H8YdcSMLFcL+ogCI3BUFFrdZZRRSl1tVLd5xatcx2Z+3pKt52jmu79Zxu7bHHslZXu+1MRB1qW6zdjlMoUsBWW4VKFRAEFAR0CCRBAiQkhOwPejrXk294fpCEXD6vP/P88nt+wlvN8+R5Erfs+GgOwBTBWC8A7BfiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiABLiAJJorBfgtARisV9MrH98gnxypGdIqGdIqEdAgFAqE0mlQonEaDAYdDp9b69WpdR0dqhbmh82NSlraxS1N/U9PWO99u+NWRxrzxbIJ022wERGo0GvN+j69b29WkVnX2dnd2Nj152GzqpKVX2dcXDQArtg4RMVHbYoJWxRSuD0RIFYTA1zEwgEYrHY09MjKIiLjfvfBqOxs7qq9WJJ65elHVWVnNFoi0UT3LLjo8dkxxaLg6ZTd9+7/FVT/vmW0mKDTmfVfYk9PCKf+mnc+o1+j/6mR0erUjYVnK85daKrod5SczJx5jh+oFUqak6duHksR9ejtvjkIpksfktGQsY2dy9vi08+pK3sSs3J3OaiwkGDwUq7MMkl4hiiVSnLs/bXn8mz4JxRT6+ZvWO3LCDQgnNSzmdsbiu7YoMd/cCFjlakvn4/efOtJe9/YJG/4jL/gNSDHy784z7blDEmXCiOIRGpy9KP5sr8A0YzSeD0xKc//Vd4SqqlVmWfXC4OjuP8YuNWHD4q9vIa2dMjlqal5/xjlHk5BFeMg+M4n6joRe9kjeCJk5c/mZJ1QCiRWnxJdshF4+A4LuyJxdFrnmF6ysSFTzyxb7+bwFV+aC59hnT2zt2N5/89oNXwGSyfHJmSdVAgGslPzDhoaCsrayu70lFVqW5p1ioUA5o+TiAQSaQSudwjONh7Yphf7NSAhOmBSTNGtgtrsJd1mNHVUH9m9UqTm0QymWScXB45JTh5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">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@600;700&display=swap" rel="stylesheet">
@@ -67,6 +73,10 @@ main{max-width:980px;margin:0 auto;padding:18px 16px 40px}
 .chip.over{background:#fdecea;color:var(--err)} .chip.open{background:#fff4e0;color:var(--warn)} .chip.paid{background:#e7f4ec;color:var(--ok)}
 .empty{padding:26px 16px;text-align:center;color:var(--muted)}
 .foot{color:var(--muted);font-size:12.5px;margin-top:16px;text-align:center}
+#installBar{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--brand);border-radius:12px;padding:12px 14px;margin-bottom:14px}
+#installBar img{width:40px;height:40px;border-radius:9px;border:1px solid var(--line);flex:none}
+#installBar .t{flex:1;font-size:13.5px} #installBar .t b{display:block;font-size:14.5px}
+#installBar .x{background:none;border:0;font-size:20px;color:var(--muted);padding:4px 6px}
 @media (max-width:640px){
   .row{grid-template-columns:1fr auto;grid-template-areas:"no bal" "dt st";row-gap:4px}
   .row.head{display:none}
@@ -122,6 +132,7 @@ th{font-size:12.5px;color:var(--muted);font-weight:600}
     <button class="btn" id="bOut" style="height:38px">Sign out</button>
   </div></header>
   <main>
+    <div id="installBar" class="hidden" role="region" aria-label="Install the app"></div>
     <div id="loading" class="empty"><span class="spin"></span> Loading your account…</div>
     <div id="content" class="hidden">
       <div class="stats">
@@ -182,7 +193,7 @@ $('bBack').addEventListener('click',function(){ msg(''); $('fCode').classList.ad
 $('fCode').addEventListener('submit',async function(e){
   e.preventDefault(); var c=$('code').value.replace(/\D/g,''); if(c.length<4){ msg('Enter the code from the text message.','err'); return; }
   $('bVerify').disabled=true; msg('Checking…');
-  try{ await post('verify',{phone:state.phone,code:c}); msg(''); await start(); }catch(e){ if(e.message!=='signed-out') msg(e.message,'err'); }
+  try{ await post('verify',{phone:state.phone,code:c}); msg(''); await start(); showInstallBar(); }catch(e){ if(e.message!=='signed-out') msg(e.message,'err'); }
   $('bVerify').disabled=false;
 });
 $('code').addEventListener('input',function(){ if(this.value.replace(/\D/g,'').length===6) $('fCode').requestSubmit(); });
@@ -262,7 +273,29 @@ async function openInvoice(id){
 function closeSheet(){ $('sheet').classList.add('hidden'); }
 $('sheet').addEventListener('click',function(e){ if(e.target===$('sheet')) closeSheet(); });
 document.addEventListener('keydown',function(e){ if(e.key==='Escape') closeSheet(); });
-start().catch(function(e){ if(e.message!=='signed-out') showLogin(); });
+
+// ---- Install as an app (Nov 2026) ----------------------------------------
+if('serviceWorker' in navigator){ navigator.serviceWorker.register('/portal/sw.js',{scope:'/portal/'}).catch(function(){}); }
+var _installEvt=null;
+function _isInstalled(){ return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone===true; }
+function _isIOS(){ return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1); }
+function _dismissed(){ try{ return Number(localStorage.getItem('portal_install_dismissed')||0) > Date.now()-30*86400000; }catch(e){ return false; } }
+window.addEventListener('beforeinstallprompt',function(e){ e.preventDefault(); _installEvt=e; showInstallBar(); });
+window.addEventListener('appinstalled',function(){ var b=document.getElementById('installBar'); if(b) b.classList.add('hidden'); });
+function showInstallBar(){
+  var b=document.getElementById('installBar'); if(!b || _isInstalled() || _dismissed() || document.getElementById('app').classList.contains('hidden')) return;
+  var how='';
+  if(_installEvt) how='<button class="btn" id="bInstall" style="height:38px;background:var(--brand);border-color:var(--brand);color:#fff">Install</button>';
+  else if(_isIOS()) how='';
+  else return;
+  b.innerHTML='<img src="/portal/icon-192.png" alt=""><div class="t"><b>Get the Leader Meat app</b>'
+    +(_installEvt?'One tap — your account on your home screen.':'Tap <b style="display:inline">Share</b> <span aria-hidden="true">⎙</span>, then <b style="display:inline">Add to Home Screen</b>.')+'</div>'
+    +how+'<button class="x" id="bInstallX" aria-label="Dismiss">×</button>';
+  b.classList.remove('hidden');
+  var i=document.getElementById('bInstall'); if(i) i.onclick=async function(){ _installEvt.prompt(); try{ await _installEvt.userChoice; }catch(e){} _installEvt=null; b.classList.add('hidden'); };
+  document.getElementById('bInstallX').onclick=function(){ try{ localStorage.setItem('portal_install_dismissed',String(Date.now())); }catch(e){} b.classList.add('hidden'); };
+}
+start().then(showInstallBar).catch(function(e){ if(e.message!=='signed-out') showLogin(); });
 })();
 </script>
 </body>

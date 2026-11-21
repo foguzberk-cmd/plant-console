@@ -1393,11 +1393,14 @@ function _portalLimited(key, max, windowMs) {
   arr.push(now); _portalHits.set(key, arr); return false;
 }
 function _clientIp(req) { return String((req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || ''); }
-function _twilioReady() { return !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_VERIFY_SID); }
+// Twilio settings, trimmed: a stray space or line break pasted into Render
+// along with a value is the most common reason Twilio rejects every request.
+function _tw(k) { return String(process.env[k] || '').trim(); }
+function _twilioReady() { return !!(_tw('TWILIO_ACCOUNT_SID') && _tw('TWILIO_AUTH_TOKEN') && _tw('TWILIO_VERIFY_SID')); }
 async function _twilioVerify(pathSuffix, form) {
   const body = Object.keys(form).map(k => encodeURIComponent(k) + '=' + encodeURIComponent(form[k])).join('&');
-  const auth = Buffer.from(process.env.TWILIO_ACCOUNT_SID + ':' + process.env.TWILIO_AUTH_TOKEN).toString('base64');
-  const r = await _httpsRequestRaw({ hostname: 'verify.twilio.com', path: `/v2/Services/${encodeURIComponent(process.env.TWILIO_VERIFY_SID)}/${pathSuffix}`, method: 'POST',
+  const auth = Buffer.from(_tw('TWILIO_ACCOUNT_SID') + ':' + _tw('TWILIO_AUTH_TOKEN')).toString('base64');
+  const r = await _httpsRequestRaw({ hostname: 'verify.twilio.com', path: `/v2/Services/${encodeURIComponent(_tw('TWILIO_VERIFY_SID'))}/${pathSuffix}`, method: 'POST',
     headers: { 'Authorization': 'Basic ' + auth, 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) } }, body);
   let j = {}; try { j = JSON.parse(r.body || '{}'); } catch (e) {}
   return { status: r.status, json: j };
@@ -2844,7 +2847,15 @@ const server = http.createServer(async (req, res) => {
         // Same answer whether or not the number is registered (no way to probe numbers).
         if (allowed.length) {
           const r = await _twilioVerify('Verifications', { To: phone, Channel: 'sms' });
-          if (r.status >= 300) { console.warn('[portal] Twilio send failed ' + r.status + ' for ' + phone.slice(0, -4) + '****'); return sendJ(502, { error: 'Could not send the text message right now. Please try again shortly.' }); }
+          if (r.status >= 300) {
+            // Twilio's own reason (error code + message) — never the secrets.
+            // 20003 = wrong Account SID / Auth Token; 20404 = wrong Verify
+            // Service SID; 60410/60605 = Geo Permissions blocking the country;
+            // 60200 = invalid phone number. Look these up at twilio.com/docs/api/errors.
+            const sidHint = 'account ' + _tw('TWILIO_ACCOUNT_SID').slice(0, 4) + '… (' + _tw('TWILIO_ACCOUNT_SID').length + ' chars), service ' + _tw('TWILIO_VERIFY_SID').slice(0, 4) + '… (' + _tw('TWILIO_VERIFY_SID').length + ' chars)';
+            console.warn('[portal] Twilio send failed: HTTP ' + r.status + ', Twilio error ' + (r.json.code || '?') + ' — ' + (r.json.message || 'no message') + ' | ' + sidHint + ' | to ' + phone.slice(0, -4) + '****');
+            return sendJ(502, { error: 'Could not send the text message right now. Please try again shortly.' });
+          }
           console.log('[portal] code sent to ' + phone.slice(0, -4) + '****');
         } else console.log('[portal] code requested for unregistered number ' + phone.slice(0, -4) + '****');
         return sendJ(200, { ok: true, message: 'If this number is registered with us, a 6-digit code is on its way.' });

@@ -16683,6 +16683,7 @@ function renderCustomersList(){
       +'<input type="checkbox" '+(on?'checked':'')+(inactive?' disabled':'')+' onchange="toggleCustomerAllowed(\''+c.id+'\',this.checked)" style="width:17px;height:17px;'+(inactive?'cursor:not-allowed':'cursor:pointer')+';accent-color:var(--brand)"/>'
       +'<div style="flex:1;font-size:13px;font-weight:600;'+(inactive?'color:#c0392b':'')+'">'+esc(c.name)+(inactive?' <span style="font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.06em;color:#fff;background:#c0392b;padding:1px 6px;border-radius:999px;vertical-align:middle;margin-left:6px">INACTIVE</span>':'')+'</div>'
       +_custEmailBoxesHtml(c,inactive)
+      +_custPortalBtnHtml(c,inactive)
       +'<input type="text" data-repinput="'+c.id+'" value="'+esc(c.salesRep||'')+'" placeholder="Sales Rep" onclick="event.stopPropagation()" onfocus="event.stopPropagation();showRepSuggestions(this,\''+c.id+'\')" oninput="showRepSuggestions(this,\''+c.id+'\')" onchange="updateCustomerSalesRep(\''+c.id+'\',this.value)" style="width:140px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;background:var(--bg);color:var(--ink);cursor:text"/>'
       +'<input type="text" value="'+esc(c.dunsNumber||'')+'" placeholder="Dun#" title="Dun# (D-U-N-S number) — not available from QuickBooks\'s API, entered here manually" onclick="event.stopPropagation()" onchange="updateCustomerDunsNumber(\''+c.id+'\',this.value)" style="width:100px;padding:6px 9px;border:1.5px solid var(--line);border-radius:7px;font-size:12px;font-family:var(--mono);background:var(--bg);color:var(--ink);cursor:text"/>'
       +'</label>';
@@ -21199,6 +21200,63 @@ function showInvoiceEmailLog(){
   document.body.appendChild(bg);
 }
 window.showInvoiceEmailLog=showInvoiceEmailLog;
+
+/* ===== Customer portal — admin controls on the Customers page (Nov 2026) =====
+   Who may sign in to the customer portal (/portal) for each customer: phone
+   numbers an admin confirms here. QuickBooks numbers are offered only as
+   suggestions — nothing gets access until it's added. */
+function _fmtPhone(p){ var d=String(p||'').replace(/\D/g,''); if(d.length===11&&d[0]==='1') d=d.slice(1); return d.length===10?'('+d.slice(0,3)+') '+d.slice(3,6)+'-'+d.slice(6):String(p||''); }
+function _custPortalBtnHtml(c,inactive){
+  if(!_isAdminUser() || inactive) return '';
+  var n=(c.portalPhones||[]).length;
+  var label=c.portalOff?'Portal off':(n?'Portal · '+n:'Portal');
+  var style=c.portalOff?'color:#b8460b;border-color:#e0c56b':(n?'color:var(--cold);border-color:var(--cold)':'');
+  return '<button type="button" class="btn btn-sm" title="Customer portal: who can sign in by phone" onclick="event.stopPropagation();event.preventDefault();openPortalAccess(\''+c.id+'\')" style="white-space:nowrap;'+style+'">'+label+'</button>';
+}
+function openPortalAccess(id){
+  var c=customers.find(function(x){ return x.id===id; }); if(!c) return;
+  var phones=(c.portalPhones||[]).slice(), off=!!c.portalOff;
+  var old=document.getElementById('portalModal'); if(old) old.remove();
+  var bg=document.createElement('div'); bg.id='portalModal';
+  bg.style.cssText='position:fixed;inset:0;z-index:1500;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;padding:16px';
+  bg.onclick=function(e){ if(e.target===bg) bg.remove(); };
+  function draw(msg,kind){
+    var sugg=(c.qbPhones||[]).filter(function(p){ return phones.indexOf(p)<0; });
+    var link=location.origin+'/portal';
+    bg.innerHTML='<div role="dialog" aria-label="Customer portal access" style="background:var(--panel);border-radius:12px;max-width:520px;width:100%;padding:18px 20px;box-shadow:0 20px 60px rgba(0,0,0,.25)">'
+      +'<div style="font-weight:700;font-size:16px">Customer portal — '+esc(c.name)+'</div>'
+      +'<div style="font-size:12.5px;color:var(--muted);margin:4px 0 14px">These phone numbers can sign in with a texted code and see this customer\'s balance and invoices — nothing else.</div>'
+      +'<div style="font-weight:600;font-size:13px;margin-bottom:6px">Allowed phone numbers</div>'
+      +(phones.length?phones.map(function(p,i){ return '<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px"><span style="flex:1;font-weight:600">'+esc(_fmtPhone(p))+'</span><button type="button" class="btn btn-sm" data-rm="'+i+'">Remove</button></div>'; }).join(''):'<div style="font-size:13px;color:var(--muted);margin-bottom:6px">None yet — no one can sign in for this customer.</div>')
+      +'<div style="display:flex;gap:8px;margin:8px 0 4px"><input id="pmAdd" type="tel" placeholder="Add a phone number" style="flex:1;height:36px;border:1px solid var(--line);border-radius:8px;padding:0 10px;font:inherit"><button type="button" class="btn btn-sm btn-primary" id="pmAddBtn">Add</button></div>'
+      +(sugg.length?'<div style="font-size:12.5px;color:var(--muted);margin-top:8px">From QuickBooks: '+sugg.map(function(p){ return '<button type="button" class="btn btn-sm" data-sg="'+esc(p)+'" style="margin:3px 4px 0 0">+ '+esc(_fmtPhone(p))+'</button>'; }).join('')+'</div>':'')
+      +'<label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:13px;cursor:pointer"><input type="checkbox" id="pmOff" '+(off?'checked':'')+'> Switch portal access OFF for this customer (keeps the numbers)</label>'
+      +'<div style="font-size:12.5px;color:var(--muted);margin-top:12px">Portal link to share: <b style="color:var(--ink)">'+esc(link)+'</b> <button type="button" class="btn btn-sm" id="pmCopy">Copy</button></div>'
+      +'<div id="pmMsg" style="min-height:18px;font-size:12.5px;margin-top:8px;color:'+(kind==='err'?'#c0392b':'#1a7a3c')+'">'+esc(msg||'')+'</div>'
+      +'<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px"><button type="button" class="btn btn-sm" id="pmCancel">Cancel</button><button type="button" class="btn btn-sm btn-primary" id="pmSave">Save</button></div>'
+      +'</div>';
+    bg.querySelectorAll('[data-rm]').forEach(function(b){ b.onclick=function(){ phones.splice(Number(b.getAttribute('data-rm')),1); draw(); }; });
+    bg.querySelectorAll('[data-sg]').forEach(function(b){ b.onclick=function(){ phones.push(b.getAttribute('data-sg')); draw(); }; });
+    var add=function(){ var v=bg.querySelector('#pmAdd').value.trim(); if(!v) return; var d=v.replace(/\D/g,''); if(!(d.length===10||(d.length===11&&d[0]==='1')||(v.trim()[0]==='+'&&d.length>=8))){ draw('That doesn\'t look like a full phone number.','err'); return; } phones.push(v); draw(); };
+    bg.querySelector('#pmAddBtn').onclick=add;
+    bg.querySelector('#pmAdd').onkeydown=function(e){ if(e.key==='Enter'){ e.preventDefault(); add(); } };
+    bg.querySelector('#pmOff').onchange=function(){ off=this.checked; };
+    bg.querySelector('#pmCancel').onclick=function(){ bg.remove(); };
+    bg.querySelector('#pmCopy').onclick=function(){ try{ navigator.clipboard.writeText(link); draw('Link copied.'); }catch(e){} };
+    bg.querySelector('#pmSave').onclick=async function(){
+      this.disabled=true;
+      try{
+        var r=await fetch('/api/customers/'+encodeURIComponent(c.id)+'/portal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phones:phones,off:off})});
+        var j=await r.json(); if(!r.ok||!j.success) throw new Error(j.error||('HTTP '+r.status));
+        c.portalPhones=j.portalPhones; c.portalOff=j.portalOff;
+        bg.remove(); renderCustomersList();
+        notify('Portal access saved for '+c.name,{kind:'success'});
+      }catch(e){ draw('Could not save: '+e.message,'err'); }
+    };
+  }
+  draw(); document.body.appendChild(bg);
+}
+window.openPortalAccess=openPortalAccess;
 </script>
 </body>
 </html>

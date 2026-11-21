@@ -1338,6 +1338,94 @@ async function runInvoiceEmailJob(trigger) {
   } finally { _invoiceEmailRunning = false; }
 }
 setInterval(() => { runInvoiceEmailJob('auto').catch(() => {}); }, 5 * 60 * 1000);
+// ===== Customer portal (Nov 2026) ============================================
+// A separate, customer-facing site at /portal. Customers log in with a phone
+// number an ADMIN has confirmed on the Customers page (portalPhones) and a
+// 6-digit code texted by Twilio Verify. Completely separate from staff
+// logins: own cookie (pc_portal), own session table, own /portal/api/*
+// routes, and every request re-checks — live — which customers that phone
+// may see, so removing a number or switching a customer off takes effect
+// immediately. All data is read live from QuickBooks and always filtered to
+// the logged-in customer's own QuickBooks id.
+function _normPhone(raw) {
+  let d = String(raw || '').replace(/[^\d+]/g, '');
+  if (d.startsWith('+')) { const digits = d.slice(1).replace(/\D/g, ''); return (digits.length >= 8 && digits.length <= 15) ? '+' + digits : ''; }
+  d = d.replace(/\D/g, '');
+  if (d.length === 10) return '+1' + d;
+  if (d.length === 11 && d[0] === '1') return '+' + d;
+  return '';
+}
+function _qbPhonesOf(rec) {
+  const out = [];
+  [rec && rec.PrimaryPhone, rec && rec.Mobile, rec && rec.AlternatePhone].forEach(p => { const n = _normPhone(p && p.FreeFormNumber); if (n && out.indexOf(n) < 0) out.push(n); });
+  return out;
+}
+const PORTAL_SESSIONS_FILE = path.join(DATA_DIR, 'portal-sessions.json');
+const PORTAL_TTL_MS = 30 * 86400000;
+const PORTAL_SESSIONS = new Map(); // token -> { phone, expires, createdAt }
+try { const raw = JSON.parse(fs.readFileSync(PORTAL_SESSIONS_FILE, 'utf8')); Object.keys(raw || {}).forEach(k => { if (raw[k] && raw[k].expires > Date.now()) PORTAL_SESSIONS.set(k, raw[k]); }); } catch (e) {}
+function _persistPortalSessions() {
+  try { const o = {}; PORTAL_SESSIONS.forEach((v, k) => { if (v.expires > Date.now()) o[k] = v; });
+    const tmp = PORTAL_SESSIONS_FILE + '.tmp-' + process.pid; fs.writeFileSync(tmp, JSON.stringify(o)); fs.renameSync(tmp, PORTAL_SESSIONS_FILE); } catch (e) { console.warn('[portal] could not save sessions:', e.message); }
+}
+function _portalCookie(token, maxAgeSec) {
+  let c = `pc_portal=${token}; Path=/portal; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSec}`;
+  if (process.env.NODE_ENV === 'production') c += '; Secure';
+  return c;
+}
+// Customers this phone may see right now (admin-confirmed, not switched off, active).
+async function _portalCustomersFor(phone) {
+  const data = await readSharedData();
+  return (data.customers || []).filter(c => c && c.active !== false && !c.portalOff && c.qbId && Array.isArray(c.portalPhones) && c.portalPhones.indexOf(phone) >= 0);
+}
+function _portalSession(req) {
+  const tok = parseCookies(req).pc_portal;
+  const s = tok && PORTAL_SESSIONS.get(tok);
+  if (!s) return null;
+  if (Date.now() > s.expires) { PORTAL_SESSIONS.delete(tok); _persistPortalSessions(); return null; }
+  return Object.assign({ token: tok }, s);
+}
+// Simple in-memory limits: per phone and per IP address.
+const _portalHits = new Map();
+function _portalLimited(key, max, windowMs) {
+  const now = Date.now(), arr = (_portalHits.get(key) || []).filter(t => now - t < windowMs);
+  if (arr.length >= max) { _portalHits.set(key, arr); return true; }
+  arr.push(now); _portalHits.set(key, arr); return false;
+}
+function _clientIp(req) { return String((req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || ''); }
+function _twilioReady() { return !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_VERIFY_SID); }
+async function _twilioVerify(pathSuffix, form) {
+  const body = Object.keys(form).map(k => encodeURIComponent(k) + '=' + encodeURIComponent(form[k])).join('&');
+  const auth = Buffer.from(process.env.TWILIO_ACCOUNT_SID + ':' + process.env.TWILIO_AUTH_TOKEN).toString('base64');
+  const r = await _httpsRequestRaw({ hostname: 'verify.twilio.com', path: `/v2/Services/${encodeURIComponent(process.env.TWILIO_VERIFY_SID)}/${pathSuffix}`, method: 'POST',
+    headers: { 'Authorization': 'Basic ' + auth, 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) } }, body);
+  let j = {}; try { j = JSON.parse(r.body || '{}'); } catch (e) {}
+  return { status: r.status, json: j };
+}
+async function _qbQueryAll(sql) {
+  await ensureFreshToken();
+  let all = [], start = 1;
+  while (start < 10000) {
+    const q = `${sql} STARTPOSITION ${start} MAXRESULTS 1000`;
+    const r = await httpsRequest({ hostname: 'quickbooks.api.intuit.com', path: `/v3/company/${activeRealm}/query?query=${encodeURIComponent(q)}&minorversion=75`, method: 'GET',
+      headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/json' } });
+    if (r.status !== 200) throw new Error('QuickBooks query failed (' + r.status + ')');
+    const qr = JSON.parse(r.body).QueryResponse || {};
+    const key = Object.keys(qr).find(k => Array.isArray(qr[k]));
+    const rows = key ? qr[key] : [];
+    all = all.concat(rows);
+    if (rows.length < 1000) break;
+    start += 1000;
+  }
+  return all;
+}
+function _daysBetween(a, b) { return Math.floor((new Date(b + 'T00:00:00Z') - new Date(a + 'T00:00:00Z')) / 86400000); }
+function _invSummary(inv, today) {
+  const due = (inv.DueDate || inv.TxnDate || '').slice(0, 10);
+  const bal = Number(inv.Balance || 0);
+  return { id: inv.Id, number: inv.DocNumber || '', date: (inv.TxnDate || '').slice(0, 10), due: due, total: Number(inv.TotalAmt || 0), balance: bal,
+    daysOverdue: (bal > 0.004 && due && due < today) ? _daysBetween(due, today) : 0 };
+}
 // ===== END SHARED DATA STORE =====
 
 // ===== QUICKBOOKS TOKEN PERSISTENCE =====
@@ -1447,7 +1535,8 @@ function _httpsRequestRaw(options, body) {
       // characters the same way.
       const parts = [];
       res.on('data', chunk => parts.push(chunk));
-      res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(parts).toString('utf8'), headers: res.headers }));
+      // options.__binary (Nov 2026): PDFs etc. must stay raw bytes, not text.
+      res.on('end', () => resolve({ status: res.statusCode, body: options.__binary ? Buffer.concat(parts) : Buffer.concat(parts).toString('utf8'), headers: res.headers }));
     });
     req.on('error', reject);
     if (body) req.write(body);
@@ -2000,6 +2089,11 @@ async function applyWebhookEntityChange(entityName, id) {
         emailInvoices: idx >= 0 ? !!customers[idx].emailInvoices : false,
         weeklyStatement: idx >= 0 ? !!customers[idx].weeklyStatement : false,
         email: (record.PrimaryEmailAddr && record.PrimaryEmailAddr.Address) || (idx >= 0 ? (customers[idx].email || '') : ''),
+        // Customer portal (Nov 2026): phones from QuickBooks are only
+        // SUGGESTIONS; portalPhones (admin-confirmed) decide who can log in.
+        qbPhones: _qbPhonesOf(record).length ? _qbPhonesOf(record) : (idx >= 0 ? (customers[idx].qbPhones || []) : []),
+        portalPhones: idx >= 0 ? (customers[idx].portalPhones || []) : [],
+        portalOff: idx >= 0 ? !!customers[idx].portalOff : false,
         balance: Number(record.Balance || 0)
       };
       if (idx >= 0) customers[idx] = mapped; else customers.push(mapped);
@@ -2408,6 +2502,9 @@ async function backgroundSyncCustomers() {
         emailInvoices: existing >= 0 ? !!customers[existing].emailInvoices : false,
         weeklyStatement: existing >= 0 ? !!customers[existing].weeklyStatement : false,
         email: (qc.PrimaryEmailAddr && qc.PrimaryEmailAddr.Address) || (existing >= 0 ? (customers[existing].email || '') : ''),
+        qbPhones: _qbPhonesOf(qc).length ? _qbPhonesOf(qc) : (existing >= 0 ? (customers[existing].qbPhones || []) : []),
+        portalPhones: existing >= 0 ? (customers[existing].portalPhones || []) : [],
+        portalOff: existing >= 0 ? !!customers[existing].portalOff : false,
         // Delivery address for driver route-mileage estimates — ShipAddr is
         // preferred (it's where the truck actually goes) with BillAddr as a
         // fallback for customers who never set one separately. If QB
@@ -2725,6 +2822,136 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  // ===== Customer portal routes (Nov 2026) — see "Customer portal" above =====
+  if (url === '/portal' || url === '/portal/') {
+    fs.readFile(path.join(__dirname, 'portal.html'), (err, data) => {
+      if (err) { res.writeHead(404); res.end('Not found'); return; }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
+      res.end(data);
+    });
+    return;
+  }
+  if (url.startsWith('/portal/api/')) {
+    const sendJ = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store' }); res.end(JSON.stringify(obj)); };
+    try {
+      if (url === '/portal/api/send-code' && req.method === 'POST') {
+        const body = JSON.parse((await readRequestBody(req)) || '{}');
+        const phone = _normPhone(body.phone);
+        if (!phone) return sendJ(400, { error: 'Please enter a valid phone number.' });
+        if (!_twilioReady()) return sendJ(503, { error: 'Sign-in by text message is not set up yet. Please contact Leader Meat.' });
+        if (_portalLimited('ip:' + _clientIp(req), 15, 3600000) || _portalLimited('send:' + phone, 4, 900000)) return sendJ(429, { error: 'Too many attempts. Please wait a few minutes and try again.' });
+        const allowed = await _portalCustomersFor(phone);
+        // Same answer whether or not the number is registered (no way to probe numbers).
+        if (allowed.length) {
+          const r = await _twilioVerify('Verifications', { To: phone, Channel: 'sms' });
+          if (r.status >= 300) { console.warn('[portal] Twilio send failed ' + r.status + ' for ' + phone.slice(0, -4) + '****'); return sendJ(502, { error: 'Could not send the text message right now. Please try again shortly.' }); }
+          console.log('[portal] code sent to ' + phone.slice(0, -4) + '****');
+        } else console.log('[portal] code requested for unregistered number ' + phone.slice(0, -4) + '****');
+        return sendJ(200, { ok: true, message: 'If this number is registered with us, a 6-digit code is on its way.' });
+      }
+      if (url === '/portal/api/verify' && req.method === 'POST') {
+        const body = JSON.parse((await readRequestBody(req)) || '{}');
+        const phone = _normPhone(body.phone), code = String(body.code || '').replace(/\D/g, '');
+        if (!phone || code.length < 4) return sendJ(400, { error: 'Enter the code from the text message.' });
+        if (_portalLimited('ip:' + _clientIp(req), 15, 3600000) || _portalLimited('verify:' + phone, 8, 900000)) return sendJ(429, { error: 'Too many attempts. Please wait a few minutes and try again.' });
+        const allowed = await _portalCustomersFor(phone);
+        if (!allowed.length || !_twilioReady()) return sendJ(401, { error: 'That code is not correct or has expired.' });
+        const r = await _twilioVerify('VerificationCheck', { To: phone, Code: code });
+        if (r.status >= 300 || r.json.status !== 'approved') return sendJ(401, { error: 'That code is not correct or has expired.' });
+        const token = crypto.randomBytes(32).toString('hex');
+        PORTAL_SESSIONS.set(token, { phone, createdAt: new Date().toISOString(), expires: Date.now() + PORTAL_TTL_MS });
+        _persistPortalSessions();
+        console.log('[portal] signed in: ' + phone.slice(0, -4) + '**** (' + allowed.map(c => c.name).join(', ') + ')');
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store', 'Set-Cookie': _portalCookie(token, PORTAL_TTL_MS / 1000) });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      if (url === '/portal/api/logout' && req.method === 'POST') {
+        const s = _portalSession(req);
+        if (s) { PORTAL_SESSIONS.delete(s.token); _persistPortalSessions(); }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': _portalCookie('', 0) });
+        res.end('{"ok":true}');
+        return;
+      }
+      // ---- everything below needs a signed-in customer ----
+      const sess = _portalSession(req);
+      if (!sess) return sendJ(401, { error: 'signed-out' });
+      const mine = await _portalCustomersFor(sess.phone);
+      if (!mine.length) return sendJ(401, { error: 'signed-out' });
+      if (url === '/portal/api/me' && req.method === 'GET') {
+        return sendJ(200, { phone: sess.phone.slice(0, -4).replace(/\d/g, '•') + sess.phone.slice(-4), customers: mine.map(c => ({ id: c.id, name: c.name })).sort((a, b) => a.name.localeCompare(b.name)) });
+      }
+      const cust = mine.find(c => c.id === String(queryParams.c || ''));
+      if (!cust) return sendJ(403, { error: 'Not available.' });
+      const qbId = String(cust.qbId).replace(/'/g, '');
+      if (url === '/portal/api/summary' && req.method === 'GET') {
+        const today = new Date().toISOString().slice(0, 10);
+        const since = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
+        const [open, recent] = await Promise.all([
+          _qbQueryAll(`SELECT * FROM Invoice WHERE CustomerRef = '${qbId}' AND Balance > '0'`),
+          _qbQueryAll(`SELECT * FROM Invoice WHERE CustomerRef = '${qbId}' AND TxnDate >= '${since}'`)
+        ]);
+        const openS = open.map(i => _invSummary(i, today)).sort((a, b) => a.due.localeCompare(b.due));
+        const aging = { current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90: 0 };
+        openS.forEach(i => { const d = i.daysOverdue; if (d <= 0) aging.current += i.balance; else if (d <= 30) aging.d1_30 += i.balance; else if (d <= 60) aging.d31_60 += i.balance; else if (d <= 90) aging.d61_90 += i.balance; else aging.d90 += i.balance; });
+        const balance = openS.reduce((t, i) => t + i.balance, 0);
+        return sendJ(200, { customer: { id: cust.id, name: cust.name }, asOf: new Date().toISOString(), balance, overdue: balance - aging.current, aging, open: openS,
+          recent: recent.map(i => _invSummary(i, today)).sort((a, b) => b.date.localeCompare(a.date) || b.number.localeCompare(a.number)) });
+      }
+      if ((url === '/portal/api/invoice' || url === '/portal/api/invoice-pdf') && req.method === 'GET') {
+        const invId = String(queryParams.inv || '').replace(/\D/g, '');
+        if (!invId) return sendJ(400, { error: 'Missing invoice.' });
+        await ensureFreshToken();
+        const r = await httpsRequest({ hostname: 'quickbooks.api.intuit.com', path: `/v3/company/${activeRealm}/invoice/${invId}?minorversion=75`, method: 'GET', headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/json' } });
+        const inv = r.status === 200 ? (JSON.parse(r.body).Invoice || null) : null;
+        // Only ever this customer's own invoices.
+        if (!inv || String(inv.CustomerRef && inv.CustomerRef.value) !== String(cust.qbId)) return sendJ(404, { error: 'Invoice not found.' });
+        if (url === '/portal/api/invoice') {
+          const lines = (inv.Line || []).filter(l => l.DetailType === 'SalesItemLineDetail' || l.DetailType === 'DescriptionOnly').map(l => {
+            const d = l.SalesItemLineDetail || {};
+            return { item: (d.ItemRef && d.ItemRef.name) || '', description: l.Description || '', qty: d.Qty != null ? Number(d.Qty) : null, rate: d.UnitPrice != null ? Number(d.UnitPrice) : null, amount: Number(l.Amount || 0) };
+          });
+          return sendJ(200, Object.assign(_invSummary(inv, new Date().toISOString().slice(0, 10)), { lines, memo: (inv.CustomerMemo && inv.CustomerMemo.value) || '' }));
+        }
+        const pr = await httpsRequest({ hostname: 'quickbooks.api.intuit.com', path: `/v3/company/${activeRealm}/invoice/${invId}/pdf?minorversion=75`, method: 'GET', __binary: true, headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/pdf' } });
+        if (pr.status !== 200) return sendJ(502, { error: 'Could not get the PDF right now.' });
+        res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': 'inline; filename="Invoice-' + String(inv.DocNumber || invId).replace(/[^\w-]/g, '') + '.pdf"', 'Cache-Control': 'private, no-store' });
+        res.end(pr.body);
+        return;
+      }
+      return sendJ(404, { error: 'Not found.' });
+    } catch (e) {
+      console.warn('[portal] error on ' + url + ':', e.message);
+      return sendJ(500, { error: 'Something went wrong. Please try again.' });
+    }
+  }
+  // Admin: which phone numbers may sign in to the portal for a customer.
+  if (url.startsWith('/api/customers/') && url.endsWith('/portal') && req.method === 'POST') {
+    const session = requireAdmin(req, res); if (!session) return;
+    const custId = decodeURIComponent(url.slice('/api/customers/'.length, -'/portal'.length));
+    try {
+      const body = JSON.parse((await readRequestBody(req)) || '{}');
+      const bad = [], phones = [];
+      (Array.isArray(body.phones) ? body.phones : []).forEach(p => { const n = _normPhone(p); if (!n) bad.push(String(p)); else if (phones.indexOf(n) < 0) phones.push(n); });
+      if (bad.length) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not a valid phone number: ' + bad.join(', ') })); return; }
+      let saved = null;
+      await updateSharedData(async (current) => {
+        const customers = Array.isArray(current.customers) ? current.customers : [];
+        const idx = customers.findIndex(c => c && c.id === custId);
+        if (idx < 0) return { skipWrite: true };
+        const patch = { portalPhones: phones };
+        if (typeof body.off === 'boolean') patch.portalOff = body.off;
+        customers[idx] = Object.assign({}, customers[idx], patch);
+        saved = customers[idx];
+        return { data: Object.assign({}, current, { customers }) };
+      });
+      if (!saved) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Customer not found.' })); return; }
+      console.log('[portal] ' + (session.name || '?') + ' set portal for ' + saved.name + ': ' + phones.length + ' phone(s)' + (saved.portalOff ? ', access OFF' : ''));
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store' });
+      res.end(JSON.stringify({ success: true, portalPhones: saved.portalPhones, portalOff: !!saved.portalOff }));
+    } catch (e) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: e.message })); }
+    return;
+  }
   // QuickBooks webhook receiver — deliberately has NO requireAuth() call.
   // Intuit itself calls this directly; it has no session cookie for this
   // app and never will. The signature check below IS this endpoint's

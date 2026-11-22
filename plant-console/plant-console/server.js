@@ -1425,6 +1425,12 @@ async function _qbQueryAll(sql) {
   }
   return all;
 }
+let _pmCache = { at: 0, map: {} };
+async function _portalPaymentMethods() {
+  if (Date.now() - _pmCache.at < 3600000) return _pmCache.map;
+  try { const rows = await _qbQueryAll('SELECT * FROM PaymentMethod'); const m = {}; rows.forEach(r => { m[String(r.Id)] = { name: r.Name || '' }; }); _pmCache = { at: Date.now(), map: m }; } catch (e) {}
+  return _pmCache.map;
+}
 function _daysBetween(a, b) { return Math.floor((new Date(b + 'T00:00:00Z') - new Date(a + 'T00:00:00Z')) / 86400000); }
 function _invSummary(inv, today) {
   const due = (inv.DueDate || inv.TxnDate || '').slice(0, 10);
@@ -2934,16 +2940,74 @@ self.addEventListener('fetch',e=>{
       if (url === '/portal/api/summary' && req.method === 'GET') {
         const today = new Date().toISOString().slice(0, 10);
         const since = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
-        const [open, recent] = await Promise.all([
+        const yearAgo = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+        const [open, recent, pays, cmsRecent, cmsOpen, methods] = await Promise.all([
           _qbQueryAll(`SELECT * FROM Invoice WHERE CustomerRef = '${qbId}' AND Balance > '0'`),
-          _qbQueryAll(`SELECT * FROM Invoice WHERE CustomerRef = '${qbId}' AND TxnDate >= '${since}'`)
+          _qbQueryAll(`SELECT * FROM Invoice WHERE CustomerRef = '${qbId}' AND TxnDate >= '${since}'`),
+          _qbQueryAll(`SELECT * FROM Payment WHERE CustomerRef = '${qbId}' AND TxnDate >= '${yearAgo}'`),
+          _qbQueryAll(`SELECT * FROM CreditMemo WHERE CustomerRef = '${qbId}' AND TxnDate >= '${yearAgo}'`),
+          _qbQueryAll(`SELECT * FROM CreditMemo WHERE CustomerRef = '${qbId}' AND Balance > '0'`),
+          _portalPaymentMethods()
         ]);
         const openS = open.map(i => _invSummary(i, today)).sort((a, b) => a.due.localeCompare(b.due));
         const aging = { current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90: 0 };
         openS.forEach(i => { const d = i.daysOverdue; if (d <= 0) aging.current += i.balance; else if (d <= 30) aging.d1_30 += i.balance; else if (d <= 60) aging.d31_60 += i.balance; else if (d <= 90) aging.d61_90 += i.balance; else aging.d90 += i.balance; });
         const balance = openS.reduce((t, i) => t + i.balance, 0);
+        // ---- Payments + credit memos (Nov 2026) ----
+        // A Payment lists exactly which invoices it paid and which credit
+        // memos it used (Line[].LinkedTxn). A CreditMemo doesn't record where
+        // it went, so "applied to" comes from the payments that used it.
+        const cmMap = {}; cmsRecent.concat(cmsOpen).forEach(c => { cmMap[c.Id] = c; });
+        const docNo = {}; open.concat(recent).forEach(i => { docNo['Invoice:' + i.Id] = i.DocNumber || ''; });
+        Object.values(cmMap).forEach(c => { docNo['CreditMemo:' + c.Id] = c.DocNumber || ''; });
+        const need = { Invoice: new Set(), CreditMemo: new Set() };
+        pays.forEach(p => (p.Line || []).forEach(l => (l.LinkedTxn || []).forEach(t => { if (need[t.TxnType] && docNo[t.TxnType + ':' + t.TxnId] === undefined) need[t.TxnType].add(String(t.TxnId).replace(/\D/g, '')); })));
+        for (const type of ['Invoice', 'CreditMemo']) {
+          const ids = Array.from(need[type]).filter(Boolean);
+          for (let k = 0; k < ids.length; k += 100) {
+            const rows = await _qbQueryAll(`SELECT * FROM ${type} WHERE CustomerRef = '${qbId}' AND Id IN (${ids.slice(k, k + 100).map(x => "'" + x + "'").join(',')})`);
+            rows.forEach(r => { docNo[type + ':' + r.Id] = r.DocNumber || ''; });
+          }
+        }
+        const applied = {}; // credit memo id -> [{date, amount, invoices:[{id,number}]}]
+        const payRows = pays.map(p => {
+          const invoices = [], credits = [];
+          (p.Line || []).forEach(l => (l.LinkedTxn || []).forEach(t => {
+            const row = { id: String(t.TxnId), number: docNo[t.TxnType + ':' + t.TxnId] || '', amount: Number(l.Amount || 0) };
+            if (t.TxnType === 'Invoice') invoices.push(row); else if (t.TxnType === 'CreditMemo') credits.push(row);
+          }));
+          credits.forEach(c => { (applied[c.id] = applied[c.id] || []).push({ date: (p.TxnDate || '').slice(0, 10), amount: c.amount, invoices: invoices.map(i => ({ id: i.id, number: i.number })) }); });
+          const m = p.PaymentMethodRef && methods[String(p.PaymentMethodRef.value)];
+          return { id: p.Id, date: (p.TxnDate || '').slice(0, 10), ref: p.PaymentRefNum || '', method: (m && m.name) || (p.PaymentMethodRef && p.PaymentMethodRef.name) || '',
+            amount: Number(p.TotalAmt || 0), unapplied: Number(p.UnappliedAmt || 0), invoices, credits };
+        }).filter(p => p.date >= new Date(Date.now() - 183 * 86400000).toISOString().slice(0, 10))
+          .sort((a, b) => b.date.localeCompare(a.date));
+        const creditMemos = Object.values(cmMap).map(c => ({ id: c.Id, number: c.DocNumber || '', date: (c.TxnDate || '').slice(0, 10), total: Number(c.TotalAmt || 0), remaining: Number(c.Balance || 0),
+          applied: (applied[c.Id] || []).sort((a, b) => b.date.localeCompare(a.date)) })).sort((a, b) => b.date.localeCompare(a.date));
+        const availableCredit = creditMemos.reduce((t, c) => t + c.remaining, 0) + payRows.reduce((t, p) => t + (p.unapplied > 0 ? p.unapplied : 0), 0);
         return sendJ(200, { customer: { id: cust.id, name: cust.name }, asOf: new Date().toISOString(), balance, overdue: balance - aging.current, aging, open: openS,
+          payments: payRows, creditMemos, availableCredit,
           recent: recent.map(i => _invSummary(i, today)).sort((a, b) => b.date.localeCompare(a.date) || b.number.localeCompare(a.number)) });
+      }
+      if ((url === '/portal/api/creditmemo' || url === '/portal/api/creditmemo-pdf') && req.method === 'GET') {
+        const cmId = String(queryParams.cm || '').replace(/\D/g, '');
+        if (!cmId) return sendJ(400, { error: 'Missing credit memo.' });
+        await ensureFreshToken();
+        const r = await httpsRequest({ hostname: 'quickbooks.api.intuit.com', path: `/v3/company/${activeRealm}/creditmemo/${cmId}?minorversion=75`, method: 'GET', headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/json' } });
+        const cm = r.status === 200 ? (JSON.parse(r.body).CreditMemo || null) : null;
+        if (!cm || String(cm.CustomerRef && cm.CustomerRef.value) !== String(cust.qbId)) return sendJ(404, { error: 'Credit memo not found.' });
+        if (url === '/portal/api/creditmemo') {
+          const lines = (cm.Line || []).filter(l => l.DetailType === 'SalesItemLineDetail' || l.DetailType === 'DescriptionOnly').map(l => {
+            const d = l.SalesItemLineDetail || {};
+            return { item: (d.ItemRef && d.ItemRef.name) || '', description: l.Description || '', qty: d.Qty != null ? Number(d.Qty) : null, rate: d.UnitPrice != null ? Number(d.UnitPrice) : null, amount: Number(l.Amount || 0) };
+          });
+          return sendJ(200, { id: cm.Id, number: cm.DocNumber || '', date: (cm.TxnDate || '').slice(0, 10), total: Number(cm.TotalAmt || 0), remaining: Number(cm.Balance || 0), lines, memo: (cm.CustomerMemo && cm.CustomerMemo.value) || '' });
+        }
+        const pr = await httpsRequest({ hostname: 'quickbooks.api.intuit.com', path: `/v3/company/${activeRealm}/creditmemo/${cmId}/pdf?minorversion=75`, method: 'GET', __binary: true, headers: { 'Authorization': 'Bearer ' + accessToken, 'Accept': 'application/pdf' } });
+        if (pr.status !== 200) return sendJ(502, { error: 'Could not get the PDF right now.' });
+        res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': 'inline; filename="Credit-Memo-' + String(cm.DocNumber || cmId).replace(/[^\w-]/g, '') + '.pdf"', 'Cache-Control': 'private, no-store' });
+        res.end(pr.body);
+        return;
       }
       if ((url === '/portal/api/invoice' || url === '/portal/api/invoice-pdf') && req.method === 'GET') {
         const invId = String(queryParams.inv || '').replace(/\D/g, '');

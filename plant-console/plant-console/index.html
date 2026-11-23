@@ -6933,8 +6933,14 @@ function renderReports(){
     +'<div id="rpt-panel-purchasing" style="display:none">'
       +'<div id="purch-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
         +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:14px">'
-          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Week</label>'
+          +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Week or dates</label>'
           +'<select id="purch-week" onchange="onPurchaseWeekChange()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);min-width:170px"></select></div>'
+          +'<div id="purch-custom" style="display:none;gap:8px;align-items:flex-end;flex-wrap:wrap">'
+            +'<div><label for="purch-from" style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px">From</label><input type="date" id="purch-from" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"></div>'
+            +'<div><label for="purch-to" style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px">To</label><input type="date" id="purch-to" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"></div>'
+            +'<button class="btn btn-primary" onclick="applyPurchCustomRange()">Use these dates</button>'
+            +'<button class="btn" onclick="document.getElementById(\'purch-custom\').style.display=\'none\'">Cancel</button>'
+          +'</div>'
           +'<div><label style="display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Product</label>'
           +'<input type="text" id="purch-product-search" oninput="renderPurchaseReport()" placeholder="Search product…" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);min-width:200px"/></div>'
           +'<button class="btn btn-primary" onclick="runPurchaseReport()">Pull from QuickBooks</button>'
@@ -13502,8 +13508,42 @@ function _purchSortedWeekIds(){
 }
 function _purchWeekLabel(w){
   if(!w||!w.startDate||!w.endDate) return (w&&w.label)||'Week';
-  return fmtDateUS(w.startDate)+'–'+fmtDateUS(w.endDate);
+  return (w.custom?'Custom: ':'')+fmtDateUS(w.startDate)+'–'+fmtDateUS(w.endDate);
 }
+// Custom date ranges (Nov 2026): saved as periods next to the weeks, so the
+// pull, shared results and table work unchanged. EST. is scaled to the
+// range's length (see runPurchaseReport). Latest 10 custom ranges are kept.
+function _purchPeriodWeeks(w){
+  if(!w||!w.custom) return 1;
+  var days=Math.round((new Date(w.endDate+'T00:00:00')-new Date(w.startDate+'T00:00:00'))/86400000)+1;
+  return Math.max(days,1)/7;
+}
+function _purchWeekOptionsHtml(){
+  return _purchSortedWeekIds().map(function(wid){ return '<option value="'+esc(wid)+'">'+esc(_purchWeekLabel(purchaseConfig.weeks[wid]))+'</option>'; }).join('')
+    +'<option value="__custom">＋ Custom dates…</option>';
+}
+function applyPurchCustomRange(){
+  var f=(document.getElementById('purch-from')||{}).value, t=(document.getElementById('purch-to')||{}).value;
+  if(!f||!t){ notify('Pick both a From and a To date.',{kind:'error'}); return; }
+  if(f>t){ notify('The From date must be on or before the To date.',{kind:'error'}); return; }
+  var days=Math.round((new Date(t+'T00:00:00')-new Date(f+'T00:00:00'))/86400000)+1;
+  if(days>366){ notify('Please choose a range of 1 year or less.',{kind:'error'}); return; }
+  purchaseConfig.weeks=purchaseConfig.weeks||{};
+  var wid=Object.keys(purchaseConfig.weeks).find(function(k){ var w=purchaseConfig.weeks[k]; return w&&w.startDate===f&&w.endDate===t; });
+  if(!wid){
+    wid='custom_'+Date.now().toString(36);
+    purchaseConfig.weeks[wid]={startDate:f,endDate:t,custom:true,createdAt:new Date().toISOString()};
+    var customs=Object.keys(purchaseConfig.weeks).filter(function(k){ return purchaseConfig.weeks[k].custom; })
+      .sort(function(a,b){ return String(purchaseConfig.weeks[b].createdAt||'').localeCompare(String(purchaseConfig.weeks[a].createdAt||'')); });
+    customs.slice(10).forEach(function(k){ delete purchaseConfig.weeks[k]; });
+    savePurchaseConfig();
+  }
+  var sel=document.getElementById('purch-week');
+  if(sel){ sel.innerHTML=_purchWeekOptionsHtml(); sel.value=wid; }
+  var box=document.getElementById('purch-custom'); if(box) box.style.display='none';
+  onPurchaseWeekChange();
+}
+window.applyPurchCustomRange=applyPurchCustomRange;
 function _purchAddDays(dateStr,n){
   var d=new Date(dateStr+'T00:00:00');
   d.setDate(d.getDate()+n);
@@ -13560,10 +13600,7 @@ function initPurchaseReportTab(){
   }
   var sel=document.getElementById('purch-week');
   if(sel){
-    sel.innerHTML=weekIds.map(function(wid){
-      var w=purchaseConfig.weeks[wid];
-      return '<option value="'+esc(wid)+'">'+esc(_purchWeekLabel(w))+'</option>';
-    }).join('');
+    sel.innerHTML=_purchWeekOptionsHtml();
     if(!_purchActiveWeekId || !purchaseConfig.weeks[_purchActiveWeekId]) _purchActiveWeekId=weekIds[weekIds.length-1];
     sel.value=_purchActiveWeekId;
   }
@@ -13575,7 +13612,7 @@ function initPurchaseReportTab(){
       renderPurchaseReport();
       if(statusEl){ statusEl.textContent='Showing '+_purchRealized.billCount+' bill(s) pulled '+new Date(_purchRealized.computedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})+'.'; statusEl.style.color='#1a7a3c'; }
     } else if(statusEl && statusEl.textContent==='Checking for a recent shared pull…'){
-      statusEl.textContent='No shared pull for this week yet — click "Pull from QuickBooks."';
+      statusEl.textContent='No shared pull for this '+((purchaseConfig.weeks[_purchActiveWeekId]||{}).custom?'date range':'week')+' yet — click "Pull from QuickBooks."';
     }
   });
 }
@@ -13629,6 +13666,15 @@ window.togglePurchAllGroups=togglePurchAllGroups;
 function onPurchaseWeekChange(){
   var sel=document.getElementById('purch-week');
   if(!sel) return;
+  if(sel.value==='__custom'){
+    var cur=purchaseConfig.weeks[_purchActiveWeekId]||{};
+    sel.value=_purchActiveWeekId||'';
+    var box=document.getElementById('purch-custom'); if(box) box.style.display='flex';
+    var f=document.getElementById('purch-from'), t=document.getElementById('purch-to');
+    if(f&&!f.value) f.value=cur.startDate||''; if(t&&!t.value) t.value=cur.endDate||'';
+    if(f) f.focus();
+    return;
+  }
   _purchActiveWeekId=sel.value;
   _purchRealized=null;
   renderPurchaseReport();
@@ -13639,7 +13685,7 @@ function onPurchaseWeekChange(){
       renderPurchaseReport();
       if(statusEl){ statusEl.textContent='Showing '+_purchRealized.billCount+' bill(s) pulled '+new Date(_purchRealized.computedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})+'.'; statusEl.style.color='#1a7a3c'; }
     } else if(statusEl){
-      statusEl.textContent='No shared pull for this week yet — click "Pull from QuickBooks."';
+      statusEl.textContent='No shared pull for this '+((purchaseConfig.weeks[_purchActiveWeekId]||{}).custom?'date range':'week')+' yet — click "Pull from QuickBooks."';
     }
   });
 }
@@ -13836,7 +13882,7 @@ async function runPurchaseReport(){
   var estGrid={}; // itemId -> vendorId -> average weekly $ over the lookback window
   productRows.forEach(function(it){
     estGrid[it.qbId]={};
-    vendorIds.forEach(function(vid){ estGrid[it.qbId][vid]=estTotals[it.qbId][vid]/ESTIMATE_LOOKBACK_WEEKS; });
+    vendorIds.forEach(function(vid){ estGrid[it.qbId][vid]=estTotals[it.qbId][vid]/ESTIMATE_LOOKBACK_WEEKS*_purchPeriodWeeks(week); }); // custom ranges: scaled to the range's length
   });
 
   _purchRealized={
@@ -13858,7 +13904,7 @@ async function runPurchaseReport(){
   safeSetLocalJSON('pc_purchase_vendor_names',(_purchVendorNameCache));
   if(statusEl){
     var uncatTotal=Object.keys(uncatByDesc).reduce(function(s,rk){ return s+vendorIds.reduce(function(s2,vid){ return s2+(uncatByDesc[rk][vid]||0); },0); },0);
-    statusEl.textContent=bills.length+' bill(s) across '+vendorIds.length+' vendor(s) — this week plus the '+ESTIMATE_LOOKBACK_WEEKS+'-week average window.'
+    statusEl.textContent=bills.length+' bill(s) across '+vendorIds.length+' vendor(s) — '+(week.custom?'this date range ('+_purchWeekLabel(week).replace('Custom: ','')+'); EST. = the '+ESTIMATE_LOOKBACK_WEEKS+'-week average scaled to '+(Math.round(_purchPeriodWeeks(week)*10)/10)+' weeks':'this week plus the '+ESTIMATE_LOOKBACK_WEEKS+'-week average window')+'.'
       +(uncatTotal?' '+_purchMoney(uncatTotal)+' this week didn\'t match a known QuickBooks product — see the rows below.':'');
     statusEl.style.color=uncatTotal?'#8a6d1a':'#1a7a3c';
   }

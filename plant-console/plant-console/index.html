@@ -1561,6 +1561,7 @@ var _recentlyAddedScaleLogs={};
 var _deletedOrderIds={};
 var _recentlyAddedOrders={};
 var _deletedDrivers={};
+var itemLots={}; // GYRO lot # breakdown per item id (Nov 2026) — from the server, saved via /api/items/:id/lots
 // Mirrors the above, for label template/layout saves: maps department name
 // -> the just-saved template object, for a grace period after a confirmed
 // save. Protects against the same timing gap — a pull already in flight
@@ -1864,6 +1865,7 @@ async function _pullSmallFromServerImpl(){
         customerAllowed[d]=_recentlySavedCustomerAllowed[d];
       });
     }
+    if(data.itemLots && typeof data.itemLots==='object' && !Array.isArray(data.itemLots)) itemLots=data.itemLots;
     if(data.itemFilterPrefs && typeof data.itemFilterPrefs==='object' && !Array.isArray(data.itemFilterPrefs) && Object.keys(data.itemFilterPrefs).length){
       itemFilterPrefs=data.itemFilterPrefs;
       Object.keys(_recentlySavedItemFilterPrefs).forEach(function(uid){
@@ -2024,6 +2026,7 @@ async function _pullFromServerImpl(opts){
         customerAllowed[d]=_recentlySavedCustomerAllowed[d];
       });
     }
+    if(data.itemLots && typeof data.itemLots==='object' && !Array.isArray(data.itemLots)) itemLots=data.itemLots;
     if(data.itemFilterPrefs && typeof data.itemFilterPrefs==='object' && !Array.isArray(data.itemFilterPrefs) && Object.keys(data.itemFilterPrefs).length){
       itemFilterPrefs=data.itemFilterPrefs;
       Object.keys(_recentlySavedItemFilterPrefs).forEach(function(uid){
@@ -2265,6 +2268,7 @@ async function _pushToServerImpl(){
           var newCustomerAllowed=Object.assign({}, smallData.customerAllowed, customerAllowed);
           if(JSON.stringify(newCustomerAllowed)!==JSON.stringify(customerAllowed)){ customerAllowed=newCustomerAllowed; safeSetLocalJSON('pc_customerallowed',(customerAllowed)); }
         }
+        if(smallData.itemLots && typeof smallData.itemLots==='object' && !Array.isArray(smallData.itemLots)) itemLots=smallData.itemLots;
         if(smallData.itemFilterPrefs && typeof smallData.itemFilterPrefs==='object' && !Array.isArray(smallData.itemFilterPrefs)){
           var newItemFilterPrefs=Object.assign({}, smallData.itemFilterPrefs, itemFilterPrefs);
           if(JSON.stringify(newItemFilterPrefs)!==JSON.stringify(itemFilterPrefs)){ itemFilterPrefs=newItemFilterPrefs; safeSetLocalJSON('pc_itemfilterprefs',(itemFilterPrefs)); }
@@ -4282,7 +4286,7 @@ function _ordersProductTablesHtml(toPrint){
             +'<td class="fill" style="font-weight:700">'+(function(){
                 var fc=l.finalCount; if(fc===undefined||fc===null||String(fc).trim()==='') return '';
                 if(Number(fc)===0||l.shortage) return '0 <span style="color:#a3231b;font-weight:700">— out of stock</span>';
-                return esc(String(fc));
+                return esc(String(fc))+(l.lot?' <span style="font-weight:600;color:#555">· Lot '+esc(l.lot)+'</span>':'');
               })()+'</td>'
             +'<td class="fill notes"></td>'
           +'</tr>';
@@ -4887,7 +4891,7 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
                 +'<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+_qbDescSpan(l.product,l.description)+(l.description?' — '+esc(l.description):'')+'</span>'
                 +'<span style="flex-shrink:0;text-align:right;min-width:60px">'
                   +(l.quantity?'<b style="white-space:nowrap">'+esc(l.quantity)+'</b>':'')
-                  +(String(l.finalCount||'').trim()!==''?'<div style="font-size:12px;font-weight:700;color:var(--ink);white-space:nowrap">Weighed: '+esc(l.finalCount)+'</div>':'')
+                  +(String(l.finalCount||'').trim()!==''?'<div style="font-size:12px;font-weight:700;color:var(--ink);white-space:nowrap">Weighed: '+esc(l.finalCount)+(l.lot?' · Lot '+esc(l.lot):'')+'</div>':'')
                 +'</span>'
               +'</div>';
             }).join('')
@@ -5538,6 +5542,8 @@ async function submitNewOrder(){
   if(document.activeElement && typeof document.activeElement.blur==='function') document.activeElement.blur();
   var vals=_readOrderFormFields(fieldsWrap);
   if(!vals.customer.trim()){ if(statusEl){ statusEl.textContent='Customer is required.'; statusEl.style.color='#c0392b'; } return; }
+  var _noLot=_formGyroCountsMissingLot(vals.lines,null);
+  if(_noLot.length){ if(statusEl){ statusEl.textContent='A lot # is required for '+_noLot.join(', ')+'. Leave Count empty here, save, then enter the count in the order list where the Lot # box is.'; statusEl.style.color='#c0392b'; } return; }
   if(_isInactiveCustomerName(vals.customer)){ if(statusEl){ statusEl.textContent='"'+vals.customer.trim()+'" is inactive in QuickBooks \u2014 pick an active customer.'; statusEl.style.color='#c0392b'; } return; }
   // Same customer, same date already has an order on the books — easy to
   // do by accident (e.g. re-submitting after a save that only looked like
@@ -5906,7 +5912,8 @@ function _renderOrderRow(o){
               +'<label title="Needs processing" style="flex-shrink:0;display:flex;align-items:center;gap:4px;cursor:pointer;font-size:10.5px;color:#8a6d1a">'
                 +'<input type="checkbox" '+(l.needsProcessing?'checked':'')+' onchange="updateOrderLineNeedsProcessing(\''+esc(o.id)+'\','+li+',this)" style="width:14px;height:14px;cursor:pointer"/>Process'
               +'</label>'
-              +'<input type="text" value="'+esc(l.finalCount||'')+'" placeholder="Count" title="Final physical count for this product" onchange="updateOrderLineFinalCount(\''+esc(o.id)+'\','+li+',this.value)" style="width:78px;flex-shrink:0;padding:5px 6px;border:1.5px solid var(--line);border-radius:6px;font-size:12px;font-family:var(--mono);text-align:right;background:var(--bg);color:var(--ink)"/>'
+              +_orderLotInputHtml(o,l,li)
+              +'<input type="text" id="cnt-'+esc(o.id)+'-'+li+'" value="'+esc(l.finalCount||'')+'" placeholder="Count" title="Final physical count for this product" onchange="updateOrderLineFinalCount(\''+esc(o.id)+'\','+li+',this.value)" style="width:78px;flex-shrink:0;padding:5px 6px;border:1.5px solid var(--line);border-radius:6px;font-size:12px;font-family:var(--mono);text-align:right;background:var(--bg);color:var(--ink)"/>'
             +'</div>';
           }).join(''))
     +'</span>'
@@ -6655,6 +6662,15 @@ async function updateOrderLineFinalCount(id,lineIdx,value){
   if(!o) return;
   var lines=_orderLinesOf(o).map(function(l){ return Object.assign({},l); });
   if(!lines[lineIdx]) return;
+  // Lot # required for GYRO products (Nov 2026) — the count waits until a lot is entered.
+  var _lotEl=document.getElementById('lot-'+id+'-'+lineIdx);
+  var _lot=String((_lotEl&&_lotEl.value)||lines[lineIdx].lot||'').trim();
+  if(_needsLot(lines[lineIdx].product,value) && !_lot){
+    if(_lotEl){ _lotEl.style.borderColor='#c0392b'; _lotEl.style.boxShadow='0 0 0 2px rgba(192,57,43,.25)'; _lotEl.focus(); }
+    notify('Enter the lot # for '+lines[lineIdx].product+' first — the count is saved as soon as the lot # is in.',{kind:'error'});
+    return;
+  }
+  if(_lot) lines[lineIdx].lot=_lot;
   lines[lineIdx].finalCount=value;
   var numeric=_parseQtyNumber(value);
   var isZero=(value||'').trim()!=='' && numeric===0;
@@ -6727,6 +6743,8 @@ async function submitEditOrder(id){
   vals.id=id;
   if(!vals.customer.trim()){ notify('Customer is required.'); return; }
   if(_isInactiveCustomerName(vals.customer)){ notify('"'+vals.customer.trim()+'" is inactive in QuickBooks \u2014 pick an active customer.'); return; }
+  var _noLotE=_formGyroCountsMissingLot(vals.lines,orders.find(function(x){ return x.id===id; }));
+  if(_noLotE.length){ notify('A lot # is required for '+_noLotE.join(', ')+'. Leave Count empty here, save, then enter the count in the order list where the Lot # box is.',{kind:'error'}); return; }
   var saveBtn=rowEl.querySelector('button.btn-primary');
   if(saveBtn){ saveBtn.disabled=true; saveBtn.textContent='Saving…'; }
   _orderSaveInProgress=true;
@@ -15865,7 +15883,7 @@ function itemRow(it,avgDailyQtyById){
   var days=avgDaily>0?(onHand/avgDaily):(onHand>0?Infinity:0);
   return '<tr>'
     +'<td style="font-family:var(--mono);font-size:12px;color:var(--cold)">'+esc(it.sku||'—')+'</td>'
-    +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+conflictBadge+'</div></td>'
+    +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+conflictBadge+'</div>'+_itemLotsBadgeHtml(it)+'</td>'
       +'<td style="font-size:12.5px;color:var(--muted);white-space:normal;min-width:180px">'+esc(it.description||'')+'</td>'
     +'<td style="font-family:var(--mono);font-size:13px;text-align:right;'+qtyColor+'">'+fmtNum2(onHand)+'</td>'
     +_lppCellHtml(it)
@@ -16048,7 +16066,7 @@ function itemsTableLoc(rows){
       : '';
     return '<tr>'
       +'<td style="font-family:var(--mono);font-size:12px;color:var(--cold)">'+esc(it.sku||'—')+'</td>'
-      +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+conflictBadge+'</div></td>'
+      +'<td><div style="font-size:13.5px;font-weight:600">'+esc(it.name)+conflictBadge+'</div>'+_itemLotsBadgeHtml(it)+'</td>'
       +'<td style="font-size:12.5px;color:var(--muted);white-space:normal;min-width:180px">'+esc(it.description||'')+'</td>'
       +'<td style="font-family:var(--mono);font-size:13px;text-align:right;'+qtyColor+'">'+fmtNum2(Number(r.locQty||0))+'</td>'
       +_lppCellHtml(it)
@@ -21303,6 +21321,128 @@ function openPortalAccess(id){
   draw(); document.body.appendChild(bg);
 }
 window.openPortalAccess=openPortalAccess;
+
+/* ===== Lot # tracking for GYRO products (Nov 2026) ========================
+   QuickBooks has no lot numbers, so each GYRO product's lot breakdown is
+   entered on the Items page (kept in itemLots, separate from the synced
+   item so the QuickBooks sync never overwrites it). On orders, a physical
+   count for a GYRO product can't be saved without a lot #. Lots are not
+   reduced automatically (counts are often in lbs while QuickBooks may count
+   cases) — the Items badge shows when the breakdown no longer matches the
+   QuickBooks quantity. */
+function _isGyroItem(it){ return !!(it && /^\s*gyro/i.test(String(it.groupName||''))); }
+function _gyroItemByName(name){
+  var n=String(name||'').trim().toUpperCase(); if(!n) return null;
+  var it=items.find(function(x){ return x && x.name && x.name.trim().toUpperCase()===n; });
+  return _isGyroItem(it)?it:null;
+}
+function _lotsFor(itemId){ var e=(itemLots||{})[itemId]; return (e&&Array.isArray(e.lots))?e.lots:[]; }
+function _lotsTotal(itemId){ return _lotsFor(itemId).reduce(function(t,l){ return t+Number(l.qty||0); },0); }
+function _itemQbQty(it){ var q=(it.qbQty!=null&&it.qbQty!=='')?Number(it.qbQty):Number(it.qty||0); return isNaN(q)?0:q; }
+function _itemLotsBadgeHtml(it){
+  if(!_isGyroItem(it)) return '';
+  var lots=_lotsFor(it.id), tot=_lotsTotal(it.id), qb=_itemQbQty(it), diff=Math.round((qb-tot)*1000)/1000;
+  var txt, col;
+  if(!lots.length){ txt='Lots: none entered'; col='#b8460b'; }
+  else if(Math.abs(diff)<0.001){ txt='Lots ✓ '+lots.length+(lots.length===1?' lot':' lots'); col='#1a7a3c'; }
+  else { txt='Lots ⚠ '+(diff>0?fmtNum2(diff)+' not in a lot':fmtNum2(-diff)+' over'); col='#b8460b'; }
+  return '<button type="button" onclick="event.stopPropagation();openItemLots(\''+esc(it.id)+'\')" title="Lot # breakdown for this GYRO product" style="margin-top:4px;border:1px solid '+col+';color:'+col+';background:transparent;border-radius:6px;padding:2px 8px;font-size:11.5px;font-weight:700;cursor:pointer">'+esc(txt)+'</button>';
+}
+function _lotShipments(it){
+  var out=[], name=String(it.name||'').trim().toUpperCase();
+  (orders||[]).forEach(function(o){ _orderLinesOf(o).forEach(function(l){
+    if(l.lot && String(l.product||'').trim().toUpperCase()===name) out.push({lot:l.lot,date:o.date||'',customer:o.customer||'',po:o.poNumber||'',count:l.finalCount||'',shipped:!!o.shipped,inv:o.invoiceDocNumber||''});
+  }); });
+  return out.sort(function(a,b){ return String(b.date).localeCompare(String(a.date)); });
+}
+function openItemLots(itemId){
+  var it=items.find(function(x){ return x.id===itemId; }); if(!it) return;
+  var rows=_lotsFor(itemId).map(function(l){ return {lot:l.lot,qty:String(l.qty)}; });
+  if(!rows.length) rows.push({lot:'',qty:''});
+  var canEdit=hasPerm('editItems');
+  var old=document.getElementById('lotsModal'); if(old) old.remove();
+  var bg=document.createElement('div'); bg.id='lotsModal';
+  bg.style.cssText='position:fixed;inset:0;z-index:1500;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;padding:16px';
+  bg.onclick=function(e){ if(e.target===bg) bg.remove(); };
+  var ship=_lotShipments(it);
+  function totals(){
+    var tot=rows.reduce(function(t,r){ var q=Number(r.qty); return t+(isNaN(q)?0:q); },0), qb=_itemQbQty(it), diff=Math.round((qb-tot)*1000)/1000;
+    return '<div style="display:flex;justify-content:space-between;font-size:13px;margin-top:8px;padding:8px 10px;border-radius:8px;background:'+(Math.abs(diff)<0.001?'#e7f4ec':'#fff4e0')+'">'
+      +'<span>Lots total <b>'+fmtNum2(tot)+'</b> · QuickBooks on hand <b>'+fmtNum2(qb)+'</b></span>'
+      +'<b style="color:'+(Math.abs(diff)<0.001?'#1a7a3c':'#b8460b')+'">'+(Math.abs(diff)<0.001?'✓ Matches':(diff>0?fmtNum2(diff)+' not in a lot':fmtNum2(-diff)+' too many'))+'</b></div>';
+  }
+  function draw(msg,kind){
+    bg.innerHTML='<div role="dialog" aria-label="Lot # breakdown" style="background:var(--panel);border-radius:12px;max-width:640px;width:100%;max-height:88vh;overflow:auto;padding:18px 20px;box-shadow:0 20px 60px rgba(0,0,0,.25)">'
+      +'<div style="font-weight:700;font-size:16px">Lot # breakdown — '+esc(it.name)+'</div>'
+      +'<div style="font-size:12.5px;color:var(--muted);margin:4px 0 12px">QuickBooks has no lot numbers, so enter them here. The quantities should add up to the QuickBooks on-hand amount.</div>'
+      +rows.map(function(r,i){ return '<div style="display:flex;gap:8px;margin-bottom:6px">'
+        +'<input data-i="'+i+'" data-f="lot" value="'+esc(r.lot)+'" placeholder="Lot #" '+(canEdit?'':'disabled')+' style="flex:2;height:36px;border:1px solid var(--line);border-radius:8px;padding:0 10px;font:inherit">'
+        +'<input data-i="'+i+'" data-f="qty" value="'+esc(r.qty)+'" placeholder="Qty" inputmode="decimal" '+(canEdit?'':'disabled')+' style="flex:1;height:36px;border:1px solid var(--line);border-radius:8px;padding:0 10px;font:inherit;text-align:right">'
+        +(canEdit?'<button type="button" class="btn btn-sm" data-rm="'+i+'" title="Remove this lot">✕</button>':'')+'</div>'; }).join('')
+      +(canEdit?'<button type="button" class="btn btn-sm" id="lotAdd">+ Add lot</button>':'')
+      +'<div id="lotTot">'+totals()+'</div>'
+      +'<div style="min-height:18px;font-size:12.5px;margin-top:8px;color:'+(kind==='err'?'#c0392b':'#1a7a3c')+'">'+esc(msg||'')+'</div>'
+      +'<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:4px"><button type="button" class="btn btn-sm" id="lotClose">'+(canEdit?'Cancel':'Close')+'</button>'+(canEdit?'<button type="button" class="btn btn-sm btn-primary" id="lotSave">Save lots</button>':'')+'</div>'
+      +'<div style="font-weight:700;font-size:13.5px;margin:18px 0 6px;border-top:1px solid var(--line);padding-top:12px">Where these lots went</div>'
+      +(ship.length?'<div style="overflow:auto;max-height:240px;border:1px solid var(--line);border-radius:8px"><table class="txn-table" style="width:100%"><thead><tr><th>Lot #</th><th>Date</th><th>Customer</th><th>P.O. / Invoice</th><th style="text-align:right">Count</th></tr></thead><tbody>'
+        +ship.map(function(s){ return '<tr><td><b>'+esc(s.lot)+'</b></td><td>'+esc(s.date)+'</td><td>'+esc(s.customer)+'</td><td>'+esc(s.po||'')+(s.inv?' · Inv #'+esc(s.inv):'')+'</td><td style="text-align:right">'+esc(s.count)+'</td></tr>'; }).join('')+'</tbody></table></div>'
+        :'<div style="font-size:12.5px;color:var(--muted)">No orders have used a lot # for this product yet.</div>')
+      +(itemLots[itemId]&&itemLots[itemId].by?'<div style="font-size:11.5px;color:var(--muted);margin-top:10px">Last updated by '+esc(itemLots[itemId].by)+' · '+esc(_orderWhenStr(itemLots[itemId].updatedAt))+'</div>':'')
+      +'</div>';
+    bg.querySelectorAll('input[data-i]').forEach(function(inp){ inp.oninput=function(){ rows[Number(inp.getAttribute('data-i'))][inp.getAttribute('data-f')]=inp.value; bg.querySelector('#lotTot').innerHTML=totals(); }; });
+    bg.querySelectorAll('[data-rm]').forEach(function(b){ b.onclick=function(){ rows.splice(Number(b.getAttribute('data-rm')),1); if(!rows.length) rows.push({lot:'',qty:''}); draw(); }; });
+    var add=bg.querySelector('#lotAdd'); if(add) add.onclick=function(){ rows.push({lot:'',qty:''}); draw(); var ins=bg.querySelectorAll('input[data-f="lot"]'); ins[ins.length-1].focus(); };
+    bg.querySelector('#lotClose').onclick=function(){ bg.remove(); };
+    var sv=bg.querySelector('#lotSave'); if(sv) sv.onclick=async function(){
+      var clean=[], bad='';
+      rows.forEach(function(r){ var lot=String(r.lot||'').trim(), q=String(r.qty||'').trim(); if(!lot&&!q) return; if(!lot){ bad='Every quantity needs a lot #.'; return; } var n=Number(q); if(q===''||isNaN(n)||n<0){ bad='Lot '+lot+' needs a quantity of 0 or more.'; return; } clean.push({lot:lot,qty:n}); });
+      if(bad){ draw(bad,'err'); return; }
+      sv.disabled=true;
+      try{
+        var r=await fetch('/api/items/'+encodeURIComponent(itemId)+'/lots',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lots:clean})});
+        var j=await r.json(); if(!r.ok||!j.success) throw new Error(j.error||('HTTP '+r.status));
+        itemLots[itemId]=j.entry; bg.remove(); renderItemsTable(); notify('Lots saved for '+it.name,{kind:'success'});
+      }catch(e){ draw('Could not save: '+e.message,'err'); }
+    };
+  }
+  draw(); document.body.appendChild(bg);
+}
+window.openItemLots=openItemLots;
+// Order rows: the Lot # box next to Count (GYRO products only).
+function _orderLotInputHtml(o,l,li){
+  var it=_gyroItemByName(l.product); if(!it) return '';
+  var lots=_lotsFor(it.id), dl='dl-lot-'+esc(o.id)+'-'+li;
+  return '<input type="text" id="lot-'+esc(o.id)+'-'+li+'" list="'+dl+'" value="'+esc(l.lot||'')+'" placeholder="Lot #" title="Lot # — required for GYRO products before a count can be saved" onchange="updateOrderLineLot(\''+esc(o.id)+'\','+li+',this.value)" style="width:86px;flex-shrink:0;padding:5px 6px;border:1.5px solid '+(l.lot?'var(--line)':'#d9a441')+';border-radius:6px;font-size:12px;font-family:var(--mono);background:var(--bg);color:var(--ink)">'
+    +'<datalist id="'+dl+'">'+lots.map(function(x){ return '<option value="'+esc(x.lot)+'">'+esc(x.lot)+' — '+fmtNum2(x.qty)+' on hand</option>'; }).join('')+'</datalist>';
+}
+function _needsLot(product,count){
+  if(!_gyroItemByName(product)) return false;
+  var v=String(count||'').trim(); if(v==='') return false;
+  return _parseQtyNumber(v)!==0; // a 0 count (out of stock) needs no lot
+}
+async function updateOrderLineLot(id,lineIdx,value){
+  var o=orders.find(function(x){return x.id===id;}); if(!o) return;
+  var lines=_orderLinesOf(o).map(function(l){ return Object.assign({},l); });
+  if(!lines[lineIdx]) return;
+  var v=String(value||'').trim();
+  if(!v && _needsLot(lines[lineIdx].product,lines[lineIdx].finalCount)){ notify('A lot # is required while this GYRO product has a count. Clear the count first to remove the lot.',{kind:'error'}); var inp=document.getElementById('lot-'+id+'-'+lineIdx); if(inp) inp.value=lines[lineIdx].lot||''; return; }
+  lines[lineIdx].lot=v;
+  var saved=await saveOrder({ id:o.id, date:o.date, customer:o.customer, driver:o.driver, lines:lines, allowCountClear:true });
+  if(!saved){ notify('Could not save the lot # — try again.',{kind:'error'}); return; }
+  // a count typed before the lot is saved now, too
+  var cnt=document.getElementById('cnt-'+id+'-'+lineIdx);
+  if(cnt && v && String(cnt.value||'').trim()!==String(lines[lineIdx].finalCount||'').trim()) await updateOrderLineFinalCount(id,lineIdx,cnt.value);
+}
+window.updateOrderLineLot=updateOrderLineLot;
+// Order form (new / edit): a GYRO count needs a lot #, which is entered in the order list.
+function _formGyroCountsMissingLot(lines,orig){
+  var origLines=orig?_orderLinesOf(orig):[];
+  return lines.filter(function(l){
+    if(!_needsLot(l.product,l.finalCount)) return false;
+    var o=origLines.find(function(x){ return String(x.product||'').trim().toUpperCase()===String(l.product||'').trim().toUpperCase() && x.lot; });
+    return !o;
+  }).map(function(l){ return l.product; });
+}
 </script>
 </body>
 </html>

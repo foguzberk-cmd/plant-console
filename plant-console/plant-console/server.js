@@ -1265,6 +1265,7 @@ function _orderChangeSummary(prev, next) {
     if (d(p.quantity) !== d(n.quantity)) out.push(name + ' qty ' + (d(p.quantity) || '—') + ' → ' + (d(n.quantity) || '—'));
     if (d(p.finalCount) !== d(n.finalCount)) out.push(d(n.finalCount) === '' ? (name + ' weight cleared') : ((d(p.finalCount) === '' ? 'Weight entered: ' : 'Weight changed: ') + name + ' ' + (d(p.finalCount) ? d(p.finalCount) + ' → ' : '') + d(n.finalCount)));
     if (!!p.needsProcessing !== !!n.needsProcessing) out.push(name + (n.needsProcessing ? ' marked for processing' : ' unmarked for processing'));
+    if (d(p.lot) !== d(n.lot)) out.push(d(n.lot) ? ('Lot ' + (d(p.lot) ? 'changed: ' + name + ' ' + d(p.lot) + ' → ' : 'entered: ' + name + ' ') + d(n.lot)) : (name + ' lot cleared'));
   });
   pl.forEach((p, i) => { if (!used.has(i)) out.push('Removed ' + (d(p.product) || 'line')); });
   return out.slice(0, 12);
@@ -2939,13 +2940,27 @@ self.addEventListener('fetch',e=>{
       const qbId = String(cust.qbId).replace(/'/g, '');
       if (url === '/portal/api/summary' && req.method === 'GET') {
         const today = new Date().toISOString().slice(0, 10);
-        const since = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
-        const yearAgo = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+        const ago = d => new Date(Date.now() - d * 86400000).toISOString().slice(0, 10);
+        // Custom date range (Nov 2026): ?from=YYYY-MM-DD&to=YYYY-MM-DD applies to
+        // the invoice, payment and credit memo lists. Open invoices and unused
+        // credits always show everything outstanding. Max 5 years per range.
+        const isDate = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) && !isNaN(new Date(v + 'T00:00:00Z'));
+        let rFrom = null, rTo = null;
+        if (isDate(queryParams.from) && isDate(queryParams.to) && queryParams.from <= queryParams.to) {
+          rFrom = String(queryParams.from); rTo = String(queryParams.to);
+          if (_daysBetween(rFrom, rTo) > 5 * 366) return sendJ(400, { error: 'Please choose a range of 5 years or less.' });
+        }
+        const since = rFrom || ago(120), invTo = rTo || today;
+        const payFrom = rFrom || ago(183), payTo = rTo || today;
+        const cmFrom = rFrom || ago(365), cmTo = rTo || today;
+        // Payments are fetched a bit wider than shown, so credits applied before
+        // the shown range still have their "where it was applied" history.
+        const yearAgo = (rFrom && rFrom < ago(365)) ? rFrom : ago(365);
         const [open, recent, pays, cmsRecent, cmsOpen, methods] = await Promise.all([
           _qbQueryAll(`SELECT * FROM Invoice WHERE CustomerRef = '${qbId}' AND Balance > '0'`),
-          _qbQueryAll(`SELECT * FROM Invoice WHERE CustomerRef = '${qbId}' AND TxnDate >= '${since}'`),
-          _qbQueryAll(`SELECT * FROM Payment WHERE CustomerRef = '${qbId}' AND TxnDate >= '${yearAgo}'`),
-          _qbQueryAll(`SELECT * FROM CreditMemo WHERE CustomerRef = '${qbId}' AND TxnDate >= '${yearAgo}'`),
+          _qbQueryAll(`SELECT * FROM Invoice WHERE CustomerRef = '${qbId}' AND TxnDate >= '${since}' AND TxnDate <= '${invTo}'`),
+          _qbQueryAll(`SELECT * FROM Payment WHERE CustomerRef = '${qbId}' AND TxnDate >= '${yearAgo}' AND TxnDate <= '${payTo > today ? payTo : today}'`),
+          _qbQueryAll(`SELECT * FROM CreditMemo WHERE CustomerRef = '${qbId}' AND TxnDate >= '${cmFrom}' AND TxnDate <= '${cmTo}'`),
           _qbQueryAll(`SELECT * FROM CreditMemo WHERE CustomerRef = '${qbId}' AND Balance > '0'`),
           _portalPaymentMethods()
         ]);
@@ -2980,13 +2995,14 @@ self.addEventListener('fetch',e=>{
           const m = p.PaymentMethodRef && methods[String(p.PaymentMethodRef.value)];
           return { id: p.Id, date: (p.TxnDate || '').slice(0, 10), ref: p.PaymentRefNum || '', method: (m && m.name) || (p.PaymentMethodRef && p.PaymentMethodRef.name) || '',
             amount: Number(p.TotalAmt || 0), unapplied: Number(p.UnappliedAmt || 0), invoices, credits };
-        }).filter(p => p.date >= new Date(Date.now() - 183 * 86400000).toISOString().slice(0, 10))
+        }).filter(p => p.date >= payFrom && p.date <= payTo)
           .sort((a, b) => b.date.localeCompare(a.date));
         const creditMemos = Object.values(cmMap).map(c => ({ id: c.Id, number: c.DocNumber || '', date: (c.TxnDate || '').slice(0, 10), total: Number(c.TotalAmt || 0), remaining: Number(c.Balance || 0),
           applied: (applied[c.Id] || []).sort((a, b) => b.date.localeCompare(a.date)) })).sort((a, b) => b.date.localeCompare(a.date));
         const availableCredit = creditMemos.reduce((t, c) => t + c.remaining, 0) + payRows.reduce((t, p) => t + (p.unapplied > 0 ? p.unapplied : 0), 0);
         return sendJ(200, { customer: { id: cust.id, name: cust.name }, asOf: new Date().toISOString(), balance, overdue: balance - aging.current, aging, open: openS,
           payments: payRows, creditMemos, availableCredit,
+          range: { custom: !!rFrom, from: rFrom, to: rTo, invoices: [since, invTo], payments: [payFrom, payTo], credits: [cmFrom, cmTo] },
           recent: recent.map(i => _invSummary(i, today)).sort((a, b) => b.date.localeCompare(a.date) || b.number.localeCompare(a.number)) });
       }
       if ((url === '/portal/api/creditmemo' || url === '/portal/api/creditmemo-pdf') && req.method === 'GET') {
@@ -3698,6 +3714,7 @@ self.addEventListener('fetch',e=>{
       deletedOrderIds: data.deletedOrderIds,
       drivers: data.drivers,
       deletedDrivers: data.deletedDrivers,
+      itemLots: data.itemLots || {},
       itemFilterPrefs: data.itemFilterPrefs
     }) };
     }
@@ -3712,6 +3729,41 @@ self.addEventListener('fetch',e=>{
   // was actually changed. There's nothing to merge and nothing that can
   // race against another device's edit to a DIFFERENT customer, because
   // this never touches anything but the single record it names.
+  // ---- Lot # breakdown for GYRO products (Nov 2026) ----
+  // QuickBooks has no lot numbers, so the breakdown (lot # + quantity) is kept
+  // here, separately from the synced item, so the QuickBooks sync can never
+  // overwrite it. Requires "Edit items".
+  if (url.startsWith('/api/items/') && url.endsWith('/lots') && req.method === 'POST') {
+    const session = requirePerm(req, res, 'editItems'); if (!session) return;
+    const itemId = decodeURIComponent(url.slice('/api/items/'.length, -'/lots'.length));
+    try {
+      const body = JSON.parse((await readRequestBody(req)) || '{}');
+      const merged = {};
+      (Array.isArray(body.lots) ? body.lots : []).forEach(l => {
+        const lot = String((l && l.lot) || '').trim().slice(0, 60); const qty = Number(l && l.qty);
+        if (!lot) return;
+        if (!(qty >= 0)) throw new Error('Quantity for lot ' + lot + ' must be a number of 0 or more.');
+        const k = lot.toUpperCase();
+        merged[k] = merged[k] ? { lot: merged[k].lot, qty: merged[k].qty + qty } : { lot, qty };
+      });
+      const lots = Object.values(merged).map(l => ({ lot: l.lot, qty: Math.round(l.qty * 1000) / 1000 }));
+      // Items live in their own store (items + transactions), not in shared data.
+      const itemsData = await readItemsTxnData();
+      if (!((itemsData && itemsData.items) || []).some(i => i && i.id === itemId)) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Item not found.' })); return; }
+      let saved = null;
+      await updateSharedData(async (current) => {
+        const all = Object.assign({}, current.itemLots || {});
+        all[itemId] = { lots, updatedAt: new Date().toISOString(), by: session.name || session.email || '' };
+        saved = all[itemId];
+        return { data: Object.assign({}, current, { itemLots: all }) };
+      });
+      if (!saved) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Item not found.' })); return; }
+      console.log('[lots] ' + (session.name || '?') + ' saved ' + lots.length + ' lot(s) for item ' + itemId);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store' });
+      res.end(JSON.stringify({ success: true, entry: saved }));
+    } catch (e) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: e.message })); }
+    return;
+  }
   // ---- Automatic customer emails (Nov 2026) — see runInvoiceEmailJob ----
   if (url.startsWith('/api/customers/') && url.endsWith('/email-prefs') && req.method === 'POST') {
     const session = requireAdmin(req, res); if (!session) return;
@@ -5056,6 +5108,9 @@ self.addEventListener('fetch',e=>{
             // on each line rather than as one order-level field, since a
             // multi-product order needs a separate count per product.
             finalCount: String((l && l.finalCount) || '').trim().slice(0, 50),
+            // Lot # (Nov 2026) — required in the app for GYRO products when a
+            // physical count is entered; traceability for recalls.
+            lot: String((l && l.lot) || '').trim().slice(0, 60),
             // Whether this specific product needs to go through the
             // processing department before it can ship — a per-product flag,
             // same reasoning as finalCount: one order can easily mix
@@ -5142,7 +5197,17 @@ self.addEventListener('fetch',e=>{
               usedPrev.add(pi);
               const pl = orders[idx].lines[pi];
               nl.finalCount = pl.finalCount;
+              if (pl.lot && !nl.lot) nl.lot = pl.lot;
               if (pl.shortage) { nl.shortage = true; if (pl.rescheduledOrderId) nl.rescheduledOrderId = pl.rescheduledOrderId; if (pl.rescheduledToDate) nl.rescheduledToDate = pl.rescheduledToDate; }
+            });
+          }
+          if (order.allowCountClear !== true && Array.isArray(saved.lines) && Array.isArray(orders[idx].lines)) {
+            const k2 = l => String((l && l.product) || '').trim().toUpperCase() + '|' + String((l && l.description) || '').trim().toUpperCase();
+            const used2 = new Set();
+            saved.lines.forEach(nl => {
+              if (!nl || nl.lot) return;
+              const pi = orders[idx].lines.findIndex((pl, i) => !used2.has(i) && pl && pl.lot && k2(pl) === k2(nl));
+              if (pi >= 0) { used2.add(pi); nl.lot = orders[idx].lines[pi].lot; }
             });
           }
           const what = _orderChangeSummary(orders[idx], saved);

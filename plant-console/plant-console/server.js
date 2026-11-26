@@ -1439,6 +1439,20 @@ function _invSummary(inv, today) {
   return { id: inv.Id, number: inv.DocNumber || '', date: (inv.TxnDate || '').slice(0, 10), due: due, total: Number(inv.TotalAmt || 0), balance: bal,
     daysOverdue: (bal > 0.004 && due && due < today) ? _daysBetween(due, today) : 0 };
 }
+// ----- Saved route miles (Nov 2026) — see /api/data/driver-route-miles -----
+const ROUTE_MILES_FILE = path.join(DATA_DIR, 'route-miles-cache.json');
+let _routeMilesStore = {};
+try { _routeMilesStore = JSON.parse(fs.readFileSync(ROUTE_MILES_FILE, 'utf8')) || {}; } catch (e) { _routeMilesStore = {}; }
+let _routeMilesSaveTimer = null;
+function _saveRouteMiles(key, val) {
+  _routeMilesStore[key] = Object.assign({ at: new Date().toISOString() }, val);
+  const keys = Object.keys(_routeMilesStore);
+  if (keys.length > 5000) keys.sort((a, b) => String(_routeMilesStore[a].at).localeCompare(String(_routeMilesStore[b].at))).slice(0, keys.length - 5000).forEach(k => delete _routeMilesStore[k]);
+  clearTimeout(_routeMilesSaveTimer);
+  _routeMilesSaveTimer = setTimeout(() => {
+    try { const tmp = ROUTE_MILES_FILE + '.tmp-' + process.pid; fs.writeFileSync(tmp, JSON.stringify(_routeMilesStore)); fs.renameSync(tmp, ROUTE_MILES_FILE); } catch (e) { console.warn('[route-miles] could not save:', e.message); }
+  }, 2000);
+}
 // ===== END SHARED DATA STORE =====
 
 // ===== QUICKBOOKS TOKEN PERSISTENCE =====
@@ -5059,7 +5073,18 @@ self.addEventListener('fetch',e=>{
         res.end(JSON.stringify({ error: 'No stop addresses provided.' }));
         return;
       }
+      // Saved route miles (Nov 2026): the same stops always give the same
+      // route, so results are remembered on disk. Reports ask with
+      // cacheOk:true and get a saved answer instantly; the Orders screen
+      // still fetches fresh (it shows per-stop details the cache doesn't keep).
+      const rmKey = mode + '|' + addresses.map(a => a.trim().toUpperCase()).join('||');
+      if (body.cacheOk === true && _routeMilesStore[rmKey]) {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
+        res.end(JSON.stringify(Object.assign({ success: true, stopCount: addresses.length, mode, cached: true }, _routeMilesStore[rmKey])));
+        return;
+      }
       const result = mode === 'regular' ? await fetchGoogleDrivingRouteMiles(addresses) : await fetchDrivingRouteMiles(addresses);
+      if (result && typeof result.miles === 'number') _saveRouteMiles(rmKey, { miles: result.miles, minutes: result.minutes });
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify(Object.assign({ success: true, stopCount: addresses.length, mode }, result)));
     } catch (e) {

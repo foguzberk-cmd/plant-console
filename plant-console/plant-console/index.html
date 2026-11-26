@@ -976,6 +976,7 @@ const PERMISSIONS=[
   {id:'viewReportsInventory',  label:'— Inventory Statement',desc:'View the Inventory Statement report',group:'Reports'},
   {id:'viewReportsAudit',      label:'— Audit',              desc:'View the Audit report',group:'Reports'},
   {id:'viewReportsPurchasing', label:'— Purchasing',         desc:'View the Weekly Purchase report',group:'Reports'},
+  {id:'viewReportsDrivers',    label:'— Driver Performance', desc:'View the Driver Performance report ($, lbs, miles per driver)',group:'Reports'},
   {id:'viewReportsSalesByCustomer', label:'— Sales by Customer', desc:'View the Sales by Customer report',group:'Reports'},
   {id:'viewReportsSalesPlan', label:'— Sales Rep Plan', desc:'View the Sales Rep benefit/commission plan calculator',group:'Reports'},
   {id:'cfSchedulePayment',label:'Schedule payments',   desc:'Pick a date to schedule a vendor bill for payment, full or partial',group:'Reports'},
@@ -6823,6 +6824,7 @@ function renderReports(){
       +(hasViewPerm('viewReportsSalesPlan')?'<button id="rpt-tab-salesplan" class="btn" onclick="switchReportTab(\'salesplan\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Sales Rep Plan</button>':'')
       +(hasViewPerm('viewReportsCashflow')?'<button id="rpt-tab-cashflow" class="btn" onclick="switchReportTab(\'cashflow\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Scheduled Payments</button>':'')
       +(hasViewPerm('viewReportsPurchasing')?'<button id="rpt-tab-purchasing" class="btn" onclick="switchReportTab(\'purchasing\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Purchasing</button>':'')
+      +(hasViewPerm('viewReportsDrivers')?'<button id="rpt-tab-drivers" class="btn" onclick="switchReportTab(\'drivers\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Driver Performance</button>':'')
       +(hasViewPerm('viewReportsChecks')?'<button id="rpt-tab-checks" class="btn" onclick="switchReportTab(\'checks\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Checks</button>':'')
       +(hasViewPerm('viewReportsInventory')?'<button id="rpt-tab-inventory" class="btn" onclick="switchReportTab(\'inventory\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Inventory Statement</button>':'')
       +(hasViewPerm('viewReportsAudit')?'<button id="rpt-tab-audit" class="btn" onclick="switchReportTab(\'audit\')" style="flex-shrink:0;white-space:nowrap;border-radius:9px 9px 0 0;border-bottom:none;background:var(--bg);font-weight:400;color:var(--muted);border-top:3px solid transparent;border-left:1.5px solid transparent;border-right:1.5px solid transparent">Audit</button>':'')
@@ -6947,6 +6949,20 @@ function renderReports(){
     +'<div id="rpt-panel-audit" style="display:none">'
       +'<div id="audit-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)"></div>'
       +'<div id="audit-body"></div>'
+    +'</div>'
+    +'<div id="rpt-panel-drivers" style="display:none">'
+      +'<div id="drv-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
+        +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:10px">'
+          +'<div><label style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px">Period</label><select id="drv-preset" onchange="drvSettingChanged()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"><option value="thisWeek">This week</option><option value="lastWeek">Last week</option><option value="thisMonth">This month</option><option value="lastMonth">Last month</option><option value="last3">Last 3 months</option><option value="custom">Custom dates…</option></select></div>'
+          +'<div id="drv-custom" style="display:none;gap:8px;align-items:flex-end"><div><label style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px">From</label><input type="date" id="drv-from" onchange="drvSettingChanged()" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"></div><div><label style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px">To</label><input type="date" id="drv-to" onchange="drvSettingChanged()" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"></div></div>'
+          +'<div><label style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px">Trend by</label><select id="drv-group" onchange="drvSettingChanged()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"><option value="week">Week</option><option value="month">Month</option></select></div>'
+          +'<div><label style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px">Rank by</label><select id="drv-rank" onchange="drvSettingChanged()" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"><option value="value">$ delivered</option><option value="lbs">Lbs delivered</option><option value="miles">Est. miles</option><option value="perMile">$ per mile</option><option value="lbsPerStop">Lbs per stop</option><option value="stopsPerDay">Stops per day</option><option value="valuePerDay">$ per day</option><option value="stops">Stops</option></select></div>'
+          +'<label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-bottom:9px;cursor:pointer"><input type="checkbox" id="drv-pickups" onchange="drvSettingChanged()"> Include pick-ups</label>'
+          +'<button id="drv-pull" class="btn btn-primary" onclick="drvPullQuickBooks()">Pull from QuickBooks</button>'
+        +'</div>'
+        +'<div style="font-size:12.5px;color:var(--muted);margin-bottom:12px"><span id="drv-range"></span> · <span id="drv-status"></span></div>'
+      +'</div>'
+      +'<div id="drv-body"></div>'
     +'</div>'
     +'<div id="rpt-panel-purchasing" style="display:none">'
       +'<div id="purch-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
@@ -7369,7 +7385,8 @@ function _reportToolbarIdForTab(tab){
     cashflow:'cf-toolbar-sticky',
     checks:'chk-toolbar-sticky',
     audit:'audit-toolbar-sticky',
-    purchasing:'purch-toolbar-sticky'
+    purchasing:'purch-toolbar-sticky',
+    drivers:'drv-toolbar-sticky'
   }[tab]||null;
 }
 function _reportPanelIdForTab(tab){
@@ -7381,7 +7398,8 @@ function _reportPanelIdForTab(tab){
     cashflow:'rpt-panel-cashflow',
     checks:'rpt-panel-checks',
     audit:'rpt-panel-audit',
-    purchasing:'rpt-panel-purchasing'
+    purchasing:'rpt-panel-purchasing',
+    drivers:'rpt-panel-drivers'
   }[tab]||null;
 }
 var _reportActiveTab='collection';
@@ -13375,7 +13393,7 @@ function undepositCheck(paymentId){
 window.undepositCheck=undepositCheck;
 
 function switchReportTab(tab){
-  var _tabPermMap={collection:'viewReportsCollection',salesbycustomer:'viewReportsSalesByCustomer',salesplan:'viewReportsSalesPlan',cashflow:'viewReportsCashflow',checks:'viewReportsChecks',inventory:'viewReportsInventory',audit:'viewReportsAudit',purchasing:'viewReportsPurchasing'};
+  var _tabPermMap={drivers:'viewReportsDrivers',collection:'viewReportsCollection',salesbycustomer:'viewReportsSalesByCustomer',salesplan:'viewReportsSalesPlan',cashflow:'viewReportsCashflow',checks:'viewReportsChecks',inventory:'viewReportsInventory',audit:'viewReportsAudit',purchasing:'viewReportsPurchasing'};
   if(_tabPermMap[tab] && !hasViewPerm(_tabPermMap[tab])){
     var fallback=Object.keys(_tabPermMap).find(function(t){ return hasViewPerm(_tabPermMap[t]); });
     if(!fallback) return; // no report tab at all is visible to this user
@@ -13407,6 +13425,9 @@ function switchReportTab(tab){
   auditPanel.style.display=(tab==='audit')?'block':'none';
   purchPanel.style.display=(tab==='purchasing')?'block':'none';
   if(tab==='purchasing') initPurchaseReportTab();
+  var drvPanel=document.getElementById('rpt-panel-drivers'), drvTab=document.getElementById('rpt-tab-drivers');
+  if(drvPanel) drvPanel.style.display=(tab==='drivers')?'block':'none';
+  if(tab==='drivers') initDriverPerformanceTab();
   if(tab==='salesbycustomer'){
     _sbcUpdatePeriodLabel();
     // Same fix as Customer Payments/Cash Flow's shell: switching to (or
@@ -13421,7 +13442,8 @@ function switchReportTab(tab){
       if(sbcStatusEl){ sbcStatusEl.textContent='Showing results from your last pull this session — click "Pull from QuickBooks" to refresh.'; sbcStatusEl.style.color='var(--muted)'; }
     }
   }
-  [[invTab,'inventory'],[collTab,'collection'],[sbcTab,'salesbycustomer'],[srpTab,'salesplan'],[cfTab,'cashflow'],[chkTab,'checks'],[auditTab,'audit'],[purchTab,'purchasing']].forEach(function(pair){
+  [[invTab,'inventory'],[collTab,'collection'],[sbcTab,'salesbycustomer'],[srpTab,'salesplan'],[cfTab,'cashflow'],[chkTab,'checks'],[auditTab,'audit'],[purchTab,'purchasing'],[drvTab,'drivers']].forEach(function(pair){
+    if(!pair[0]) return;
     var active=(tab===pair[1]);
     pair[0].style.background=active?'#fff':'var(--bg)';
     pair[0].style.fontWeight=active?'700':'400';
@@ -21443,6 +21465,197 @@ function _formGyroCountsMissingLot(lines,orig){
     return !o;
   }).map(function(l){ return l.product; });
 }
+
+/* ===== Driver Performance report (Nov 2026) ===============================
+   Per driver, for a chosen period: $ delivered (exact QuickBooks invoice
+   totals of their shipped orders), lbs delivered (actual weights entered
+   in the Count box), est. route miles (same stops as the Orders screen,
+   saved on the server once calculated), plus fairness ratios ($/mile,
+   lbs/stop, stops/day, $/day) so the ranking rewards the driver, not the
+   easy route. PICK UP (customers collecting) is excluded unless chosen. */
+var _drv={preset:'thisMonth',from:'',to:'',group:'week',rank:'value',pickups:false,inv:null,invRange:'',miles:{},milesBusy:false,note:''};
+function _drvIso(d){ return d.toISOString().slice(0,10); }
+function _drvRange(){
+  var t=new Date(); t.setHours(12,0,0,0);
+  var mon=function(d){ var x=new Date(d); var g=(x.getDay()+6)%7; x.setDate(x.getDate()-g); return x; };
+  var f,to;
+  if(_drv.preset==='thisWeek'){ f=mon(t); to=new Date(f); to.setDate(f.getDate()+6); }
+  else if(_drv.preset==='lastWeek'){ f=mon(t); f.setDate(f.getDate()-7); to=new Date(f); to.setDate(f.getDate()+6); }
+  else if(_drv.preset==='lastMonth'){ f=new Date(t.getFullYear(),t.getMonth()-1,1,12); to=new Date(t.getFullYear(),t.getMonth(),0,12); }
+  else if(_drv.preset==='last3'){ f=new Date(t.getFullYear(),t.getMonth()-2,1,12); to=new Date(t.getFullYear(),t.getMonth()+1,0,12); }
+  else if(_drv.preset==='custom'){ return {from:_drv.from,to:_drv.to}; }
+  else { f=new Date(t.getFullYear(),t.getMonth(),1,12); to=new Date(t.getFullYear(),t.getMonth()+1,0,12); }
+  return {from:_drvIso(f),to:_drvIso(to)};
+}
+function _drvMoney(n){ return '$'+Number(n||0).toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}); }
+function _drvNum(n,dp){ return Number(n||0).toLocaleString('en-US',{minimumFractionDigits:dp||0,maximumFractionDigits:dp||0}); }
+function _drvIsPickup(name){ return /^\s*pick\s*-?\s*up\s*$/i.test(String(name||'')); }
+function _drvBucket(date){
+  var d=new Date(date+'T12:00:00');
+  if(_drv.group==='month') return date.slice(0,7);
+  var g=(d.getDay()+6)%7; d.setDate(d.getDate()-g); return _drvIso(d);
+}
+function _drvBucketLabel(b){
+  if(_drv.group==='month'){ var p=b.split('-'); return new Date(Number(p[0]),Number(p[1])-1,1).toLocaleDateString('en-US',{month:'short',year:'2-digit'}); }
+  var d=new Date(b+'T12:00:00'); return 'Wk '+(d.getMonth()+1)+'/'+d.getDate();
+}
+function _drvRouteAddresses(dayOrders){
+  var names=[]; dayOrders.forEach(function(o){ if(o.customer&&names.indexOf(o.customer)<0) names.push(o.customer); });
+  var addrs=[]; names.forEach(function(n){ var c=_findQbCustomerMatch(n); if(c&&c.address) addrs.push(c.address); });
+  return addrs;
+}
+function _drvCompute(){
+  var r=_drvRange(); if(!r.from||!r.to) return null;
+  var shipped=(orders||[]).filter(function(o){ return o.shipped && o.date>=r.from && o.date<=r.to && String(o.driver||'').trim() && (_drv.pickups||!_drvIsPickup(o.driver)); });
+  var by={}, buckets={};
+  shipped.forEach(function(o){
+    var d=String(o.driver).trim().toUpperCase();
+    var x=by[d]=by[d]||{driver:d,days:{},stops:{},orders:0,value:0,valueMissing:0,lbs:0,lines:0,weighed:0,invSeen:{},dayOrders:{},miles:0,milesDays:0,milesMissing:0,trend:{}};
+    x.orders++; x.days[o.date]=1; x.stops[o.date+'|'+(o.customer||'')]=1;
+    (x.dayOrders[o.date]=x.dayOrders[o.date]||[]).push(o);
+    var b=_drvBucket(o.date); buckets[b]=1; var tr=x.trend[b]=x.trend[b]||{value:0,lbs:0,miles:0,stops:{}};
+    tr.stops[o.date+'|'+(o.customer||'')]=1;
+    _orderLinesOf(o).forEach(function(l){
+      x.lines++; var v=String(l.finalCount||'').trim();
+      if(v!==''){ x.weighed++; var n=_parseQtyNumber(v); if(n>0){ x.lbs+=n; tr.lbs+=n; } }
+    });
+    var inv=String(o.invoiceDocNumber||'').trim();
+    if(_drv.inv){
+      if(inv && _drv.inv[inv]!=null){ if(!x.invSeen[inv]){ x.invSeen[inv]=1; x.value+=_drv.inv[inv]; tr.value+=_drv.inv[inv]; } }
+      else x.valueMissing++;
+    }
+  });
+  Object.keys(by).forEach(function(d){
+    var x=by[d];
+    Object.keys(x.dayOrders).forEach(function(day){
+      var addrs=_drvRouteAddresses(x.dayOrders[day]); if(!addrs.length){ x.milesMissing++; return; }
+      var m=_drv.miles[addrs.map(function(a){return a.trim().toUpperCase();}).join('||')];
+      if(m&&typeof m.miles==='number'){ x.miles+=m.miles; x.milesDays++; var tb=x.trend[_drvBucket(day)]; if(tb) tb.miles+=m.miles; } else x.milesMissing++;
+    });
+    x.nDays=Object.keys(x.days).length; x.nStops=Object.keys(x.stops).length;
+    x.perMile=x.miles>0&&_drv.inv?x.value/x.miles:null;
+    x.lbsPerStop=x.nStops?x.lbs/x.nStops:0; x.stopsPerDay=x.nDays?x.nStops/x.nDays:0; x.valuePerDay=x.nDays&&_drv.inv?x.value/x.nDays:null;
+    x.weighedPct=x.lines?Math.round(x.weighed/x.lines*100):0;
+  });
+  return {range:r, drivers:Object.keys(by).map(function(k){ return by[k]; }), buckets:Object.keys(buckets).sort()};
+}
+async function drvPullQuickBooks(){
+  var r=_drvRange(); if(!r.from||!r.to){ notify('Choose the dates first.',{kind:'error'}); return; }
+  var st=document.getElementById('drv-status'); var btn=document.getElementById('drv-pull'); if(btn) btn.disabled=true;
+  try{
+    if(st){ st.textContent='Getting invoice totals from QuickBooks…'; st.style.color=''; }
+    var end=new Date(r.to+'T12:00:00'); end.setDate(end.getDate()+10); // invoices can be dated a few days after delivery
+    var rows=await _qbFetchPagesParallel('Invoice','&from='+encodeURIComponent(r.from)+'&to='+encodeURIComponent(_drvIso(end)),function(n){ if(st) st.textContent='Getting invoice totals from QuickBooks… '+n+' so far'; },3);
+    var m={}; rows.forEach(function(i){ if(i&&i.DocNumber) m[String(i.DocNumber).trim()]=Number(i.TotalAmt||0); });
+    _drv.inv=m; _drv.invRange=r.from+'|'+r.to;
+    await drvCalcMiles();
+    if(st){ st.textContent='Updated from QuickBooks: '+rows.length+' invoice(s) · '+new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); st.style.color='#1a7a3c'; }
+  }catch(e){ if(st){ st.textContent='Could not reach QuickBooks: '+e.message; st.style.color='#c0392b'; } }
+  if(btn) btn.disabled=false;
+  renderDriverPerformance();
+}
+window.drvPullQuickBooks=drvPullQuickBooks;
+async function drvCalcMiles(){
+  if(_drv.milesBusy) return; var data=_drvCompute(); if(!data) return;
+  var need=[];
+  data.drivers.forEach(function(x){ Object.keys(x.dayOrders).forEach(function(day){ var a=_drvRouteAddresses(x.dayOrders[day]); if(!a.length) return; var k=a.map(function(s){return s.trim().toUpperCase();}).join('||'); if(!_drv.miles[k]&&need.every(function(n){return n.k!==k;})) need.push({k:k,a:a}); }); });
+  if(!need.length) return;
+  _drv.milesBusy=true; var done=0, st=document.getElementById('drv-status'), failed=0, noKey=false;
+  async function one(n){
+    try{ var r=await fetch('/api/data/driver-route-miles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({addresses:n.a,cacheOk:true})});
+      var j=await r.json(); if(r.ok&&j.success&&typeof j.miles==='number') _drv.miles[n.k]={miles:j.miles}; else { failed++; if(r.status===501) noKey=true; } }catch(e){ failed++; }
+    done++; if(st) st.textContent='Calculating route miles… '+done+' of '+need.length;
+  }
+  for(var i=0;i<need.length;i+=3) await Promise.all(need.slice(i,i+3).map(one));
+  _drv.milesBusy=false;
+  _drv.note=noKey?'Route miles need the Geoapify key on the server (same as the Orders route miles).':(failed?failed+' route(s) could not be measured — those days show without miles.':'');
+}
+function _drvMetric(x,k){ return {value:x.value,lbs:x.lbs,miles:x.miles,perMile:x.perMile||0,stops:x.nStops,lbsPerStop:x.lbsPerStop,stopsPerDay:x.stopsPerDay,valuePerDay:x.valuePerDay||0}[k]; }
+var _DRV_METRICS={value:'$ delivered',lbs:'Lbs delivered',miles:'Est. miles',perMile:'$ per mile',stops:'Stops',lbsPerStop:'Lbs per stop',stopsPerDay:'Stops per day',valuePerDay:'$ per day'};
+function _drvFmt(k,v){ if(v==null) return '—'; if(k==='value'||k==='valuePerDay') return _drvMoney(v); if(k==='perMile') return '$'+_drvNum(v,2); if(k==='lbs'||k==='miles') return _drvNum(v); if(k==='lbsPerStop') return _drvNum(v); if(k==='stopsPerDay') return _drvNum(v,1); return _drvNum(v); }
+var _DRV_COLORS=['#1f5f73','#9E2B25','#2f7d4e','#a86a12','#6b4fa0','#c4512c','#2a7fb8','#7a7a2a','#b03a75','#3c6e47'];
+function _drvBars(drivers,k,title,color){
+  var max=Math.max.apply(null,drivers.map(function(x){ return _drvMetric(x,k)||0; }).concat([0]));
+  return '<div style="background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px">'
+    +'<div style="font-weight:700;margin-bottom:10px">'+esc(title)+'</div>'
+    +drivers.slice().sort(function(a,b){ return (_drvMetric(b,k)||0)-(_drvMetric(a,k)||0); }).map(function(x){
+      var v=_drvMetric(x,k)||0, w=max>0?Math.max(2,v/max*100):0;
+      return '<div style="display:grid;grid-template-columns:110px 1fr 84px;gap:8px;align-items:center;margin:5px 0;font-size:12.5px">'
+        +'<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600" title="'+esc(x.driver)+'">'+esc(x.driver)+'</span>'
+        +'<span style="background:var(--bg);border-radius:5px;height:14px;overflow:hidden"><span style="display:block;height:100%;width:'+w+'%;background:'+color+';border-radius:5px"></span></span>'
+        +'<span style="text-align:right;font-variant-numeric:tabular-nums">'+_drvFmt(k,v)+'</span></div>';
+    }).join('')+'</div>';
+}
+function _drvTrend(data){
+  var k=_drv.rank, bk=data.buckets; if(bk.length<2) return '';
+  var drivers=data.drivers.slice().sort(function(a,b){ return a.driver.localeCompare(b.driver); });
+  var val=function(x,b){ var t=x.trend[b]; if(!t) return 0; if(k==='value'||k==='valuePerDay') return t.value; if(k==='lbs'||k==='lbsPerStop') return t.lbs; if(k==='miles') return t.miles; if(k==='perMile') return t.miles>0?t.value/t.miles:0; return Object.keys(t.stops).length; };
+  var trendKey={value:'value',valuePerDay:'value',lbs:'lbs',lbsPerStop:'lbs',miles:'miles',perMile:'perMile',stops:'stops',stopsPerDay:'stops'}[k];
+  var max=0; drivers.forEach(function(x){ bk.forEach(function(b){ max=Math.max(max,val(x,b)); }); }); if(max<=0) return '';
+  var W=760,H=240,pl=56,pr=12,pt=14,pb=34, iw=W-pl-pr, ih=H-pt-pb;
+  var X=function(i){ return pl+(bk.length===1?iw/2:i*iw/(bk.length-1)); }, Y=function(v){ return pt+ih-(v/max)*ih; };
+  var grid=''; for(var g=0;g<=4;g++){ var gv=max*g/4, gy=Y(gv); grid+='<line x1="'+pl+'" x2="'+(W-pr)+'" y1="'+gy+'" y2="'+gy+'" stroke="#e3e6ea"/><text x="'+(pl-6)+'" y="'+(gy+4)+'" text-anchor="end" font-size="10.5" fill="#6b7280">'+esc(_drvFmt(trendKey,gv))+'</text>'; }
+  var xl=bk.map(function(b,i){ var anc=i===0?'start':(i===bk.length-1?'end':'middle'); return '<text x="'+X(i)+'" y="'+(H-12)+'" text-anchor="'+anc+'" font-size="10.5" fill="#6b7280">'+esc(_drvBucketLabel(b))+'</text>'; }).join('');
+  var lines=drivers.map(function(x,di){ var c=_DRV_COLORS[di%_DRV_COLORS.length]; var pts=bk.map(function(b,i){ return X(i)+','+Y(val(x,b)); }).join(' ');
+    return '<polyline points="'+pts+'" fill="none" stroke="'+c+'" stroke-width="2.5"/>'+bk.map(function(b,i){ return '<circle cx="'+X(i)+'" cy="'+Y(val(x,b))+'" r="3.5" fill="'+c+'"><title>'+esc(x.driver+' · '+_drvBucketLabel(b)+': '+_drvFmt(trendKey,val(x,b)))+'</title></circle>'; }).join(''); }).join('');
+  var legend=drivers.map(function(x,di){ return '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:12px"><span style="width:12px;height:3px;background:'+_DRV_COLORS[di%_DRV_COLORS.length]+';display:inline-block"></span>'+esc(x.driver)+'</span>'; }).join('');
+  var label={value:'$ delivered',lbs:'lbs delivered',miles:'est. miles',perMile:'$ per mile',stops:'stops'}[trendKey];
+  return '<div style="background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-top:14px">'
+    +'<div style="font-weight:700;margin-bottom:6px">Trend — '+esc(label)+' per '+(_drv.group==='month'?'month':'week')+'</div>'
+    +'<div style="overflow-x:auto"><svg viewBox="0 0 '+W+' '+H+'" style="width:100%;min-width:560px;height:auto" role="img" aria-label="Trend chart">'+grid+xl+lines+'</svg></div>'
+    +'<div style="margin-top:6px">'+legend+'</div></div>';
+}
+function renderDriverPerformance(){
+  var body=document.getElementById('drv-body'); if(!body) return;
+  var data=_drvCompute();
+  var rEl=document.getElementById('drv-range'); if(rEl&&data) rEl.textContent=fmtDateUS(data.range.from)+' – '+fmtDateUS(data.range.to);
+  if(!data){ body.innerHTML='<div style="color:var(--muted);padding:20px">Choose a From and To date.</div>'; return; }
+  if(!data.drivers.length){ body.innerHTML='<div style="color:var(--muted);padding:20px">No shipped orders with a driver in this period.</div>'; return; }
+  var stale=_drv.inv&&_drv.invRange!==data.range.from+'|'+data.range.to;
+  var ds=data.drivers.slice().sort(function(a,b){ return (_drvMetric(b,_drv.rank)||0)-(_drvMetric(a,_drv.rank)||0); });
+  var tot=ds.reduce(function(t,x){ t.v+=x.value; t.l+=x.lbs; t.m+=x.miles; t.s+=x.nStops; t.o+=x.orders; return t; },{v:0,l:0,m:0,s:0,o:0});
+  var medal=['🥇','🥈','🥉'];
+  var kpi=function(k,v,sub){ return '<div style="background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px"><div style="font-size:12px;color:var(--muted);font-weight:600">'+k+'</div><div style="font-size:24px;font-weight:700;margin-top:2px">'+v+'</div>'+(sub?'<div style="font-size:11.5px;color:var(--muted)">'+sub+'</div>':'')+'</div>'; };
+  body.innerHTML=
+    (!_drv.inv?'<div style="background:#fff8e1;border:1px solid #e0c56b;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px">Click <b>Pull from QuickBooks</b> to add the <b>$ delivered</b> (exact invoice totals) and the route miles. Weights and stops are shown already.</div>':'')
+    +(stale?'<div style="background:#fff8e1;border:1px solid #e0c56b;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px">The dates changed — click <b>Pull from QuickBooks</b> again so the $ match this period.</div>':'')
+    +(_drv.note?'<div style="color:#b8460b;font-size:12.5px;margin-bottom:10px">'+esc(_drv.note)+'</div>':'')
+    +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px">'
+      +kpi('$ delivered',_drv.inv?_drvMoney(tot.v):'—','all drivers')+kpi('Lbs delivered',_drvNum(tot.l),'actual weights')+kpi('Est. miles',_drvNum(tot.m),'planned routes')+kpi('Stops',_drvNum(tot.s),tot.o+' orders')
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:14px">'
+      +ds.slice(0,3).map(function(x,i){ return '<div style="background:var(--panel);border:1px solid var(--line);border-left:4px solid '+['#d4a017','#9aa0a6','#b87333'][i]+';border-radius:12px;padding:12px 14px"><div style="font-size:22px">'+medal[i]+'</div><div style="font-weight:700;font-size:15px">'+esc(x.driver)+'</div><div style="color:var(--muted);font-size:12.5px">'+esc(_DRV_METRICS[_drv.rank])+': <b style="color:var(--ink)">'+_drvFmt(_drv.rank,_drvMetric(x,_drv.rank))+'</b></div></div>'; }).join('')
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">'
+      +(_drv.inv?_drvBars(ds,'value','$ delivered','#1f5f73'):'')+_drvBars(ds,'lbs','Lbs delivered','#9E2B25')+_drvBars(ds,'miles','Est. miles driven','#2f7d4e')
+    +'</div>'
+    +_drvTrend(data)
+    +'<div style="overflow-x:auto;margin-top:14px"><table class="txn-table" style="width:100%"><thead><tr><th>#</th><th>Driver</th><th style="text-align:right">Days</th><th style="text-align:right">Stops</th><th style="text-align:right">Orders</th><th style="text-align:right">$ delivered</th><th style="text-align:right">Lbs</th><th style="text-align:right">Est. miles</th><th style="text-align:right">$ / mile</th><th style="text-align:right">Lbs / stop</th><th style="text-align:right">Stops / day</th><th style="text-align:right">$ / day</th></tr></thead><tbody>'
+      +ds.map(function(x,i){ return '<tr><td>'+(i<3?medal[i]:(i+1))+'</td><td><b>'+esc(x.driver)+'</b></td><td style="text-align:right">'+x.nDays+'</td><td style="text-align:right">'+x.nStops+'</td><td style="text-align:right">'+x.orders+'</td>'
+        +'<td style="text-align:right">'+(_drv.inv?_drvMoney(x.value)+(x.valueMissing?'<div style="font-size:11px;color:#b8460b">'+x.valueMissing+' order(s) not invoiced</div>':''):'—')+'</td>'
+        +'<td style="text-align:right">'+_drvNum(x.lbs)+'<div style="font-size:11px;color:'+(x.weighedPct<90?'#b8460b':'var(--muted)')+'">'+x.weighedPct+'% of lines weighed</div></td>'
+        +'<td style="text-align:right">'+(x.milesDays?_drvNum(x.miles):'—')+(x.milesMissing?'<div style="font-size:11px;color:#b8460b">'+x.milesMissing+' day(s) without miles</div>':'')+'</td>'
+        +'<td style="text-align:right">'+_drvFmt('perMile',x.perMile)+'</td><td style="text-align:right">'+_drvNum(x.lbsPerStop)+'</td><td style="text-align:right">'+_drvNum(x.stopsPerDay,1)+'</td><td style="text-align:right">'+_drvFmt('valuePerDay',x.valuePerDay)+'</td></tr>'; }).join('')
+    +'</tbody></table></div>'
+    +'<div style="font-size:12px;color:var(--muted);margin-top:12px;line-height:1.55">How it works: counts <b>shipped</b> orders by their delivery date. <b>$ delivered</b> = the QuickBooks invoice total of each order. <b>Lbs</b> = actual weights entered in the Count box (lines not weighed count as 0 — see "% weighed"). <b>Est. miles</b> = the planned route for that driver\'s stops that day (the same number as on the Orders screen); actual odometer miles can come from Samsara later. For rewards, compare the ratios ($ / mile, lbs / stop, stops / day) as well as the totals — totals alone favor whoever got the biggest route.</div>';
+}
+function initDriverPerformanceTab(){
+  var p=document.getElementById('drv-preset'); if(p) p.value=_drv.preset;
+  var g=document.getElementById('drv-group'); if(g) g.value=_drv.group;
+  var k=document.getElementById('drv-rank'); if(k) k.value=_drv.rank;
+  var c=document.getElementById('drv-custom'); if(c) c.style.display=_drv.preset==='custom'?'flex':'none';
+  renderDriverPerformance();
+}
+function drvSettingChanged(){
+  _drv.preset=(document.getElementById('drv-preset')||{}).value||'thisMonth';
+  _drv.group=(document.getElementById('drv-group')||{}).value||'week';
+  _drv.rank=(document.getElementById('drv-rank')||{}).value||'value';
+  _drv.pickups=!!(document.getElementById('drv-pickups')||{}).checked;
+  _drv.from=(document.getElementById('drv-from')||{}).value||''; _drv.to=(document.getElementById('drv-to')||{}).value||'';
+  var c=document.getElementById('drv-custom'); if(c) c.style.display=_drv.preset==='custom'?'flex':'none';
+  renderDriverPerformance();
+}
+window.drvSettingChanged=drvSettingChanged;
 </script>
 </body>
 </html>

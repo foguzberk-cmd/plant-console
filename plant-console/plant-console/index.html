@@ -1867,6 +1867,7 @@ async function _pullSmallFromServerImpl(){
       });
     }
     if(data.itemLots && typeof data.itemLots==='object' && !Array.isArray(data.itemLots)) itemLots=data.itemLots;
+    if(data.ignoredDeliveryInvoices && typeof data.ignoredDeliveryInvoices==='object') ignoredDeliveryInvoices=data.ignoredDeliveryInvoices;
     if(data.itemFilterPrefs && typeof data.itemFilterPrefs==='object' && !Array.isArray(data.itemFilterPrefs) && Object.keys(data.itemFilterPrefs).length){
       itemFilterPrefs=data.itemFilterPrefs;
       Object.keys(_recentlySavedItemFilterPrefs).forEach(function(uid){
@@ -2028,6 +2029,7 @@ async function _pullFromServerImpl(opts){
       });
     }
     if(data.itemLots && typeof data.itemLots==='object' && !Array.isArray(data.itemLots)) itemLots=data.itemLots;
+    if(data.ignoredDeliveryInvoices && typeof data.ignoredDeliveryInvoices==='object') ignoredDeliveryInvoices=data.ignoredDeliveryInvoices;
     if(data.itemFilterPrefs && typeof data.itemFilterPrefs==='object' && !Array.isArray(data.itemFilterPrefs) && Object.keys(data.itemFilterPrefs).length){
       itemFilterPrefs=data.itemFilterPrefs;
       Object.keys(_recentlySavedItemFilterPrefs).forEach(function(uid){
@@ -2270,6 +2272,7 @@ async function _pushToServerImpl(){
           if(JSON.stringify(newCustomerAllowed)!==JSON.stringify(customerAllowed)){ customerAllowed=newCustomerAllowed; safeSetLocalJSON('pc_customerallowed',(customerAllowed)); }
         }
         if(smallData.itemLots && typeof smallData.itemLots==='object' && !Array.isArray(smallData.itemLots)) itemLots=smallData.itemLots;
+        if(smallData.ignoredDeliveryInvoices && typeof smallData.ignoredDeliveryInvoices==='object') ignoredDeliveryInvoices=smallData.ignoredDeliveryInvoices;
         if(smallData.itemFilterPrefs && typeof smallData.itemFilterPrefs==='object' && !Array.isArray(smallData.itemFilterPrefs)){
           var newItemFilterPrefs=Object.assign({}, smallData.itemFilterPrefs, itemFilterPrefs);
           if(JSON.stringify(newItemFilterPrefs)!==JSON.stringify(itemFilterPrefs)){ itemFilterPrefs=newItemFilterPrefs; safeSetLocalJSON('pc_itemfilterprefs',(itemFilterPrefs)); }
@@ -4597,6 +4600,7 @@ function renderOrdersPage(){
     +'</div>'
     +'<div id="newOrderFormWrap"></div>'
     +'<div style="padding:12px 16px;background:#EAF3EC;border:1px solid var(--line);border-bottom:none;border-radius:14px 14px 0 0;font-weight:700;font-size:13px;letter-spacing:.02em;color:#1b5e2f">Shipped Orders <span style="font-weight:400;color:var(--muted)">— invoiced in QuickBooks</span></div>'
+    +'<div id="inoPanel" style="margin-bottom:14px"></div>'
     +'<div id="ordersShippedSummary" style="margin-bottom:22px"></div>'
     +'<div style="padding:12px 16px;background:#F5EFE8;border:1px solid var(--line);border-bottom:none;border-radius:14px 14px 0 0;font-weight:700;font-size:13px;letter-spacing:.02em">Received Orders <span id="receivedOrdersTotalCount" style="font-weight:400;color:var(--muted)"></span></div>'
     +'<div id="ordersWeekSummary"></div>';
@@ -4659,6 +4663,7 @@ async function matchOrdersWithQuickBooks(){
     _collAllInvoicesCache[inv.Id]={Id:inv.Id,DocNumber:inv.DocNumber||'',CustomerRef:inv.CustomerRef,TotalAmt:Number(inv.TotalAmt||0),Balance:Number(inv.Balance||0),TxnDate:(inv.TxnDate||'').slice(0,10)};
   });
   safeSetLocalJSON('pc_coll_all_invoices',(_collAllInvoicesCache));
+  _ino.rows=freshInvoices; _ino.pulledAt=Date.now(); // the Orders tab's "invoices without an order" box
   var invoices=freshInvoices.map(function(inv){
     return {DocNumber:inv.DocNumber||'',CustomerRef:inv.CustomerRef,TxnDate:(inv.TxnDate||'').slice(0,10)};
   });
@@ -4761,6 +4766,7 @@ window.toggleShippedWeek=toggleShippedWeek;
 function _renderShippedOrdersSummary(){
   var el=document.getElementById('ordersShippedSummary');
   if(!el) return;
+  renderInoPanel();
   function fmtDayOrd(dateStr){
     var d=new Date(dateStr+'T00:00:00');
     return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
@@ -21547,7 +21553,7 @@ async function drvPullQuickBooks(){
     var end=new Date(r.to+'T12:00:00'); end.setDate(end.getDate()+10); // invoices can be dated a few days after delivery
     var rows=await _qbFetchPagesParallel('Invoice','&from='+encodeURIComponent(r.from)+'&to='+encodeURIComponent(_drvIso(end)),function(n){ if(st) st.textContent='Getting invoice totals from QuickBooks… '+n+' so far'; },3);
     var m={}; rows.forEach(function(i){ if(i&&i.DocNumber) m[String(i.DocNumber).trim()]=Number(i.TotalAmt||0); });
-    _drv.inv=m; _drv.invRange=r.from+'|'+r.to;
+    _drv.inv=m; _drv.invRows=rows; _drv.invRange=r.from+'|'+r.to;
     await drvCalcMiles();
     if(st){ st.textContent='Updated from QuickBooks: '+rows.length+' invoice(s) · '+new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); st.style.color='#1a7a3c'; }
   }catch(e){ if(st){ st.textContent='Could not reach QuickBooks: '+e.message; st.style.color='#c0392b'; } }
@@ -21610,7 +21616,7 @@ function renderDriverPerformance(){
   var data=_drvCompute();
   var rEl=document.getElementById('drv-range'); if(rEl&&data) rEl.textContent=fmtDateUS(data.range.from)+' – '+fmtDateUS(data.range.to);
   if(!data){ body.innerHTML='<div style="color:var(--muted);padding:20px">Choose a From and To date.</div>'; return; }
-  if(!data.drivers.length){ body.innerHTML='<div style="color:var(--muted);padding:20px">No shipped orders with a driver in this period.</div>'; return; }
+  if(!data.drivers.length){ body.innerHTML=_drvUnmatchedHtml(data.range)+'<div style="color:var(--muted);padding:20px">No shipped orders with a driver in this period.</div>'; return; }
   var stale=_drv.inv&&_drv.invRange!==data.range.from+'|'+data.range.to;
   var ds=data.drivers.slice().sort(function(a,b){ return (_drvMetric(b,_drv.rank)||0)-(_drvMetric(a,_drv.rank)||0); });
   var tot=ds.reduce(function(t,x){ t.v+=x.value; t.l+=x.lbs; t.m+=x.miles; t.s+=x.nStops; t.o+=x.orders; return t; },{v:0,l:0,m:0,s:0,o:0});
@@ -21620,6 +21626,7 @@ function renderDriverPerformance(){
     (!_drv.inv?'<div style="background:#fff8e1;border:1px solid #e0c56b;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px">Click <b>Pull from QuickBooks</b> to add the <b>$ delivered</b> (exact invoice totals) and the route miles. Weights and stops are shown already.</div>':'')
     +(stale?'<div style="background:#fff8e1;border:1px solid #e0c56b;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px">The dates changed — click <b>Pull from QuickBooks</b> again so the $ match this period.</div>':'')
     +(_drv.note?'<div style="color:#b8460b;font-size:12.5px;margin-bottom:10px">'+esc(_drv.note)+'</div>':'')
+    +(stale?'':_drvUnmatchedHtml(data.range))
     +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px">'
       +kpi('$ delivered',_drv.inv?_drvMoney(tot.v):'—','all drivers')+kpi('Lbs delivered',_drvNum(tot.l),'actual weights')+kpi('Est. miles',_drvNum(tot.m),'planned routes')+kpi('Stops',_drvNum(tot.s),tot.o+' orders')
     +'</div>'
@@ -21656,6 +21663,184 @@ function drvSettingChanged(){
   renderDriverPerformance();
 }
 window.drvSettingChanged=drvSettingChanged;
+
+/* ===== QuickBooks invoices with no order → assign a driver (Nov 2026) =====
+   When something is invoiced in QuickBooks without an order in Plant
+   Console, the driver report can't see it. After "Pull from QuickBooks" in
+   Driver Performance, those invoices are listed; assigning a driver creates
+   a shipped order from the invoice (customer, date, invoice #, products;
+   inventory quantities used as the weight), marked "From QB invoice". The
+   server refuses a second order for the same invoice. Invoices that aren't
+   deliveries can be hidden for everyone ("Not a delivery"). */
+var ignoredDeliveryInvoices={};
+var _drvSel={};
+function _drvUnmatchedInvoices(range){
+  if(!_drv.invRows) return [];
+  var have={}; (orders||[]).forEach(function(o){ var n=String(o.invoiceDocNumber||'').trim(); if(n) have[n]=1; });
+  return _drv.invRows.filter(function(i){
+    var n=String(i.DocNumber||'').trim(), d=String(i.TxnDate||'').slice(0,10);
+    return n && !have[n] && !ignoredDeliveryInvoices[n] && d>=range.from && d<=range.to && Number(i.TotalAmt||0)>0;
+  }).sort(function(a,b){ return String(a.TxnDate).localeCompare(String(b.TxnDate)) || String(a.DocNumber).localeCompare(String(b.DocNumber)); });
+}
+function _drvDriverOptions(){
+  var list=(drivers||[]).filter(function(d){ return d && !_deletedDrivers[d]; }).slice().sort();
+  return '<option value="">— driver —</option>'+list.map(function(d){ return '<option value="'+esc(d)+'">'+esc(d)+'</option>'; }).join('');
+}
+function _drvUnmatchedHtml(range){
+  if(!_drv.invRows) return '';
+  var rows=_drvUnmatchedInvoices(range); if(!rows.length) return '';
+  // (Nov 2026) Assigning now happens on the Orders tab — this is just a reminder.
+  return '<div style="background:#fff8e1;border:1px solid #e0c56b;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+    +'<span>⚠ <b>'+rows.length+' QuickBooks invoice'+(rows.length!==1?'s':'')+'</b> in this period '+(rows.length!==1?'have':'has')+' no order, so no driver gets credit for '+(rows.length!==1?'them':'it')+'.</span>'
+    +'<button class="btn btn-sm btn-primary" onclick="_ino.rows=_drv.invRows;_ino.pulledAt=Date.now();_inoSnapDays(Math.ceil((Date.now()-new Date(\''+esc(range.from)+'T00:00:00\'))/86400000));select(\'orders\')">Assign drivers on the Orders tab →</button></div>';
+  var can=hasPerm('editOrders');
+  var items3=function(i){ var names=(i.Line||[]).filter(function(l){ return l.DetailType==='SalesItemLineDetail'; }).map(function(l){ return (l.SalesItemLineDetail&&l.SalesItemLineDetail.ItemRef&&l.SalesItemLineDetail.ItemRef.name)||''; }).filter(Boolean); return names.slice(0,3).join(', ')+(names.length>3?' +'+(names.length-3)+' more':''); };
+  var nSel=Object.keys(_drvSel).filter(function(k){ return _drvSel[k]; }).length;
+  return '<div style="background:var(--panel);border:1px solid #e0c56b;border-left:4px solid #d4a017;border-radius:12px;padding:12px 14px;margin-bottom:14px">'
+    +'<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">'
+      +'<div><div style="font-weight:700">⚠ '+rows.length+' QuickBooks invoice'+(rows.length!==1?'s have':' has')+' no order</div>'
+      +'<div style="font-size:12.5px;color:var(--muted)">These were invoiced without an order in Plant Console, so no driver gets credit. Assign the driver who delivered — or mark "Not a delivery" (services, fees).</div></div>'
+      +(can?'<div style="display:flex;gap:6px;align-items:center"><select id="drv-bulk-driver" style="padding:7px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg)">'+_drvDriverOptions()+'</select><button class="btn btn-sm btn-primary" onclick="drvAssignSelected()" '+(nSel?'':'disabled')+'>Assign '+(nSel?nSel+' ':'')+'selected</button></div>':'')
+    +'</div>'
+    +'<div style="overflow:auto;max-height:340px;margin-top:10px"><table class="txn-table" style="width:100%"><thead><tr>'+(can?'<th><input type="checkbox" title="Select all" onchange="drvSelectAll(this.checked)"></th>':'')+'<th>Invoice</th><th>Date</th><th>Customer</th><th>Products</th><th style="text-align:right">Total</th>'+(can?'<th>Driver</th><th></th>':'')+'</tr></thead><tbody>'
+    +rows.map(function(i){ var n=String(i.DocNumber); return '<tr>'
+      +(can?'<td><input type="checkbox" '+(_drvSel[n]?'checked':'')+' onchange="_drvSel[\''+esc(n)+'\']=this.checked;renderDriverPerformance()"></td>':'')
+      +'<td><b>#'+esc(n)+'</b></td><td>'+esc(fmtDateUS(String(i.TxnDate||'').slice(0,10)))+'</td><td>'+esc((i.CustomerRef&&i.CustomerRef.name)||'')+'</td>'
+      +'<td style="font-size:12px;color:var(--muted);max-width:260px">'+esc(items3(i))+'</td><td style="text-align:right">'+_drvMoney(i.TotalAmt)+'</td>'
+      +(can?'<td><select id="drv-inv-'+esc(n)+'" style="padding:5px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg)">'+_drvDriverOptions()+'</select></td>'
+        +'<td style="white-space:nowrap"><button class="btn btn-sm btn-primary" onclick="drvAssignInvoices([\''+esc(n)+'\'],null)">Assign</button> <button class="btn btn-sm" onclick="drvIgnoreInvoice(\''+esc(n)+'\')">Not a delivery</button></td>':'')
+      +'</tr>'; }).join('')
+    +'</tbody></table></div></div>';
+}
+function drvSelectAll(on){ var r=_drvRange(); _drvUnmatchedInvoices(r).forEach(function(i){ _drvSel[String(i.DocNumber)]=!!on; }); renderDriverPerformance(); }
+window.drvSelectAll=drvSelectAll;
+function drvAssignSelected(){
+  var d=(document.getElementById('drv-bulk-driver')||{}).value||'';
+  var docs=Object.keys(_drvSel).filter(function(k){ return _drvSel[k]; });
+  if(!d){ notify('Choose a driver for the selected invoices.',{kind:'error'}); return; }
+  drvAssignInvoices(docs,d);
+}
+window.drvAssignSelected=drvAssignSelected;
+async function drvAssignInvoices(docNumbers,driver,ctx){
+  var byQbId={}; (items||[]).forEach(function(it){ if(it&&it.qbId) byQbId[String(it.qbId)]=it; });
+  var ok=0, problems=[];
+  for(var di=0;di<docNumbers.length;di++){
+    var n=docNumbers[di];
+    var inv=_findInvRowAny(n); if(!inv) continue;
+    var d=driver||((document.getElementById((ctx||'drv')+'-inv-'+n)||{}).value||'');
+    if(!d){ problems.push('#'+n+': choose a driver'); continue; }
+    var lines=(inv.Line||[]).filter(function(l){ return l.DetailType==='SalesItemLineDetail'; }).map(function(l){
+      var det=l.SalesItemLineDetail||{}, ref=det.ItemRef||{}, it=byQbId[String(ref.value||'')];
+      var qty=det.Qty!=null?String(det.Qty):'';
+      var isInv=!!(it && /inventory/i.test(String(it.type||'')));
+      return { product:ref.name||'', description:(l.Description&&l.Description!==ref.name)?l.Description:'', quantity:qty, finalCount:isInv?qty:'' };
+    });
+    var order={ date:String(inv.TxnDate||'').slice(0,10), customer:(inv.CustomerRef&&inv.CustomerRef.name)||'', driver:d, lines:lines,
+      shipped:true, invoiceDocNumber:n, invoiceDate:String(inv.TxnDate||'').slice(0,10), fromInvoice:true };
+    try{
+      var r=await fetch('/api/data/save-order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order:Object.assign({id:'ord_inv_'+n+'_'+Date.now().toString(36)},order)})});
+      var j={}; try{ j=await r.json(); }catch(e){}
+      if(!r.ok||!j.order) throw new Error(j.error||('HTTP '+r.status));
+      if(!orders.some(function(o){ return o.id===j.order.id; })) orders.push(j.order);
+      delete _drvSel[n]; delete _inoSel[n]; ok++;
+    }catch(e){ problems.push('#'+n+': '+e.message); }
+  }
+  if(ok) notify(ok+' invoice'+(ok!==1?'s':'')+' assigned — '+(ok!==1?'they now count':'it now counts')+' in Shipped Orders and this report.',{kind:'success'});
+  if(problems.length) notify('Not assigned — '+problems.join('; '),{kind:'error'});
+  renderInoPanel(); try{ _renderShippedOrdersSummary(); }catch(e){}
+  if(_drv.inv){ await drvCalcMiles(); } renderDriverPerformance();
+}
+window.drvAssignInvoices=drvAssignInvoices;
+async function drvIgnoreInvoice(n){
+  try{
+    var r=await fetch('/api/delivery-invoices/ignore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({docNumbers:[n],ignore:true})});
+    var j=await r.json(); if(!r.ok||!j.success) throw new Error(j.error||('HTTP '+r.status));
+    ignoredDeliveryInvoices=j.ignored||{}; renderDriverPerformance(); renderInoPanel();
+    notify('Invoice #'+n+' hidden — it won\'t be listed again.',{kind:'success'});
+  }catch(e){ notify('Could not hide it: '+e.message,{kind:'error'}); }
+}
+window.drvIgnoreInvoice=drvIgnoreInvoice;
+
+/* ===== Orders tab: QuickBooks invoices without an order (Nov 2026) ========
+   Filled automatically by "Match with QuickBooks" (the invoices it fetched
+   that no order uses), or by this box's own "Check QuickBooks". Shows recent
+   invoices only (7/14/30 days). Assigning a driver creates a shipped order
+   from the invoice (see drvAssignInvoices); "Not a delivery" hides it for
+   everyone. Driver Performance just links here. */
+var _ino={rows:null,days:14,pulledAt:null,busy:false};
+var _inoSel={};
+// The box offers 7 / 14 / 30 days; a wider need is rounded up to the next choice.
+function _inoSnapDays(need){ need=Math.max(need||0,_ino.days); _ino.days=need<=7?7:(need<=14?14:30); }
+function _findInvRowAny(n){
+  var f=function(list){ return (list||[]).find(function(x){ return String(x.DocNumber)===String(n); }); };
+  return f(_ino.rows)||f(_drv.invRows)||null;
+}
+function _inoList(){
+  if(!_ino.rows) return [];
+  var since=new Date(); since.setDate(since.getDate()-_ino.days); since=since.toISOString().slice(0,10);
+  var have={}; (orders||[]).forEach(function(o){ var n=String(o.invoiceDocNumber||'').trim(); if(n) have[n]=1; });
+  return _ino.rows.filter(function(i){
+    var n=String(i.DocNumber||'').trim(), d=String(i.TxnDate||'').slice(0,10);
+    return n && !have[n] && !ignoredDeliveryInvoices[n] && d>=since && Number(i.TotalAmt||0)>0;
+  }).sort(function(a,b){ return String(b.TxnDate).localeCompare(String(a.TxnDate)) || String(b.DocNumber).localeCompare(String(a.DocNumber)); });
+}
+function renderInoPanel(){
+  var el=document.getElementById('inoPanel'); if(!el) return;
+  var can=hasPerm('editOrders'); if(!can){ el.innerHTML=''; return; }
+  var rows=_inoList();
+  var daysSel='<select id="ino-days" onchange="_ino.days=Number(this.value);renderInoPanel()" style="padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:12.5px;background:var(--bg)">'
+    +[7,14,30].map(function(d){ return '<option value="'+d+'"'+(_ino.days===d?' selected':'')+'>Last '+d+' days</option>'; }).join('')+'</select>';
+  var checkBtn='<button class="btn btn-sm" onclick="inoCheckQuickBooks(this)"'+(_ino.busy?' disabled':'')+'>'+(_ino.busy?'Checking…':'Check QuickBooks')+'</button>';
+  if(!_ino.rows){
+    el.innerHTML='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);padding:8px 12px;border:1px dashed var(--line);border-radius:10px">'
+      +'<span>📄 Invoiced in QuickBooks without an order? Check here to assign the driver.</span>'+daysSel+checkBtn+'</div>';
+    return;
+  }
+  var when=_ino.pulledAt?new Date(_ino.pulledAt).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):'';
+  if(!rows.length){
+    el.innerHTML='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px;color:#1a7a3c;padding:8px 12px;border:1px solid #cfe6d6;background:#f1f9f3;border-radius:10px">'
+      +'<span>✓ Every QuickBooks invoice in the '+daysSel.replace('<select','<select style="display:inline-block"')+' has an order'+(when?' (checked '+esc(when)+')':'')+'.</span>'+checkBtn+'</div>';
+    return;
+  }
+  var items3=function(i){ var names=(i.Line||[]).filter(function(l){ return l.DetailType==='SalesItemLineDetail'; }).map(function(l){ return (l.SalesItemLineDetail&&l.SalesItemLineDetail.ItemRef&&l.SalesItemLineDetail.ItemRef.name)||''; }).filter(Boolean); return names.slice(0,3).join(', ')+(names.length>3?' +'+(names.length-3)+' more':''); };
+  var nSel=rows.filter(function(i){ return _inoSel[String(i.DocNumber)]; }).length;
+  el.innerHTML='<div style="background:var(--panel);border:1px solid #e0c56b;border-left:4px solid #d4a017;border-radius:12px;padding:12px 14px">'
+    +'<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">'
+      +'<div><div style="font-weight:700">⚠ '+rows.length+' QuickBooks invoice'+(rows.length!==1?'s':'')+' without an order</div>'
+      +'<div style="font-size:12.5px;color:var(--muted)">Invoiced in QuickBooks but never entered as an order — assign the driver who delivered, or mark "Not a delivery" (services, fees).'+(when?' Checked '+esc(when)+'.':'')+'</div></div>'
+      +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+daysSel+checkBtn
+        +'<select id="ino-bulk-driver" style="padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:12.5px;background:var(--bg)">'+_drvDriverOptions()+'</select>'
+        +'<button class="btn btn-sm btn-primary" onclick="inoAssignSelected()" '+(nSel?'':'disabled')+'>Assign '+(nSel?nSel+' ':'')+'selected</button></div>'
+    +'</div>'
+    +'<div style="overflow:auto;max-height:320px;margin-top:10px"><table class="txn-table" style="width:100%"><thead><tr><th><input type="checkbox" title="Select all" onchange="inoSelectAll(this.checked)"></th><th>Invoice</th><th>Date</th><th>Customer</th><th>Products</th><th style="text-align:right">Total</th><th>Driver</th><th></th></tr></thead><tbody>'
+    +rows.map(function(i){ var n=String(i.DocNumber); return '<tr>'
+      +'<td><input type="checkbox" '+(_inoSel[n]?'checked':'')+' onchange="_inoSel[\''+esc(n)+'\']=this.checked;renderInoPanel()"></td>'
+      +'<td><b>#'+esc(n)+'</b></td><td>'+esc(fmtDateUS(String(i.TxnDate||'').slice(0,10)))+'</td><td>'+esc((i.CustomerRef&&i.CustomerRef.name)||'')+'</td>'
+      +'<td style="font-size:12px;color:var(--muted);max-width:260px">'+esc(items3(i))+'</td><td style="text-align:right">'+_drvMoney(i.TotalAmt)+'</td>'
+      +'<td><select id="ino-inv-'+esc(n)+'" style="padding:5px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:12.5px;background:var(--bg)">'+_drvDriverOptions()+'</select></td>'
+      +'<td style="white-space:nowrap"><button class="btn btn-sm btn-primary" onclick="drvAssignInvoices([\''+esc(n)+'\'],null,\'ino\')">Assign</button> <button class="btn btn-sm" onclick="drvIgnoreInvoice(\''+esc(n)+'\')">Not a delivery</button></td>'
+      +'</tr>'; }).join('')
+    +'</tbody></table></div></div>';
+}
+async function inoCheckQuickBooks(btn){
+  if(_ino.busy) return; _ino.busy=true; renderInoPanel();
+  try{
+    var f=new Date(); f.setDate(f.getDate()-_ino.days-1);
+    _ino.rows=await _qbFetchPagesParallel('Invoice','&from='+encodeURIComponent(f.toISOString().slice(0,10)),null,3);
+    _ino.pulledAt=Date.now();
+  }catch(e){ notify('Could not check QuickBooks: '+e.message,{kind:'error'}); }
+  _ino.busy=false; renderInoPanel();
+}
+window.inoCheckQuickBooks=inoCheckQuickBooks;
+function inoSelectAll(on){ _inoList().forEach(function(i){ _inoSel[String(i.DocNumber)]=!!on; }); renderInoPanel(); }
+window.inoSelectAll=inoSelectAll;
+function inoAssignSelected(){
+  var d=(document.getElementById('ino-bulk-driver')||{}).value||'';
+  var docs=_inoList().map(function(i){ return String(i.DocNumber); }).filter(function(n){ return _inoSel[n]; });
+  if(!d){ notify('Choose a driver for the selected invoices.',{kind:'error'}); return; }
+  drvAssignInvoices(docs,d,'ino');
+}
+window.inoAssignSelected=inoAssignSelected;
 </script>
 </body>
 </html>

@@ -21984,31 +21984,6 @@ function _lotMissingLines(){
   });
   return out.sort(function(a,b){ return String(b.o.date).localeCompare(String(a.o.date)) || String(a.o.customer).localeCompare(String(b.o.customer)); });
 }
-function renderLotMissingPanel(){
-  var el=document.getElementById('lotMissingPanel'); if(!el) return;
-  if(!hasPerm('editOrders')){ el.innerHTML=''; return; }
-  var rows=_lotMissingLines();
-  var sel='<select onchange="_lm.days=Number(this.value);renderLotMissingPanel()" style="padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:12.5px;background:var(--bg)">'
-    +[[7,'Last 7 days'],[30,'Last 30 days'],[90,'Last 90 days'],[0,'All']].map(function(x){ return '<option value="'+x[0]+'"'+(_lm.days===x[0]?' selected':'')+'>'+x[1]+'</option>'; }).join('')+'</select>';
-  if(!rows.length){
-    var anyOlder=_lm.days>0 && (function(){ var keep=_lm.days; _lm.days=0; var n=_lotMissingLines().length; _lm.days=keep; return n; })();
-    el.innerHTML=anyOlder?'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);padding:6px 12px;border:1px dashed var(--line);border-radius:10px">✓ No GYRO / SUJUK lines without a lot # in this period ('+anyOlder+' older). '+sel+'</div>':'';
-    return;
-  }
-  el.innerHTML='<div style="background:var(--panel);border:1px solid #e0c56b;border-left:4px solid #c4512c;border-radius:12px;padding:12px 14px">'
-    +'<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">'
-      +'<div><div style="font-weight:700">⚠ '+rows.length+' GYRO / SUJUK line'+(rows.length!==1?'s':'')+' shipped without a lot #</div>'
-      +'<div style="font-size:12.5px;color:var(--muted)">Type the lot # and press Tab — it saves to the order (it stays shipped) and the line leaves this list.</div></div>'+sel
-    +'</div>'
-    +'<div style="overflow:auto;max-height:340px;margin-top:10px"><table class="txn-table" style="width:100%"><thead><tr><th>Date</th><th>Customer</th><th>P.O. / Invoice</th><th>Product</th><th style="text-align:right">Weighed / qty</th><th>Lot #</th></tr></thead><tbody>'
-    +rows.map(function(r){ var o=r.o, l=r.l, dl='lm-dl-'+esc(o.id)+'-'+r.li;
-      return '<tr><td>'+esc(fmtDateUS(o.date||''))+'</td><td>'+esc(o.customer||'')+'</td><td style="font-size:12px">'+esc(o.poNumber||'')+(o.invoiceDocNumber?' · Inv #'+esc(o.invoiceDocNumber):'')+'</td>'
-        +'<td><b>'+esc(_plainProductName(l.product)===String(l.product||'').trim().toUpperCase()?l.product:String(l.product).slice(String(l.product).lastIndexOf(':')+1))+'</b></td>'
-        +'<td style="text-align:right">'+esc(String(l.finalCount||'').trim()||l.quantity||'')+'</td>'
-        +'<td><input type="text" list="'+dl+'" placeholder="Lot #" aria-label="Lot # for '+esc(l.product)+'" onchange="lmSaveLot(this,\''+esc(o.id)+'\','+r.li+')" style="width:110px;padding:5px 7px;border:1.5px solid #d9a441;border-radius:6px;font-size:12.5px;font-family:var(--mono);background:var(--bg);color:var(--ink)">'
-        +'<datalist id="'+dl+'">'+_lotSuggestions(r.it).map(function(x){ return '<option value="'+esc(x)+'">'; }).join('')+'</datalist></td></tr>'; }).join('')
-    +'</tbody></table></div></div>';
-}
 async function lmSaveLot(inp,orderId,li){
   var v=String(inp.value||'').trim(); if(!v) return;
   inp.disabled=true;
@@ -22016,6 +21991,89 @@ async function lmSaveLot(inp,orderId,li){
   renderLotMissingPanel();
 }
 window.lmSaveLot=lmSaveLot;
+// (Nov 2026) Sort + filter per column, and "Set lot for all shown".
+_lm.sort={key:'date',dir:-1};
+_lm.f={date:'',customer:'',po:'',product:'',qty:''};
+function _lmRowVals(r){
+  var o=r.o, l=r.l, prod=String(l.product||''); if(prod.indexOf(':')>=0) prod=prod.slice(prod.lastIndexOf(':')+1).trim();
+  return { date:String(o.date||''), dateUS:fmtDateUS(o.date||''), customer:String(o.customer||''),
+    po:String(o.poNumber||'')+(o.invoiceDocNumber?' · Inv #'+o.invoiceDocNumber:''), product:prod,
+    qty:String(String(l.finalCount||'').trim()||l.quantity||''), qtyNum:_parseQtyNumber(String(l.finalCount||'').trim()||l.quantity||'') };
+}
+function _lmFiltered(){
+  var f=_lm.f, rows=_lotMissingLines().map(function(r){ r.v=_lmRowVals(r); return r; });
+  var has=function(hay,needle){ return !needle || String(hay).toLowerCase().indexOf(String(needle).trim().toLowerCase())>=0; };
+  rows=rows.filter(function(r){ var v=r.v; return has(v.dateUS+' '+v.date,f.date)&&has(v.customer,f.customer)&&has(v.po,f.po)&&has(v.product,f.product)&&has(v.qty,f.qty); });
+  var k=_lm.sort.key, d=_lm.sort.dir;
+  rows.sort(function(a,b){ var x=k==='qty'?a.v.qtyNum:a.v[k], y=k==='qty'?b.v.qtyNum:b.v[k]; if(x<y) return -d; if(x>y) return d; return String(a.v.customer).localeCompare(String(b.v.customer)); });
+  return rows;
+}
+function lmSortBy(k){ if(_lm.sort.key===k) _lm.sort.dir=-_lm.sort.dir; else { _lm.sort.key=k; _lm.sort.dir=(k==='date'||k==='qty')?-1:1; } renderLotMissingPanel(); }
+window.lmSortBy=lmSortBy;
+function lmFilter(k,v){ _lm.f[k]=v; _lmRenderBody(); }
+window.lmFilter=lmFilter;
+function _lmRenderBody(){
+  var body=document.getElementById('lmBody'); if(!body) return;
+  var all=_lotMissingLines().length, rows=_lmFiltered();
+  var cnt=document.getElementById('lmCount'); if(cnt) cnt.textContent=(rows.length!==all?'Showing '+rows.length+' of '+all:all+' line'+(all!==1?'s':''));
+  var ba=document.getElementById('lmBulkN'); if(ba) ba.textContent=rows.length;
+  var bb=document.getElementById('lmBulkBtn'); if(bb) bb.disabled=!rows.length;
+  body.innerHTML=rows.length?rows.map(function(r){ var o=r.o, l=r.l, v=r.v, dl='lm-dl-'+esc(o.id)+'-'+r.li;
+      return '<tr><td>'+esc(v.dateUS)+'</td><td>'+esc(v.customer)+'</td><td style="font-size:12px">'+esc(v.po)+'</td><td><b>'+esc(v.product)+'</b></td><td style="text-align:right">'+esc(v.qty)+'</td>'
+        +'<td><input type="text" list="'+dl+'" placeholder="Lot #" aria-label="Lot # for '+esc(l.product)+'" onchange="lmSaveLot(this,\''+esc(o.id)+'\','+r.li+')" style="width:110px;padding:5px 7px;border:1.5px solid #d9a441;border-radius:6px;font-size:12.5px;font-family:var(--mono);background:var(--bg);color:var(--ink)">'
+        +'<datalist id="'+dl+'">'+_lotSuggestions(r.it).map(function(x){ return '<option value="'+esc(x)+'">'; }).join('')+'</datalist></td></tr>'; }).join('')
+    :'<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:16px">No lines match these filters.</td></tr>';
+}
+function renderLotMissingPanel(){
+  var el=document.getElementById('lotMissingPanel'); if(!el) return;
+  if(!hasPerm('editOrders')){ el.innerHTML=''; return; }
+  var all=_lotMissingLines();
+  var sel='<select onchange="_lm.days=Number(this.value);renderLotMissingPanel()" style="padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:12.5px;background:var(--bg)">'
+    +[[7,'Last 7 days'],[30,'Last 30 days'],[90,'Last 90 days'],[0,'All']].map(function(x){ return '<option value="'+x[0]+'"'+(_lm.days===x[0]?' selected':'')+'>'+x[1]+'</option>'; }).join('')+'</select>';
+  if(!all.length){
+    var anyOlder=_lm.days>0 && (function(){ var keep=_lm.days; _lm.days=0; var n=_lotMissingLines().length; _lm.days=keep; return n; })();
+    el.innerHTML=anyOlder?'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);padding:6px 12px;border:1px dashed var(--line);border-radius:10px">✓ No GYRO / SUJUK lines without a lot # in this period ('+anyOlder+' older). '+sel+'</div>':'';
+    return;
+  }
+  var cols=[['date','Date',''],['customer','Customer',''],['po','P.O. / Invoice',''],['product','Product',''],['qty','Weighed / qty','text-align:right']];
+  var arrow=function(k){ return _lm.sort.key===k?(_lm.sort.dir>0?' ▲':' ▼'):''; };
+  var fin=function(k){ return '<input type="text" value="'+esc(_lm.f[k]||'')+'" placeholder="Filter…" aria-label="Filter '+k+'" oninput="lmFilter(\''+k+'\',this.value)" style="width:100%;min-width:60px;box-sizing:border-box;padding:4px 7px;border:1px solid var(--line);border-radius:6px;font-size:12px;font-weight:400;background:var(--panel);color:var(--ink)">'; };
+  el.innerHTML='<div style="background:var(--panel);border:1px solid #e0c56b;border-left:4px solid #c4512c;border-radius:12px;padding:12px 14px">'
+    +'<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">'
+      +'<div><div style="font-weight:700">⚠ '+all.length+' GYRO / SUJUK line'+(all.length!==1?'s':'')+' shipped without a lot #</div>'
+      +'<div style="font-size:12.5px;color:var(--muted)">Type the lot # and press Tab — it saves to the order (it stays shipped). Click a column to sort, type under it to filter.</div></div>'
+      +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span id="lmCount" style="font-size:12.5px;color:var(--muted)"></span>'+sel+'</div>'
+    +'</div>'
+    +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:10px;font-size:12.5px">'
+      +'<span>Set lot for all <b id="lmBulkN">0</b> shown:</span><input id="lmBulkLot" type="text" placeholder="Lot #" style="width:110px;padding:5px 7px;border:1.5px solid var(--line);border-radius:6px;font-size:12.5px;font-family:var(--mono);background:var(--bg)">'
+      +'<button id="lmBulkBtn" class="btn btn-sm btn-primary" onclick="lmBulkAssign()">Apply</button>'
+      +'<span style="color:var(--muted)">— filter first (e.g. one product and date), then apply one lot to all of them.</span>'
+    +'</div>'
+    +'<div style="overflow:auto;max-height:420px;margin-top:10px"><table class="txn-table" style="width:100%"><thead>'
+      +'<tr>'+cols.map(function(c){ return '<th onclick="lmSortBy(\''+c[0]+'\')" style="cursor:pointer;user-select:none;white-space:nowrap;'+c[2]+'" title="Sort by '+c[1]+'">'+c[1]+arrow(c[0])+'</th>'; }).join('')+'<th>Lot #</th></tr>'
+      +'<tr>'+cols.map(function(c){ return '<th style="padding-top:0">'+fin(c[0])+'</th>'; }).join('')+'<th style="padding-top:0"></th></tr>'
+    +'</thead><tbody id="lmBody"></tbody></table></div></div>';
+  _lmRenderBody();
+}
+async function lmBulkAssign(){
+  var lot=String((document.getElementById('lmBulkLot')||{}).value||'').trim();
+  if(!lot){ notify('Type the lot # to apply first.',{kind:'error'}); return; }
+  var rows=_lmFiltered(); if(!rows.length) return;
+  var prods={}; rows.forEach(function(r){ prods[r.v.product]=1; });
+  var pl=Object.keys(prods);
+  if(!confirm('Set lot '+lot+' on all '+rows.length+' line'+(rows.length!==1?'s':'')+' shown?\n\nProduct'+(pl.length!==1?'s':'')+': '+pl.slice(0,6).join(', ')+(pl.length>6?' +'+(pl.length-6)+' more':'')+(pl.length>1?'\n\n⚠ More than one product is shown — filter to one product if they came from different lots.':''))) return;
+  var btn=document.getElementById('lmBulkBtn'); if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
+  var ok=0;
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i]; var before=(_orderLinesOf(orders.find(function(x){ return x.id===r.o.id; })||{})[r.li]||{}).lot;
+    await updateOrderLineLot(r.o.id,r.li,lot);
+    var after=(_orderLinesOf(orders.find(function(x){ return x.id===r.o.id; })||{})[r.li]||{}).lot;
+    if(after===lot && before!==lot) ok++;
+  }
+  notify('Lot '+lot+' set on '+ok+' of '+rows.length+' line'+(rows.length!==1?'s':'')+'.',{kind:ok===rows.length?'success':'error'});
+  renderLotMissingPanel();
+}
+window.lmBulkAssign=lmBulkAssign;
 </script>
 </body>
 </html>

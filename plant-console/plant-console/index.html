@@ -4818,7 +4818,9 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
   var byDay={};
   weekOrders.forEach(function(o){ (byDay[o.date]=byDay[o.date]||[]).push(o); });
   var dayKeys=Object.keys(byDay).sort().reverse();
-  return _weekDriverMileageSummaryHtml(weekOrders)+dayKeys.map(function(dk,di){
+  // (Nov 2026) The "Weekly mileage by driver" table was removed here — miles per
+  // driver are in Reports → Driver Performance now.
+  return dayKeys.map(function(dk,di){
     var count=byDay[dk].length;
     var openKey='shipday:'+dk;
     var rowId='ordShipDay-'+wi+'-'+di;

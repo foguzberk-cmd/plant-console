@@ -4600,6 +4600,7 @@ function renderOrdersPage(){
     +'</div>'
     +'<div id="newOrderFormWrap"></div>'
     +'<div style="padding:12px 16px;background:#EAF3EC;border:1px solid var(--line);border-bottom:none;border-radius:14px 14px 0 0;font-weight:700;font-size:13px;letter-spacing:.02em;color:#1b5e2f">Shipped Orders <span style="font-weight:400;color:var(--muted)">— invoiced in QuickBooks</span></div>'
+    +'<div id="lotMissingPanel" style="margin-bottom:14px"></div>'
     +'<div id="inoPanel" style="margin-bottom:14px"></div>'
     +'<div id="ordersShippedSummary" style="margin-bottom:22px"></div>'
     +'<div style="padding:12px 16px;background:#F5EFE8;border:1px solid var(--line);border-bottom:none;border-radius:14px 14px 0 0;font-weight:700;font-size:13px;letter-spacing:.02em">Received Orders <span id="receivedOrdersTotalCount" style="font-weight:400;color:var(--muted)"></span></div>'
@@ -4766,7 +4767,7 @@ window.toggleShippedWeek=toggleShippedWeek;
 function _renderShippedOrdersSummary(){
   var el=document.getElementById('ordersShippedSummary');
   if(!el) return;
-  renderInoPanel();
+  renderInoPanel(); renderLotMissingPanel();
   function fmtDayOrd(dateStr){
     var d=new Date(dateStr+'T00:00:00');
     return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
@@ -21451,14 +21452,24 @@ function _lotShipments(it){
   }); });
   return out.sort(function(a,b){ return String(b.date).localeCompare(String(a.date)); });
 }
-// Lot quantities (Nov 2026): each lot = RECEIVED into it (entered here)
-// − SHIPPED from it (shipped orders with that lot #). Whatever part of the
-// QuickBooks quantity isn't in a lot shows as "Unknown lot #", so the rows
-// always add up to the QuickBooks quantity.
+// Lot quantities (Nov 2026): a lot's amount is part of the CURRENT stock
+// ASSIGNED to it (entered here — it only splits the QuickBooks quantity,
+// never changes it), minus what shipped from that lot ON OR AFTER the date
+// it was assigned (earlier shipments are already reflected in the stock that
+// was assigned). Lots used on orders but never assigned show what shipped
+// from them as a negative. Whatever isn't in a lot shows as "Unknown lot #",
+// so the rows always add up to the QuickBooks quantity.
 function _lotNetBreakdown(it){
   var rec={}, order=[];
-  _lotsFor(it.id).forEach(function(l){ var k=String(l.lot).trim().toUpperCase(); if(!rec[k]){ rec[k]={lot:l.lot,received:0,shipped:0}; order.push(k); } rec[k].received+=Number(l.qty||0); });
-  _lotShippedSummary(it).forEach(function(x){ var k=String(x.lot).trim().toUpperCase(); if(!rec[k]){ rec[k]={lot:x.lot,received:0,shipped:0,last:x.last}; order.push(k); } rec[k].shipped+=x.total; rec[k].last=x.last; });
+  _lotsFor(it.id).forEach(function(l){ var k=String(l.lot).trim().toUpperCase(); if(!rec[k]){ rec[k]={lot:l.lot,received:0,shipped:0,at:l.at||''}; order.push(k); } rec[k].received+=Number(l.qty||0); });
+  _lotShipments(it).forEach(function(sh){
+    if(!sh.shipped) return;
+    var k=String(sh.lot).trim().toUpperCase(), n=_parseQtyNumber(sh.count);
+    if(!rec[k]){ rec[k]={lot:sh.lot,received:0,shipped:0,at:''}; order.push(k); }
+    if(rec[k].at && String(sh.date||'')<rec[k].at) return; // shipped before the lot was assigned — already reflected
+    if(n>0) rec[k].shipped+=n;
+    if(!rec[k].last || String(sh.date)>rec[k].last) rec[k].last=String(sh.date);
+  });
   var rows=order.map(function(k){ var r=rec[k]; r.net=Math.round((r.received-r.shipped)*1000)/1000; return r; });
   var lotsTotal=rows.reduce(function(t,r){ return t+r.net; },0);
   var qb=_itemQbQty(it);
@@ -21471,14 +21482,14 @@ function _itemLotSubRowsHtml(it,ncols){
   var rest='<td colspan="'+Math.max(1,ncols-4)+'"></td>';
   var sub=function(label,v,title,muted){ return '<tr class="lot-subrow" onclick="openItemLots(\''+esc(it.id)+'\')" title="'+esc(title)+'" style="cursor:pointer;background:var(--bg)">'
     +'<td></td><td style="padding-left:28px;font-size:12.5px;'+(muted?'color:var(--muted);font-style:italic':'font-weight:600')+'">↳ '+label+'</td><td></td>'+qtyCell(v)+rest+'</tr>'; };
-  return b.rows.map(function(r){ return sub('Lot #'+esc(r.lot), r.net, 'Received '+fmtNum2(r.received)+' − shipped '+fmtNum2(r.shipped)+(r.last?' (last shipped '+r.last+')':'')+' — click to edit lots', false); }).join('')
-    +(Math.abs(b.unknown)>0.0005?sub('Unknown lot #', b.unknown, 'The part of the QuickBooks quantity not in any lot — enter what was received into each lot to assign it', true):'');
+  return b.rows.map(function(r){ return sub('Lot #'+esc(r.lot), r.net, (r.at?'Assigned '+fmtNum2(r.received)+' on '+r.at+' − shipped '+fmtNum2(r.shipped)+' since':'Not assigned — shipped '+fmtNum2(r.shipped)+' from this lot')+' — click to edit lots', false); }).join('')
+    +(Math.abs(b.unknown)>0.0005?sub('Unknown lot #', b.unknown, 'The part of the QuickBooks quantity not assigned to any lot', true):'');
 }
 function openItemLots(itemId){
   var it=items.find(function(x){ return x.id===itemId; }); if(!it) return;
   var b=_lotNetBreakdown(it);
   var shippedBy={}; b.rows.forEach(function(r){ shippedBy[String(r.lot).trim().toUpperCase()]=r.shipped; });
-  var rows=b.rows.map(function(r){ return {lot:r.lot,qty:r.received?String(r.received):''}; });
+  var rows=b.rows.map(function(r){ return {lot:r.lot,qty:r.received?String(r.received):'',at:r.at||'',origLot:r.lot,origQty:r.received?String(r.received):''}; });
   if(!rows.length) rows.push({lot:'',qty:''});
   var canEdit=hasPerm('editItems');
   var old=document.getElementById('lotsModal'); if(old) old.remove();
@@ -21493,18 +21504,18 @@ function openItemLots(itemId){
     net+=extraShipped;
     var unk=Math.round((b.qb-net)*1000)/1000;
     return '<div style="font-size:13px;margin-top:8px;padding:8px 10px;border-radius:8px;background:var(--bg);display:grid;grid-template-columns:1fr auto;gap:2px 12px">'
-      +'<span>Lots total (received − shipped)</span><b style="text-align:right">'+fmtNum2(net)+'</b>'
+      +'<span>Lots total (assigned − shipped since)</span><b style="text-align:right">'+fmtNum2(net)+'</b>'
       +'<span style="color:var(--muted)">Unknown lot #</span><b style="text-align:right;color:'+(Math.abs(unk)>0.0005?'#b8460b':'#1a7a3c')+'">'+fmtNum2(unk)+'</b>'
       +'<span style="border-top:1px solid var(--line);padding-top:2px">QuickBooks quantity</span><b style="text-align:right;border-top:1px solid var(--line);padding-top:2px">'+fmtNum2(b.qb)+'</b></div>';
   }
   function draw(msg,kind){
     bg.innerHTML='<div role="dialog" aria-label="Lots" style="background:var(--panel);border-radius:12px;max-width:680px;width:100%;max-height:88vh;overflow:auto;padding:18px 20px;box-shadow:0 20px 60px rgba(0,0,0,.25)">'
       +'<div style="font-weight:700;font-size:16px">Lots — '+esc(it.name)+'</div>'
-      +'<div style="font-size:12.5px;color:var(--muted);margin:4px 0 12px">Enter how much was <b>received</b> into each lot. Shipments with a lot # are subtracted automatically. Anything not in a lot shows as “Unknown lot #”.</div>'
-      +'<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:6px 8px;align-items:center;font-size:11.5px;color:var(--muted);font-weight:600;margin-bottom:4px"><span>Lot #</span><span style="text-align:right">Received</span><span style="text-align:right">Shipped</span><span style="text-align:right">= Lot qty</span><span></span></div>'
+      +'<div style="font-size:12.5px;color:var(--muted);margin:4px 0 12px"><b>Assign</b> part of the current stock to a lot. This only <b>splits</b> the product\'s quantity — it never changes it. Shipments from a lot after you assign it are subtracted automatically; anything not assigned shows as “Unknown lot #”.</div>'
+      +'<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:6px 8px;align-items:center;font-size:11.5px;color:var(--muted);font-weight:600;margin-bottom:4px"><span>Lot #</span><span style="text-align:right">Assigned</span><span style="text-align:right">Shipped since</span><span style="text-align:right">= Lot qty</span><span></span></div>'
       +rows.map(function(r,i){ var sh=shipOf(r.lot), q=Number(r.qty)||0; return '<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:6px 8px;align-items:center;margin-bottom:6px">'
         +'<input data-i="'+i+'" data-f="lot" value="'+esc(r.lot)+'" placeholder="Lot #" '+(canEdit?'':'disabled')+' style="height:34px;border:1px solid var(--line);border-radius:8px;padding:0 10px;font:inherit">'
-        +'<input data-i="'+i+'" data-f="qty" value="'+esc(r.qty)+'" placeholder="0" inputmode="decimal" '+(canEdit?'':'disabled')+' style="height:34px;border:1px solid var(--line);border-radius:8px;padding:0 8px;font:inherit;text-align:right;min-width:0">'
+        +'<input data-i="'+i+'" data-f="qty" value="'+esc(r.qty)+'" placeholder="0" inputmode="decimal" title="'+(r.at?'Assigned on '+esc(r.at):'Not assigned yet')+'" '+(canEdit?'':'disabled')+' style="height:34px;border:1px solid var(--line);border-radius:8px;padding:0 8px;font:inherit;text-align:right;min-width:0">'
         +'<span style="text-align:right;font-family:var(--mono);font-size:12.5px;color:var(--muted)">−'+fmtNum2(sh)+'</span>'
         +'<span data-net="'+i+'" style="text-align:right;font-family:var(--mono);font-size:12.5px;font-weight:700;color:'+(q-sh<0?'#c0392b':'var(--ink)')+'">'+fmtNum2(q-sh)+'</span>'
         +(canEdit?'<button type="button" class="btn btn-sm" data-rm="'+i+'" title="Remove this lot" '+(sh>0?'disabled title="Has shipments — can\'t be removed"':'')+'>✕</button>':'<span></span>')+'</div>'; }).join('')
@@ -21516,7 +21527,7 @@ function openItemLots(itemId){
       +(ship.length?'<div style="overflow:auto;max-height:240px;border:1px solid var(--line);border-radius:8px"><table class="txn-table" style="width:100%"><thead><tr><th>Lot #</th><th>Date</th><th>Customer</th><th>P.O. / Invoice</th><th style="text-align:right">Count</th><th>Status</th></tr></thead><tbody>'
         +ship.map(function(s){ return '<tr><td><b>'+esc(s.lot)+'</b></td><td>'+esc(s.date)+'</td><td>'+esc(s.customer)+'</td><td>'+esc(s.po||'')+(s.inv?' · Inv #'+esc(s.inv):'')+'</td><td style="text-align:right">'+esc(s.count)+'</td><td style="font-size:12px;color:var(--muted)">'+(s.shipped?'Shipped':'Not shipped yet')+'</td></tr>'; }).join('')+'</tbody></table></div>'
         :'<div style="font-size:12.5px;color:var(--muted)">No orders have used a lot # for this product yet.</div>')
-      +(itemLots[itemId]&&itemLots[itemId].by?'<div style="font-size:11.5px;color:var(--muted);margin-top:10px">Received amounts last updated by '+esc(itemLots[itemId].by)+' · '+esc(_orderWhenStr(itemLots[itemId].updatedAt))+'</div>':'')
+      +(itemLots[itemId]&&itemLots[itemId].by?'<div style="font-size:11.5px;color:var(--muted);margin-top:10px">Lot amounts last assigned by '+esc(itemLots[itemId].by)+' · '+esc(_orderWhenStr(itemLots[itemId].updatedAt))+'</div>':'')
       +'</div>';
     bg.querySelectorAll('input[data-i]').forEach(function(inp){ inp.oninput=function(){ var i=Number(inp.getAttribute('data-i')); rows[i][inp.getAttribute('data-f')]=inp.value; var n=bg.querySelector('[data-net="'+i+'"]'); if(n){ var v=(Number(rows[i].qty)||0)-shipOf(rows[i].lot); n.textContent=fmtNum2(v); n.style.color=v<0?'#c0392b':'var(--ink)'; } bg.querySelector('#lotTot').innerHTML=totals(); }; });
     bg.querySelectorAll('[data-rm]').forEach(function(btn){ btn.onclick=function(){ rows.splice(Number(btn.getAttribute('data-rm')),1); if(!rows.length) rows.push({lot:'',qty:''}); draw(); }; });
@@ -21524,7 +21535,11 @@ function openItemLots(itemId){
     bg.querySelector('#lotClose').onclick=function(){ bg.remove(); };
     var sv=bg.querySelector('#lotSave'); if(sv) sv.onclick=async function(){
       var clean=[], bad='';
-      rows.forEach(function(r){ var lot=String(r.lot||'').trim(), q=String(r.qty||'').trim(); if(!lot&&!q) return; if(!lot){ bad='Every received amount needs a lot #.'; return; } if(q==='') return; var n=Number(q); if(isNaN(n)||n<0){ bad='Received for lot '+lot+' must be a number of 0 or more.'; return; } clean.push({lot:lot,qty:n}); });
+      var today=new Date().toISOString().slice(0,10);
+      rows.forEach(function(r){ var lot=String(r.lot||'').trim(), q=String(r.qty||'').trim(); if(!lot&&!q) return; if(!lot){ bad='Every assigned amount needs a lot #.'; return; } if(q==='') return; var n=Number(q); if(isNaN(n)||n<0){ bad='The amount for lot '+lot+' must be a number of 0 or more.'; return; }
+        // keep the original assignment date unless this lot's amount (or name) changed
+        var same=r.at && String(r.origLot||'').toUpperCase()===lot.toUpperCase() && Number(r.origQty)===n;
+        clean.push({lot:lot,qty:n,at:same?r.at:today}); });
       if(bad){ draw(bad,'err'); return; }
       sv.disabled=true;
       try{
@@ -21541,9 +21556,9 @@ window.openItemLots=openItemLots;
 // Order rows: the Lot # box next to Count (GYRO products only).
 function _orderLotInputHtml(o,l,li){
   var it=_gyroItemByName(l.product); if(!it) return '';
-  var lots=_lotsFor(it.id), dl='dl-lot-'+esc(o.id)+'-'+li;
+  var lots=_lotSuggestions(it).map(function(x){ var e=_lotsFor(it.id).find(function(y){ return String(y.lot).toUpperCase()===String(x).toUpperCase(); }); return {lot:x,qty:e?e.qty:null}; }), dl='dl-lot-'+esc(o.id)+'-'+li;
   return '<input type="text" id="lot-'+esc(o.id)+'-'+li+'" list="'+dl+'" value="'+esc(l.lot||'')+'" placeholder="Lot #" title="Lot # — required for GYRO and SUJUK products before a count can be saved" onchange="updateOrderLineLot(\''+esc(o.id)+'\','+li+',this.value)" style="width:86px;flex-shrink:0;padding:5px 6px;border:1.5px solid '+(l.lot?'var(--line)':'#d9a441')+';border-radius:6px;font-size:12px;font-family:var(--mono);background:var(--bg);color:var(--ink)">'
-    +'<datalist id="'+dl+'">'+lots.map(function(x){ return '<option value="'+esc(x.lot)+'">'+esc(x.lot)+' — '+fmtNum2(x.qty)+' on hand</option>'; }).join('')+'</datalist>';
+    +'<datalist id="'+dl+'">'+lots.map(function(x){ return '<option value="'+esc(x.lot)+'">'+esc(x.lot)+(x.qty!=null?' — '+fmtNum2(x.qty)+' assigned':'')+'</option>'; }).join('')+'</datalist>';
 }
 function _needsLot(product,count){
   if(!_gyroItemByName(product)) return false;
@@ -21943,6 +21958,64 @@ function inoAssignSelected(){
   drvAssignInvoices(docs,d,'ino');
 }
 window.inoAssignSelected=inoAssignSelected;
+
+/* ===== Orders tab: shipped GYRO / SUJUK lines without a lot # (Nov 2026) ===
+   Every lot-tracked line that shipped without a lot is listed here so a lot
+   can be assigned (saves straight to the order — it stays shipped). Lines
+   counted 0 (out of stock) shipped nothing and aren't listed. */
+var _lm={days:30};
+function _lotSuggestions(it){
+  var seen={}, out=[];
+  _lotsFor(it.id).forEach(function(l){ var k=String(l.lot).toUpperCase(); if(!seen[k]){ seen[k]=1; out.push(l.lot); } });
+  _lotShippedSummary(it).forEach(function(x){ var k=String(x.lot).toUpperCase(); if(!seen[k]){ seen[k]=1; out.push(x.lot); } });
+  return out;
+}
+function _lotMissingLines(){
+  var since=null; if(_lm.days>0){ var d=new Date(); d.setDate(d.getDate()-_lm.days); since=d.toISOString().slice(0,10); }
+  var out=[];
+  (orders||[]).forEach(function(o){
+    if(!o.shipped || (since && String(o.date||'')<since)) return;
+    _orderLinesOf(o).forEach(function(l,li){
+      if(l.lot) return;
+      var it=_gyroItemByName(l.product); if(!it) return;
+      var c=String(l.finalCount||'').trim(); if(c!=='' && _parseQtyNumber(c)===0) return; // out of stock — nothing shipped
+      out.push({o:o,l:l,li:li,it:it});
+    });
+  });
+  return out.sort(function(a,b){ return String(b.o.date).localeCompare(String(a.o.date)) || String(a.o.customer).localeCompare(String(b.o.customer)); });
+}
+function renderLotMissingPanel(){
+  var el=document.getElementById('lotMissingPanel'); if(!el) return;
+  if(!hasPerm('editOrders')){ el.innerHTML=''; return; }
+  var rows=_lotMissingLines();
+  var sel='<select onchange="_lm.days=Number(this.value);renderLotMissingPanel()" style="padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:12.5px;background:var(--bg)">'
+    +[[7,'Last 7 days'],[30,'Last 30 days'],[90,'Last 90 days'],[0,'All']].map(function(x){ return '<option value="'+x[0]+'"'+(_lm.days===x[0]?' selected':'')+'>'+x[1]+'</option>'; }).join('')+'</select>';
+  if(!rows.length){
+    var anyOlder=_lm.days>0 && (function(){ var keep=_lm.days; _lm.days=0; var n=_lotMissingLines().length; _lm.days=keep; return n; })();
+    el.innerHTML=anyOlder?'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);padding:6px 12px;border:1px dashed var(--line);border-radius:10px">✓ No GYRO / SUJUK lines without a lot # in this period ('+anyOlder+' older). '+sel+'</div>':'';
+    return;
+  }
+  el.innerHTML='<div style="background:var(--panel);border:1px solid #e0c56b;border-left:4px solid #c4512c;border-radius:12px;padding:12px 14px">'
+    +'<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">'
+      +'<div><div style="font-weight:700">⚠ '+rows.length+' GYRO / SUJUK line'+(rows.length!==1?'s':'')+' shipped without a lot #</div>'
+      +'<div style="font-size:12.5px;color:var(--muted)">Type the lot # and press Tab — it saves to the order (it stays shipped) and the line leaves this list.</div></div>'+sel
+    +'</div>'
+    +'<div style="overflow:auto;max-height:340px;margin-top:10px"><table class="txn-table" style="width:100%"><thead><tr><th>Date</th><th>Customer</th><th>P.O. / Invoice</th><th>Product</th><th style="text-align:right">Weighed / qty</th><th>Lot #</th></tr></thead><tbody>'
+    +rows.map(function(r){ var o=r.o, l=r.l, dl='lm-dl-'+esc(o.id)+'-'+r.li;
+      return '<tr><td>'+esc(fmtDateUS(o.date||''))+'</td><td>'+esc(o.customer||'')+'</td><td style="font-size:12px">'+esc(o.poNumber||'')+(o.invoiceDocNumber?' · Inv #'+esc(o.invoiceDocNumber):'')+'</td>'
+        +'<td><b>'+esc(_plainProductName(l.product)===String(l.product||'').trim().toUpperCase()?l.product:String(l.product).slice(String(l.product).lastIndexOf(':')+1))+'</b></td>'
+        +'<td style="text-align:right">'+esc(String(l.finalCount||'').trim()||l.quantity||'')+'</td>'
+        +'<td><input type="text" list="'+dl+'" placeholder="Lot #" aria-label="Lot # for '+esc(l.product)+'" onchange="lmSaveLot(this,\''+esc(o.id)+'\','+r.li+')" style="width:110px;padding:5px 7px;border:1.5px solid #d9a441;border-radius:6px;font-size:12.5px;font-family:var(--mono);background:var(--bg);color:var(--ink)">'
+        +'<datalist id="'+dl+'">'+_lotSuggestions(r.it).map(function(x){ return '<option value="'+esc(x)+'">'; }).join('')+'</datalist></td></tr>'; }).join('')
+    +'</tbody></table></div></div>';
+}
+async function lmSaveLot(inp,orderId,li){
+  var v=String(inp.value||'').trim(); if(!v) return;
+  inp.disabled=true;
+  await updateOrderLineLot(orderId,li,v);
+  renderLotMissingPanel();
+}
+window.lmSaveLot=lmSaveLot;
 </script>
 </body>
 </html>

@@ -21485,6 +21485,11 @@ function _itemLotSubRowsHtml(it,ncols){
   return b.rows.map(function(r){ return sub('Lot #'+esc(r.lot), r.net, (r.at?'Assigned '+fmtNum2(r.received)+' on '+r.at+' − shipped '+fmtNum2(r.shipped)+' since':'Not assigned — shipped '+fmtNum2(r.shipped)+' from this lot')+' — click to edit lots', false); }).join('')
     +(Math.abs(b.unknown)>0.0005?sub('Unknown lot #', b.unknown, 'The part of the QuickBooks quantity not assigned to any lot', true):'');
 }
+function _shippedSince(it,lot,at){
+  var k=String(lot||'').trim().toUpperCase(), t=0;
+  _lotShipments(it).forEach(function(s){ if(!s.shipped||String(s.lot).trim().toUpperCase()!==k) return; if(at&&String(s.date||'')<at) return; var n=_parseQtyNumber(s.count); if(n>0) t+=n; });
+  return t;
+}
 function openItemLots(itemId){
   var it=items.find(function(x){ return x.id===itemId; }); if(!it) return;
   var b=_lotNetBreakdown(it);
@@ -21497,23 +21502,31 @@ function openItemLots(itemId){
   bg.style.cssText='position:fixed;inset:0;z-index:1500;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;padding:16px';
   bg.onclick=function(e){ if(e.target===bg) bg.remove(); };
   var ship=_lotShipments(it);
-  var shipOf=function(lot){ return shippedBy[String(lot||'').trim().toUpperCase()]||0; };
+  var today=new Date().toISOString().slice(0,10);
+  var rowAt=function(r){ var lot=String(r.lot||'').trim(), n=Number(String(r.qty||'').trim()); return (r.at && String(r.origLot||'').toUpperCase()===lot.toUpperCase() && Number(r.origQty)===n)?r.at:today; };
+  var rowShip=function(r){ return _shippedSince(it,r.lot,rowAt(r)); };
+  var shipOf=function(lot){ var r=rows.find(function(x){ return String(x.lot||'').trim().toUpperCase()===String(lot||'').trim().toUpperCase(); }); return r?rowShip(r):(shippedBy[String(lot||'').trim().toUpperCase()]||0); };
+  // Lots can only split the inventory (Nov 2026): the total may not exceed the
+  // QuickBooks quantity — except that lowering an already-over product is allowed.
+  var lotsNet=function(){ return rows.reduce(function(t,r){ var q=Number(r.qty); return t+(isNaN(q)?0:q)-(String(r.lot||'').trim()?rowShip(r):0); },0)
+      + b.rows.filter(function(x){ return !rows.some(function(r){ return String(r.lot).trim().toUpperCase()===String(x.lot).trim().toUpperCase(); }); }).reduce(function(t,x){ return t-x.shipped; },0); };
+  var startNet=b.lotsTotal;
   function totals(){
-    var net=rows.reduce(function(t,r){ var q=Number(r.qty); return t+(isNaN(q)?0:q)-shipOf(r.lot); },0);
-    var extraShipped=b.rows.filter(function(x){ return !rows.some(function(r){ return String(r.lot).trim().toUpperCase()===String(x.lot).trim().toUpperCase(); }); }).reduce(function(t,x){ return t-x.shipped; },0);
-    net+=extraShipped;
+    var net=Math.round(lotsNet()*1000)/1000;
     var unk=Math.round((b.qb-net)*1000)/1000;
+    var over=unk<-0.0005;
     return '<div style="font-size:13px;margin-top:8px;padding:8px 10px;border-radius:8px;background:var(--bg);display:grid;grid-template-columns:1fr auto;gap:2px 12px">'
       +'<span>Lots total (assigned − shipped since)</span><b style="text-align:right">'+fmtNum2(net)+'</b>'
       +'<span style="color:var(--muted)">Unknown lot #</span><b style="text-align:right;color:'+(Math.abs(unk)>0.0005?'#b8460b':'#1a7a3c')+'">'+fmtNum2(unk)+'</b>'
-      +'<span style="border-top:1px solid var(--line);padding-top:2px">QuickBooks quantity</span><b style="text-align:right;border-top:1px solid var(--line);padding-top:2px">'+fmtNum2(b.qb)+'</b></div>';
+      +'<span style="border-top:1px solid var(--line);padding-top:2px">QuickBooks quantity</span><b style="text-align:right;border-top:1px solid var(--line);padding-top:2px">'+fmtNum2(b.qb)+'</b>'
+      +(over?'<span style="grid-column:1/3;margin-top:6px;color:#c0392b;font-weight:700">⚠ '+fmtNum2(-unk)+' over the inventory of '+fmtNum2(b.qb)+' — lower the lots. Lots can only split what\'s in stock.</span>':'')+'</div>';
   }
   function draw(msg,kind){
     bg.innerHTML='<div role="dialog" aria-label="Lots" style="background:var(--panel);border-radius:12px;max-width:680px;width:100%;max-height:88vh;overflow:auto;padding:18px 20px;box-shadow:0 20px 60px rgba(0,0,0,.25)">'
       +'<div style="font-weight:700;font-size:16px">Lots — '+esc(it.name)+'</div>'
       +'<div style="font-size:12.5px;color:var(--muted);margin:4px 0 12px"><b>Assign</b> part of the current stock to a lot. This only <b>splits</b> the product\'s quantity — it never changes it. Shipments from a lot after you assign it are subtracted automatically; anything not assigned shows as “Unknown lot #”.</div>'
       +'<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:6px 8px;align-items:center;font-size:11.5px;color:var(--muted);font-weight:600;margin-bottom:4px"><span>Lot #</span><span style="text-align:right">Assigned</span><span style="text-align:right">Shipped since</span><span style="text-align:right">= Lot qty</span><span></span></div>'
-      +rows.map(function(r,i){ var sh=shipOf(r.lot), q=Number(r.qty)||0; return '<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:6px 8px;align-items:center;margin-bottom:6px">'
+      +rows.map(function(r,i){ var sh=String(r.lot||'').trim()?rowShip(r):0, q=Number(r.qty)||0; return '<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:6px 8px;align-items:center;margin-bottom:6px">'
         +'<input data-i="'+i+'" data-f="lot" value="'+esc(r.lot)+'" placeholder="Lot #" '+(canEdit?'':'disabled')+' style="height:34px;border:1px solid var(--line);border-radius:8px;padding:0 10px;font:inherit">'
         +'<input data-i="'+i+'" data-f="qty" value="'+esc(r.qty)+'" placeholder="0" inputmode="decimal" title="'+(r.at?'Assigned on '+esc(r.at):'Not assigned yet')+'" '+(canEdit?'':'disabled')+' style="height:34px;border:1px solid var(--line);border-radius:8px;padding:0 8px;font:inherit;text-align:right;min-width:0">'
         +'<span style="text-align:right;font-family:var(--mono);font-size:12.5px;color:var(--muted)">−'+fmtNum2(sh)+'</span>'
@@ -21529,7 +21542,7 @@ function openItemLots(itemId){
         :'<div style="font-size:12.5px;color:var(--muted)">No orders have used a lot # for this product yet.</div>')
       +(itemLots[itemId]&&itemLots[itemId].by?'<div style="font-size:11.5px;color:var(--muted);margin-top:10px">Lot amounts last assigned by '+esc(itemLots[itemId].by)+' · '+esc(_orderWhenStr(itemLots[itemId].updatedAt))+'</div>':'')
       +'</div>';
-    bg.querySelectorAll('input[data-i]').forEach(function(inp){ inp.oninput=function(){ var i=Number(inp.getAttribute('data-i')); rows[i][inp.getAttribute('data-f')]=inp.value; var n=bg.querySelector('[data-net="'+i+'"]'); if(n){ var v=(Number(rows[i].qty)||0)-shipOf(rows[i].lot); n.textContent=fmtNum2(v); n.style.color=v<0?'#c0392b':'var(--ink)'; } bg.querySelector('#lotTot').innerHTML=totals(); }; });
+    bg.querySelectorAll('input[data-i]').forEach(function(inp){ inp.oninput=function(){ var i=Number(inp.getAttribute('data-i')); rows[i][inp.getAttribute('data-f')]=inp.value; var n=bg.querySelector('[data-net="'+i+'"]'); if(n){ var v=(Number(rows[i].qty)||0)-(String(rows[i].lot||'').trim()?rowShip(rows[i]):0); n.textContent=fmtNum2(v); n.style.color=v<0?'#c0392b':'var(--ink)'; } bg.querySelector('#lotTot').innerHTML=totals(); }; });
     bg.querySelectorAll('[data-rm]').forEach(function(btn){ btn.onclick=function(){ rows.splice(Number(btn.getAttribute('data-rm')),1); if(!rows.length) rows.push({lot:'',qty:''}); draw(); }; });
     var add=bg.querySelector('#lotAdd'); if(add) add.onclick=function(){ rows.push({lot:'',qty:''}); draw(); var ins=bg.querySelectorAll('input[data-f="lot"]'); ins[ins.length-1].focus(); };
     bg.querySelector('#lotClose').onclick=function(){ bg.remove(); };
@@ -21541,6 +21554,8 @@ function openItemLots(itemId){
         var same=r.at && String(r.origLot||'').toUpperCase()===lot.toUpperCase() && Number(r.origQty)===n;
         clean.push({lot:lot,qty:n,at:same?r.at:today}); });
       if(bad){ draw(bad,'err'); return; }
+      var newNet=lotsNet();
+      if(newNet>b.qb+0.0005 && newNet>startNet+0.0005){ draw('The lots total ('+fmtNum2(newNet)+') can\'t be more than the inventory ('+fmtNum2(b.qb)+'). Lower the lots by '+fmtNum2(newNet-b.qb)+'.','err'); return; }
       sv.disabled=true;
       try{
         var r=await fetch('/api/items/'+encodeURIComponent(itemId)+'/lots',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lots:clean})});

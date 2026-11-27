@@ -1562,7 +1562,7 @@ var _recentlyAddedScaleLogs={};
 var _deletedOrderIds={};
 var _recentlyAddedOrders={};
 var _deletedDrivers={};
-var itemLots={}; // GYRO lot # breakdown per item id (Nov 2026) — from the server, saved via /api/items/:id/lots
+var itemLots={}; // GYRO / SUJUK lot # breakdown per item id (Nov 2026) — from the server, saved via /api/items/:id/lots
 // Mirrors the above, for label template/layout saves: maps department name
 // -> the just-saved template object, for a grace period after a confirmed
 // save. Protects against the same timing gap — a pull already in flight
@@ -6898,7 +6898,13 @@ function renderReports(){
             +'<option value="month">Month vs. month</option>'
             +'<option value="quarter">Quarter vs. quarter</option>'
             +'<option value="year">Year vs. year</option>'
+            +'<option value="custom">Custom dates…</option>'
           +'</select></div>'
+          +'<div id="sbc-custom" style="display:none;gap:8px;align-items:flex-end;flex-wrap:wrap">'
+            +'<div><label for="sbc-from" style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px">From</label><input type="date" id="sbc-from" onchange="onSbcCustomChange()" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"></div>'
+            +'<div><label for="sbc-to" style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px">To</label><input type="date" id="sbc-to" onchange="onSbcCustomChange()" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"></div>'
+            +'<div><label for="sbc-compare" style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px">Compare to</label><select id="sbc-compare" onchange="onSbcCustomChange()" style="padding:9px 10px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"><option value="previous">Previous period (same length)</option><option value="lastyear">Same dates last year</option></select></div>'
+          +'</div>'
           +'<div style="display:flex;align-items:center;gap:8px;padding-bottom:1px">'
             +'<button class="btn btn-sm" id="sbc-period-prev" onclick="sbcShiftPeriod(-1)" title="Go back one period" style="padding:8px 12px">‹</button>'
             +'<div id="sbc-period-label" style="font-weight:700;font-size:13.5px;white-space:nowrap;min-width:180px;text-align:center">…</div>'
@@ -8570,7 +8576,30 @@ function _sbcFmtDate(y,m0,d){ return y+'-'+_sbcPad2(m0+1)+'-'+_sbcPad2(d); }
 // granularity='month' when today is Sep 4 2026 means August 2026 (current
 // period) vs July 2026 (prior), NOT September (which hasn't finished yet
 // and would look artificially low next to a full month).
+// Custom dates (Nov 2026): compared with the same-length period just before,
+// or the same dates a year earlier. Max 1 year per range.
+var _sbcCustom={from:'',to:'',compare:'previous'};
+function _sbcCustomPeriods(){
+  var c=_sbcCustom, d=function(x){ return new Date(x+'T12:00:00'); }, iso=function(x){ return _sbcFmtDate(x.getFullYear(),x.getMonth(),x.getDate()); };
+  var us=function(x){ var p=x.split('-'); return p[1]+'/'+p[2]+'/'+p[0]; };
+  if(!c.from||!c.to||c.from>c.to) return {curFrom:'',curTo:'',curLabel:'Pick From and To dates',priorFrom:'',priorTo:'',priorLabel:'',invalid:true};
+  var len=Math.round((d(c.to)-d(c.from))/86400000)+1;
+  var pf,pt;
+  if(c.compare==='lastyear'){
+    var ly=function(x){ var y=d(x); var m=y.getMonth(), day=y.getDate(); var r=new Date(y.getFullYear()-1,m,day,12); if(r.getMonth()!==m) r=new Date(y.getFullYear()-1,m+1,0,12); return iso(r); };
+    pf=ly(c.from); pt=ly(c.to);
+  } else { var e=d(c.from); e.setDate(e.getDate()-1); var b=new Date(e); b.setDate(e.getDate()-(len-1)); pf=iso(b); pt=iso(e); }
+  return {curFrom:c.from,curTo:c.to,curLabel:us(c.from)+'–'+us(c.to),priorFrom:pf,priorTo:pt,priorLabel:us(pf)+'–'+us(pt),days:len};
+}
+function onSbcCustomChange(){
+  _sbcCustom.from=(document.getElementById('sbc-from')||{}).value||'';
+  _sbcCustom.to=(document.getElementById('sbc-to')||{}).value||'';
+  _sbcCustom.compare=(document.getElementById('sbc-compare')||{}).value||'previous';
+  _sbcUpdatePeriodLabel();
+}
+window.onSbcCustomChange=onSbcCustomChange;
 function _sbcComputePeriods(granularity,offset){
+  if(granularity==='custom') return _sbcCustomPeriods();
   var now=new Date();
   var MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
   if(granularity==='week'){
@@ -8628,10 +8657,19 @@ function _sbcUpdatePeriodLabel(){
   if(labelEl) labelEl.textContent=p.curLabel+' vs. '+p.priorLabel;
   var nextBtn=document.getElementById('sbc-period-next');
   if(nextBtn) nextBtn.disabled=(_sbcPeriodOffset>=0); // never navigate into the current, still-incomplete period
+  var isCustom=_sbcGranularity==='custom';
+  var box=document.getElementById('sbc-custom'); if(box) box.style.display=isCustom?'flex':'none';
+  var prevBtn=document.getElementById('sbc-period-prev');
+  if(prevBtn) prevBtn.style.display=isCustom?'none':''; if(nextBtn) nextBtn.style.display=isCustom?'none':'';
+  if(isCustom){
+    var f=document.getElementById('sbc-from'), t=document.getElementById('sbc-to'), cmp=document.getElementById('sbc-compare');
+    if(f&&!f.value&&_sbcCustom.from) f.value=_sbcCustom.from; if(t&&!t.value&&_sbcCustom.to) t.value=_sbcCustom.to; if(cmp) cmp.value=_sbcCustom.compare;
+  }
 }
 function onSbcGranularityChange(){
   var gEl=document.getElementById('sbc-granularity');
   _sbcGranularity=gEl?gEl.value:'month';
+  if(_sbcGranularity==='custom' && !_sbcCustom.from){ var lm=_sbcComputePeriods('month',0); _sbcCustom.from=lm.curFrom; _sbcCustom.to=lm.curTo; }
   _sbcPeriodOffset=0; // reset to "most recent complete period" whenever the granularity changes
   _sbcUpdatePeriodLabel();
 }
@@ -8771,6 +8809,10 @@ async function runSalesByCustomerReport(){
   var statusEl=document.getElementById('sbc-status');
   var bodyEl=document.getElementById('sbc-body');
   var p=_sbcComputePeriods(_sbcGranularity,_sbcPeriodOffset);
+  if(p.invalid || (p.days && p.days>366)){
+    if(statusEl){ statusEl.textContent=p.invalid?'Pick a From date on or before the To date.':'Please choose a range of 1 year or less.'; statusEl.style.color='#c0392b'; }
+    return;
+  }
   if(statusEl){ statusEl.textContent='Fetching sales documents from QuickBooks…'; statusEl.style.color=''; }
   if(bodyEl) bodyEl.innerHTML='';
   // Trailing 28 days ending today — for the Sales by Products "Days of
@@ -21358,7 +21400,10 @@ window.openPortalAccess=openPortalAccess;
    reduced automatically (counts are often in lbs while QuickBooks may count
    cases) — the Items badge shows when the breakdown no longer matches the
    QuickBooks quantity. */
-function _isGyroItem(it){ return !!(it && /^\s*gyro/i.test(String(it.groupName||''))); }
+// Lot-tracked categories (Nov 2026): GYRO and SUJUK (also the Turkish spelling SUCUK).
+// Add a category here to lot-track it too — everything else follows this one rule.
+var LOT_TRACKED_CATEGORIES=/^\s*(gyro|sujuk|sucuk)/i;
+function _isGyroItem(it){ return !!(it && LOT_TRACKED_CATEGORIES.test(String(it.groupName||''))); }
 function _gyroItemByName(name){
   var n=String(name||'').trim().toUpperCase(); if(!n) return null;
   var it=items.find(function(x){ return x && x.name && x.name.trim().toUpperCase()===n; });
@@ -21374,7 +21419,7 @@ function _itemLotsBadgeHtml(it){
   if(!lots.length){ txt='Lots: none entered'; col='#b8460b'; }
   else if(Math.abs(diff)<0.001){ txt='Lots ✓ '+lots.length+(lots.length===1?' lot':' lots'); col='#1a7a3c'; }
   else { txt='Lots ⚠ '+(diff>0?fmtNum2(diff)+' not in a lot':fmtNum2(-diff)+' over'); col='#b8460b'; }
-  return '<button type="button" onclick="event.stopPropagation();openItemLots(\''+esc(it.id)+'\')" title="Lot # breakdown for this GYRO product" style="margin-top:4px;border:1px solid '+col+';color:'+col+';background:transparent;border-radius:6px;padding:2px 8px;font-size:11.5px;font-weight:700;cursor:pointer">'+esc(txt)+'</button>';
+  return '<button type="button" onclick="event.stopPropagation();openItemLots(\''+esc(it.id)+'\')" title="Lot # breakdown for this product (GYRO / SUJUK)" style="margin-top:4px;border:1px solid '+col+';color:'+col+';background:transparent;border-radius:6px;padding:2px 8px;font-size:11.5px;font-weight:700;cursor:pointer">'+esc(txt)+'</button>';
 }
 function _lotShipments(it){
   var out=[], name=String(it.name||'').trim().toUpperCase();
@@ -21440,7 +21485,7 @@ window.openItemLots=openItemLots;
 function _orderLotInputHtml(o,l,li){
   var it=_gyroItemByName(l.product); if(!it) return '';
   var lots=_lotsFor(it.id), dl='dl-lot-'+esc(o.id)+'-'+li;
-  return '<input type="text" id="lot-'+esc(o.id)+'-'+li+'" list="'+dl+'" value="'+esc(l.lot||'')+'" placeholder="Lot #" title="Lot # — required for GYRO products before a count can be saved" onchange="updateOrderLineLot(\''+esc(o.id)+'\','+li+',this.value)" style="width:86px;flex-shrink:0;padding:5px 6px;border:1.5px solid '+(l.lot?'var(--line)':'#d9a441')+';border-radius:6px;font-size:12px;font-family:var(--mono);background:var(--bg);color:var(--ink)">'
+  return '<input type="text" id="lot-'+esc(o.id)+'-'+li+'" list="'+dl+'" value="'+esc(l.lot||'')+'" placeholder="Lot #" title="Lot # — required for GYRO and SUJUK products before a count can be saved" onchange="updateOrderLineLot(\''+esc(o.id)+'\','+li+',this.value)" style="width:86px;flex-shrink:0;padding:5px 6px;border:1.5px solid '+(l.lot?'var(--line)':'#d9a441')+';border-radius:6px;font-size:12px;font-family:var(--mono);background:var(--bg);color:var(--ink)">'
     +'<datalist id="'+dl+'">'+lots.map(function(x){ return '<option value="'+esc(x.lot)+'">'+esc(x.lot)+' — '+fmtNum2(x.qty)+' on hand</option>'; }).join('')+'</datalist>';
 }
 function _needsLot(product,count){
@@ -21453,7 +21498,7 @@ async function updateOrderLineLot(id,lineIdx,value){
   var lines=_orderLinesOf(o).map(function(l){ return Object.assign({},l); });
   if(!lines[lineIdx]) return;
   var v=String(value||'').trim();
-  if(!v && _needsLot(lines[lineIdx].product,lines[lineIdx].finalCount)){ notify('A lot # is required while this GYRO product has a count. Clear the count first to remove the lot.',{kind:'error'}); var inp=document.getElementById('lot-'+id+'-'+lineIdx); if(inp) inp.value=lines[lineIdx].lot||''; return; }
+  if(!v && _needsLot(lines[lineIdx].product,lines[lineIdx].finalCount)){ notify('A lot # is required while this product has a count. Clear the count first to remove the lot.',{kind:'error'}); var inp=document.getElementById('lot-'+id+'-'+lineIdx); if(inp) inp.value=lines[lineIdx].lot||''; return; }
   lines[lineIdx].lot=v;
   var saved=await saveOrder({ id:o.id, date:o.date, customer:o.customer, driver:o.driver, lines:lines, allowCountClear:true });
   if(!saved){ notify('Could not save the lot # — try again.',{kind:'error'}); return; }

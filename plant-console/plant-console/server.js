@@ -3729,6 +3729,7 @@ self.addEventListener('fetch',e=>{
       drivers: data.drivers,
       deletedDrivers: data.deletedDrivers,
       itemLots: data.itemLots || {},
+      ignoredDeliveryInvoices: data.ignoredDeliveryInvoices || {},
       itemFilterPrefs: data.itemFilterPrefs
     }) };
     }
@@ -3743,6 +3744,28 @@ self.addEventListener('fetch',e=>{
   // was actually changed. There's nothing to merge and nothing that can
   // race against another device's edit to a DIFFERENT customer, because
   // this never touches anything but the single record it names.
+  // ---- QuickBooks invoices that are not deliveries (Nov 2026) ----
+  // Invoices with no order are listed in Driver Performance so a driver can
+  // be assigned; ones that aren't deliveries (services, fees) can be hidden
+  // for everyone here. Requires "Edit & match orders".
+  if (url === '/api/delivery-invoices/ignore' && req.method === 'POST') {
+    const session = requirePerm(req, res, 'editOrders'); if (!session) return;
+    try {
+      const body = JSON.parse((await readRequestBody(req)) || '{}');
+      const docs = (Array.isArray(body.docNumbers) ? body.docNumbers : []).map(d => String(d || '').trim().slice(0, 100)).filter(Boolean);
+      if (!docs.length) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'No invoice numbers.' })); return; }
+      let out = null;
+      await updateSharedData(async (current) => {
+        const ig = Object.assign({}, current.ignoredDeliveryInvoices || {});
+        docs.forEach(d => { if (body.ignore === false) delete ig[d]; else ig[d] = { by: session.name || '', at: new Date().toISOString() }; });
+        out = ig;
+        return { data: Object.assign({}, current, { ignoredDeliveryInvoices: ig }) };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store' });
+      res.end(JSON.stringify({ success: true, ignored: out }));
+    } catch (e) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: e.message })); }
+    return;
+  }
   // ---- Lot # breakdown for GYRO products (Nov 2026) ----
   // QuickBooks has no lot numbers, so the breakdown (lot # + quantity) is kept
   // here, separately from the synced item, so the QuickBooks sync can never
@@ -3757,10 +3780,13 @@ self.addEventListener('fetch',e=>{
         const lot = String((l && l.lot) || '').trim().slice(0, 60); const qty = Number(l && l.qty);
         if (!lot) return;
         if (!(qty >= 0)) throw new Error('Quantity for lot ' + lot + ' must be a number of 0 or more.');
+        // When this lot's amount was assigned (YYYY-MM-DD): only shipments on or
+        // after that date are subtracted from it (Nov 2026).
+        const at = /^\d{4}-\d{2}-\d{2}$/.test(String((l && l.at) || '')) ? String(l.at) : new Date().toISOString().slice(0, 10);
         const k = lot.toUpperCase();
-        merged[k] = merged[k] ? { lot: merged[k].lot, qty: merged[k].qty + qty } : { lot, qty };
+        merged[k] = merged[k] ? { lot: merged[k].lot, qty: merged[k].qty + qty, at: merged[k].at < at ? merged[k].at : at } : { lot, qty, at };
       });
-      const lots = Object.values(merged).map(l => ({ lot: l.lot, qty: Math.round(l.qty * 1000) / 1000 }));
+      const lots = Object.values(merged).map(l => ({ lot: l.lot, qty: Math.round(l.qty * 1000) / 1000, at: l.at }));
       // Items live in their own store (items + transactions), not in shared data.
       const itemsData = await readItemsTxnData();
       if (!((itemsData && itemsData.items) || []).some(i => i && i.id === itemId)) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Item not found.' })); return; }
@@ -5099,6 +5125,7 @@ self.addEventListener('fetch',e=>{
     const _orderSession = requireAuth(req, res);
     if (!_orderSession) return;
     const _who = String(_orderSession.name || _orderSession.email || 'Unknown user').slice(0, 80);
+    let _dupInvoice = false;
     try {
       const bodyStr = await readRequestBody(req);
       const body = JSON.parse(bodyStr || '{}');
@@ -5199,6 +5226,7 @@ self.addEventListener('fetch',e=>{
           // P.O. number: permanent — carried over (this endpoint rebuilds
           // the order from scratch, so any field not copied here is lost).
           saved.poNumber = orders[idx].poNumber || '';
+          if (orders[idx].fromInvoice) saved.fromInvoice = true;
           // Edit tracking (Nov 2026): who changed what, from the logged-in
           // account on the server — never taken from the browser. A save that
           // changes nothing (repeat/auto save) adds no history entry.
@@ -5245,10 +5273,16 @@ self.addEventListener('fetch',e=>{
         } else {
           saved.createdBy = _who; // the logged-in account, not the browser's claim
           saved.createdAt = new Date().toISOString();
-          saved.history = [{ by: _who, at: saved.createdAt, what: ['Order added'] }];
           saved.shipped = order.shipped === true;
           saved.invoiceDocNumber = String(order.invoiceDocNumber || '').trim().slice(0, 100);
           saved.invoiceDate = String(order.invoiceDate || '').slice(0, 10);
+          // Created from a QuickBooks invoice that had no order (Nov 2026):
+          // never twice for the same invoice, even if two people click at once.
+          if (order.fromInvoice === true) {
+            if (!saved.invoiceDocNumber || orders.some(o => o && String(o.invoiceDocNumber || '').trim() === saved.invoiceDocNumber)) { _dupInvoice = true; return { skipWrite: true }; }
+            saved.fromInvoice = true;
+          }
+          saved.history = [{ by: _who, at: saved.createdAt, what: [order.fromInvoice === true ? 'Order added from QuickBooks invoice #' + saved.invoiceDocNumber + (saved.driver ? ' — driver ' + saved.driver : '') : 'Order added'] }];
           orders.push(saved);
         }
         // A fresh save always wins over a stale "this was just deleted"
@@ -5260,6 +5294,11 @@ self.addEventListener('fetch',e=>{
         if (!saved.poNumber) saved.poNumber = _nextPoNumber(next); // new order (or one still unnumbered)
         return { data: next };
       });
+      if (_dupInvoice) {
+        res.writeHead(409, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store' });
+        res.end(JSON.stringify({ error: 'Invoice #' + String(order.invoiceDocNumber || '') + ' already has an order.' }));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' });
       res.end(JSON.stringify({ success: true, order: saved }));
     } catch (e) {

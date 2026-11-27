@@ -3789,7 +3789,33 @@ self.addEventListener('fetch',e=>{
       const lots = Object.values(merged).map(l => ({ lot: l.lot, qty: Math.round(l.qty * 1000) / 1000, at: l.at }));
       // Items live in their own store (items + transactions), not in shared data.
       const itemsData = await readItemsTxnData();
-      if (!((itemsData && itemsData.items) || []).some(i => i && i.id === itemId)) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Item not found.' })); return; }
+      const theItem = ((itemsData && itemsData.items) || []).find(i => i && i.id === itemId);
+      if (!theItem) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Item not found.' })); return; }
+      // Lots can only SPLIT the inventory, never exceed it (Nov 2026): the lots
+      // total (assigned − shipped from that lot since it was assigned) may not
+      // be more than the QuickBooks quantity. Lowering an over-assigned product
+      // is always allowed, so existing mistakes can be corrected step by step.
+      {
+        const shared = await readSharedData();
+        const plain = n => { n = String(n || '').trim().toUpperCase(); return n.indexOf(':') >= 0 ? n.slice(n.lastIndexOf(':') + 1).trim() : n; };
+        const num = v => { const m = String(v || '').replace(/,/g, '').match(/-?\d+(\.\d+)?/); return m ? Number(m[0]) : 0; };
+        const itemName = plain(theItem.name);
+        const shippedSince = (lot, at) => {
+          let t = 0;
+          (shared.orders || []).forEach(o => { if (!o || !o.shipped) return; if (at && String(o.date || '') < at) return;
+            (o.lines || []).forEach(l => { if (l && l.lot && String(l.lot).trim().toUpperCase() === String(lot).trim().toUpperCase() && plain(l.product) === itemName) { const n = num(l.finalCount); if (n > 0) t += n; } }); });
+          return t;
+        };
+        const netOf = list => (list || []).reduce((t, l) => t + Number(l.qty || 0) - shippedSince(l.lot, l.at), 0);
+        const qbQty = Number(theItem.qbQty != null && theItem.qbQty !== '' ? theItem.qbQty : theItem.qty) || 0;
+        const newNet = netOf(lots);
+        const oldNet = netOf((((shared.itemLots || {})[itemId]) || {}).lots);
+        if (newNet > qbQty + 0.0005 && newNet > oldNet + 0.0005) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'The lots total (' + (Math.round(newNet * 100) / 100) + ') can\'t be more than the inventory (' + (Math.round(qbQty * 100) / 100) + '). Lower the lot amounts by ' + (Math.round((newNet - qbQty) * 100) / 100) + '.' }));
+          return;
+        }
+      }
       let saved = null;
       await updateSharedData(async (current) => {
         const all = Object.assign({}, current.itemLots || {});

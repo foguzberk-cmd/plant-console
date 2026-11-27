@@ -4898,6 +4898,7 @@ function _shippedWeekBodyHtml(weekOrders,wi,q,fmtDayOrd){
               return '<div style="display:flex;align-items:center;gap:10px;padding:6px 16px 6px 54px;border-bottom:1px dashed var(--line);font-size:12.5px">'
                 +'<input type="checkbox" class="ship-line-chk" data-orderid="'+esc(o.id)+'" data-lineidx="'+li+'" checked style="flex-shrink:0;width:15px;height:15px;cursor:pointer"/>'
                 +'<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>'+esc(l.product||'(no product)')+'</b>'+_qbDescSpan(l.product,l.description)+(l.description?' — '+esc(l.description):'')+'</span>'
+                +_orderLotInputHtml(o,l,li) // Lot # can be entered or corrected after shipping (Nov 2026)
                 +'<span style="flex-shrink:0;text-align:right;min-width:60px">'
                   +(l.quantity?'<b style="white-space:nowrap">'+esc(l.quantity)+'</b>':'')
                   +(String(l.finalCount||'').trim()!==''?'<div style="font-size:12px;font-weight:700;color:var(--ink);white-space:nowrap">Weighed: '+esc(l.finalCount)+(l.lot?' · Lot '+esc(l.lot):'')+'</div>':'')
@@ -5080,7 +5081,8 @@ function _qbSalesDesc(productName){
     var m={}; items.forEach(function(it){ if(it&&it.name&&it.description){ var k=it.name.trim().toUpperCase(); if(it.description.trim().toUpperCase()!==k && !m[k]) m[k]=it.description.trim(); } });
     _qbDescCache={ref:items,len:items.length,map:m};
   }
-  return _qbDescCache.map[String(productName||'').trim().toUpperCase()]||'';
+  var k=String(productName||'').trim().toUpperCase();
+  return _qbDescCache.map[k]||(k.indexOf(':')>=0?_qbDescCache.map[k.slice(k.lastIndexOf(':')+1).trim()]:'')||'';
 }
 function _qbDescSpan(productName,lineDesc){
   var d=_qbSalesDesc(productName);
@@ -21409,6 +21411,9 @@ function _isGyroItem(it){ return !!(it && LOT_TRACKED_CATEGORIES.test(String(it.
 function _gyroItemByName(name){
   var n=String(name||'').trim().toUpperCase(); if(!n) return null;
   var it=items.find(function(x){ return x && x.name && x.name.trim().toUpperCase()===n; });
+  // Orders made from a QuickBooks invoice may carry the category in front
+  // ("SUJUK:SUJUK LIDER BEEF RING MILD") — match on the part after the last ':'.
+  if(!it && n.indexOf(':')>=0){ var short=n.slice(n.lastIndexOf(':')+1).trim(); it=items.find(function(x){ return x && x.name && x.name.trim().toUpperCase()===short; }); if(!it&&/^\s*(gyro|sujuk|sucuk)\s*:/i.test(n)) return {id:'',name:short,groupName:n.split(':')[0]}; }
   return _isGyroItem(it)?it:null;
 }
 function _lotsFor(itemId){ var e=(itemLots||{})[itemId]; return (e&&Array.isArray(e.lots))?e.lots:[]; }
@@ -21780,7 +21785,7 @@ async function drvAssignInvoices(docNumbers,driver,ctx){
       var det=l.SalesItemLineDetail||{}, ref=det.ItemRef||{}, it=byQbId[String(ref.value||'')];
       var qty=det.Qty!=null?String(det.Qty):'';
       var isInv=!!(it && /inventory/i.test(String(it.type||'')));
-      return { product:ref.name||'', description:(l.Description&&l.Description!==ref.name)?l.Description:'', quantity:qty, finalCount:isInv?qty:'' };
+      return { product:(it&&it.name)||String(ref.name||'').replace(/^.*:/,'').trim(), description:(l.Description&&l.Description!==ref.name)?l.Description:'', quantity:qty, finalCount:isInv?qty:'' };
     });
     var order={ date:String(inv.TxnDate||'').slice(0,10), customer:(inv.CustomerRef&&inv.CustomerRef.name)||'', driver:d, lines:lines,
       shipped:true, invoiceDocNumber:n, invoiceDate:String(inv.TxnDate||'').slice(0,10), fromInvoice:true };

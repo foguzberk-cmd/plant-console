@@ -3782,6 +3782,10 @@ self.addEventListener('fetch',e=>{
       if (!txn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Transaction not found.' })); return; }
       const lineQty = Math.abs(Number(txn.qty) || 0);
       const raw = (Array.isArray(body.lots) ? body.lots : []).map(l => ({ lot: String((l && l.lot) || '').trim().slice(0, 60), qty: Number(l && l.qty) })).filter(l => l.lot);
+      // "Unassigned" (picked from the list) = deliberately no lot: the line stops
+      // needing one and counts toward "Unknown lot #" (Nov 2026).
+      const unassigned = raw.length === 1 && /^unassigned$/i.test(raw[0].lot);
+      if (unassigned) raw.length = 0;
       let lots;
       if (raw.length <= 1) lots = raw.map(l => ({ lot: l.lot, qty: lineQty }));
       else {
@@ -3796,11 +3800,11 @@ self.addEventListener('fetch',e=>{
         // fp = the line itself (document, product, quantity): if a sync ever gives
         // the line a different id, the lot is still found by these (Nov 2026).
         const fp = { docId: txn.docId || '', itemId: txn.itemId || '', qty: Number(txn.qty) || 0, num: txn.num || '', date: txn.date || '' };
-        if (lots.length) { all[txnId] = { lots, by: session.name || '', at: new Date().toISOString(), fp }; entry = all[txnId]; }
+        if (lots.length || unassigned) { all[txnId] = { lots, unassigned: unassigned || undefined, by: session.name || '', at: new Date().toISOString(), fp }; entry = all[txnId]; }
         else delete all[txnId];
         return { data: Object.assign({}, current, { txnLots: all }) };
       });
-      console.log('[lots] ' + (session.name || '?') + ' ' + (lots.length ? 'set lot ' + lots.map(l => l.lot + (lots.length > 1 ? ' (' + l.qty + ')' : '')).join(' + ') : 'cleared the lot') + ' on ' + (txn.num || txnId) + ' — ' + txnId);
+      console.log('[lots] ' + (session.name || '?') + ' ' + (unassigned ? 'marked as Unassigned' : lots.length ? 'set lot ' + lots.map(l => l.lot + (lots.length > 1 ? ' (' + l.qty + ')' : '')).join(' + ') : 'cleared the lot') + ' on ' + (txn.num || txnId) + ' — ' + txnId);
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store' });
       res.end(JSON.stringify({ success: true, entry }));
     } catch (e) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: e.message })); }

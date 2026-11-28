@@ -22101,8 +22101,12 @@ function _lotCacheFresh(){
   return _lotCache;
 }
 function _effectiveTxnLots(t){
-  var e=txnLots[t.id]; if(e&&Array.isArray(e.lots)&&e.lots.length) return {lots:e.lots,source:'txn'};
-  var f=(_lotCacheFresh().byFp||{})[(t.docId||'')+'|'+(t.itemId||'')+'|'+Number(t.qty)]; if(f&&Array.isArray(f.lots)&&f.lots.length) return {lots:f.lots,source:'txn'};
+  var e=txnLots[t.id];
+  if(e&&e.unassigned) return {lots:[],source:'txn',unassigned:true};
+  if(e&&Array.isArray(e.lots)&&e.lots.length) return {lots:e.lots,source:'txn'};
+  var f=(_lotCacheFresh().byFp||{})[(t.docId||'')+'|'+(t.itemId||'')+'|'+Number(t.qty)];
+  if(f&&f.unassigned) return {lots:[],source:'txn',unassigned:true};
+  if(f&&Array.isArray(f.lots)&&f.lots.length) return {lots:f.lots,source:'txn'};
   var ol=_lotCacheFresh().orderLot[t.id]; if(ol) return {lots:[{lot:ol,qty:Math.abs(Number(t.qty)||0)}],source:'order'};
   return null;
 }
@@ -22159,20 +22163,37 @@ function renderLotMissingPanel(){
 function _txnLotCellHtml(t){
   if(!_lotTrackedTxn(t)) return '';
   var e=_effectiveTxnLots(t), can=hasPerm('editTxns'), need=_txnNeedsLot(t);
-  var chips=e?e.lots.map(function(l){ return '<span style="display:inline-block;margin-right:4px;padding:1px 7px;border-radius:999px;background:#e6f1f6;color:#1f5f73;font-size:11px;font-weight:700">Lot '+esc(l.lot)+(e.lots.length>1?' · '+fmtNum2(l.qty):'')+'</span>'; }).join('')+(e.source==='order'?'<span style="font-size:10.5px;color:var(--muted)">from order</span>':''):'';
+  var chips=e&&e.unassigned?'<span style="display:inline-block;margin-right:4px;padding:1px 7px;border-radius:999px;background:#f1f3f4;color:#6b7280;font-size:11px;font-weight:700">Unassigned</span>':e?e.lots.map(function(l){ return '<span style="display:inline-block;margin-right:4px;padding:1px 7px;border-radius:999px;background:#e6f1f6;color:#1f5f73;font-size:11px;font-weight:700">Lot '+esc(l.lot)+(e.lots.length>1?' · '+fmtNum2(l.qty):'')+'</span>'; }).join('')+(e.source==='order'?'<span style="font-size:10.5px;color:var(--muted)">from order</span>':''):'';
   if(!can) return ' '+chips+(need?'<span style="color:#c4512c;font-weight:700;font-size:11.5px">needs lot #</span>':'');
-  var cur=e&&e.source==='txn'&&e.lots.length===1?e.lots[0].lot:'';
+  var cur=e&&e.unassigned?'Unassigned':(e&&e.source==='txn'&&e.lots.length===1?e.lots[0].lot:'');
   var sugg=_lotSuggestionsTxn(t);
   return '<div onclick="event.stopPropagation()" style="display:inline-flex;align-items:center;gap:6px;margin-left:10px;flex-wrap:wrap">'
     +(e&&(e.lots.length>1||e.source==='order')?chips:'')
-    +(!e||(e.source==='txn'&&e.lots.length===1)?'<input type="text" list="dl-tl-'+esc(t.id)+'" value="'+esc(cur)+'" placeholder="Lot #" aria-label="Lot # for this line" data-txnlot="'+esc(t.id)+'" onchange="saveTxnLot(\''+esc(t.id)+'\',this.value,this)" title="'+(cur?'Saved on the server':'Type the lot # and press Tab')+'" style="width:100px;padding:3px 7px;border:1.5px solid '+(need?'#c4512c':(cur?'#1a7a3c':'var(--line)'))+';border-radius:6px;font-size:12px;font-family:var(--mono);background:'+(cur?'#eaf6ee':'var(--panel)')+';color:var(--ink)">'+(cur?'<span title="Saved on the server" style="color:#1a7a3c;font-weight:700;font-size:12px">✓</span>':'')+'<datalist id="dl-tl-'+esc(t.id)+'">'+sugg.map(function(x){ return '<option value="'+esc(x)+'">'; }).join('')+'</datalist>':'')
+    +(!e||e.unassigned||(e.source==='txn'&&e.lots.length===1)?'<input type="text" list="dl-tl-'+esc(t.id)+'" value="'+esc(cur)+'" placeholder="Lot #" aria-label="Lot # for this line" data-txnlot="'+esc(t.id)+'" onchange="saveTxnLot(\''+esc(t.id)+'\',this.value,this)" title="'+(cur?'Saved on the server':'Type a lot #, or click to pick a saved lot or Unassigned')+'" placeholder="Type or pick…" style="width:120px;padding:3px 7px;border:1.5px solid '+(need?'#c4512c':(cur==='Unassigned'?'#9aa0a6':(cur?'#1a7a3c':'var(--line)')))+';border-radius:6px;font-size:12px;font-family:var(--mono);background:'+(cur==='Unassigned'?'#f1f3f4':(cur?'#eaf6ee':'var(--panel)'))+';color:'+(cur==='Unassigned'?'var(--muted)':'var(--ink)')+'">'+(cur?'<span title="Saved on the server" style="color:'+(cur==='Unassigned'?'#6b7280':'#1a7a3c')+';font-weight:700;font-size:12px">✓</span>':'')+'<datalist id="dl-tl-'+esc(t.id)+'">'+sugg.map(function(x){ return '<option value="'+esc(x.v)+'">'+esc(x.label)+'</option>'; }).join('')+'</datalist>':'')
     +'<a href="#" onclick="openTxnLotSplit(\''+esc(t.id)+'\');return false" style="font-size:11.5px;color:var(--cold)">'+(e&&e.lots.length>1?'Edit split':'Split')+'</a>'
     +(need?'<span style="color:#c4512c;font-weight:700;font-size:11.5px">needs lot #</span>':'')
     +'</div>';
 }
+// Drop-down for the Lot # box: Unassigned, this product's lots, then every other saved lot.
+var _allLotsCache={key:'',list:[]};
+function _allSavedLots(){
+  var key=Object.keys(txnLots||{}).length+'|'+(orders||[]).length+'|'+Object.keys(itemLots||{}).length;
+  if(_allLotsCache.key===key) return _allLotsCache.list;
+  var seen={}, out=[]; var add=function(l){ l=String(l||'').trim(); var k=l.toUpperCase(); if(!l||k==='UNASSIGNED'||seen[k]) return; seen[k]=1; out.push(l); };
+  Object.keys(txnLots||{}).forEach(function(id){ var e=txnLots[id]; (e&&e.lots||[]).forEach(function(x){ add(x.lot); }); });
+  (orders||[]).forEach(function(o){ _orderLinesOf(o).forEach(function(l){ if(l.lot) add(l.lot); }); });
+  Object.keys(itemLots||{}).forEach(function(id){ ((itemLots[id]||{}).lots||[]).forEach(function(x){ add(x.lot); }); });
+  out.sort(function(a,b){ return b.localeCompare(a,undefined,{numeric:true}); });
+  _allLotsCache={key:key,list:out}; return out;
+}
 function _lotSuggestionsTxn(t){
-  var it=_txnItem(t); if(!it) return [];
-  var b=_lotNetBreakdown(it); return b.rows.map(function(r){ return r.lot; });
+  var it=_txnItem(t), mine={}, list=[{v:'Unassigned',label:'Unassigned — no lot for this line'}];
+  if(it){
+    _lotNetBreakdown(it).rows.forEach(function(r){ mine[String(r.lot).toUpperCase()]=1; list.push({v:r.lot,label:'This product · balance '+fmtNum2(r.net)}); });
+    _lotSuggestions(it).forEach(function(l){ if(!mine[String(l).toUpperCase()]){ mine[String(l).toUpperCase()]=1; list.push({v:l,label:'This product'}); } });
+  }
+  _allSavedLots().forEach(function(l){ if(!mine[String(l).toUpperCase()]) list.push({v:l,label:'Other product'}); });
+  return list;
 }
 async function _postTxnLots(txnId,lots){
   var r=await fetch('/api/txn-lots',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({txnId:txnId,lots:lots})});

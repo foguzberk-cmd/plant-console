@@ -3793,10 +3793,14 @@ self.addEventListener('fetch',e=>{
       let entry = null;
       await updateSharedData(async (current) => {
         const all = Object.assign({}, current.txnLots || {});
-        if (lots.length) { all[txnId] = { lots, by: session.name || '', at: new Date().toISOString() }; entry = all[txnId]; }
+        // fp = the line itself (document, product, quantity): if a sync ever gives
+        // the line a different id, the lot is still found by these (Nov 2026).
+        const fp = { docId: txn.docId || '', itemId: txn.itemId || '', qty: Number(txn.qty) || 0, num: txn.num || '', date: txn.date || '' };
+        if (lots.length) { all[txnId] = { lots, by: session.name || '', at: new Date().toISOString(), fp }; entry = all[txnId]; }
         else delete all[txnId];
         return { data: Object.assign({}, current, { txnLots: all }) };
       });
+      console.log('[lots] ' + (session.name || '?') + ' ' + (lots.length ? 'set lot ' + lots.map(l => l.lot + (lots.length > 1 ? ' (' + l.qty + ')' : '')).join(' + ') : 'cleared the lot') + ' on ' + (txn.num || txnId) + ' — ' + txnId);
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store' });
       res.end(JSON.stringify({ success: true, entry }));
     } catch (e) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: e.message })); }

@@ -6936,6 +6936,7 @@ function renderReports(){
       +'<div id="cf-toolbar-sticky" style="position:static;z-index:20;background:var(--bg);padding-top:2px;box-shadow:0 -12px 0 0 var(--bg)">'
         +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:14px">'
           +'<button class="btn btn-primary" onclick="runCashFlowReport()">Pull from QuickBooks</button>'
+          +'<label style="display:flex;align-items:center;gap:6px;font-size:13px">Group vendors by <select id="cf-groupby" onchange="setCfGroupBy(this.value)" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink)"><option value="purchRep"'+(_cfGroupBy==='purchRep'?' selected':'')+'>Purch Rep</option><option value="department"'+(_cfGroupBy==='department'?' selected':'')+'>Department</option></select></label>'
           +'<button class="btn" onclick="findLikelyBadPaidEntries()" title="Scans the Paid section for entries where the confirmed-paid amount doesn\'t match what was actually scheduled — the pattern left by an old, now-disabled bug — and pre-selects them below for review">🔍 Find likely-bad Paid entries</button>'
         +'</div>'
         +'<div style="position:relative;margin-bottom:14px;max-width:320px">'
@@ -12413,6 +12414,9 @@ window.renderCashFlowReport=renderCashFlowReport;
 // Vendor → Department is a local-only assignment (QuickBooks has no
 // concept of your plant's departments) — same pattern as Sales Rep on the
 // Customer Payments side. Keyed by vendor id (or name, if no id).
+var _cfGroupBy=(function(){ try{ return localStorage.getItem('pc_cf_groupby')==='department'?'department':'purchRep'; }catch(e){ return 'purchRep'; } })();
+function setCfGroupBy(v){ _cfGroupBy=(v==='department')?'department':'purchRep'; try{ localStorage.setItem('pc_cf_groupby',_cfGroupBy); }catch(e){} try{ _renderCashFlowReportInner(); }catch(e){} }
+window.setCfGroupBy=setCfGroupBy;
 var _vendorDepartments=(function(){ try{ return JSON.parse(localStorage.getItem('pc_vendor_departments')||'{}'); }catch(e){ return {}; } })();
 // "Dumb terminal" write — same single-vendor endpoint the Vendors settings
 // panel's CSV import uses. Used when a department gets assigned to a
@@ -12518,8 +12522,14 @@ function _renderCashFlowReportInner(){
   // replaces: Settings → Vendors keys by qbId when available, but this
   // fallback keeps grouping working even if those two ever disagree.
   function _purchRepForVendorKey(vKey){
-    if(vendorByKeyForPurchRep[vKey]) return vendorByKeyForPurchRep[vKey];
     var vName=byVendor[vKey]&&byVendor[vKey].name;
+    // (Nov 2026) "Group vendors by" switch: Department (Settings → Vendors) or Purch Rep.
+    if(_cfGroupBy==='department'){
+      var d=_vendorDepartments[vKey]||(vName&&_vendorDepartments[vName]);
+      if(!d && vName){ var v=vendors.find(function(x){ return x.name===vName; }); if(v) d=_vendorDepartments[v.qbId||v.name]; }
+      return d||'Unassigned';
+    }
+    if(vendorByKeyForPurchRep[vKey]) return vendorByKeyForPurchRep[vKey];
     if(vName && vendorByKeyForPurchRep[vName]) return vendorByKeyForPurchRep[vName];
     return 'Unassigned';
   }
@@ -16427,7 +16437,7 @@ function renderSettings(){
 
       <div class="settings-section" id="stab-vendors">
         <div class="settings-section-head">
-          <div><h3>Vendors</h3><p>Assign each vendor to a department, so Scheduled Payments' vendor bills table can group them the way your plant is organized.</p></div>
+          <div><h3>Vendors</h3><p>Assign each vendor to a department. In Reports → Scheduled Payments, choose <b>Group vendors by: Department</b> to group the vendor bills this way (or by Purch Rep).</p></div>
         </div>
         <div id="vendorsPanel"></div>
       </div>

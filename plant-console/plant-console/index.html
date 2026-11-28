@@ -22094,11 +22094,15 @@ function _lotCacheFresh(){
       orderLot[t.id]=cands[i].lot; cands.splice(i,1);
     });
   });
-  _lotCache={key:key,baseline:baseline,orderLot:orderLot};
+  // lots whose line got a different id (e.g. after a sync) are found by the line itself
+  var byFp={}, ids={}; transactions.forEach(function(t){ ids[t.id]=1; });
+  Object.keys(txnLots||{}).forEach(function(id){ var e=txnLots[id]; if(ids[id]||!e||!e.fp) return; var k=e.fp.docId+'|'+e.fp.itemId+'|'+Number(e.fp.qty); if(!byFp[k]) byFp[k]=e; });
+  _lotCache={key:key,baseline:baseline,orderLot:orderLot,byFp:byFp};
   return _lotCache;
 }
 function _effectiveTxnLots(t){
   var e=txnLots[t.id]; if(e&&Array.isArray(e.lots)&&e.lots.length) return {lots:e.lots,source:'txn'};
+  var f=(_lotCacheFresh().byFp||{})[(t.docId||'')+'|'+(t.itemId||'')+'|'+Number(t.qty)]; if(f&&Array.isArray(f.lots)&&f.lots.length) return {lots:f.lots,source:'txn'};
   var ol=_lotCacheFresh().orderLot[t.id]; if(ol) return {lots:[{lot:ol,qty:Math.abs(Number(t.qty)||0)}],source:'order'};
   return null;
 }
@@ -22161,7 +22165,7 @@ function _txnLotCellHtml(t){
   var sugg=_lotSuggestionsTxn(t);
   return '<div onclick="event.stopPropagation()" style="display:inline-flex;align-items:center;gap:6px;margin-left:10px;flex-wrap:wrap">'
     +(e&&(e.lots.length>1||e.source==='order')?chips:'')
-    +(!e||(e.source==='txn'&&e.lots.length===1)?'<input type="text" list="dl-tl-'+esc(t.id)+'" value="'+esc(cur)+'" placeholder="Lot #" aria-label="Lot # for this line" onchange="saveTxnLot(\''+esc(t.id)+'\',this.value)" style="width:100px;padding:3px 7px;border:1.5px solid '+(need?'#c4512c':'var(--line)')+';border-radius:6px;font-size:12px;font-family:var(--mono);background:var(--panel);color:var(--ink)"><datalist id="dl-tl-'+esc(t.id)+'">'+sugg.map(function(x){ return '<option value="'+esc(x)+'">'; }).join('')+'</datalist>':'')
+    +(!e||(e.source==='txn'&&e.lots.length===1)?'<input type="text" list="dl-tl-'+esc(t.id)+'" value="'+esc(cur)+'" placeholder="Lot #" aria-label="Lot # for this line" data-txnlot="'+esc(t.id)+'" onchange="saveTxnLot(\''+esc(t.id)+'\',this.value,this)" title="'+(cur?'Saved on the server':'Type the lot # and press Tab')+'" style="width:100px;padding:3px 7px;border:1.5px solid '+(need?'#c4512c':(cur?'#1a7a3c':'var(--line)'))+';border-radius:6px;font-size:12px;font-family:var(--mono);background:'+(cur?'#eaf6ee':'var(--panel)')+';color:var(--ink)">'+(cur?'<span title="Saved on the server" style="color:#1a7a3c;font-weight:700;font-size:12px">✓</span>':'')+'<datalist id="dl-tl-'+esc(t.id)+'">'+sugg.map(function(x){ return '<option value="'+esc(x)+'">'; }).join('')+'</datalist>':'')
     +'<a href="#" onclick="openTxnLotSplit(\''+esc(t.id)+'\');return false" style="font-size:11.5px;color:var(--cold)">'+(e&&e.lots.length>1?'Edit split':'Split')+'</a>'
     +(need?'<span style="color:#c4512c;font-weight:700;font-size:11.5px">needs lot #</span>':'')
     +'</div>';
@@ -22176,11 +22180,17 @@ async function _postTxnLots(txnId,lots){
   if(j.entry) txnLots[txnId]=j.entry; else delete txnLots[txnId];
   _lotCache.key='';
 }
-async function saveTxnLot(txnId,value){
+async function saveTxnLot(txnId,value,inp){
   var v=String(value||'').trim();
-  try{ await _postTxnLots(txnId, v?[{lot:v}]:[]); notify(v?'Lot '+v+' saved.':'Lot removed.',{kind:'success'}); }
-  catch(e){ notify('Could not save the lot: '+e.message,{kind:'error'}); }
-  try{ renderTxnTable(); }catch(e){}
+  if(inp){ inp.disabled=true; inp.style.borderColor='var(--line)'; }
+  try{
+    await _postTxnLots(txnId, v?[{lot:v}]:[]);
+    notify(v?'Lot '+v+' saved.':'Lot removed.',{kind:'success'});
+    try{ renderTxnTable(); }catch(e){}
+  }catch(e){
+    notify('Could not save the lot: '+e.message,{kind:'error'});
+    if(inp){ inp.disabled=false; inp.style.borderColor='#c0392b'; inp.style.background='#fdecea'; inp.title='NOT saved: '+e.message; inp.insertAdjacentHTML('afterend','<span style="color:#c0392b;font-weight:700;font-size:12px">✕ not saved — '+esc(e.message)+'</span>'); }
+  }
 }
 window.saveTxnLot=saveTxnLot;
 function openTxnLotSplit(txnId){

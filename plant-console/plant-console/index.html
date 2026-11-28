@@ -1867,6 +1867,7 @@ async function _pullSmallFromServerImpl(){
       });
     }
     if(data.itemLots && typeof data.itemLots==='object' && !Array.isArray(data.itemLots)) itemLots=data.itemLots;
+    if(data.txnLots && typeof data.txnLots==='object' && !Array.isArray(data.txnLots)) txnLots=data.txnLots;
     if(data.ignoredDeliveryInvoices && typeof data.ignoredDeliveryInvoices==='object') ignoredDeliveryInvoices=data.ignoredDeliveryInvoices;
     if(data.itemFilterPrefs && typeof data.itemFilterPrefs==='object' && !Array.isArray(data.itemFilterPrefs) && Object.keys(data.itemFilterPrefs).length){
       itemFilterPrefs=data.itemFilterPrefs;
@@ -2029,6 +2030,7 @@ async function _pullFromServerImpl(opts){
       });
     }
     if(data.itemLots && typeof data.itemLots==='object' && !Array.isArray(data.itemLots)) itemLots=data.itemLots;
+    if(data.txnLots && typeof data.txnLots==='object' && !Array.isArray(data.txnLots)) txnLots=data.txnLots;
     if(data.ignoredDeliveryInvoices && typeof data.ignoredDeliveryInvoices==='object') ignoredDeliveryInvoices=data.ignoredDeliveryInvoices;
     if(data.itemFilterPrefs && typeof data.itemFilterPrefs==='object' && !Array.isArray(data.itemFilterPrefs) && Object.keys(data.itemFilterPrefs).length){
       itemFilterPrefs=data.itemFilterPrefs;
@@ -2272,6 +2274,7 @@ async function _pushToServerImpl(){
           if(JSON.stringify(newCustomerAllowed)!==JSON.stringify(customerAllowed)){ customerAllowed=newCustomerAllowed; safeSetLocalJSON('pc_customerallowed',(customerAllowed)); }
         }
         if(smallData.itemLots && typeof smallData.itemLots==='object' && !Array.isArray(smallData.itemLots)) itemLots=smallData.itemLots;
+        if(smallData.txnLots && typeof smallData.txnLots==='object' && !Array.isArray(smallData.txnLots)) txnLots=smallData.txnLots;
         if(smallData.ignoredDeliveryInvoices && typeof smallData.ignoredDeliveryInvoices==='object') ignoredDeliveryInvoices=smallData.ignoredDeliveryInvoices;
         if(smallData.itemFilterPrefs && typeof smallData.itemFilterPrefs==='object' && !Array.isArray(smallData.itemFilterPrefs)){
           var newItemFilterPrefs=Object.assign({}, smallData.itemFilterPrefs, itemFilterPrefs);
@@ -19972,7 +19975,8 @@ function renderTransactions(){
       </select>
       <input type="date" id="txnDateFrom" onchange="renderTxnTable()" title="From date" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
       <span style="color:var(--muted);font-size:12px">to</span>
-      <input type="date" id="txnDateTo" onchange="renderTxnTable()" title="To date" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
+            <input type="date" id="txnDateTo" onchange="renderTxnTable()" title="To date" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;background:var(--bg);color:var(--ink);outline:none"/>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;white-space:nowrap"><input type="checkbox" id="txnMissingLot" onchange="_txnMissingOnly=this.checked;renderTxnTable()"> Missing lot # only <span id="txnMissingCount" style="color:#c4512c;font-weight:700"></span></label>
       <button class="btn btn-sm" onclick="clearTxnFilters()">Clear</button>
     </div>
     <div class="txn-table-wrap" id="txnTableWrap"></div>`;
@@ -20035,7 +20039,10 @@ function renderTxnTable(){
   // Pre-filter individual transactions
   var itemNameCache={};
   function itemName(id){ if(itemNameCache[id]!==undefined) return itemNameCache[id]; var it=items.find(function(x){return x.id===id;}); itemNameCache[id]=it?it.name.toLowerCase():''; return itemNameCache[id]; }
+  var _mc=document.getElementById('txnMissingCount'); if(_mc){ var _mn=transactions.filter(_txnNeedsLot).length; _mc.textContent=_mn?'('+_mn+')':''; }
+  var _mo=document.getElementById('txnMissingLot'); if(_mo) _mo.checked=_txnMissingOnly;
   var filtered=transactions.filter(function(t){
+    if(_txnMissingOnly && !_txnNeedsLot(t)) return false;
     // "doc:X" values filter by the underlying QuickBooks document type
     // (Bill/Invoice/SalesReceipt/CreditMemo/VendorCredit) rather than the
     // inventory-movement type — e.g. "Bill" and "Receive" aren't the same
@@ -20093,9 +20100,10 @@ function renderTxnTable(){
       var itemCount=g.lines.length;
       var expanded=expandedTxn===g.docId;
       var typeBadge='<span class="type-badge type-'+g.type+'">'+(TXN_TYPES[g.type]||g.type)+'</span>';
-      var mainRow='<tr style="cursor:pointer" onclick="toggleTxnExpand(this.dataset.doc)" ondblclick="openEditDoc(this.dataset.doc)" data-doc="'+g.docId+'">'
+      var _need=g.lines.filter(_txnNeedsLot).length;
+      var mainRow='<tr style="cursor:pointer'+(_need?';background:#fff4e5;box-shadow:inset 4px 0 0 #c4512c':'')+'" onclick="toggleTxnExpand(this.dataset.doc)" ondblclick="openEditDoc(this.dataset.doc)" data-doc="'+g.docId+'">'
         +'<td class="txn-date" style="white-space:nowrap;min-width:110px"><span style="display:inline-block;width:14px;color:var(--muted);transition:transform .15s;transform:rotate('+(expanded?'90deg':'0deg')+')">&#9656;</span>'+ds+'</td>'
-        +'<td><div class="txn-num">'+esc(g.num||'—')+'</div><div class="txn-desc">'+itemCount+' item'+(itemCount!==1?'s':'')+(g.desc&&g.desc!=='Opening count'?' · '+esc(g.desc):'')+'</div></td>'
+        +'<td><div class="txn-num">'+esc(g.num||'—')+(_need?' <span style="margin-left:6px;padding:1px 7px;border-radius:999px;background:#c4512c;color:#fff;font-size:10.5px;font-weight:700;font-family:var(--sans,inherit)">'+_need+' need lot #</span>':'')+'</div><div class="txn-desc">'+itemCount+' item'+(itemCount!==1?'s':'')+(g.desc&&g.desc!=='Opening count'?' · '+esc(g.desc):'')+'</div></td>'
         +'<td>'+typeBadge+'</td>'
         +'<td style="font-family:var(--mono);font-size:12px;font-weight:700;text-align:right;color:var(--cold)">'+valStr+'</td>'
         +'<td style="text-align:right;position:relative">'
@@ -20137,9 +20145,9 @@ function renderTxnTable(){
             lv=q*price;
           }
           if(!price && q && lv) price=lv/q;
-          return '<tr style="background:var(--bg)">'
+          return '<tr style="background:'+(_txnNeedsLot(t)?'#fff4e5':'var(--bg)')+'">'
             +'<td></td>'
-            +'<td style="padding-left:24px;font-size:12.5px">'+esc(nm)+(it&&it.sku?' <span style="font-family:var(--mono);font-size:10px;color:var(--cold)">'+esc(it.sku)+'</span>':'')+'</td>'
+            +'<td style="padding-left:24px;font-size:12.5px">'+esc(nm)+(it&&it.sku?' <span style="font-family:var(--mono);font-size:10px;color:var(--cold)">'+esc(it.sku)+'</span>':'')+_txnLotCellHtml(t)+'</td>'
             +'<td style="font-family:var(--mono);font-size:12px;color:var(--muted)">'+fmtNum2(q)+' '+(t.unit||'lbs')+'</td>'
             +'<td style="font-family:var(--mono);font-size:12px;text-align:right">'+fmtMoney(price)+' &middot; <b>$'+lv.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</b></td>'
             +'<td></td></tr>';
@@ -21450,10 +21458,6 @@ function _itemShippedLotsHtml(it){
   return '<div style="margin-top:4px;font-size:11.5px;color:var(--muted)">Shipped by lot: '+chips
     +(sum.length>4?'<button type="button" onclick="event.stopPropagation();openItemLots(\''+esc(it.id)+'\')" style="border:0;background:none;color:var(--cold);font-weight:700;font-size:11.5px;cursor:pointer;padding:0">+'+(sum.length-4)+' more</button>':'')+'</div>';
 }
-function _itemLotsBadgeHtml(it){
-  if(!_isGyroItem(it)) return '';
-  return '<button type="button" onclick="event.stopPropagation();openItemLots(\''+esc(it.id)+'\')" title="Lots for this product — received and shipped by lot #" style="margin-top:3px;border:1px solid var(--line);color:var(--muted);background:transparent;border-radius:6px;padding:1px 8px;font-size:11px;font-weight:600;cursor:pointer">Lots ›</button>';
-}
 function _plainProductName(n){ n=String(n||'').trim().toUpperCase(); return n.indexOf(':')>=0?n.slice(n.lastIndexOf(':')+1).trim():n; }
 function _lotShipments(it){
   var out=[], name=_plainProductName(it.name);
@@ -21469,32 +21473,6 @@ function _lotShipments(it){
 // was assigned). Lots used on orders but never assigned show what shipped
 // from them as a negative. Whatever isn't in a lot shows as "Unknown lot #",
 // so the rows always add up to the QuickBooks quantity.
-function _lotNetBreakdown(it){
-  var rec={}, order=[];
-  _lotsFor(it.id).forEach(function(l){ var k=String(l.lot).trim().toUpperCase(); if(!rec[k]){ rec[k]={lot:l.lot,received:0,shipped:0,at:l.at||''}; order.push(k); } rec[k].received+=Number(l.qty||0); });
-  _lotShipments(it).forEach(function(sh){
-    if(!sh.shipped) return;
-    var k=String(sh.lot).trim().toUpperCase(), n=_parseQtyNumber(sh.count);
-    if(!rec[k]){ rec[k]={lot:sh.lot,received:0,shipped:0,at:''}; order.push(k); }
-    if(rec[k].at && String(sh.date||'')<rec[k].at) return; // shipped before the lot was assigned — already reflected
-    if(n>0) rec[k].shipped+=n;
-    if(!rec[k].last || String(sh.date)>rec[k].last) rec[k].last=String(sh.date);
-  });
-  var rows=order.map(function(k){ var r=rec[k]; r.net=Math.round((r.received-r.shipped)*1000)/1000; return r; });
-  var lotsTotal=rows.reduce(function(t,r){ return t+r.net; },0);
-  var qb=_itemQbQty(it);
-  return {rows:rows, lotsTotal:Math.round(lotsTotal*1000)/1000, unknown:Math.round((qb-lotsTotal)*1000)/1000, qb:qb};
-}
-function _itemLotSubRowsHtml(it,ncols){
-  if(!_isGyroItem(it)) return '';
-  var b=_lotNetBreakdown(it); if(!b.rows.length) return '';
-  var qtyCell=function(v){ return '<td style="font-family:var(--mono);font-size:12.5px;text-align:right;'+(v<0?'color:#c0392b':'')+'">'+fmtNum2(v)+'</td>'; };
-  var rest='<td colspan="'+Math.max(1,ncols-4)+'"></td>';
-  var sub=function(label,v,title,muted){ return '<tr class="lot-subrow" onclick="openItemLots(\''+esc(it.id)+'\')" title="'+esc(title)+'" style="cursor:pointer;background:var(--bg)">'
-    +'<td></td><td style="padding-left:28px;font-size:12.5px;'+(muted?'color:var(--muted);font-style:italic':'font-weight:600')+'">↳ '+label+'</td><td></td>'+qtyCell(v)+rest+'</tr>'; };
-  return b.rows.map(function(r){ return sub('Lot #'+esc(r.lot), r.net, (r.at?'Assigned '+fmtNum2(r.received)+' on '+r.at+' − shipped '+fmtNum2(r.shipped)+' since':'Not assigned — shipped '+fmtNum2(r.shipped)+' from this lot')+' — click to edit lots', false); }).join('')
-    +(Math.abs(b.unknown)>0.0005?sub('Unknown lot #', b.unknown, 'The part of the QuickBooks quantity not assigned to any lot', true):'');
-}
 function _shippedSince(it,lot,at){
   var k=String(lot||'').trim().toUpperCase(), t=0;
   _lotShipments(it).forEach(function(s){ if(!s.shipped||String(s.lot).trim().toUpperCase()!==k) return; if(at&&String(s.date||'')<at) return; var n=_parseQtyNumber(s.count); if(n>0) t+=n; });
@@ -22049,37 +22027,6 @@ function _lmRenderBody(){
         +'<datalist id="'+dl+'">'+_lotSuggestions(r.it).map(function(x){ return '<option value="'+esc(x)+'">'; }).join('')+'</datalist></td></tr>'; }).join('')
     :'<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:16px">No lines match these filters.</td></tr>';
 }
-function renderLotMissingPanel(){
-  var el=document.getElementById('lotMissingPanel'); if(!el) return;
-  if(!hasPerm('editOrders')){ el.innerHTML=''; return; }
-  var all=_lotMissingLines();
-  var sel='<select onchange="_lm.days=Number(this.value);renderLotMissingPanel()" style="padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:12.5px;background:var(--bg)">'
-    +[[7,'Last 7 days'],[30,'Last 30 days'],[90,'Last 90 days'],[0,'All']].map(function(x){ return '<option value="'+x[0]+'"'+(_lm.days===x[0]?' selected':'')+'>'+x[1]+'</option>'; }).join('')+'</select>';
-  if(!all.length){
-    var anyOlder=_lm.days>0 && (function(){ var keep=_lm.days; _lm.days=0; var n=_lotMissingLines().length; _lm.days=keep; return n; })();
-    el.innerHTML=anyOlder?'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);padding:6px 12px;border:1px dashed var(--line);border-radius:10px">✓ No GYRO / SUJUK lines without a lot # in this period ('+anyOlder+' older). '+sel+'</div>':'';
-    return;
-  }
-  var cols=[['date','Date',''],['customer','Customer',''],['po','P.O. / Invoice',''],['product','Product',''],['qty','Weighed / qty','text-align:right']];
-  var arrow=function(k){ return _lm.sort.key===k?(_lm.sort.dir>0?' ▲':' ▼'):''; };
-  var fin=function(k){ return '<input type="text" value="'+esc(_lm.f[k]||'')+'" placeholder="Filter…" aria-label="Filter '+k+'" oninput="lmFilter(\''+k+'\',this.value)" style="width:100%;min-width:60px;box-sizing:border-box;padding:4px 7px;border:1px solid var(--line);border-radius:6px;font-size:12px;font-weight:400;background:var(--panel);color:var(--ink)">'; };
-  el.innerHTML='<div style="background:var(--panel);border:1px solid #e0c56b;border-left:4px solid #c4512c;border-radius:12px;padding:12px 14px">'
-    +'<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">'
-      +'<div><div style="font-weight:700">⚠ '+all.length+' GYRO / SUJUK line'+(all.length!==1?'s':'')+' shipped without a lot #</div>'
-      +'<div style="font-size:12.5px;color:var(--muted)">Type the lot # and press Tab — it saves to the order (it stays shipped). Click a column to sort, type under it to filter.</div></div>'
-      +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span id="lmCount" style="font-size:12.5px;color:var(--muted)"></span>'+sel+'</div>'
-    +'</div>'
-    +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:10px;font-size:12.5px">'
-      +'<span>Set lot for all <b id="lmBulkN">0</b> shown:</span><input id="lmBulkLot" type="text" placeholder="Lot #" style="width:110px;padding:5px 7px;border:1.5px solid var(--line);border-radius:6px;font-size:12.5px;font-family:var(--mono);background:var(--bg)">'
-      +'<button id="lmBulkBtn" class="btn btn-sm btn-primary" onclick="lmBulkAssign()">Apply</button>'
-      +'<span style="color:var(--muted)">— filter first (e.g. one product and date), then apply one lot to all of them.</span>'
-    +'</div>'
-    +'<div style="overflow:auto;max-height:420px;margin-top:10px"><table class="txn-table" style="width:100%"><thead>'
-      +'<tr>'+cols.map(function(c){ return '<th onclick="lmSortBy(\''+c[0]+'\')" style="cursor:pointer;user-select:none;white-space:nowrap;'+c[2]+'" title="Sort by '+c[1]+'">'+c[1]+arrow(c[0])+'</th>'; }).join('')+'<th>Lot #</th></tr>'
-      +'<tr>'+cols.map(function(c){ return '<th style="padding-top:0">'+fin(c[0])+'</th>'; }).join('')+'<th style="padding-top:0"></th></tr>'
-    +'</thead><tbody id="lmBody"></tbody></table></div></div>';
-  _lmRenderBody();
-}
 async function lmBulkAssign(){
   var lot=String((document.getElementById('lmBulkLot')||{}).value||'').trim();
   if(!lot){ notify('Type the lot # to apply first.',{kind:'error'}); return; }
@@ -22099,6 +22046,177 @@ async function lmBulkAssign(){
   renderLotMissingPanel();
 }
 window.lmBulkAssign=lmBulkAssign;
+
+/* ===== Lot # on transactions (Nov 2026) ==================================
+   Lots for GYRO / SUJUK are assigned ONLY on the Transactions tab, per
+   transaction line. The Items tab shows the resulting breakdown, read-only.
+   - A line needs a lot when its product is lot-tracked and it is dated on or
+     after that product's most recent inventory adjustment (earlier lines no
+     longer need one) and on/after LOT_TRACKING_START.
+   - Invoice lines take the lot already entered on the matching shipped order
+     (same invoice #, same product) automatically.
+   - Lot totals use QuickBooks quantities: received/returns/increases add,
+     shipments/vendor credits/decreases subtract. Unknown lot # = QuickBooks
+     quantity − all lots. */
+var txnLots={};
+var LOT_TRACKING_START='2026-11-01';
+var _txnMissingOnly=false;
+function _txnSigned(t){
+  var q=Number(t.qty)||0;
+  if(t.type==='adjustment') return q;
+  if(t.type==='shipment'||t.type==='vendor_credit') return -Math.abs(q);
+  return Math.abs(q);
+}
+function _txnItem(t){ return items.find(function(x){ return x.id===t.itemId; }); }
+function _lotTrackedTxn(t){
+  if(!t||!t.docId) return false;
+  if(['receive','shipment','return','vendor_credit','adjustment'].indexOf(t.type)<0) return false;
+  return _isGyroItem(_txnItem(t));
+}
+var _lotCache={key:'',baseline:{},orderLot:{}};
+function _lotCacheFresh(){
+  var key=transactions.length+'|'+(orders||[]).length+'|'+Object.keys(txnLots||{}).length;
+  if(_lotCache.key===key) return _lotCache;
+  var baseline={};
+  transactions.forEach(function(t){ if(t.type==='adjustment'&&t.itemId&&t.date){ if(!baseline[t.itemId]||t.date>baseline[t.itemId]) baseline[t.itemId]=t.date; } });
+  // invoice # → lots entered on the shipped order's lines, per product (in line order)
+  var byInv={};
+  (orders||[]).forEach(function(o){ var n=String(o.invoiceDocNumber||'').trim(); if(!n||!o.shipped) return;
+    _orderLinesOf(o).forEach(function(l){ if(!l.lot) return; var k=n+'|'+_plainProductName(l.product); (byInv[k]=byInv[k]||[]).push({lot:l.lot,count:_parseQtyNumber(l.finalCount||l.quantity)}); }); });
+  var orderLot={};
+  var lineGroups={};
+  transactions.forEach(function(t){ if((t.qbDocType==='Invoice'||t.qbDocType==='SalesReceipt')&&_lotTrackedTxn(t)){ var inv=String(t.num||'').replace(/^[A-Z]+-/,''); var it=_txnItem(t); var k=inv+'|'+_plainProductName(it&&it.name); (lineGroups[k]=lineGroups[k]||[]).push(t); } });
+  Object.keys(lineGroups).forEach(function(k){
+    var cands=(byInv[k]||[]).slice(); if(!cands.length) return;
+    lineGroups[k].forEach(function(t){
+      var q=Math.abs(Number(t.qty)||0), i=cands.findIndex(function(c){ return Math.abs(c.count-q)<0.01; });
+      if(i<0) i=0; if(!cands[i]) return;
+      orderLot[t.id]=cands[i].lot; cands.splice(i,1);
+    });
+  });
+  _lotCache={key:key,baseline:baseline,orderLot:orderLot};
+  return _lotCache;
+}
+function _effectiveTxnLots(t){
+  var e=txnLots[t.id]; if(e&&Array.isArray(e.lots)&&e.lots.length) return {lots:e.lots,source:'txn'};
+  var ol=_lotCacheFresh().orderLot[t.id]; if(ol) return {lots:[{lot:ol,qty:Math.abs(Number(t.qty)||0)}],source:'order'};
+  return null;
+}
+function _txnNeedsLot(t){
+  if(!_lotTrackedTxn(t)||_effectiveTxnLots(t)) return false;
+  var d=String(t.date||''); if(d<LOT_TRACKING_START) return false;
+  var b=_lotCacheFresh().baseline[t.itemId];
+  return !(b && d<b); // dated before the product's latest inventory adjustment → no longer needed
+}
+// Items breakdown, from transactions
+function _lotNetBreakdown(it){
+  var rec={}, order=[];
+  transactions.forEach(function(t){
+    if(t.itemId!==it.id||!_lotTrackedTxn(t)) return;
+    var e=_effectiveTxnLots(t); if(!e) return;
+    var sign=_txnSigned(t)<0?-1:1;
+    e.lots.forEach(function(l){ var k=String(l.lot).trim().toUpperCase(); if(!rec[k]){ rec[k]={lot:l.lot,inQty:0,outQty:0}; order.push(k); } var q=Math.abs(Number(l.qty)||0); if(sign>0) rec[k].inQty+=q; else rec[k].outQty+=q; });
+  });
+  var rows=order.map(function(k){ var r=rec[k]; r.net=Math.round((r.inQty-r.outQty)*1000)/1000; return r; });
+  var lotsTotal=rows.reduce(function(t,r){ return t+r.net; },0), qb=_itemQbQty(it);
+  return {rows:rows, lotsTotal:Math.round(lotsTotal*1000)/1000, unknown:Math.round((qb-lotsTotal)*1000)/1000, qb:qb};
+}
+function _itemMissingLotCount(it){ return transactions.filter(function(t){ return t.itemId===it.id && _txnNeedsLot(t); }).length; }
+function goAssignLotsInTransactions(itemName){
+  _txnMissingOnly=true;
+  select('transactions');
+  setTimeout(function(){ var s=document.getElementById('txnSearch'); if(s){ s.value=itemName||''; } var c=document.getElementById('txnMissingLot'); if(c) c.checked=true; try{ renderTxnTable(); }catch(e){} },50);
+}
+window.goAssignLotsInTransactions=goAssignLotsInTransactions;
+function _itemLotSubRowsHtml(it,ncols){
+  if(!_isGyroItem(it)) return '';
+  var b=_lotNetBreakdown(it), miss=_itemMissingLotCount(it);
+  if(!b.rows.length && !miss) return '';
+  var qtyCell=function(v){ return '<td style="font-family:var(--mono);font-size:12.5px;text-align:right;'+(v<0?'color:#c0392b':'')+'">'+fmtNum2(v)+'</td>'; };
+  var rest=function(html){ return '<td colspan="'+Math.max(1,ncols-4)+'" style="font-size:12px">'+(html||'')+'</td>'; };
+  var nameJs=esc(it.name).replace(/'/g,"\\'");
+  var out=b.rows.map(function(r){ return '<tr class="lot-subrow" style="background:var(--bg)" title="In '+fmtNum2(r.inQty)+' − out '+fmtNum2(r.outQty)+'"><td></td><td style="padding-left:28px;font-size:12.5px;font-weight:600">↳ Lot #'+esc(r.lot)+'</td><td></td>'+qtyCell(r.net)+rest('')+'</tr>'; }).join('');
+  if(Math.abs(b.unknown)>0.0005 || miss){
+    out+='<tr class="lot-subrow" style="background:var(--bg)"><td></td><td style="padding-left:28px;font-size:12.5px;color:var(--muted);font-style:italic">↳ Unknown lot #</td><td></td>'+qtyCell(b.unknown)
+      +rest(miss?'<a href="#" onclick="goAssignLotsInTransactions(\''+nameJs+'\');return false" style="color:#c4512c;font-weight:700">'+miss+' transaction'+(miss!==1?'s':'')+' need a lot # — assign in Transactions ›</a>':'')+'</tr>';
+  }
+  return out;
+}
+// Items: no lot editing here any more — status only
+function _itemLotsBadgeHtml(it){ return ''; }
+// Orders tab: lots are assigned in Transactions now — just a pointer
+function renderLotMissingPanel(){
+  var el=document.getElementById('lotMissingPanel'); if(!el) return;
+  if(!hasPerm('editTxns')&&!hasPerm('viewTxns')){ el.innerHTML=''; return; }
+  var n=transactions.filter(_txnNeedsLot).length;
+  el.innerHTML=n?'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;padding:8px 12px;border:1px solid #e0c56b;border-left:4px solid #c4512c;border-radius:10px;background:var(--panel)">⚠ <b>'+n+' GYRO / SUJUK transaction line'+(n!==1?'s':'')+'</b> need a lot #. <button class="btn btn-sm btn-primary" onclick="goAssignLotsInTransactions(\'\')">Assign in Transactions ›</button></div>':'';
+}
+// Transactions: the lot cell on a product line
+function _txnLotCellHtml(t){
+  if(!_lotTrackedTxn(t)) return '';
+  var e=_effectiveTxnLots(t), can=hasPerm('editTxns'), need=_txnNeedsLot(t);
+  var chips=e?e.lots.map(function(l){ return '<span style="display:inline-block;margin-right:4px;padding:1px 7px;border-radius:999px;background:#e6f1f6;color:#1f5f73;font-size:11px;font-weight:700">Lot '+esc(l.lot)+(e.lots.length>1?' · '+fmtNum2(l.qty):'')+'</span>'; }).join('')+(e.source==='order'?'<span style="font-size:10.5px;color:var(--muted)">from order</span>':''):'';
+  if(!can) return ' '+chips+(need?'<span style="color:#c4512c;font-weight:700;font-size:11.5px">needs lot #</span>':'');
+  var cur=e&&e.source==='txn'&&e.lots.length===1?e.lots[0].lot:'';
+  var sugg=_lotSuggestionsTxn(t);
+  return '<div onclick="event.stopPropagation()" style="display:inline-flex;align-items:center;gap:6px;margin-left:10px;flex-wrap:wrap">'
+    +(e&&(e.lots.length>1||e.source==='order')?chips:'')
+    +(!e||(e.source==='txn'&&e.lots.length===1)?'<input type="text" list="dl-tl-'+esc(t.id)+'" value="'+esc(cur)+'" placeholder="Lot #" aria-label="Lot # for this line" onchange="saveTxnLot(\''+esc(t.id)+'\',this.value)" style="width:100px;padding:3px 7px;border:1.5px solid '+(need?'#c4512c':'var(--line)')+';border-radius:6px;font-size:12px;font-family:var(--mono);background:var(--panel);color:var(--ink)"><datalist id="dl-tl-'+esc(t.id)+'">'+sugg.map(function(x){ return '<option value="'+esc(x)+'">'; }).join('')+'</datalist>':'')
+    +'<a href="#" onclick="openTxnLotSplit(\''+esc(t.id)+'\');return false" style="font-size:11.5px;color:var(--cold)">'+(e&&e.lots.length>1?'Edit split':'Split')+'</a>'
+    +(need?'<span style="color:#c4512c;font-weight:700;font-size:11.5px">needs lot #</span>':'')
+    +'</div>';
+}
+function _lotSuggestionsTxn(t){
+  var it=_txnItem(t); if(!it) return [];
+  var b=_lotNetBreakdown(it); return b.rows.map(function(r){ return r.lot; });
+}
+async function _postTxnLots(txnId,lots){
+  var r=await fetch('/api/txn-lots',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({txnId:txnId,lots:lots})});
+  var j=await r.json(); if(!r.ok||!j.success) throw new Error(j.error||('HTTP '+r.status));
+  if(j.entry) txnLots[txnId]=j.entry; else delete txnLots[txnId];
+  _lotCache.key='';
+}
+async function saveTxnLot(txnId,value){
+  var v=String(value||'').trim();
+  try{ await _postTxnLots(txnId, v?[{lot:v}]:[]); notify(v?'Lot '+v+' saved.':'Lot removed.',{kind:'success'}); }
+  catch(e){ notify('Could not save the lot: '+e.message,{kind:'error'}); }
+  try{ renderTxnTable(); }catch(e){}
+}
+window.saveTxnLot=saveTxnLot;
+function openTxnLotSplit(txnId){
+  var t=transactions.find(function(x){ return x.id===txnId; }); if(!t) return;
+  var it=_txnItem(t), lineQty=Math.abs(Number(t.qty)||0), e=_effectiveTxnLots(t);
+  var rows=e?e.lots.map(function(l){ return {lot:l.lot,qty:String(l.qty)}; }):[{lot:'',qty:String(lineQty)}];
+  if(rows.length<2) rows.push({lot:'',qty:''});
+  var old=document.getElementById('txnLotModal'); if(old) old.remove();
+  var bg=document.createElement('div'); bg.id='txnLotModal';
+  bg.style.cssText='position:fixed;inset:0;z-index:1500;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;padding:16px';
+  bg.onclick=function(ev){ if(ev.target===bg) bg.remove(); };
+  function sum(){ return rows.reduce(function(a,r){ var q=Number(r.qty); return a+(isNaN(q)?0:q); },0); }
+  function draw(msg){
+    var s=Math.round(sum()*1000)/1000, ok=Math.abs(s-lineQty)<0.01;
+    bg.innerHTML='<div role="dialog" aria-label="Split into lots" style="background:var(--panel);border-radius:12px;max-width:460px;width:100%;padding:18px 20px;box-shadow:0 20px 60px rgba(0,0,0,.25)">'
+      +'<div style="font-weight:700;font-size:16px">Split into lots</div>'
+      +'<div style="font-size:12.5px;color:var(--muted);margin:4px 0 12px">'+esc((it&&it.name)||'')+' · '+esc(t.num||'')+' · '+esc(t.date||'')+' — line quantity <b>'+fmtNum2(lineQty)+'</b>. The lots must add up to it.</div>'
+      +rows.map(function(r,i){ return '<div style="display:flex;gap:8px;margin-bottom:6px"><input data-i="'+i+'" data-f="lot" value="'+esc(r.lot)+'" placeholder="Lot #" style="flex:2;height:34px;border:1px solid var(--line);border-radius:8px;padding:0 10px;font:inherit"><input data-i="'+i+'" data-f="qty" value="'+esc(r.qty)+'" placeholder="Qty" inputmode="decimal" style="flex:1;height:34px;border:1px solid var(--line);border-radius:8px;padding:0 8px;font:inherit;text-align:right"><button type="button" class="btn btn-sm" data-rm="'+i+'">✕</button></div>'; }).join('')
+      +'<button type="button" class="btn btn-sm" id="tlAdd">+ Add lot</button>'
+      +'<div id="tlSum" style="margin-top:10px;font-size:13px;font-weight:700;color:'+(ok?'#1a7a3c':'#c0392b')+'">Total '+fmtNum2(s)+' of '+fmtNum2(lineQty)+(ok?' ✓':' — must equal the line')+'</div>'
+      +'<div style="min-height:18px;font-size:12.5px;margin-top:6px;color:#c0392b">'+esc(msg||'')+'</div>'
+      +'<div style="display:flex;justify-content:flex-end;gap:8px"><button type="button" class="btn btn-sm" id="tlCancel">Cancel</button><button type="button" class="btn btn-sm btn-primary" id="tlSave">Save</button></div></div>';
+    bg.querySelectorAll('input[data-i]').forEach(function(inp){ inp.oninput=function(){ rows[Number(inp.getAttribute('data-i'))][inp.getAttribute('data-f')]=inp.value; var s2=Math.round(sum()*1000)/1000, ok2=Math.abs(s2-lineQty)<0.01, el=bg.querySelector('#tlSum'); el.textContent='Total '+fmtNum2(s2)+' of '+fmtNum2(lineQty)+(ok2?' ✓':' — must equal the line'); el.style.color=ok2?'#1a7a3c':'#c0392b'; }; });
+    bg.querySelectorAll('[data-rm]').forEach(function(b){ b.onclick=function(){ rows.splice(Number(b.getAttribute('data-rm')),1); if(!rows.length) rows.push({lot:'',qty:''}); draw(); }; });
+    bg.querySelector('#tlAdd').onclick=function(){ rows.push({lot:'',qty:''}); draw(); };
+    bg.querySelector('#tlCancel').onclick=function(){ bg.remove(); };
+    bg.querySelector('#tlSave').onclick=async function(){
+      var clean=rows.filter(function(r){ return String(r.lot||'').trim()||String(r.qty||'').trim(); }).map(function(r){ return {lot:String(r.lot||'').trim(),qty:Number(r.qty)}; });
+      if(clean.some(function(r){ return !r.lot; })){ draw('Every quantity needs a lot #.'); return; }
+      if(clean.length>1 && Math.abs(clean.reduce(function(a,r){ return a+(r.qty||0); },0)-lineQty)>0.01){ draw('The lots must add up to '+fmtNum2(lineQty)+'.'); return; }
+      try{ await _postTxnLots(txnId, clean); bg.remove(); notify('Lots saved.',{kind:'success'}); try{ renderTxnTable(); }catch(e){} }catch(e){ draw(e.message); }
+    };
+  }
+  draw(); document.body.appendChild(bg);
+}
+window.openTxnLotSplit=openTxnLotSplit;
 </script>
 </body>
 </html>

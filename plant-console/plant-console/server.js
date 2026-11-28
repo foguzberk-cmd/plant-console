@@ -3729,6 +3729,7 @@ self.addEventListener('fetch',e=>{
       drivers: data.drivers,
       deletedDrivers: data.deletedDrivers,
       itemLots: data.itemLots || {},
+      txnLots: data.txnLots || {},
       ignoredDeliveryInvoices: data.ignoredDeliveryInvoices || {},
       itemFilterPrefs: data.itemFilterPrefs
     }) };
@@ -3764,6 +3765,41 @@ self.addEventListener('fetch',e=>{
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store' });
       res.end(JSON.stringify({ success: true, ignored: out }));
     } catch (e) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: e.message })); }
+    return;
+  }
+  // ---- Lot # on transaction lines (Nov 2026) ----
+  // GYRO / SUJUK lots are assigned on the Transactions tab, per transaction
+  // line (bill, invoice, adjustment...). Kept separately from the synced
+  // transactions (keyed by their stable id) so QuickBooks syncs never erase
+  // them. One lot = the whole line; a split must add up to the line's quantity.
+  if (url === '/api/txn-lots' && req.method === 'POST') {
+    const session = requirePerm(req, res, 'editTxns'); if (!session) return;
+    try {
+      const body = JSON.parse((await readRequestBody(req)) || '{}');
+      const txnId = String(body.txnId || '').slice(0, 200);
+      const itemsData = await readItemsTxnData();
+      const txn = ((itemsData && itemsData.transactions) || []).find(t => t && t.id === txnId);
+      if (!txn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Transaction not found.' })); return; }
+      const lineQty = Math.abs(Number(txn.qty) || 0);
+      const raw = (Array.isArray(body.lots) ? body.lots : []).map(l => ({ lot: String((l && l.lot) || '').trim().slice(0, 60), qty: Number(l && l.qty) })).filter(l => l.lot);
+      let lots;
+      if (raw.length <= 1) lots = raw.map(l => ({ lot: l.lot, qty: lineQty }));
+      else {
+        if (raw.some(l => !(l.qty > 0))) throw new Error('Each lot in a split needs a quantity above 0.');
+        const sum = raw.reduce((t, l) => t + l.qty, 0);
+        if (Math.abs(sum - lineQty) > 0.01) throw new Error('The split adds up to ' + (Math.round(sum * 100) / 100) + ' but the line is ' + (Math.round(lineQty * 100) / 100) + '.');
+        lots = raw.map(l => ({ lot: l.lot, qty: Math.round(l.qty * 1000) / 1000 }));
+      }
+      let entry = null;
+      await updateSharedData(async (current) => {
+        const all = Object.assign({}, current.txnLots || {});
+        if (lots.length) { all[txnId] = { lots, by: session.name || '', at: new Date().toISOString() }; entry = all[txnId]; }
+        else delete all[txnId];
+        return { data: Object.assign({}, current, { txnLots: all }) };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, no-store' });
+      res.end(JSON.stringify({ success: true, entry }));
+    } catch (e) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: e.message })); }
     return;
   }
   // ---- Lot # breakdown for GYRO products (Nov 2026) ----
